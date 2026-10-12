@@ -1,0 +1,35 @@
+{
+  "expo": {
+    "name": "ADEM",
+    "slug": "adem-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#071B2B",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-sharing",
+      "expo-status-bar",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "ADEM requires camera access to scan question papers, answer keys, and student handwritten answer sheets."
+        }
+      ]
+    ]
+  }
+}
