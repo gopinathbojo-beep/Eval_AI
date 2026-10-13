@@ -352,14 +352,16 @@ def refresh_evaluation_status(db: Session, ev: Evaluation) -> None:
     items = db.query(EvaluationItem).filter_by(evaluation_id=ev.id).all()
     if any(a.status in ("UNMAPPED", "NEEDS_REVIEW") for a in answers):
         ev.status = "MAPPING_REVIEW"
-    elif not items:
+    elif not items or all(i.status == "PENDING" for i in items):
         ev.status = "OCR_REVIEW"
     elif not finalize_issues(db, ev):
         ev.status = "FINALIZABLE"
     elif any(i.status == "APPROVED" or i.teacher_overridden for i in items):
         ev.status = "TEACHER_REVIEW"
-    else:
+    elif any(i.status == "EVALUATED" for i in items):
         ev.status = "AI_EVALUATED"
+    else:
+        ev.status = "TEACHER_REVIEW"
     db.commit()
 
 

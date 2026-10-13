@@ -3,6 +3,7 @@ import { Image, View, ActivityIndicator, StyleSheet, ImageStyle, Text, Touchable
 import { Ionicons } from "@expo/vector-icons";
 import { getBaseUrl, getToken } from "../api/client";
 import { useTheme } from "../theme/ThemeContext";
+import * as FileSystem from "expo-file-system/legacy";
 
 interface AuthImageProps {
   path: string;
@@ -57,29 +58,22 @@ export const AuthImage: React.FC<AuthImageProps> = ({
   }, [path, retryCount]);
 
   const handleNativeImageError = async () => {
-    // If native Image tag failed (common with Fresco header drops on Android), fetch directly with fetch()
+    // If native Image tag failed (common with Fresco header drops on Android), download directly via FileSystem
     if (sourceUri && !base64Uri) {
       try {
         const token = await getToken();
-        const res = await fetch(sourceUri, {
+        const safeKey = path.replace(/[^a-zA-Z0-9_-]/g, "_");
+        const cachedPath = `${FileSystem.cacheDirectory}auth_img_${safeKey}.jpg`;
+        const res = await FileSystem.downloadAsync(sourceUri, cachedPath, {
           headers: token ? { Authorization: `Bearer ${token}` } : {},
         });
-        if (res.ok) {
-          const blob = await res.blob();
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            if (typeof reader.result === "string") {
-              setBase64Uri(reader.result);
-              setError(false);
-            } else {
-              setError(true);
-            }
-          };
-          reader.readAsDataURL(blob);
+        if (res.status === 200 && res.uri) {
+          setBase64Uri(res.uri);
+          setError(false);
           return;
         }
       } catch (err) {
-        console.warn("AuthImage fallback fetch failed:", err);
+        console.warn("AuthImage fallback download failed:", err);
       }
     }
     setError(true);

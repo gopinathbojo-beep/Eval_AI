@@ -413,8 +413,7 @@ export async function uploadFileNative<T = unknown>(
       // Secondary fallback via fetch
       try {
         const fileResponse = await fetch(cleanSourceUri);
-        const blob = await fileResponse.blob();
-        const buffer = await blob.arrayBuffer();
+        const buffer = await fileResponse.arrayBuffer();
         if (buffer && buffer.byteLength > 0) {
           const base64Data = uint8ArrayToBase64(new Uint8Array(buffer));
           await FileSystem.writeAsStringAsync(stagedUri, base64Data, {
@@ -501,7 +500,8 @@ export async function uploadFileNative<T = unknown>(
         blob = await readLocalUriAsBlob(cleanSourceUri);
       } catch {
         const fileRes = await fetch(cleanSourceUri);
-        blob = await fileRes.blob();
+        const buf = await fileRes.arrayBuffer();
+        blob = new Blob([new Uint8Array(buf) as any], { type: resolvedMime });
       }
     }
 

@@ -19,7 +19,7 @@ export function AppLayout() {
     <div className="flex h-full">
       <aside className="flex w-56 shrink-0 flex-col border-r border-line bg-surface">
         <div className="px-5 py-5">
-          <p className="text-lg font-semibold tracking-tight text-pen">ADEM</p>
+          <p className="text-lg font-semibold tracking-tight text-pen">Eval AI</p>
           <p className="text-xs text-mute">Exam evaluation</p>
         </div>
         <nav className="flex-1 space-y-0.5 px-2" aria-label="Main">

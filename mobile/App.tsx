@@ -9,6 +9,7 @@ import { RootNavigator } from "./src/navigation/RootNavigator";
 LogBox.ignoreLogs([
   "Cannot connect to Expo CLI",
   "SafeAreaView has been deprecated",
+  "Response.blob() is using React Native's Blob",
 ]);
 
 function MainApp() {
