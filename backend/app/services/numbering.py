@@ -16,6 +16,19 @@ _ROMAN_VALS = {"i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6, "vii": 7, "v
 _NULLISH = {"", "null", "none", "unknown", "n/a", "na", "?", "-", "[unclear]", "unclear"}
 
 
+_OCR_DIGIT = str.maketrans({"O": "0", "o": "0", "l": "1", "I": "1", "|": "1"})
+
+
+def _fix_ocr_digits(s: str) -> str:
+    """Letter look-alikes in the main question number when it also contains a real digit:
+    'l2' -> '12', '1O' -> '10', 'Q.l0' -> 'Q.10'. Only the first number run is touched, and a run without
+    any real digit is left alone (it may be a roman numeral or a part letter)."""
+    m = re.match(r"^([A-Za-z\.\s:\-]*?)([0-9Ool|I]*[0-9][0-9Ool|I]*)(?![A-Za-z])(.*)$", s, re.DOTALL)
+    if not m:
+        return s
+    return m.group(1) + m.group(2).translate(_OCR_DIGIT) + m.group(3)
+
+
 def _clean_token(tok: str) -> str | None:
     tok = tok.strip().lower()
     if re.fullmatch(r"[a-z]", tok) or _ROMAN.match(tok):
@@ -31,8 +44,14 @@ def normalize_question_number(raw: str | int | None) -> str | None:
     s = str(raw).strip()
     if s.lower() in _NULLISH:
         return None
+    s = _fix_ocr_digits(s)
     s = _PREFIX.sub("", s).strip()
     s = s.replace("（", "(").replace("）", ")").replace("[", "(").replace("]", ")")
+    # Unclosed trailing part from handwriting/OCR: "3(a" -> "3(a)"
+    if s.count("(") == s.count(")") + 1 and re.search(r"\(\s*[a-zA-Z0-9]{1,4}\s*$", s):
+        s += ")"
+    # Letter part closed only on the right: "1a)", "1 a)", "1.a)", "1(a)i)" -> "1(a)", "1(a)(i)"
+    s = re.sub(r"(?<=[\d\)])\s*[\.\-]?\s*([a-zA-Z]{1,4})\)", r"(\1)", s)
 
     # Parenthesized main number: (1), (2), (1)(a), (1) a
     pm = re.match(r"^\(\s*(\d{1,3})\s*\)(.*)$", s)

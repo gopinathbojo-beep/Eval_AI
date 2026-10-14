@@ -39,10 +39,10 @@ def parse_criteria_marks(criteria: list[str], text: str = "") -> float | None:
         if m_tot:
             return float(m_tot.group(1))
 
-    # 3. Check for "1 mark per ... pair" or "1 mark each"
-    for c in criteria:
-        if "1 mark per" in c.lower() or "1 mark each" in c.lower():
-            return 3.0
+    # 3. "N mark(s) each / per point" gives no count, so no total can be computed here. Leave it to the
+    #    printed marks or the question's maximum marks (a fixed guess would silently corrupt the key).
+    if any(re.search(r"\d+(?:\.\d+)?\s*marks?\s+(?:each|per)\b", c, re.I) for c in criteria):
+        return None
 
     # 4. Sum of itemized criteria marks:
     total = 0.0
@@ -70,16 +70,30 @@ def parse_criteria_marks(criteria: list[str], text: str = "") -> float | None:
     return None
 
 
+def _label_pattern(norm_num: str) -> str | None:
+    """Regex for a normalized label as printed: '3(a)' matches '3(a)', '3 (a)', '3a', '3.a'."""
+    m = re.fullmatch(r"(\d+)((?:\([a-z0-9]+\))*)", norm_num or "")
+    if not m:
+        return None
+    parts = re.findall(r"\(([a-z0-9]+)\)", m.group(2))
+    return re.escape(m.group(1)) + "".join(rf"\s*[\.\-]?\s*\(?{re.escape(t)}\)?" for t in parts)
+
+
 def extract_from_full_pdf_text(full_text: str, norm_num: str) -> tuple[str | None, list[str]]:
     """Extract answer text and criteria for a specific question number from full document text."""
-    pat = re.compile(rf"(?:^|\n)\s*(?:Q\.?\s*{norm_num}|{norm_num}\.)\b[^\n]*\n(.*)", re.DOTALL | re.I)
+    label = _label_pattern(norm_num)
+    if label is None:
+        return None, []
+    # "1." / "1)" / "Q1" / "Question 1" at line start, but not "1.5 Marks" or "10."
+    pat = re.compile(rf"(?:^|\n)[ \t]*(?:Q(?:uestion)?\.?\s*{label}(?![\d\(])|{label}[\.\)](?!\d))[^\n]*\n(.*)",
+                     re.DOTALL | re.I)
     m = pat.search(full_text)
     if not m:
         return None, []
 
     rest = m.group(1)
     # Stop at next question
-    next_q = re.search(r"(?:^|\n)\s*(?:Q\.?\s*\d+|\d+\.)\b", rest, re.I)
+    next_q = re.search(r"(?:^|\n)[ \t]*(?:Q(?:uestion)?\.?\s*\d+|\d+[\.\)](?!\d)|\d+\s*\(\s*[a-z]{1,4}\s*\))", rest, re.I)
     block = rest[:next_q.start()].strip() if next_q else rest.strip()
 
     # Strip page boundary markers
@@ -174,7 +188,10 @@ def segment_answer_keys(page_results: list[tuple[dict, Any]]) -> list[SegmentedK
             if not k.normalized_number:
                 continue
             rec_ans, rec_crit = extract_from_full_pdf_text(full_text, k.normalized_number)
-            if rec_ans and (len(k.answer_text) < 15 or len(rec_ans) > len(k.answer_text)):
+            # The exact text layer replaces OCR only when OCR clearly lost text: OCR is near-empty, or the
+            # text-layer block is longer but still plausibly the same answer (not the rest of the document).
+            if rec_ans and (len(k.answer_text) < 15
+                            or len(k.answer_text) < len(rec_ans) <= max(400, 2.5 * len(k.answer_text))):
                 k.answer_text = rec_ans
             if rec_crit:
                 k.criteria = rec_crit

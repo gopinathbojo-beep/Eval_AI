@@ -41,6 +41,11 @@ _MAX_MARKS_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+_PAGE_FURNITURE = re.compile(
+    r"\W*(?:page\s*\d+(?:\s*of\s*\d+)?|\d{1,3}|p\.?\s*t\.?\s*o\.?|please\s+turn\s+over|turn\s+over|continued(?:\s+on\s+next\s+page)?)\W*",
+    re.IGNORECASE,
+)
+
 _INLINE_MARKS_PATTERN = re.compile(
     r"\(\s*(\d+(?:\.\d+)?)\s*(?:marks?|m)\s*\)\s*$",
     re.IGNORECASE,
@@ -165,6 +170,8 @@ def _is_question_continuation(
     text: str,
     last_q: StructuredQuestion | None,
     page_num: int,
+    first_on_page: bool = False,
+    own_marks: float | None = None,
 ) -> bool:
     if not last_q:
         return False
@@ -193,6 +200,16 @@ def _is_question_continuation(
     # 3. Tables (e.g. Editing table with Line | Incorrect Word | Correct Word)
     if is_table_block(text):
         return True
+
+    # 3b. First unlabelled block at the top of a new page: the question from the previous page carries on
+    #     (text, options, table). Headings/instructions were already filtered out by the caller; a block with its
+    #     own printed marks is a separate unnumbered question.
+    if is_unnumbered and first_on_page and page_num > last_q.page_end and own_marks is None:
+        return True
+
+    # An unlabelled block with its own marks is its own question, not the tail of the previous one
+    if is_unnumbered and own_marks is not None:
+        return False
 
     # 4. Check negative signals that prove this is a NEW question, NEVER a continuation
     # If the text has a new section or subject header e.g. "Reading Comprehension:", "Literature:", "Grammar:", "Section C:"
@@ -296,10 +313,14 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
                     "rule": rule,
                 })
 
+        first_on_page = True
         for q in questions_raw:
             text = (q.question_text or "").strip()
             raw_label = (q.raw_question_number or "").strip() or None
             marks = q.marks
+            if not raw_label and _PAGE_FURNITURE.fullmatch(text):
+                continue  # "Page 2", "P.T.O.", "Turn over" - never content
+            is_first_block, first_on_page = first_on_page, False
 
             # If raw_label is missing or empty, attempt to extract label from start of question text
             if raw_label is None or raw_label.lower() in ("null", "none", "?", "unknown", ""):
@@ -332,7 +353,7 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
 
             # Check if this block continues the previous question (cross-page continuation e.g. Q4 or Q6 table)
             last_q = doc_struct.questions[-1] if doc_struct.questions else None
-            if _is_question_continuation(raw_label, text, last_q, page_num):
+            if _is_question_continuation(raw_label, text, last_q, page_num, is_first_block, marks):
                 sep = "\n\n" if is_table_block(text) else " " if (last_q.question_text and not last_q.question_text.endswith(("\n", ".", "?", ":", ";", "!"))) else "\n"
                 last_q.question_text = f"{last_q.question_text}{sep}{text}".strip()
                 last_q.page_end = max(last_q.page_end, page_num)

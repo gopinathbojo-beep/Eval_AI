@@ -159,7 +159,7 @@ def test_answer_key_split_and_merge_api(client, auth):
     from app.models import AnswerKey, Exam, ExamQuestion, SchoolClass, Subject, Teacher
     db = SessionLocal()
     try:
-        t = db.query(Teacher).first()
+        t = db.query(Teacher).filter_by(email="rao@school.org").one()
         cls = SchoolClass(teacher_id=t.id, name="Class SplitKey")
         sub = Subject(teacher_id=t.id, name="Subject SplitKey")
         db.add_all([cls, sub])
@@ -222,7 +222,7 @@ def test_student_answer_split_merge_and_suggestion_api(client, auth):
     from app.models import AnswerSheetDocument, Evaluation, Exam, ExamQuestion, SchoolClass, Student, StudentAnswer, Subject, Teacher
     db = SessionLocal()
     try:
-        t = db.query(Teacher).first()
+        t = db.query(Teacher).filter_by(email="rao@school.org").one()
         cls = SchoolClass(teacher_id=t.id, name="Class EvalSplit")
         sub = Subject(teacher_id=t.id, name="Subject EvalSplit")
         db.add_all([cls, sub])

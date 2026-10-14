@@ -30,6 +30,33 @@ _DIGIT_CONFUSIONS: dict[str, list[str]] = {
     "27": ["2"],
     "71": ["1", "7"],
 }
+# Handwritten digits that OCR commonly confuses with each other
+_LOOKALIKE = {"1": "74", "7": "12", "4": "91", "9": "47", "3": "85", "8": "30", "5": "63", "6": "50", "0": "68", "2": "7"}
+
+
+def _digit_alternatives(norm: str) -> list[tuple[str, float, str]]:
+    """Plausible intended labels for a misread number, with base score and reason. Sub-parts are kept:
+    '17(a)' -> '1(a)'."""
+    main, sep, rest = norm.partition("(")
+    suffix = sep + rest
+    if not main.isdigit():
+        return []
+    out: dict[str, tuple[float, str]] = {}
+    for alt in _DIGIT_CONFUSIONS.get(main, []):
+        out[alt] = (0.70, f"OCR digit misread: '{main}' is commonly misread for '{alt}'")
+    if len(main) > 1:  # a hook/stray stroke read as an extra 1 or 7: 17 -> 1, 72 -> 2 (but never 10 -> 1)
+        for i in range(len(main)):
+            if main[i] not in "17":
+                continue
+            alt = main[:i] + main[i + 1:]
+            if alt and alt.lstrip("0") == alt:
+                out.setdefault(alt, (0.60, f"OCR may have read an extra digit: '{main}' -> '{alt}'"))
+    for i, d in enumerate(main):  # one look-alike digit: 7 -> 1, 9 -> 4
+        for r in _LOOKALIKE.get(d, ""):
+            alt = main[:i] + r + main[i + 1:]
+            if alt.lstrip("0") == alt:
+                out.setdefault(alt, (0.55, f"handwritten '{d}' and '{r}' look alike: '{main}' -> '{alt}'"))
+    return [(a + suffix, s, why) for a, (s, why) in out.items()]
 
 _STOP_WORDS = {
     "the", "and", "for", "with", "that", "this", "from", "are", "was", "were",
@@ -61,13 +88,12 @@ def find_recovery_candidates(
     q_by_pos = {getattr(q, "position", i + 1): q for i, q in enumerate(questions)}
 
     # 1. Handwritten digit confusion recovery (e.g. 17 -> 1, 27 -> 2)
-    if norm and norm in _DIGIT_CONFUSIONS:
-        alternatives = _DIGIT_CONFUSIONS[norm]
-        for alt in alternatives:
+    if norm and norm not in q_by_norm:
+        for alt, base, why in _digit_alternatives(norm):
             if alt in q_by_norm:
                 target_q = q_by_norm[alt]
-                score = 0.70
-                reasons = [f"OCR digit misread: '{norm}' is commonly misread for '{alt}'"]
+                score = base
+                reasons = [why]
 
                 # If sequential position also matches the alternative's position
                 q_pos = getattr(target_q, "position", None)

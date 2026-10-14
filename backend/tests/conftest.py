@@ -66,8 +66,9 @@ def _reply(system: str, user: str) -> str:
             rows = [("1", "Osmosis is water movement"), ("Q1", "Another try at one"), ("2", "Diffusion text"),
                     ("3(a)", "Photosynthesis"), ("3(b)", "Leaf diagram")]
         else:
-            rows = [("Q1", "Osmosis is movement of water"), ("Q2", "WRONG diffusion answer"), ("3", "Photosynthesis makes food"),
-                    ("3(b)", "OVERSHOOT leaf drawing"), (None, "stray text continued from earlier")]
+            # the unlabelled block comes before any labelled answer, so it has nothing to continue -> UNMAPPED
+            rows = [(None, "stray text continued from earlier"), ("Q1", "Osmosis is movement of water"),
+                    ("Q2", "WRONG diffusion answer"), ("3", "Photosynthesis makes food"), ("3(b)", "OVERSHOOT leaf drawing")]
         return json.dumps({"page_number": 1, "answers": [
             {"question_number": n, "answer_text": t, "ocr_confidence": 0.9} for n, t in rows]})
     return "{}"

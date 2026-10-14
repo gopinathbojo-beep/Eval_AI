@@ -21,8 +21,16 @@ def validate_evaluation(result: EvaluationResult, official_max: float) -> Evalua
     if result.max_marks is not None and abs(result.max_marks - official_max) > 1e-9:
         raise EvaluationValidationError(
             f"AI reported max_marks {result.max_marks} but the official maximum is {official_max}")
-    if result.decision:
-        result.decision = result.decision.strip().upper().replace(" ", "_")
-        if result.decision not in VALID_DECISIONS:
-            result.decision = None
+    # Snap to the 0.5-mark grid the prompt asks for (e.g. 1.3 -> 1.5); never past the official maximum.
+    result.marks_awarded = min(official_max, round(m * 2) / 2)
+    # The decision label is derived from the marks so it can never contradict them.
+    result.decision = derive_decision(result.marks_awarded, official_max)
     return result
+
+
+def derive_decision(marks: float, official_max: float) -> str:
+    if official_max > 0 and marks >= official_max - 1e-9:
+        return "CORRECT"
+    if marks <= 1e-9:
+        return "INCORRECT"
+    return "PARTIALLY_CORRECT"

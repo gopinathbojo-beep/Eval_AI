@@ -73,7 +73,11 @@ def test_valid_and_decision_normalised():
     r = validate_evaluation(EvaluationResult(marks_awarded=4, max_marks=5, decision="partially correct"), 5)
     assert r.decision == "PARTIALLY_CORRECT"
     r = validate_evaluation(EvaluationResult(marks_awarded=4, decision="nonsense"), 5)
-    assert r.decision is None
+    assert r.decision == "PARTIALLY_CORRECT"
+    r = validate_evaluation(EvaluationResult(marks_awarded=5, decision="INCORRECT"), 5)
+    assert r.decision == "CORRECT"
+    r = validate_evaluation(EvaluationResult(marks_awarded=1.3), 5)
+    assert r.marks_awarded == 1.5
 
 
 def test_marks_must_be_numeric():

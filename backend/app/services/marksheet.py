@@ -594,6 +594,9 @@ def sync_root_marksheet_file(db: Session, teacher_id: str | None = None) -> bool
     try:
         import os
         base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+        if os.environ.get("DATA_DIR"):  # explicit data dir (e.g. the test suite): keep the project root untouched
+            from ..config import get_settings
+            base_dir = str(get_settings().data_path)
         target_path = os.path.join(base_dir, "Student_Marksheet.xlsx")
         stream = generate_marksheet_bytes(db, teacher_id=teacher_id)
         data = stream.getvalue()

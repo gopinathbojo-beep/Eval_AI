@@ -97,6 +97,8 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
 
     (wd / "ocr").mkdir(exist_ok=True)
     total = len(doc.pages)
+    # Exam labels help the model read ambiguous handwritten numbers (it is told to copy what is written).
+    labels = [q.display_number for q in _exam_questions(db, exam.id)] if kind == "answer-sheet" else None
     _progress(db, doc, f"OCR: page 1 of {total}", 0, total, "OCR_PROCESSING")
     for i, p in enumerate(list(doc.pages)):
         if only_failed and p.get("ocr_status") == "OK":
@@ -105,8 +107,9 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
         img = abs_path(p["processed_file"])
         out = wd / "ocr" / f"page-{p['page_number']:03d}.json"
         try:
-            call = chat_structured(prompts.OCR_SYSTEM, prompt_fn(p["page_number"], p["ocr_width"], p["ocr_height"]),
-                                   schema, img)
+            prompt = prompt_fn(p["page_number"], p["ocr_width"], p["ocr_height"],
+                               page_text=p.get("page_text"), canonical_questions=labels)
+            call = chat_structured(prompts.OCR_SYSTEM, prompt, schema, img)
             out.write_text(json.dumps({"status": "OK", "raw": call.raw, "parsed": call.parsed.model_dump(),
                                        "attempts": call.attempts}, ensure_ascii=False, indent=1), encoding="utf-8")
             _set_pages(db, doc, i, ocr_status="OK", ocr_error=None, ocr_file=rel(out))
@@ -139,6 +142,10 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
     else:
         doc.status, doc.stage = "READY", "Ready for review"
     db.commit()
+
+
+def _exam_questions(db: Session, exam_id: str) -> list[ExamQuestion]:
+    return db.query(ExamQuestion).filter_by(exam_id=exam_id).order_by(ExamQuestion.position).all()
 
 
 def _load_results(doc, schema):
@@ -312,7 +319,8 @@ def _build_student_answers(db: Session, doc, exam: Exam, wd: Path, results) -> N
     ev = db.query(Evaluation).filter_by(answer_sheet_id=doc.id).one()
     db.query(StudentAnswer).filter_by(evaluation_id=ev.id).delete()
     pages_by_num = {p["page_number"]: p for p, _ in results}
-    answers = segment_student_answers(results)
+    known = [q.normalized_number for q in _exam_questions(db, exam.id) if q.normalized_number]
+    answers = segment_student_answers(results, known)
     n = 0
     for a in answers:
         n += 1
