@@ -12,8 +12,8 @@ import { LinearGradient } from "expo-linear-gradient";
 import { useTheme } from "../theme/ThemeContext";
 
 interface ButtonProps {
-  title: string;
-  onPress: () => void;
+  title?: string;
+  onPress?: () => void;
   variant?: "primary" | "gradient" | "secondary" | "danger" | "outline" | "ghost";
   size?: "small" | "medium" | "large";
   icon?: React.ReactNode;
@@ -75,26 +75,28 @@ export const Button: React.FC<ButtonProps> = ({
       ) : (
         icon && iconPosition === "left" && <View style={styles.iconLeft}>{icon}</View>
       )}
-      <Text
-        style={[
-          styles.text,
-          {
-            fontSize: getFontSize(),
-            color:
-              variant === "secondary"
-                ? colors.text
-                : variant === "outline"
-                ? colors.primary
-                : variant === "ghost"
-                ? colors.textSecondary
-                : "#FFFFFF",
-          },
-          isDisabled && { opacity: 0.7 },
-          textStyle,
-        ]}
-      >
-        {title}
-      </Text>
+      {title ? (
+        <Text
+          style={[
+            styles.text,
+            {
+              fontSize: getFontSize(),
+              color:
+                variant === "secondary"
+                  ? colors.text
+                  : variant === "outline"
+                  ? colors.primary
+                  : variant === "ghost"
+                  ? colors.textSecondary
+                  : "#FFFFFF",
+            },
+            isDisabled && { opacity: 0.7 },
+            textStyle,
+          ]}
+        >
+          {title}
+        </Text>
+      ) : null}
       {!loading && icon && iconPosition === "right" && (
         <View style={styles.iconRight}>{icon}</View>
       )}

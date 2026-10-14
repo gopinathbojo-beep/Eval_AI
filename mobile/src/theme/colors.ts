@@ -18,6 +18,7 @@ export interface ThemeColors {
   successSoft: string;
   error: string;
   errorSoft: string;
+  danger: string;
   warning: string;
   warningSoft: string;
   card: string;
@@ -48,6 +49,7 @@ export const darkColors: ThemeColors = {
   successSoft: "rgba(37, 200, 120, 0.16)",
   error: "#EF6262",          // ADEM Error
   errorSoft: "rgba(239, 98, 98, 0.16)",
+  danger: "#EF6262",
   warning: "#F5A623",        // ADEM Warning
   warningSoft: "rgba(245, 166, 35, 0.16)",
   card: "#0B2638",
@@ -78,6 +80,7 @@ export const lightColors: ThemeColors = {
   successSoft: "rgba(37, 200, 120, 0.12)",
   error: "#EF6262",
   errorSoft: "rgba(239, 98, 98, 0.12)",
+  danger: "#EF6262",
   warning: "#F5A623",
   warningSoft: "rgba(245, 166, 35, 0.12)",
   card: "#FFFFFF",
