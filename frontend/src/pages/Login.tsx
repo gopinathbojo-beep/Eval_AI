@@ -20,7 +20,7 @@ export default function Login() {
   return (
     <div className="flex h-full items-center justify-center p-6">
       <div className="w-full max-w-sm">
-        <h1 className="text-3xl font-semibold tracking-tight text-pen">ADEM</h1>
+        <h1 className="text-3xl font-semibold tracking-tight text-pen">Eval AI</h1>
         <p className="mb-6 mt-1 text-sm text-mute">Sign in with your teacher account to mark exams.</p>
         <form onSubmit={submit} className="space-y-4 rounded-lg border border-line bg-surface p-5">
           <Field label="Email">{(id) => <Input id={id} type="email" autoComplete="username" required value={email} onChange={(e) => setEmail(e.target.value)} />}</Field>

@@ -70,12 +70,12 @@ export const Button: React.FC<ButtonProps> = ({
         <ActivityIndicator
           size="small"
           color={variant === "secondary" || variant === "outline" || variant === "ghost" ? colors.primary : "#FFFFFF"}
-          style={{ marginRight: 8 }}
+          style={title ? { marginRight: 8 } : undefined}
         />
       ) : (
-        icon && iconPosition === "left" && <View style={styles.iconLeft}>{icon}</View>
+        icon && iconPosition === "left" && <View style={title ? styles.iconLeft : undefined}>{icon}</View>
       )}
-      {title ? (
+      {Boolean(title) && (
         <Text
           style={[
             styles.text,
@@ -96,9 +96,9 @@ export const Button: React.FC<ButtonProps> = ({
         >
           {title}
         </Text>
-      ) : null}
+      )}
       {!loading && icon && iconPosition === "right" && (
-        <View style={styles.iconRight}>{icon}</View>
+        <View style={title ? styles.iconRight : undefined}>{icon}</View>
       )}
     </View>
   );
@@ -106,7 +106,7 @@ export const Button: React.FC<ButtonProps> = ({
   if (variant === "gradient" && !isDisabled) {
     return (
       <TouchableOpacity
-        onPress={onPress}
+        onPress={onPress || (() => {})}
         disabled={isDisabled}
         activeOpacity={0.85}
         style={[fullWidth && styles.fullWidth, style]}

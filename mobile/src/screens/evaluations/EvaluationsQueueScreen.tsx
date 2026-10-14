@@ -61,6 +61,16 @@ export const EvaluationsQueueScreen: React.FC<EvaluationsQueueScreenProps> = ({ 
     fetchData();
   }, [fetchData]);
 
+  useEffect(() => {
+    const hasRunning = evaluations.some((ev) => ev.run_status === "RUNNING");
+    if (hasRunning) {
+      const timer = setInterval(() => {
+        fetchData();
+      }, 2000);
+      return () => clearInterval(timer);
+    }
+  }, [evaluations, fetchData]);
+
   const onRefresh = () => {
     setRefreshing(true);
     fetchData();
@@ -227,7 +237,7 @@ export const EvaluationsQueueScreen: React.FC<EvaluationsQueueScreenProps> = ({ 
 
                 <View style={[styles.cardFooter, { borderTopColor: colors.border }]}>
                   <View style={styles.badgeRow}>
-                    <StatusBadge status={item.status} />
+                    <StatusBadge status={item.run_status === "RUNNING" ? "EVALUATING" : item.status} />
                     {item.percentage !== null && item.percentage !== undefined && (
                       <Text style={[styles.percentageText, { color: colors.brandGreen }]}>
                         {item.percentage.toFixed(1)}%
@@ -237,7 +247,11 @@ export const EvaluationsQueueScreen: React.FC<EvaluationsQueueScreenProps> = ({ 
 
                   <View style={styles.actionBtnRow}>
                     <Text style={[styles.reviewActionText, { color: colors.primary }]}>
-                      {item.status === "FINALIZED" ? "View Final Result" : "Review & Approve"}
+                      {item.status === "FINALIZED"
+                        ? "View Final Result"
+                        : item.run_status === "RUNNING"
+                        ? "Evaluating..."
+                        : "Review & Approve"}
                     </Text>
                     <Ionicons name="chevron-forward" size={16} color={colors.primary} />
                   </View>

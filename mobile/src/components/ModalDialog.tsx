@@ -11,6 +11,7 @@ import {
   ScrollView,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "../theme/ThemeContext";
 
 interface ModalDialogProps {
@@ -31,6 +32,7 @@ export const ModalDialog: React.FC<ModalDialogProps> = ({
   footer,
 }) => {
   const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
 
   return (
     <Modal
@@ -40,7 +42,15 @@ export const ModalDialog: React.FC<ModalDialogProps> = ({
       onRequestClose={onClose}
     >
       <TouchableWithoutFeedback onPress={onClose}>
-        <View style={styles.overlay}>
+        <View
+          style={[
+            styles.overlay,
+            {
+              paddingTop: Math.max(insets.top, 16),
+              paddingBottom: Math.max(insets.bottom, 16),
+            },
+          ]}
+        >
           <TouchableWithoutFeedback>
             <KeyboardAvoidingView
               behavior={Platform.OS === "ios" ? "padding" : undefined}
@@ -111,20 +121,24 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0,0,0,0.65)",
     justifyContent: "center",
     alignItems: "center",
-    padding: 20,
+    paddingHorizontal: 16,
   },
   keyboardView: {
     width: "100%",
     maxWidth: 480,
+    maxHeight: "100%",
+    justifyContent: "center",
   },
   content: {
     width: "100%",
     borderRadius: 16,
     borderWidth: 1,
-    maxHeight: "90%",
+    maxHeight: "92%",
+    flexDirection: "column",
     overflow: "hidden",
   },
   header: {
+    flexShrink: 0,
     flexDirection: "row",
     alignItems: "center",
     paddingHorizontal: 20,
@@ -143,12 +157,14 @@ const styles = StyleSheet.create({
     marginLeft: 12,
   },
   body: {
-    maxHeight: 500,
+    flexShrink: 1,
+    flexGrow: 0,
   },
   bodyContent: {
     padding: 20,
   },
   footer: {
+    flexShrink: 0,
     paddingHorizontal: 20,
     paddingVertical: 14,
     borderTopWidth: 1,

@@ -31,10 +31,24 @@ interface ScannedPage {
   base64?: string;
 }
 
+export interface ScannedPageAsset {
+  uri: string;
+  name: string;
+  mimeType: string;
+}
+
+export interface DocumentScannerResult {
+  uri: string;
+  name: string;
+  type: string;
+  pages?: ScannedPageAsset[];
+  pageCount?: number;
+}
+
 interface DocumentScannerModalProps {
   visible: boolean;
   onClose: () => void;
-  onComplete: (file: { uri: string; name: string; type: string }) => Promise<void>;
+  onComplete: (file: DocumentScannerResult) => Promise<void>;
   examTitle?: string;
   title?: string;
   docTitlePrefix?: string;
@@ -62,6 +76,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
   const [torch, setTorch] = useState(false);
   const [capturing, setCapturing] = useState(false);
   const [selectedPageIndex, setSelectedPageIndex] = useState<number | null>(null);
+  const [retakeIndex, setRetakeIndex] = useState<number | null>(null);
   const [isCompiling, setIsCompiling] = useState(false);
 
   // Animated laser scan effect for auto edge detection feedback
@@ -91,6 +106,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
     if (!visible) {
       setScannedPages([]);
       setSelectedPageIndex(null);
+      setRetakeIndex(null);
       setCapturing(false);
       setIsCompiling(false);
       setTorch(false);
@@ -123,7 +139,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
             Camera Access Required
           </Text>
           <Text style={[styles.permissionText, { color: colors.textSecondary }]}>
-            Eval AI uses your camera to scan question papers across multiple pages with automated boundary detection and straightening.
+            Eval AI uses your camera to scan student answer sheets across multiple pages with automated boundary detection and straightening.
           </Text>
           <Button
             title="Enable Camera Access"
@@ -163,21 +179,18 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
       }
 
       // Calculate relative framing of the document boundary
-      // Screen layout relative proportions
       const photoWidth = photo.width;
       const photoHeight = photo.height;
 
-      // The viewfinder frame proportions relative to camera view
       const frameRatioX = FRAME_WIDTH / SCREEN_WIDTH;
       const frameRatioY = FRAME_HEIGHT / SCREEN_HEIGHT;
 
-      // Crop box inside photo coordinates
       const cropWidth = Math.round(photoWidth * Math.min(frameRatioX * 1.1, 0.92));
       const cropHeight = Math.round(photoHeight * Math.min(frameRatioY * 1.1, 0.92));
       const originX = Math.max(0, Math.round((photoWidth - cropWidth) / 2));
       const originY = Math.max(0, Math.round((photoHeight - cropHeight) / 2));
 
-      // Automatically crop to detected paper edges and resize to standard A4 resolution
+      // Automatically crop to detected paper edges and resize with high fidelity (1600px)
       const cropped = await manipulateAsync(
         photo.uri,
         [
@@ -190,18 +203,19 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
             },
           },
           {
-            resize: { width: 1240 },
+            resize: { width: 1600 },
           },
         ],
         {
-          compress: 0.9,
+          compress: 0.92,
           format: SaveFormat.JPEG,
           base64: true,
         }
       );
 
+      const pageNumber = retakeIndex !== null ? retakeIndex + 1 : scannedPages.length + 1;
       const newPage: ScannedPage = {
-        id: `page_${Date.now()}_${scannedPages.length + 1}`,
+        id: `page_${Date.now()}_${pageNumber}`,
         uri: cropped.uri,
         width: cropped.width,
         height: cropped.height,
@@ -209,7 +223,17 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
         base64: cropped.base64,
       };
 
-      setScannedPages((prev) => [...prev, newPage]);
+      if (retakeIndex !== null) {
+        setScannedPages((prev) => {
+          const copy = [...prev];
+          copy[retakeIndex] = newPage;
+          return copy;
+        });
+        setSelectedPageIndex(retakeIndex);
+        setRetakeIndex(null);
+      } else {
+        setScannedPages((prev) => [...prev, newPage]);
+      }
     } catch (err: any) {
       Alert.alert("Capture Failed", err.message || "Could not capture document page.");
     } finally {
@@ -229,7 +253,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
         page.uri,
         [{ rotate: 90 }],
         {
-          compress: 0.9,
+          compress: 0.92,
           format: SaveFormat.JPEG,
           base64: true,
         }
@@ -250,6 +274,23 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
     } catch (err: any) {
       Alert.alert("Rotation Failed", err.message || "Failed to rotate page.");
     }
+  };
+
+  /**
+   * Reorder pages in sequence
+   */
+  const handleMovePage = (index: number, direction: "left" | "right") => {
+    const targetIndex = direction === "left" ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= scannedPages.length) return;
+
+    setScannedPages((prev) => {
+      const copy = [...prev];
+      const temp = copy[index];
+      copy[index] = copy[targetIndex];
+      copy[targetIndex] = temp;
+      return copy;
+    });
+    setSelectedPageIndex(targetIndex);
   };
 
   /**
@@ -274,11 +315,39 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
   };
 
   /**
-   * Compiles all scanned pages into a unified multi-page PDF document and uploads it
+   * Confirm before discarding all captured pages
+   */
+  const handleRequestClose = () => {
+    if (scannedPages.length > 0) {
+      Alert.alert(
+        "Discard Scanned Pages?",
+        `You have captured ${scannedPages.length} page(s). Are you sure you want to discard them and exit the camera?`,
+        [
+          { text: "Keep Scanning", style: "cancel" },
+          {
+            text: "Discard & Exit",
+            style: "destructive",
+            onPress: () => {
+              setScannedPages([]);
+              setSelectedPageIndex(null);
+              setRetakeIndex(null);
+              onClose();
+            },
+          },
+        ]
+      );
+    } else {
+      onClose();
+    }
+  };
+
+  /**
+   * Compiles all scanned pages into a unified multi-page PDF document
+   * and returns both the compiled document and the individual page assets
    */
   const handleFinishAndUpload = async () => {
     if (scannedPages.length === 0) {
-      Alert.alert("No Pages Scanned", "Please scan at least one page before uploading.");
+      Alert.alert("No Pages Scanned", "Please scan at least one page before finishing.");
       return;
     }
 
@@ -287,120 +356,101 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
 
       const cleanTitle = examTitle.replace(/[^a-zA-Z0-9_-]/g, "_");
       const prefix = docTitlePrefix || "Doc";
-      let uploadFile: { uri: string; name: string; type: string };
 
-      if (scannedPages.length === 1) {
-        // Single page can be uploaded directly as high-res document image or compiled PDF
-        const single = scannedPages[0];
-        const safeImgUri = `${FileSystem.cacheDirectory}${cleanTitle}_${prefix}_${Date.now()}.jpg`;
+      const html = `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <meta charset="utf-8" />
+            <style>
+              @page {
+                size: 210mm 297mm;
+                margin: 0;
+              }
+              * {
+                box-sizing: border-box;
+              }
+              html, body {
+                margin: 0;
+                padding: 0;
+                width: 210mm;
+                background-color: #ffffff;
+              }
+              .page {
+                width: 210mm;
+                height: 297mm;
+                max-height: 297mm;
+                page-break-before: auto;
+                page-break-after: always;
+                break-after: page;
+                page-break-inside: avoid;
+                break-inside: avoid;
+                display: block;
+                position: relative;
+                overflow: hidden;
+                background-color: #ffffff;
+              }
+              .page:last-child {
+                page-break-after: auto;
+                break-after: auto;
+              }
+              .page img {
+                width: 100%;
+                height: 100%;
+                object-fit: contain;
+                display: block;
+              }
+            </style>
+          </head>
+          <body>
+            ${scannedPages
+              .map(
+                (p, i) => `
+              <div class="page" id="page-${i + 1}">
+                <img src="${p.base64 ? `data:image/jpeg;base64,${p.base64}` : p.uri}" alt="Page ${i + 1}" />
+              </div>
+            `
+              )
+              .join("")}
+          </body>
+        </html>
+      `;
 
-        if (single.base64) {
-          await FileSystem.writeAsStringAsync(safeImgUri, single.base64, {
-            encoding: FileSystem.EncodingType.Base64,
-          });
-        } else {
-          try {
-            await FileSystem.copyAsync({ from: single.uri, to: safeImgUri });
-          } catch {
-            // fallback to original uri if copy fails
-          }
-        }
+      const pdf = await printToFileAsync({
+        html,
+        width: 595,
+        height: 842,
+        base64: true,
+      });
 
-        uploadFile = {
-          uri: safeImgUri,
-          name: `${cleanTitle}_${prefix}_Scanned_Page1.jpg`,
-          type: "image/jpeg",
-        };
-      } else {
-        // Multi-page document: compile into clean multi-page PDF using expo-print
-        const html = `
-          <!DOCTYPE html>
-          <html>
-            <head>
-              <meta charset="utf-8" />
-              <style>
-                @page {
-                  size: A4 portrait;
-                  margin: 0;
-                }
-                html, body {
-                  margin: 0;
-                  padding: 0;
-                  background-color: #ffffff;
-                }
-                .page {
-                  page-break-after: always;
-                  break-after: page;
-                  width: 100%;
-                  height: 100vh;
-                  display: flex;
-                  justify-content: center;
-                  align-items: center;
-                  box-sizing: border-box;
-                }
-                .page:last-child {
-                  page-break-after: auto;
-                  break-after: auto;
-                }
-                img {
-                  max-width: 100%;
-                  max-height: 100%;
-                  width: auto;
-                  height: auto;
-                  object-fit: contain;
-                  display: block;
-                  margin: auto;
-                }
-              </style>
-            </head>
-            <body>
-              ${scannedPages
-                .map(
-                  (p, i) => `
-                <div class="page" id="page-${i + 1}">
-                  <img src="${p.base64 ? `data:image/jpeg;base64,${p.base64}` : p.uri}" alt="Page ${i + 1}" />
-                </div>
-              `
-                )
-                .join("")}
-            </body>
-          </html>
-        `;
+      const safePdfUri = `${FileSystem.cacheDirectory}${cleanTitle}_${prefix}_${Date.now()}.pdf`;
 
-        const pdf = await printToFileAsync({
-          html,
-          width: 595,
-          height: 842,
-          base64: true,
+      if (pdf.base64) {
+        await FileSystem.writeAsStringAsync(safePdfUri, pdf.base64, {
+          encoding: FileSystem.EncodingType.Base64,
         });
-
-        const safePdfUri = `${FileSystem.cacheDirectory}${cleanTitle}_${prefix}_${Date.now()}.pdf`;
-
-        // Write directly from base64 memory into app cache to completely avoid
-        // Android Print cache read permission errors
-        if (pdf.base64) {
-          await FileSystem.writeAsStringAsync(safePdfUri, pdf.base64, {
-            encoding: FileSystem.EncodingType.Base64,
-          });
-          uploadFile = {
-            uri: safePdfUri,
-            name: `${cleanTitle}_${prefix}_Scanned_Document.pdf`,
-            type: "application/pdf",
-          };
-        } else {
-          // Fallback if base64 not provided by native module
-          uploadFile = {
-            uri: pdf.uri,
-            name: `${cleanTitle}_${prefix}_Scanned_Document.pdf`,
-            type: "application/pdf",
-          };
-        }
+      } else {
+        await FileSystem.copyAsync({ from: pdf.uri, to: safePdfUri });
       }
 
-      await onComplete(uploadFile);
+      const individualPages: ScannedPageAsset[] = scannedPages.map((p, idx) => ({
+        uri: p.uri,
+        name: `${cleanTitle}_${prefix}_Page_${idx + 1}.jpg`,
+        mimeType: "image/jpeg",
+      }));
+
+      const uploadResult: DocumentScannerResult = {
+        uri: safePdfUri,
+        name: `${cleanTitle}_${prefix}_${scannedPages.length}_Pages.pdf`,
+        type: "application/pdf",
+        pages: individualPages,
+        pageCount: scannedPages.length,
+      };
+
+      await onComplete(uploadResult);
       onClose();
     } catch (err: any) {
-      Alert.alert("Upload Failed", err.message || "Failed to process and upload scanned document.");
+      Alert.alert("Processing Failed", err.message || "Failed to process and compile scanned pages.");
     } finally {
       setIsCompiling(false);
     }
@@ -414,7 +464,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <SafeAreaView style={styles.modalRoot}>
-        {/* If user is reviewing/straightening an existing page */}
+        {/* If user is reviewing/editing an existing page */}
         {selectedPageIndex !== null && scannedPages[selectedPageIndex] ? (
           <View style={styles.reviewContainer}>
             <View style={styles.reviewHeader}>
@@ -422,8 +472,8 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                 onPress={() => setSelectedPageIndex(null)}
                 style={styles.reviewBackBtn}
               >
-                <Ionicons name="arrow-back" size={24} color="#FFFFFF" />
-                <Text style={styles.reviewBackText}>Back to Camera</Text>
+                <Ionicons name="camera-outline" size={20} color="#FFFFFF" />
+                <Text style={styles.reviewBackText}>Capture More</Text>
               </TouchableOpacity>
               <Text style={styles.reviewPageTitle}>
                 Page {selectedPageIndex + 1} of {scannedPages.length}
@@ -444,21 +494,105 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
               />
             </View>
 
-            <View style={styles.reviewActionsBar}>
+            {/* Page manipulation toolbar: Move, Rotate, Retake */}
+            <View style={styles.reviewToolbar}>
               <TouchableOpacity
-                onPress={() => handleRotatePage(selectedPageIndex)}
-                style={styles.rotateButton}
+                onPress={() => handleMovePage(selectedPageIndex, "left")}
+                disabled={selectedPageIndex === 0}
+                style={[
+                  styles.toolBtn,
+                  selectedPageIndex === 0 && styles.toolBtnDisabled,
+                ]}
               >
-                <Ionicons name="reload-outline" size={22} color="#FFFFFF" />
-                <Text style={styles.rotateBtnText}>Rotate / Straighten</Text>
+                <Ionicons
+                  name="arrow-back"
+                  size={18}
+                  color={selectedPageIndex === 0 ? "rgba(255,255,255,0.3)" : "#FFFFFF"}
+                />
+                <Text
+                  style={[
+                    styles.toolBtnText,
+                    selectedPageIndex === 0 && styles.toolBtnTextDisabled,
+                  ]}
+                >
+                  Move Left
+                </Text>
               </TouchableOpacity>
 
-              <Button
-                title="Keep & Next Page"
-                variant="gradient"
-                size="medium"
+              <TouchableOpacity
+                onPress={() => handleRotatePage(selectedPageIndex)}
+                style={styles.toolBtn}
+              >
+                <Ionicons name="reload" size={18} color="#FFFFFF" />
+                <Text style={styles.toolBtnText}>Rotate</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => {
+                  const target = selectedPageIndex;
+                  setSelectedPageIndex(null);
+                  setRetakeIndex(target);
+                }}
+                style={styles.toolBtn}
+              >
+                <Ionicons name="camera-reverse-outline" size={18} color="#FFFFFF" />
+                <Text style={styles.toolBtnText}>Retake Page</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={() => handleMovePage(selectedPageIndex, "right")}
+                disabled={selectedPageIndex === scannedPages.length - 1}
+                style={[
+                  styles.toolBtn,
+                  selectedPageIndex === scannedPages.length - 1 && styles.toolBtnDisabled,
+                ]}
+              >
+                <Ionicons
+                  name="arrow-forward"
+                  size={18}
+                  color={
+                    selectedPageIndex === scannedPages.length - 1
+                      ? "rgba(255,255,255,0.3)"
+                      : "#FFFFFF"
+                  }
+                />
+                <Text
+                  style={[
+                    styles.toolBtnText,
+                    selectedPageIndex === scannedPages.length - 1 && styles.toolBtnTextDisabled,
+                  ]}
+                >
+                  Move Right
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Bottom action row: Add More Pages or Finish Scanning */}
+            <View style={styles.reviewActionsBar}>
+              <TouchableOpacity
                 onPress={() => setSelectedPageIndex(null)}
-              />
+                style={styles.addMoreBtn}
+              >
+                <Ionicons name="add" size={20} color="#FFFFFF" />
+                <Text style={styles.addMoreBtnText}>Add More Pages</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                onPress={handleFinishAndUpload}
+                disabled={isCompiling}
+                style={[styles.finishScanBtn, { backgroundColor: colors.brandGreen }]}
+              >
+                {isCompiling ? (
+                  <ActivityIndicator size="small" color="#FFFFFF" />
+                ) : (
+                  <>
+                    <Ionicons name="checkmark-circle-outline" size={20} color="#FFFFFF" />
+                    <Text style={styles.finishScanBtnText}>
+                      Finish ({scannedPages.length} {scannedPages.length === 1 ? "page" : "pages"})
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
             </View>
           </View>
         ) : (
@@ -473,15 +607,19 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
 
             {/* Top Toolbar */}
             <View style={styles.topToolbar}>
-              <TouchableOpacity onPress={onClose} style={styles.iconCircleButton}>
+              <TouchableOpacity onPress={handleRequestClose} style={styles.iconCircleButton}>
                 <Ionicons name="close" size={24} color="#FFFFFF" />
               </TouchableOpacity>
 
               <View style={styles.pageCounterBadge}>
                 <Text style={styles.pageCounterText}>
-                  {scannedPages.length === 0
+                  {retakeIndex !== null
+                    ? `Retaking Page ${retakeIndex + 1}`
+                    : scannedPages.length === 0
                     ? "Page 1"
-                    : `Page ${scannedPages.length + 1} (${scannedPages.length} scanned)`}
+                    : `${scannedPages.length} ${
+                        scannedPages.length === 1 ? "page" : "pages"
+                      } captured`}
                 </Text>
               </View>
 
@@ -500,10 +638,26 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
               </TouchableOpacity>
             </View>
 
+            {/* Retake Alert Banner if in retake mode */}
+            {retakeIndex !== null && (
+              <View style={styles.retakeBanner}>
+                <Ionicons name="camera-reverse-outline" size={16} color="#FFFFFF" />
+                <Text style={styles.retakeBannerText}>
+                  Retaking Page {retakeIndex + 1} of {scannedPages.length}
+                </Text>
+                <TouchableOpacity
+                  onPress={() => setRetakeIndex(null)}
+                  style={styles.retakeCancelBtn}
+                >
+                  <Text style={styles.retakeCancelText}>Cancel</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
             {/* Edge Detection Viewfinder Overlay */}
             <View style={styles.overlayContainer} pointerEvents="none">
               <View style={styles.viewfinderBox}>
-                {/* 4 Glowing Corner Target Markers */}
+                {/* 4 Corner Target Markers */}
                 <View style={[styles.corner, styles.cornerTL, { borderColor: colors.primary }]} />
                 <View style={[styles.corner, styles.cornerTR, { borderColor: colors.primary }]} />
                 <View style={[styles.corner, styles.cornerBL, { borderColor: colors.primary }]} />
@@ -543,7 +697,10 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                     renderItem={({ item, index }) => (
                       <TouchableOpacity
                         onPress={() => setSelectedPageIndex(index)}
-                        style={styles.thumbnailWrapper}
+                        style={[
+                          styles.thumbnailWrapper,
+                          retakeIndex === index && { borderColor: colors.warning },
+                        ]}
                       >
                         <Image source={{ uri: item.uri }} style={styles.thumbnailImg} />
                         <View style={styles.thumbnailPageBadge}>
@@ -555,9 +712,20 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                 </View>
               )}
 
-              {/* Shutter Button & Finish Button */}
+              {/* Shutter Button & Controls */}
               <View style={styles.shutterRow}>
-                <View style={{ width: 80 }} />
+                {/* Preview Pages button on the left */}
+                <View style={{ width: 90, alignItems: "flex-start" }}>
+                  {scannedPages.length > 0 && (
+                    <TouchableOpacity
+                      onPress={() => setSelectedPageIndex(0)}
+                      style={styles.previewPagesBtn}
+                    >
+                      <Ionicons name="images-outline" size={18} color="#FFFFFF" />
+                      <Text style={styles.previewPagesBtnText}>Preview</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
 
                 {/* Capture Button */}
                 <TouchableOpacity
@@ -575,8 +743,8 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                   </View>
                 </TouchableOpacity>
 
-                {/* Finish & Upload Sequence Button */}
-                <View style={{ width: 100, alignItems: "flex-end" }}>
+                {/* Finish & Upload Sequence Button on the right */}
+                <View style={{ width: 90, alignItems: "flex-end" }}>
                   {scannedPages.length > 0 && (
                     <TouchableOpacity
                       onPress={handleFinishAndUpload}
@@ -587,7 +755,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                         <ActivityIndicator size="small" color="#FFFFFF" />
                       ) : (
                         <>
-                          <Text style={styles.finishBtnText}>Done</Text>
+                          <Text style={styles.finishBtnText}>Finish</Text>
                           <Ionicons name="checkmark" size={18} color="#FFFFFF" />
                         </>
                       )}
@@ -885,19 +1053,105 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderColor: "rgba(255, 255, 255, 0.15)",
   },
-  rotateButton: {
+  reviewToolbar: {
+    flexDirection: "row",
+    justifyContent: "space-around",
+    alignItems: "center",
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    borderTopWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.1)",
+  },
+  toolBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: "rgba(255, 255, 255, 0.1)",
+  },
+  toolBtnDisabled: {
+    backgroundColor: "rgba(255, 255, 255, 0.03)",
+  },
+  toolBtnText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  toolBtnTextDisabled: {
+    color: "rgba(255, 255, 255, 0.3)",
+  },
+  addMoreBtn: {
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.3)",
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    backgroundColor: "rgba(255, 255, 255, 0.15)",
   },
-  rotateBtnText: {
+  addMoreBtnText: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  finishScanBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+  },
+  finishScanBtnText: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  retakeBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: "#F59E0B",
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    marginHorizontal: 20,
+    marginTop: 8,
+    borderRadius: 8,
+    zIndex: 10,
+  },
+  retakeBannerText: {
     color: "#FFFFFF",
     fontSize: 13,
+    fontWeight: "700",
+  },
+  retakeCancelBtn: {
+    marginLeft: 8,
+    backgroundColor: "rgba(0, 0, 0, 0.2)",
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+  },
+  retakeCancelText: {
+    color: "#FFFFFF",
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  previewPagesBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: 18,
+    backgroundColor: "rgba(255, 255, 255, 0.2)",
+  },
+  previewPagesBtnText: {
+    color: "#FFFFFF",
+    fontSize: 12,
     fontWeight: "600",
   },
   compilingOverlay: {

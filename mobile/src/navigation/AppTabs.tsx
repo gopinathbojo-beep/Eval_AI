@@ -1,6 +1,8 @@
 import React from "react";
+import { Platform } from "react-native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { Ionicons } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "../theme/ThemeContext";
 
 import { DashboardScreen } from "../screens/dashboard/DashboardScreen";
@@ -13,6 +15,9 @@ const Tab = createBottomTabNavigator();
 
 export const AppTabs: React.FC = () => {
   const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
+  const bottomInset = Math.max(insets.bottom, Platform.OS === "android" ? 8 : 6);
+  const tabHeight = 54 + bottomInset;
 
   return (
     <Tab.Navigator
@@ -32,15 +37,19 @@ export const AppTabs: React.FC = () => {
           backgroundColor: colors.surface,
           borderTopColor: colors.border,
           borderTopWidth: 1,
-          height: 62,
-          paddingBottom: 8,
-          paddingTop: 8,
+          height: tabHeight,
+          paddingBottom: bottomInset,
+          paddingTop: 6,
         },
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.tabBarInactive,
         tabBarLabelStyle: {
-          fontSize: 11,
+          fontSize: 10,
           fontWeight: "600",
+          marginTop: -2,
+        },
+        tabBarItemStyle: {
+          paddingVertical: 2,
         },
       }}
     >
@@ -71,7 +80,7 @@ export const AppTabs: React.FC = () => {
         component={ExamCreateScreen}
         options={{
           title: "Create Examination",
-          tabBarLabel: "Create Exam",
+          tabBarLabel: "Create",
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="add-circle-outline" size={size} color={color} />
           ),
@@ -82,7 +91,7 @@ export const AppTabs: React.FC = () => {
         component={EvaluationsQueueScreen}
         options={{
           title: "Evaluation Queue",
-          tabBarLabel: "Evaluations",
+          tabBarLabel: "Evaluate",
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="checkbox-outline" size={size - 2} color={color} />
           ),

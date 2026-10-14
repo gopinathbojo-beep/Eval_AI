@@ -36,7 +36,7 @@ import { Loading } from "../../components/Loading";
 import { Empty } from "../../components/Empty";
 import { Input } from "../../components/Input";
 import { ModalDialog } from "../../components/ModalDialog";
-import { DocumentScannerModal } from "../../components/DocumentScannerModal";
+import { DocumentScannerModal, DocumentScannerResult } from "../../components/DocumentScannerModal";
 import { AuthImage } from "../../components/AuthImage";
 import {
   EditQuestionModal,
@@ -93,36 +93,41 @@ async function compileAssetsToMultiPagePdf(
         <meta charset="utf-8" />
         <style>
           @page {
-            size: A4 portrait;
+            size: 210mm 297mm;
             margin: 0;
+          }
+          * {
+            box-sizing: border-box;
           }
           html, body {
             margin: 0;
             padding: 0;
+            width: 210mm;
             background-color: #ffffff;
           }
           .page {
+            width: 210mm;
+            height: 297mm;
+            max-height: 297mm;
+            page-break-before: auto;
             page-break-after: always;
             break-after: page;
-            width: 100%;
-            height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            box-sizing: border-box;
+            page-break-inside: avoid;
+            break-inside: avoid;
+            display: block;
+            position: relative;
+            overflow: hidden;
+            background-color: #ffffff;
           }
           .page:last-child {
             page-break-after: auto;
             break-after: auto;
           }
-          img {
-            max-width: 100%;
-            max-height: 100%;
-            width: auto;
-            height: auto;
+          .page img {
+            width: 100%;
+            height: 100%;
             object-fit: contain;
             display: block;
-            margin: auto;
           }
         </style>
       </head>
@@ -178,7 +183,7 @@ interface ExamWorkspaceScreenProps {
   navigation: any;
 }
 
-type TabType = "overview" | "paper" | "questions" | "answerKey" | "submissions" | "evaluations";
+type TabType = "overview" | "paper" | "questions" | "answerKey" | "students" | "submissions" | "evaluations" | "results";
 
 export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
   route,
@@ -209,10 +214,12 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
   const [questionsData, setQuestionsData] = useState<QuestionsResponse | null>(null);
   const [keysData, setKeysData] = useState<KeysResponse | null>(null);
   const [evaluations, setEvaluations] = useState<Evaluation[]>([]);
+  const [results, setResults] = useState<Evaluation[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
 
   // Action states
   const [actionLoading, setActionLoading] = useState(false);
+  const [finalizingExam, setFinalizingExam] = useState(false);
 
   // Question Management Modal States
   const [editModalVisible, setEditModalVisible] = useState(false);
@@ -245,9 +252,34 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
   const [newStudentRoll, setNewStudentRoll] = useState("");
   const [compilingPages, setCompilingPages] = useState(false);
   const [selectedStudentId, setSelectedStudentId] = useState("");
-  const [pickedFile, setPickedFile] = useState<any>(null);
+  const [attachedPages, setAttachedPages] = useState<
+    Array<{ uri: string; name?: string; mimeType?: string; base64?: string }>
+  >([]);
   const [cameraScannerVisible, setCameraScannerVisible] = useState(false);
   const [scannerTarget, setScannerTarget] = useState<"question_paper" | "answer_key" | "student_sheet">("question_paper");
+
+  // Total marks verification & popup modal state
+  const [totalMarksModalVisible, setTotalMarksModalVisible] = useState(false);
+  const [customTotalMarks, setCustomTotalMarks] = useState("");
+  const hasAutoPromptedTotalMarks = useRef(false);
+  const autoPromptUploadHandled = useRef(false);
+
+  const handleUpdateTotalMarks = async (marks: number) => {
+    try {
+      setActionLoading(true);
+      await api(`/exams/${examId}`, {
+        method: "PATCH",
+        json: { total_marks: marks },
+      });
+      setTotalMarksModalVisible(false);
+      await Promise.all([fetchExamDetail(), loadTabData("questions")]);
+      Alert.alert("Total Marks Updated", `Examination total marks successfully set to ${marks}.`);
+    } catch (err: any) {
+      Alert.alert("Update Error", err.message || "Failed to update total marks.");
+    } finally {
+      setActionLoading(false);
+    }
+  };
 
   const selectedStudent = students.find((s) => s.id === selectedStudentId);
 
@@ -274,23 +306,30 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
 
   const loadTabData = useCallback(async (tab: TabType) => {
     try {
-      if (tab === "questions") {
+      if (tab === "questions" || tab === "paper") {
         const q = await api<QuestionsResponse>(`/exams/${examId}/questions`);
         setQuestionsData(q);
       } else if (tab === "answerKey") {
         const k = await api<KeysResponse>(`/exams/${examId}/answer-keys`);
         setKeysData(k);
-      } else if (tab === "submissions") {
+      } else if (tab === "submissions" || tab === "students") {
         const sheets = await api<Evaluation[]>(`/exams/${examId}/answer-sheets`);
         setEvaluations(sheets);
+        if (exam?.class_id) {
+          const studs = await api<Student[]>(`/students?class_id=${exam.class_id}`);
+          setStudents(studs);
+        }
       } else if (tab === "evaluations") {
-        const evs = await api<Evaluation[]>(`/exams/${examId}/results`);
+        const evs = await api<Evaluation[]>(`/exams/${examId}/answer-sheets`);
         setEvaluations(evs);
+      } else if (tab === "results") {
+        const res = await api<Evaluation[]>(`/exams/${examId}/results`);
+        setResults(res);
       }
     } catch (err: any) {
       console.warn("Tab load error:", err);
     }
-  }, [examId]);
+  }, [examId, exam?.class_id]);
 
   useEffect(() => {
     fetchExamDetail();
@@ -300,6 +339,51 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
     loadTabData(activeTab);
     scrollToActiveTab(activeTab);
   }, [activeTab, loadTabData, scrollToActiveTab]);
+
+  // Auto-prompt to upload question paper if navigated from exam creation
+  useEffect(() => {
+    if (
+      route.params?.autoPromptUpload &&
+      !autoPromptUploadHandled.current &&
+      exam &&
+      !exam.question_paper
+    ) {
+      autoPromptUploadHandled.current = true;
+      Alert.alert(
+        "Upload Question Paper",
+        `Welcome to "${exam.name}"! Please upload or scan the question paper to extract questions and verify total marks.`,
+        [
+          {
+            text: "Scan with Camera",
+            onPress: () => {
+              setScannerTarget("question_paper");
+              setCameraScannerVisible(true);
+            },
+          },
+          {
+            text: "Upload File (PDF/Image)",
+            onPress: handleUploadQuestionPaper,
+          },
+          { text: "Dismiss", style: "cancel" },
+        ]
+      );
+    }
+  }, [exam, route.params?.autoPromptUpload]);
+
+  // When question paper extracts questions and computes total marks, show popup to confirm or adjust
+  useEffect(() => {
+    if (!questionsData || !exam) return;
+    const paperSum = questionsData.sum_of_marks;
+    if (
+      paperSum > 0 &&
+      !hasAutoPromptedTotalMarks.current &&
+      (Math.abs(paperSum - exam.total_marks) > 0.001 || route.params?.autoPromptUpload)
+    ) {
+      hasAutoPromptedTotalMarks.current = true;
+      setCustomTotalMarks(String(paperSum));
+      setTotalMarksModalVisible(true);
+    }
+  }, [questionsData, exam, route.params?.autoPromptUpload]);
 
   // Active polling while question paper, answer key, or any student sheet is running OCR or extraction
   const BUSY_DOC = ["UPLOADED", "RENDERING", "OCR_PROCESSING", "EXTRACTING"];
@@ -319,10 +403,12 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
         loadTabData("questions");
       } else if (activeTab === "answerKey") {
         loadTabData("answerKey");
-      } else if (activeTab === "submissions") {
+      } else if (activeTab === "submissions" || activeTab === "students") {
         loadTabData("submissions");
       } else if (activeTab === "evaluations") {
         loadTabData("evaluations");
+      } else if (activeTab === "results") {
+        loadTabData("results");
       }
     }, 2500);
     return () => clearInterval(timer);
@@ -428,18 +514,30 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
     try {
       const result = await DocumentPicker.getDocumentAsync({
         type: ["application/pdf", "image/*"],
-        copyToCacheDirectory: false,
+        multiple: true,
+        copyToCacheDirectory: true,
       });
 
       if (result.canceled || !result.assets || result.assets.length === 0) return;
 
-      const file = result.assets[0];
-      await executeQuestionPaperUpload({
-        uri: file.uri,
-        name: file.name,
-        mimeType: file.mimeType,
-      });
+      if (result.assets.length > 1) {
+        setActionLoading(true);
+        const compiled = await compileAssetsToMultiPagePdf(
+          result.assets,
+          `QuestionPaper_${exam?.name || "exam"}`
+        );
+        setActionLoading(false);
+        await executeQuestionPaperUpload(compiled);
+      } else {
+        const file = result.assets[0];
+        await executeQuestionPaperUpload({
+          uri: file.uri,
+          name: file.name,
+          mimeType: file.mimeType,
+        });
+      }
     } catch (err: any) {
+      setActionLoading(false);
       Alert.alert("File Selection Failed", err.message || "Failed to select question paper.");
     }
   };
@@ -464,7 +562,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
         mimeType: file.mimeType,
       });
 
-      Alert.alert("Success", "Answer key uploaded!");
+      Alert.alert("Success", "Answer key uploaded! OCR extraction started.");
       fetchExamDetail();
       loadTabData("answerKey");
     } catch (err: any) {
@@ -485,18 +583,30 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
     try {
       const result = await DocumentPicker.getDocumentAsync({
         type: ["application/pdf", "image/*"],
-        copyToCacheDirectory: false,
+        multiple: true,
+        copyToCacheDirectory: true,
       });
 
       if (result.canceled || !result.assets || result.assets.length === 0) return;
 
-      const file = result.assets[0];
-      await executeAnswerKeyUpload({
-        uri: file.uri,
-        name: file.name,
-        mimeType: file.mimeType,
-      });
+      if (result.assets.length > 1) {
+        setActionLoading(true);
+        const compiled = await compileAssetsToMultiPagePdf(
+          result.assets,
+          `AnswerKey_${exam?.name || "exam"}`
+        );
+        setActionLoading(false);
+        await executeAnswerKeyUpload(compiled);
+      } else {
+        const file = result.assets[0];
+        await executeAnswerKeyUpload({
+          uri: file.uri,
+          name: file.name,
+          mimeType: file.mimeType,
+        });
+      }
     } catch (err: any) {
+      setActionLoading(false);
       Alert.alert("File Selection Failed", err.message || "Failed to select answer key.");
     }
   };
@@ -735,7 +845,6 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
     );
     const emptyTextKeys = keysData.keys.filter((k) => !(k.answer_text || "").trim());
     const mismatchKeys = keysData.keys.filter((k) => k.mark_mismatch);
-    const unapprovedKeys = keysData.keys.filter((k) => k.verification_status !== "VERIFIED");
 
     const blockers: string[] = [];
     if (unmappedKeys.length > 0) {
@@ -750,17 +859,17 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
     if (keysData.missing_question_ids && keysData.missing_question_ids.length > 0) {
       blockers.push(`${keysData.missing_question_ids.length} question(s) lack answer keys.`);
     }
-    if (unapprovedKeys.length > 0) {
-      blockers.push(`${unapprovedKeys.length} answer(s) pending individual teacher verification.`);
-    }
 
     if (blockers.length > 0) {
       Alert.alert(
         "Verification Incomplete",
-        `All individual answers must be resolved and verified before final verification:\n\n• ${blockers.join(
+        `Issues must be resolved before verifying and locking the answer key:\n\n• ${blockers.join(
           "\n• "
-        )}\n\nPlease resolve any issues and tap "Verify Answer" on each answer card.`,
-        [{ text: "OK" }]
+        )}\n\nPlease resolve these issues using 'Resolve Issue' or 'Verify All Answers'.`,
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Verify All Answers", onPress: handleVerifyAllAnswers },
+        ]
       );
       return;
     }
@@ -805,44 +914,42 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
       const res = await DocumentPicker.getDocumentAsync({
         type: ["application/pdf", "image/*"],
         multiple: true,
-        copyToCacheDirectory: false,
+        copyToCacheDirectory: true,
       });
       if (res.canceled || !res.assets || res.assets.length === 0) return;
 
-      if (res.assets.length === 1) {
-        setPickedFile(res.assets[0]);
-      } else {
-        // Multiple pages picked: compile into a clean multi-page PDF!
-        setCompilingPages(true);
-        try {
-          const compiled = await compileAssetsToMultiPagePdf(
-            res.assets,
-            `Student_AnswerSheet_${Date.now()}`
-          );
-          setPickedFile(compiled);
-        } catch (compileErr: any) {
-          Alert.alert("Compilation Failed", "Failed to compile multiple pages into a document. Please try again.");
-        } finally {
-          setCompilingPages(false);
-        }
-      }
+      setAttachedPages((prev) => [...prev, ...res.assets]);
     } catch (err: any) {
-      Alert.alert("File Selection Failed", err.message || "Failed to select answer sheet.");
+      Alert.alert("File Selection Failed", err.message || "Failed to select answer sheet file.");
     }
   };
 
-  const handleScannedStudentSheetComplete = async (file: { uri: string; name: string; type: string }) => {
-    setPickedFile({
-      uri: file.uri,
-      name: file.name,
-      mimeType: file.type || "application/pdf",
-    });
+  const handleScannedStudentSheetComplete = async (file: DocumentScannerResult) => {
+    if (file.pages && file.pages.length > 0) {
+      setAttachedPages((prev) => [
+        ...prev,
+        ...file.pages!.map((p) => ({
+          uri: p.uri,
+          name: p.name,
+          mimeType: p.mimeType || "image/jpeg",
+        })),
+      ]);
+    } else {
+      setAttachedPages((prev) => [
+        ...prev,
+        {
+          uri: file.uri,
+          name: file.name,
+          mimeType: file.type || "application/pdf",
+        },
+      ]);
+    }
     setCameraScannerVisible(false);
     setUploadSheetModal(true);
   };
 
   const handleSubmitStudentSheet = async () => {
-    if (uploadingSheet) return;
+    if (uploadingSheet || compilingPages) return;
 
     const isNew = studentMode === "new";
     if (isNew) {
@@ -857,44 +964,106 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
       }
     }
 
-    if (!pickedFile) {
-      Alert.alert("Answer Sheet Required", "Please select or scan an answer sheet document.");
+    if (attachedPages.length === 0) {
+      Alert.alert("Answer Sheet Required", "Please attach or scan at least one page for the student's answer sheet.");
       return;
     }
 
     try {
+      let finalUpload: { uri: string; name: string; mimeType: string };
+
+      if (
+        attachedPages.length === 1 &&
+        (attachedPages[0].mimeType?.includes("pdf") || attachedPages[0].name?.toLowerCase().endsWith(".pdf"))
+      ) {
+        finalUpload = {
+          uri: attachedPages[0].uri,
+          name: attachedPages[0].name || "student_answer_sheet.pdf",
+          mimeType: "application/pdf",
+        };
+      } else {
+        setCompilingPages(true);
+        const compiled = await compileAssetsToMultiPagePdf(
+          attachedPages,
+          isNew
+            ? `AnswerSheet_${newStudentRoll.trim()}_${newStudentName.trim()}`
+            : `AnswerSheet_Student_${selectedStudentId}`
+        );
+        finalUpload = {
+          uri: compiled.uri,
+          name: compiled.name,
+          mimeType: compiled.mimeType,
+        };
+        setCompilingPages(false);
+      }
+
       setUploadingSheet(true);
       const params: Record<string, string> = isNew
         ? { student_name: newStudentName.trim(), roll_number: newStudentRoll.trim() }
         : { student_id: selectedStudentId };
 
-      await uploadFileNative(`/exams/${examId}/answer-sheets`, pickedFile.uri, {
-        fileName: pickedFile.name,
-        mimeType: pickedFile.mimeType || "application/pdf",
+      const uploadRes: any = await uploadFileNative(`/exams/${examId}/answer-sheets`, finalUpload.uri, {
+        fileName: finalUpload.name,
+        mimeType: finalUpload.mimeType || "application/pdf",
         params,
       });
 
+      const actualPageCount = uploadRes?.document?.page_count ?? attachedPages.length;
+      const docStatus = uploadRes?.document?.status ?? "OCR_PROCESSING";
+
+      // Only clear state and dismiss modal on verified upload success
       setUploadSheetModal(false);
-      setPickedFile(null);
+      setAttachedPages([]);
       setNewStudentName("");
       setNewStudentRoll("");
-      Alert.alert("Success", "Answer sheet submitted successfully! OCR processing has started.");
+
+      Alert.alert(
+        "Upload Confirmed",
+        `Student answer sheet (${actualPageCount} page${actualPageCount === 1 ? "" : "s"}) uploaded and confirmed by backend!\nStatus: ${docStatus}. OCR analysis in progress.`
+      );
       fetchExamDetail();
       loadTabData("submissions");
     } catch (err: any) {
-      Alert.alert("Submission Failed", err.message || "Failed to submit answer sheet. Please try again.");
+      Alert.alert(
+        "Submission Failed",
+        err.message || "Failed to submit answer sheet. Your scanned pages are preserved so you can retry without re-scanning.",
+        [
+          { text: "Cancel", style: "cancel" },
+          { text: "Retry Submission", onPress: handleSubmitStudentSheet },
+        ]
+      );
     } finally {
+      setCompilingPages(false);
       setUploadingSheet(false);
     }
   };
 
-  // Run AI Evaluation with precise status handling
+  // Run AI Evaluation with precise status handling and guidance
   const handleRunEvaluation = async (evaluationId: string) => {
     const targetEv = evaluations.find((e) => e.id === evaluationId);
     if (targetEv?.status === "FINALIZED") {
       Alert.alert(
         "Evaluation Finalized (Read-Only)",
         `The evaluation for ${targetEv.student?.name || "this student"} is finalized and approved. Finalized evaluations are permanently locked and cannot be re-evaluated or modified.`
+      );
+      return;
+    }
+
+    if (exam && !["ANSWER_KEY_VERIFIED", "READY_FOR_EVALUATION", "EVALUATING", "REVIEW_REQUIRED", "FINALIZED"].includes(exam.status)) {
+      Alert.alert(
+        "Answer Key Verification Required",
+        "Before evaluating student answer sheets, the Answer Key must be verified.\n\nPlease go to the Answer Key tab to verify answers and lock the key.",
+        [
+          { text: "Cancel", style: "cancel" },
+          {
+            text: "Go to Answer Key",
+            style: "default",
+            onPress: () => {
+              setActiveTab("answerKey");
+              scrollToActiveTab("answerKey");
+            },
+          },
+        ]
       );
       return;
     }
@@ -919,6 +1088,22 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
         Alert.alert(
           "Evaluation Finalized (Read-Only)",
           "This evaluation is finalized and can no longer be changed. Finalized marks and student answers are permanently locked."
+        );
+      } else if (err.code === "EXAM_NOT_READY" || err.message?.includes("verified question paper and answer key")) {
+        Alert.alert(
+          "Answer Key Verification Required",
+          "Before evaluating student answer sheets, the Answer Key must be verified.\n\nPlease go to the Answer Key tab to verify answers and lock the key.",
+          [
+            { text: "Cancel", style: "cancel" },
+            {
+              text: "Go to Answer Key",
+              style: "default",
+              onPress: () => {
+                setActiveTab("answerKey");
+                scrollToActiveTab("answerKey");
+              },
+            },
+          ]
         );
       } else if (err.code === "OCR_NOT_FINISHED") {
         Alert.alert(
@@ -946,6 +1131,44 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
     } finally {
       setActionLoading(false);
     }
+  };
+
+  // Finalize Whole Exam (Laptop parity)
+  const handleFinalizeExam = () => {
+    if (finalizingExam) return;
+    const pending = evaluations.filter((e) => e.status !== "FINALIZED");
+    if (evaluations.length === 0 || pending.length > 0) {
+      Alert.alert(
+        "Cannot Finalize Exam",
+        `Every student's evaluation must be marked and finalized first. Currently ${pending.length} evaluation(s) are pending.`
+      );
+      return;
+    }
+
+    Alert.alert(
+      "Finalize Exam",
+      "This closes the exam and locks all student marks permanently. No more answer sheets can be uploaded or modified.\n\nDo you want to finalize this exam?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Finalize Exam",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              setFinalizingExam(true);
+              await api(`/exams/${examId}/finalize`, { method: "POST" });
+              Alert.alert("Exam Finalized", "The exam has been successfully closed and finalized.");
+              fetchExamDetail();
+              loadTabData("results");
+            } catch (err: any) {
+              Alert.alert("Finalize Failed", err.message || "Failed to finalize exam.");
+            } finally {
+              setFinalizingExam(false);
+            }
+          },
+        },
+      ]
+    );
   };
 
   // Delete Answer Sheet (Matching laptop functionality)
@@ -996,8 +1219,10 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
     { key: "paper", label: "Question Paper", icon: "document-text-outline" },
     { key: "questions", label: "Questions", icon: "list-outline" },
     { key: "answerKey", label: "Answer Key", icon: "key-outline" },
+    { key: "students", label: "Students", icon: "people-outline" },
     { key: "submissions", label: "Submissions", icon: "cloud-upload-outline" },
     { key: "evaluations", label: "Evaluations", icon: "checkbox-outline" },
+    { key: "results", label: "Results", icon: "trophy-outline" },
   ];
 
   return (
@@ -1316,6 +1541,78 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                 </View>
               )}
             </Card>
+
+            {/* Total Marks Verification Card in Question Paper Tab */}
+            {questionsData && (
+              <Card
+                style={[
+                  styles.totalMarksCard,
+                  {
+                    borderColor:
+                      Math.abs((questionsData.sum_of_marks || 0) - exam.total_marks) > 0.01
+                        ? colors.warning
+                        : colors.brandGreen,
+                  },
+                ]}
+              >
+                <View style={styles.totalMarksHeader}>
+                  <View
+                    style={[
+                      styles.totalMarksIconCircle,
+                      {
+                        backgroundColor:
+                          Math.abs((questionsData.sum_of_marks || 0) - exam.total_marks) > 0.01
+                            ? "rgba(240, 182, 90, 0.15)"
+                            : "rgba(81, 188, 117, 0.15)",
+                      },
+                    ]}
+                  >
+                    <Ionicons
+                      name={
+                        Math.abs((questionsData.sum_of_marks || 0) - exam.total_marks) > 0.01
+                          ? "alert-circle-outline"
+                          : "checkmark-circle-outline"
+                      }
+                      size={20}
+                      color={
+                        Math.abs((questionsData.sum_of_marks || 0) - exam.total_marks) > 0.01
+                          ? colors.warning
+                          : colors.brandGreen
+                      }
+                    />
+                  </View>
+                  <View style={{ flex: 1, marginLeft: 10 }}>
+                    <Text style={[styles.totalMarksCardTitle, { color: colors.text }]}>
+                      Total Marks: {exam.total_marks} Marks
+                    </Text>
+                    <Text style={[styles.totalMarksCardSub, { color: colors.textSecondary }]}>
+                      {questionsData.sum_of_marks > 0
+                        ? `Extracted from Question Paper: ${questionsData.sum_of_marks} Marks (${questionsData.questions.length} questions)`
+                        : "Upload question paper to automatically compute and verify total marks."}
+                    </Text>
+                  </View>
+                </View>
+
+                {questionsData.sum_of_marks > 0 && (
+                  <View style={styles.totalMarksActionRow}>
+                    <Button
+                      title="Verify / Update Total Marks"
+                      icon={<Ionicons name="calculator-outline" size={15} color="#FFFFFF" />}
+                      variant={
+                        Math.abs((questionsData.sum_of_marks || 0) - exam.total_marks) > 0.01
+                          ? "gradient"
+                          : "primary"
+                      }
+                      size="small"
+                      onPress={() => {
+                        setCustomTotalMarks(String(questionsData.sum_of_marks || exam.total_marks));
+                        setTotalMarksModalVisible(true);
+                      }}
+                    />
+                  </View>
+                )}
+              </Card>
+            )}
           </View>
         )}
 
@@ -1386,6 +1683,18 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                       {questionsData?.exam_total_marks ?? exam.total_marks}
                     </Text>
                   </Text>
+                  <TouchableOpacity
+                    onPress={() => {
+                      setCustomTotalMarks(String(questionsData?.sum_of_marks || exam.total_marks));
+                      setTotalMarksModalVisible(true);
+                    }}
+                    style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 4 }}
+                  >
+                    <Ionicons name="calculator-outline" size={13} color={colors.primary} />
+                    <Text style={{ fontSize: 12, fontWeight: "700", color: colors.primary }}>
+                      Verify Total Marks ({questionsData?.sum_of_marks ?? 0} vs {exam.total_marks})
+                    </Text>
+                  </TouchableOpacity>
                 </View>
 
                 {!questionsData?.locked && (
@@ -1424,12 +1733,24 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
 
               {/* Marks Warning Banner */}
               {questionsData?.marks_warning && (
-                <View style={[styles.alertBanner, { backgroundColor: "rgba(234, 179, 8, 0.12)", borderColor: colors.warning }]}>
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  onPress={() => {
+                    setCustomTotalMarks(String(questionsData.sum_of_marks));
+                    setTotalMarksModalVisible(true);
+                  }}
+                  style={[styles.alertBanner, { backgroundColor: "rgba(234, 179, 8, 0.12)", borderColor: colors.warning }]}
+                >
                   <Ionicons name="warning-outline" size={18} color={colors.warning} />
-                  <Text style={[styles.alertText, { color: colors.text }]}>
-                    {questionsData.marks_warning} This is only a warning; some papers offer student choice.
-                  </Text>
-                </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.alertText, { color: colors.text }]}>
+                      {questionsData.marks_warning}
+                    </Text>
+                    <Text style={{ fontSize: 11, fontWeight: "700", color: colors.warning, marginTop: 2 }}>
+                      Tap to open confirmation popup and set exam total marks.
+                    </Text>
+                  </View>
+                </TouchableOpacity>
               )}
 
               {/* Locked Banner */}
@@ -2041,6 +2362,104 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
           </View>
         )}
 
+        {/* STUDENTS TAB (Class Roster with submission & marks status - Laptop Parity) */}
+        {activeTab === "students" && (
+          <View>
+            <View style={styles.tabActionHeader}>
+              <View>
+                <Text style={[styles.tabHeading, { color: colors.text }]}>
+                  Class Roster ({students.length})
+                </Text>
+                <Text style={{ fontSize: 12, color: colors.textSecondary }}>
+                  {evaluations.length} of {students.length} student answer sheets submitted
+                </Text>
+              </View>
+              <Button
+                title="+ Upload Sheet"
+                icon={<Ionicons name="cloud-upload-outline" size={14} color="#FFFFFF" />}
+                variant="gradient"
+                size="small"
+                onPress={() => {
+                  setAttachedPages([]);
+                  setUploadSheetModal(true);
+                }}
+              />
+            </View>
+
+            {students.length === 0 ? (
+              <Empty
+                icon="people-outline"
+                title="No Students Enrolled"
+                description="Students enrolled in this class or added during answer sheet uploads will appear here."
+              />
+            ) : (
+              students.map((st) => {
+                const sheet = evaluations.find((ev) => ev.student?.id === st.id);
+                return (
+                  <Card key={st.id} style={styles.itemCard}>
+                    <View style={styles.itemHeader}>
+                      <View style={{ flex: 1 }}>
+                        <Text style={[styles.studentItemName, { color: colors.text }]}>
+                          {st.name}
+                        </Text>
+                        <Text style={[styles.studentItemRoll, { color: colors.textSecondary }]}>
+                          Roll No: {st.roll_number}
+                        </Text>
+                      </View>
+                      {sheet ? (
+                        sheet.status === "FINALIZED" ? (
+                          <PenScore score={sheet.total_marks} maxScore={sheet.maximum_marks} />
+                        ) : (
+                          <StatusBadge status={sheet.status} />
+                        )
+                      ) : (
+                        <View style={[styles.unsubmittedPill, { borderColor: colors.border }]}>
+                          <Text style={[styles.unsubmittedText, { color: colors.textSecondary }]}>Not Uploaded</Text>
+                        </View>
+                      )}
+                    </View>
+
+                    <View style={[styles.itemFooter, { borderTopColor: colors.border }]}>
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+                        <Ionicons
+                          name={sheet ? "document-text" : "cloud-upload-outline"}
+                          size={14}
+                          color={sheet ? colors.brandGreen : colors.textSecondary}
+                        />
+                        <Text style={{ fontSize: 12, color: sheet ? colors.brandGreen : colors.textSecondary, fontWeight: "600" }}>
+                          {sheet ? "Answer Sheet Uploaded" : "Pending Upload"}
+                        </Text>
+                      </View>
+                      {sheet ? (
+                        <Button
+                          title="Open"
+                          variant="secondary"
+                          size="small"
+                          icon={<Ionicons name="open-outline" size={13} color={colors.text} />}
+                          onPress={() => navigation.navigate(sheet.status === "FINALIZED" ? "ResultDetail" : "EvaluationDetail", { evaluationId: sheet.id })}
+                        />
+                      ) : (
+                        <Button
+                          title="Upload Sheet"
+                          variant="gradient"
+                          size="small"
+                          icon={<Ionicons name="cloud-upload" size={13} color="#FFFFFF" />}
+                          onPress={() => {
+                            setSelectedStudentId(st.id);
+                            setStudentMode("existing");
+                            setAttachedPages([]);
+                            setUploadSheetModal(true);
+                          }}
+                        />
+                      )}
+                    </View>
+                  </Card>
+                );
+              })
+            )}
+          </View>
+        )}
+
         {/* SUBMISSIONS TAB */}
         {activeTab === "submissions" && (
           <View>
@@ -2211,10 +2630,11 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                             variant="gradient"
                             size="small"
                             disabled
+                            onPress={() => {}}
                             style={{ flex: 1 }}
                           />
                           <Button
-                            icon={<Ionicons name="trash-outline" size={15} color={colors.danger} />}
+                            icon={<Ionicons name="trash-outline" size={15} color={colors.error} />}
                             variant="secondary"
                             size="small"
                             onPress={() => handleDeleteAnswerSheet(ev)}
@@ -2266,7 +2686,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                             style={{ flex: 1 }}
                           />
                           <Button
-                            icon={<Ionicons name="trash-outline" size={15} color={colors.danger} />}
+                            icon={<Ionicons name="trash-outline" size={15} color={colors.error} />}
                             variant="secondary"
                             size="small"
                             onPress={() => handleDeleteAnswerSheet(ev)}
@@ -2329,6 +2749,130 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
             )}
           </View>
         )}
+
+        {/* RESULTS TAB (Score report & Exam Finalization - Laptop Parity) */}
+        {activeTab === "results" && (() => {
+          const finalizedResults = results.filter((r) => r.status === "FINALIZED");
+          const totalMax = finalizedResults.length > 0 && finalizedResults[0].maximum_marks ? finalizedResults[0].maximum_marks : (exam?.total_marks || 100);
+          const avgScore = finalizedResults.length > 0
+            ? Math.round(finalizedResults.reduce((sum, r) => sum + (r.total_marks || 0), 0) / finalizedResults.length)
+            : 0;
+          const highestScore = finalizedResults.length > 0
+            ? Math.max(...finalizedResults.map((r) => r.total_marks || 0))
+            : 0;
+          const passCount = finalizedResults.filter((r) => (r.percentage || 0) >= 40).length;
+          const passRate = finalizedResults.length > 0 ? Math.round((passCount / finalizedResults.length) * 100) : 0;
+          const allFinalized = evaluations.length > 0 && finalizedResults.length === evaluations.length;
+
+          return (
+            <View>
+              <View style={styles.tabActionHeader}>
+                <View>
+                  <Text style={[styles.tabHeading, { color: colors.text }]}>
+                    Exam Results ({results.length})
+                  </Text>
+                  <Text style={{ fontSize: 12, color: colors.textSecondary }}>
+                    {finalizedResults.length} of {evaluations.length || results.length} finalized
+                  </Text>
+                </View>
+                {exam?.status !== "FINALIZED" && (
+                  <Button
+                    title="Finalize Exam"
+                    icon={<Ionicons name="ribbon-outline" size={15} color="#FFFFFF" />}
+                    variant="gradient"
+                    size="small"
+                    onPress={handleFinalizeExam}
+                    disabled={!allFinalized || finalizingExam}
+                    loading={finalizingExam}
+                  />
+                )}
+              </View>
+
+              {exam?.status === "FINALIZED" && (
+                <View style={[styles.alertBanner, { backgroundColor: "rgba(37, 200, 120, 0.12)", borderColor: colors.brandGreen, marginBottom: 14 }]}>
+                  <Ionicons name="checkmark-done-circle" size={18} color={colors.brandGreen} />
+                  <Text style={[styles.alertText, { color: colors.text }]}>
+                    This exam is finalized and closed. Results and marks are permanently recorded.
+                  </Text>
+                </View>
+              )}
+
+              {/* Performance Stats Cards */}
+              {finalizedResults.length > 0 && (
+                <View style={styles.resultsStatsRow}>
+                  <Card style={styles.resultsStatCard}>
+                    <Text style={[styles.resultsStatValue, { color: colors.primary }]}>{avgScore} / {totalMax}</Text>
+                    <Text style={[styles.resultsStatLabel, { color: colors.textSecondary }]}>Class Average</Text>
+                  </Card>
+                  <Card style={styles.resultsStatCard}>
+                    <Text style={[styles.resultsStatValue, { color: colors.brandGreen }]}>{highestScore} / {totalMax}</Text>
+                    <Text style={[styles.resultsStatLabel, { color: colors.textSecondary }]}>Highest Score</Text>
+                  </Card>
+                  <Card style={styles.resultsStatCard}>
+                    <Text style={[styles.resultsStatValue, { color: colors.text }]}>{passRate}%</Text>
+                    <Text style={[styles.resultsStatLabel, { color: colors.textSecondary }]}>Pass Rate</Text>
+                  </Card>
+                </View>
+              )}
+
+              {results.length === 0 ? (
+                <Empty
+                  icon="trophy-outline"
+                  title="No Results Yet"
+                  description="Evaluate and finalize student answer sheets to view the score report and class standings."
+                />
+              ) : (
+                results.map((ev, index) => (
+                  <TouchableOpacity
+                    key={ev.id}
+                    activeOpacity={0.8}
+                    onPress={() => navigation.navigate(ev.status === "FINALIZED" ? "ResultDetail" : "EvaluationDetail", { evaluationId: ev.id })}
+                  >
+                    <Card key={ev.id} style={styles.itemCard}>
+                      <View style={styles.itemHeader}>
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 10, flex: 1 }}>
+                          <View style={[styles.rankCircle, { backgroundColor: index < 3 ? `${colors.primary}22` : colors.surfaceElevated }]}>
+                            <Text style={[styles.rankText, { color: index < 3 ? colors.primary : colors.textSecondary }]}>
+                              {index + 1}
+                            </Text>
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={[styles.studentItemName, { color: colors.text }]}>
+                              {ev.student?.name}
+                            </Text>
+                            <Text style={[styles.studentItemRoll, { color: colors.textSecondary }]}>
+                              Roll No: {ev.student?.roll_number}
+                            </Text>
+                          </View>
+                        </View>
+                        {ev.status === "FINALIZED" ? (
+                          <PenScore score={ev.total_marks} maxScore={ev.maximum_marks} />
+                        ) : (
+                          <StatusBadge status={ev.status} />
+                        )}
+                      </View>
+
+                      <View style={[styles.itemFooter, { borderTopColor: colors.border }]}>
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                          <StatusBadge status={ev.status} />
+                          {ev.percentage !== null && (
+                            <Text style={{ fontSize: 12, fontWeight: "700", color: colors.textSecondary }}>
+                              {ev.percentage}%
+                            </Text>
+                          )}
+                        </View>
+                        <View style={{ flexDirection: "row", alignItems: "center", gap: 4 }}>
+                          <Text style={[styles.reviewLink, { color: colors.primary }]}>View Details</Text>
+                          <Ionicons name="chevron-forward" size={14} color={colors.primary} />
+                        </View>
+                      </View>
+                    </Card>
+                  </TouchableOpacity>
+                ))
+              )}
+            </View>
+          );
+        })()}
       </ScrollView>
 
       {/* Upload Student Sheet Modal with multi-page compilation and on-the-fly student creation */}
@@ -2358,14 +2902,14 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
               disabled={
                 compilingPages ||
                 uploadingSheet ||
-                !pickedFile ||
+                attachedPages.length === 0 ||
                 (studentMode === "new"
                   ? !newStudentName.trim() || !newStudentRoll.trim()
                   : !selectedStudentId)
               }
               fullWidth
             />
-            {(!pickedFile ||
+            {(attachedPages.length === 0 ||
               (studentMode === "new" ? !newStudentName.trim() || !newStudentRoll.trim() : !selectedStudentId)) && (
               <Text
                 style={{
@@ -2375,7 +2919,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                   marginTop: 2,
                 }}
               >
-                {!pickedFile
+                {attachedPages.length === 0
                   ? "Scan or attach answer sheet pages to submit"
                   : studentMode === "new"
                   ? "Enter the student name and roll number to continue"
@@ -2483,45 +3027,75 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
         )}
 
         <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>
-          Answer Sheet Pages *
+          Answer Sheet Pages ({attachedPages.length}) *
         </Text>
 
         {compilingPages ? (
           <View style={[styles.compilingBox, { borderColor: colors.primary }]}>
             <ActivityIndicator size="small" color={colors.primary} />
             <Text style={[styles.compilingText, { color: colors.primary }]}>
-              Compiling pages into a single multi-page PDF...
+              Compiling {attachedPages.length} pages into a multi-page PDF document...
             </Text>
           </View>
-        ) : pickedFile ? (
-          <View
-            style={[
-              styles.selectedFileCard,
-              {
-                borderColor: colors.brandGreen,
-                backgroundColor: "rgba(81, 188, 117, 0.08)",
-              },
-            ]}
-          >
-            <View style={[styles.selectedFileIconBox, { backgroundColor: "rgba(81, 188, 117, 0.15)" }]}>
-              <Ionicons name="document-text" size={24} color={colors.brandGreen} />
+        ) : attachedPages.length > 0 ? (
+          <View style={{ marginBottom: 12, gap: 8 }}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ maxHeight: 95 }}>
+              <View style={{ flexDirection: "row", gap: 8, paddingVertical: 4 }}>
+                {attachedPages.map((page, idx) => (
+                  <View
+                    key={idx}
+                    style={[
+                      styles.attachedPageCard,
+                      { borderColor: colors.border, backgroundColor: colors.surfaceElevated },
+                    ]}
+                  >
+                    <View style={styles.attachedPageHeader}>
+                      <Ionicons
+                        name={page.mimeType?.includes("pdf") ? "document-text" : "image-outline"}
+                        size={16}
+                        color={colors.primary}
+                      />
+                      <TouchableOpacity
+                        onPress={() => setAttachedPages((prev) => prev.filter((_, i) => i !== idx))}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      >
+                        <Ionicons name="close-circle" size={16} color={colors.error} />
+                      </TouchableOpacity>
+                    </View>
+                    <Text style={[styles.attachedPageTitle, { color: colors.text }]}>Page {idx + 1}</Text>
+                    <Text style={[styles.attachedPageSub, { color: colors.textSecondary }]} numberOfLines={1}>
+                      {page.name || "scanned_page.jpg"}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            </ScrollView>
+
+            <View style={{ flexDirection: "row", gap: 8 }}>
+              <Button
+                title="+ Scan Page"
+                icon={<Ionicons name="camera-outline" size={15} color="#FFFFFF" />}
+                variant="gradient"
+                size="small"
+                onPress={() => {
+                  setUploadSheetModal(false);
+                  setScannerTarget("student_sheet");
+                  setCameraScannerVisible(true);
+                }}
+                style={{ flex: 1 }}
+              />
+              <Button
+                title="+ Add Photo/File"
+                icon={<Ionicons name="add" size={15} color={colors.text} />}
+                variant="secondary"
+                size="small"
+                onPress={handlePickStudentFile}
+                style={{ flex: 1 }}
+              />
             </View>
-            <View style={{ flex: 1, marginHorizontal: 10 }}>
-              <Text style={[styles.selectedFileName, { color: colors.text }]} numberOfLines={1}>
-                {pickedFile.name || "student_answer_sheet.pdf"}
-              </Text>
-              <Text style={[styles.selectedFileMeta, { color: colors.brandGreen }]}>
-                {pickedFile.pageCount
-                  ? `${pickedFile.pageCount} Pages Compiled • Ready for evaluation`
-                  : "Ready for evaluation"}
-              </Text>
-            </View>
-            <TouchableOpacity
-              onPress={() => setPickedFile(null)}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-            >
-              <Ionicons name="close-circle" size={22} color={colors.textSecondary} />
-            </TouchableOpacity>
+            <Text style={{ fontSize: 11, color: colors.brandGreen, textAlign: "center" }}>
+              ✓ {attachedPages.length} page(s) attached • Will be compiled into a single PDF
+            </Text>
           </View>
         ) : (
           <View style={{ gap: 10, marginBottom: 8 }}>
@@ -2538,7 +3112,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
               fullWidth
             />
             <Button
-              title="Upload File(s) (PDF or Multiple Images)"
+              title="Upload File(s) (PDF or Photos)"
               icon={<Ionicons name="cloud-upload-outline" size={18} color={colors.text} />}
               variant="secondary"
               size="medium"
@@ -2546,7 +3120,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
               fullWidth
             />
             <Text style={{ fontSize: 11, color: colors.textSecondary, textAlign: "center" }}>
-              Tip: You can select multiple page images from gallery to auto-compile them into a multi-page document.
+              Tip: You can attach multiple pages. Each page will be compiled in order into one document.
             </Text>
           </View>
         )}
@@ -2646,6 +3220,90 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
         }
         examTitle={exam.name}
       />
+
+      {/* Total Marks Verification & Popup Modal */}
+      <ModalDialog
+        visible={totalMarksModalVisible}
+        onClose={() => setTotalMarksModalVisible(false)}
+        title="Verify Exam Total Marks"
+        subtitle={`Detected from Question Paper: ${questionsData?.sum_of_marks ?? 0} Marks (${questionsData?.questions?.length ?? 0} Questions)`}
+      >
+        <View style={{ marginBottom: 14 }}>
+          <View
+            style={{
+              padding: 12,
+              borderRadius: 10,
+              backgroundColor: "rgba(7, 159, 189, 0.08)",
+              borderWidth: 1,
+              borderColor: colors.border,
+              marginBottom: 10,
+            }}
+          >
+            <View style={{ flexDirection: "row", justifyContent: "space-between", marginBottom: 6 }}>
+              <Text style={{ fontSize: 13, color: colors.textSecondary }}>Paper Detected Total:</Text>
+              <Text style={{ fontSize: 16, fontWeight: "800", color: colors.primary }}>
+                {questionsData?.sum_of_marks ?? 0} Marks
+              </Text>
+            </View>
+            <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+              <Text style={{ fontSize: 13, color: colors.textSecondary }}>Current Declared Total:</Text>
+              <Text style={{ fontSize: 16, fontWeight: "800", color: colors.text }}>
+                {exam?.total_marks ?? 0} Marks
+              </Text>
+            </View>
+          </View>
+
+          <Text style={{ fontSize: 13, fontWeight: "600", color: colors.text, marginBottom: 10, lineHeight: 18 }}>
+            Is {questionsData?.sum_of_marks ?? 0} marks the correct total marks for this examination?
+          </Text>
+
+          <Input
+            label="Adjust Total Marks (if students have question choices)"
+            placeholder="e.g. 100"
+            value={customTotalMarks}
+            onChangeText={setCustomTotalMarks}
+            keyboardType="numeric"
+          />
+        </View>
+
+        <View style={{ gap: 8 }}>
+          {questionsData?.sum_of_marks !== undefined && questionsData.sum_of_marks > 0 && (
+            <Button
+              title={`Yes, Set to ${questionsData.sum_of_marks} Marks (From Paper)`}
+              icon={<Ionicons name="checkmark-circle" size={16} color="#FFFFFF" />}
+              variant="gradient"
+              loading={actionLoading}
+              onPress={() => handleUpdateTotalMarks(questionsData.sum_of_marks)}
+              fullWidth
+            />
+          )}
+
+          {customTotalMarks !== "" && parseFloat(customTotalMarks) !== questionsData?.sum_of_marks && (
+            <Button
+              title={`Apply Custom (${customTotalMarks} Marks)`}
+              icon={<Ionicons name="save-outline" size={16} color="#FFFFFF" />}
+              variant="primary"
+              loading={actionLoading}
+              onPress={() => {
+                const num = parseFloat(customTotalMarks);
+                if (isNaN(num) || num <= 0) {
+                  Alert.alert("Validation", "Please enter a valid positive number for total marks.");
+                  return;
+                }
+                handleUpdateTotalMarks(num);
+              }}
+              fullWidth
+            />
+          )}
+
+          <Button
+            title={`Keep Current (${exam?.total_marks} Marks)`}
+            variant="secondary"
+            onPress={() => setTotalMarksModalVisible(false)}
+            fullWidth
+          />
+        </View>
+      </ModalDialog>
     </View>
   );
 };
@@ -3250,5 +3908,111 @@ const styles = StyleSheet.create({
   compilingText: {
     fontSize: 13,
     fontWeight: "600",
+  },
+  attachedPageCard: {
+    width: 110,
+    padding: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  attachedPageHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 4,
+  },
+  attachedPageTitle: {
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  attachedPageSub: {
+    fontSize: 10,
+    marginTop: 2,
+  },
+  unsubmittedPill: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  unsubmittedText: {
+    fontSize: 11,
+    fontWeight: "600",
+  },
+  resultsStatsRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 12,
+  },
+  resultsStatCard: {
+    flex: 1,
+    padding: 12,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  resultsStatValue: {
+    fontSize: 18,
+    fontWeight: "800",
+    marginBottom: 2,
+  },
+  resultsStatLabel: {
+    fontSize: 11,
+    fontWeight: "600",
+  },
+  rankCircle: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  rankText: {
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  preconditionBannerCard: {
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    marginBottom: 12,
+  },
+  preconditionBannerTitle: {
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  preconditionBannerText: {
+    fontSize: 11,
+    lineHeight: 15,
+    marginTop: 2,
+  },
+  totalMarksCard: {
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    marginTop: 12,
+  },
+  totalMarksHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  totalMarksIconCircle: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  totalMarksCardTitle: {
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  totalMarksCardSub: {
+    fontSize: 12,
+    lineHeight: 16,
+    marginTop: 2,
+  },
+  totalMarksActionRow: {
+    marginTop: 10,
+    alignItems: "flex-end",
   },
 });
