@@ -64,6 +64,13 @@ class QuestionPageResult(_Base):
     page_number: int | None = None
     questions: list[QuestionItem] = Field(default_factory=list)
 
+    @field_validator("questions", mode="before")
+    @classmethod
+    def _sanitize_questions(cls, v):
+        if not isinstance(v, list):
+            return []
+        return [item for item in v if isinstance(item, (dict, QuestionItem))]
+
 
 class AnswerKeyItem(_Base):
     question_number: str | None = None
@@ -97,6 +104,13 @@ class AnswerKeyItem(_Base):
 class AnswerKeyPageResult(_Base):
     page_number: int | None = None
     answers: list[AnswerKeyItem] = Field(default_factory=list)
+
+    @field_validator("answers", mode="before")
+    @classmethod
+    def _sanitize_answers(cls, v):
+        if not isinstance(v, list):
+            return []
+        return [item for item in v if isinstance(item, (dict, AnswerKeyItem))]
 
 
 class GeneratedAnswerItem(_Base):
@@ -184,6 +198,13 @@ class StudentPageResult(_Base):
     page: int | None = None
     answers: list[StudentAnswerItem] = Field(default_factory=list)
     unresolved: list[Any] = Field(default_factory=list)
+
+    @field_validator("answers", mode="before")
+    @classmethod
+    def _sanitize_answers(cls, v):
+        if not isinstance(v, list):
+            return []
+        return [item for item in v if isinstance(item, (dict, StudentAnswerItem))]
 
     @model_validator(mode="after")
     def _sync_page(self):

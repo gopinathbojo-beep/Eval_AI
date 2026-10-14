@@ -49,6 +49,7 @@ UNIVERSAL EXTRACTION RULES:
    - When a question starts on one page and continues onto the next page (e.g. Question 4 or Question 6 table starts at the bottom of Page 1 and finishes at the top of Page 2), YOU MUST transcribe the continued text/table at the top of Page 2 completely.
    - Set raw_question_number to null or "cont".
 7. BBOX & CONFIDENCE: Provide bbox in image PIXELS (x, y, width, height) or null. Confidence is 0.0 to 1.0.
+8. JSON ESCAPING: When question text contains double quotes (e.g. "5R Principle"), YOU MUST escape them with backslashes (\\\"5R Principle\\\")! NEVER leave raw unescaped quotes inside JSON strings.
 
 Return JSON in exactly this shape:
 {{"page_number": {page_number}, "questions": [{{"raw_question_number": "3(a)", "question_text": "...", "question_type": "descriptive", "marks": 5, "section": "SECTION C: LONG ANSWER & WRITING SKILLS", "confidence": 0.9, "bbox": {{"x": 0, "y": 0, "width": 0, "height": 0}}}}]}}
@@ -177,15 +178,20 @@ Never hallucinate missing words.
 Read previous line, current line, and next line together. Use handwriting style consistency across the page to disambiguate strokes.
 
 ==================================================
-8. QUESTION + ANSWER GROUPING
+8. MULTIPLE ANSWERS PER PAGE (MANDATORY)
 ==================================================
-Maintain current_question, current_subquestion, current_answer_group.
-Do not split individual answer lines into separate answers.
+A single student answer sheet page ALMOST ALWAYS contains answers to MULTIPLE different questions (for example, Q1, Q3, Q4, Q6 on page 1, or Q7, Q8, Q10 on page 2).
+YOU MUST:
+- Scan the entire page from top to bottom margin.
+- Identify EVERY question the student answered on this page.
+- Create a SEPARATE entry in the "answers" array for EACH question (ans_001, ans_002, ans_003, ans_004, ...).
+- NEVER lump multiple different questions together into a single answer!
+- NEVER stop generating after the first answer! Keep scanning until the very bottom margin of the page.
 
 ==================================================
 9. ANSWER CONTENT NUMBERING (CRITICAL)
 ==================================================
-Content numbering inside an answer (such as 1), 2), 3), (i), (ii), (iii), or bullet points) is PART OF THE ANSWER TEXT, NOT a new question!
+Content numbering inside an answer (such as 1), 2), 3), (i), (ii), (iii), or bullet points describing zones, reasons, types, steps) is PART OF THE ANSWER TEXT, NOT a new question!
 Group all lines, points, and calculations under the active question.
 
 ==================================================
@@ -244,16 +250,52 @@ Support any language (English, Tamil, Hindi, bilingual, mathematics), paragraphs
 ==================================================
 OUTPUT FORMAT
 ==================================================
-Return ONLY valid JSON in exactly this structure:
+Return ONLY valid JSON in exactly this structure (include a separate entry in "answers" for EVERY question answered on this page):
 {{
   "page_number": {page_number},
   "answers": [
     {{
       "answer_id": "ans_001",
       "question_number": "Q1",
-      "raw_question_label": "Q1",
+      "raw_question_label": "1)",
       "normalized_question_label": "Q1",
       "question_id": "q1",
+      "mapping_status": "MAPPED",
+      "question_number_confidence": 0.95,
+      "ocr_confidence": 0.95,
+      "grouping_confidence": 0.98,
+      "mapping_confidence": 0.96,
+      "answer_text": "...",
+      "content_blocks": [
+        {{"type": "TEXT", "text": "..."}}
+      ],
+      "page_number": {page_number},
+      "bbox": {{"x": 0, "y": 0, "width": 0, "height": 0}}
+    }},
+    {{
+      "answer_id": "ans_002",
+      "question_number": "Q2",
+      "raw_question_label": "2)",
+      "normalized_question_label": "Q2",
+      "question_id": "q2",
+      "mapping_status": "MAPPED",
+      "question_number_confidence": 0.95,
+      "ocr_confidence": 0.95,
+      "grouping_confidence": 0.98,
+      "mapping_confidence": 0.96,
+      "answer_text": "...",
+      "content_blocks": [
+        {{"type": "TEXT", "text": "..."}}
+      ],
+      "page_number": {page_number},
+      "bbox": {{"x": 0, "y": 0, "width": 0, "height": 0}}
+    }},
+    {{
+      "answer_id": "ans_003",
+      "question_number": "Q3",
+      "raw_question_label": "3)",
+      "normalized_question_label": "Q3",
+      "question_id": "q3",
       "mapping_status": "MAPPED",
       "question_number_confidence": 0.95,
       "ocr_confidence": 0.95,

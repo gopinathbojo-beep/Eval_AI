@@ -38,11 +38,18 @@ _STOP_WORDS = {
 }
 
 
+def _normalize_word(w: str) -> str:
+    w = w.lower()
+    if w.endswith("ies") and len(w) > 4:
+        return w[:-3] + "y"
+    return w.rstrip("s")
+
+
 def _tokenize(text: str | None) -> set[str]:
     if not text:
         return set()
-    words = re.findall(r"[a-zA-Z]{3,}", text.lower())
-    return {w for w in words if w not in _STOP_WORDS}
+    words = re.findall(r"\b[a-zA-Z0-9]{2,}\b", text.lower())
+    return {_normalize_word(w) for w in words if w not in _STOP_WORDS}
 
 
 def find_recovery_candidates(
@@ -99,15 +106,16 @@ def find_recovery_candidates(
                 continue
             q_tokens = _tokenize(getattr(q, "question_text", None))
             common = ans_tokens & q_tokens
-            if len(common) >= 3:
+            if len(common) >= 2:
                 jaccard = len(common) / len(ans_tokens | q_tokens) if (ans_tokens | q_tokens) else 0
-                if jaccard >= 0.20:
+                recall = len(common) / len(ans_tokens) if ans_tokens else 0
+                if len(common) >= 3 or jaccard >= 0.15 or recall >= 0.25:
                     q_norm = getattr(q, "normalized_number", str(getattr(q, "display_number", "")))
                     candidates.append(
                         RecoveryCandidate(
                             question_id=qid,
                             normalized_number=q_norm,
-                            score=min(0.85, round(0.50 + jaccard, 2)),
+                            score=min(0.85, round(0.50 + max(jaccard, recall * 0.4) + (0.10 if len(common) >= 3 else 0.05), 2)),
                             reason=f"Significant content match: shared keywords ({', '.join(list(common)[:4])})",
                         )
                     )

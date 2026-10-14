@@ -104,8 +104,17 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
         _progress(db, doc, f"OCR: processing page {p['page_number']} of {total}", i)
         img = abs_path(p["processed_file"])
         out = wd / "ocr" / f"page-{p['page_number']:03d}.json"
+        prompt_kwargs = {}
+        if kind == "answer-sheet":
+            canonical_qs = [
+                f"Q{q.display_number}: {q.question_text[:80]}"
+                for q in db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all()
+            ]
+            if canonical_qs:
+                prompt_kwargs["canonical_questions"] = canonical_qs
+        prompt_str = prompt_fn(p["page_number"], p["ocr_width"], p["ocr_height"], **prompt_kwargs)
         try:
-            call = chat_structured(prompts.OCR_SYSTEM, prompt_fn(p["page_number"], p["ocr_width"], p["ocr_height"]),
+            call = chat_structured(prompts.OCR_SYSTEM, prompt_str,
                                    schema, img)
             out.write_text(json.dumps({"status": "OK", "raw": call.raw, "parsed": call.parsed.model_dump(),
                                        "attempts": call.attempts}, ensure_ascii=False, indent=1), encoding="utf-8")
@@ -312,7 +321,8 @@ def _build_student_answers(db: Session, doc, exam: Exam, wd: Path, results) -> N
     ev = db.query(Evaluation).filter_by(answer_sheet_id=doc.id).one()
     db.query(StudentAnswer).filter_by(evaluation_id=ev.id).delete()
     pages_by_num = {p["page_number"]: p for p, _ in results}
-    answers = segment_student_answers(results)
+    canonical_qs = db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all()
+    answers = segment_student_answers(results, canonical_questions=canonical_qs)
     n = 0
     for a in answers:
         n += 1
