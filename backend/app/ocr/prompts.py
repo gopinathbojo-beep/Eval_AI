@@ -11,15 +11,19 @@ OCR_SYSTEM = (
     "2. Detect element types from surrounding visual context (QUESTION, SUBQUESTION, SECTION, HEADING, INSTRUCTION, "
     "PASSAGE, TABLE, FORMULA, EQUATION, LIST, OPTION, ANSWER, CONTINUATION). "
     "Do NOT classify headings, instructions, passages, tables, or continuation lines as questions unless explicitly printed as a question.\n"
-    "3. Question numbering: recognize any format (Q1, Q.1, Question 1, 1., 1), (1), I, II, 1(a), 1.a, 1-a). "
+    "3. Question numbering: recognize any format (Q1, Q.1, Question 1, 1., 1), (1), I, II, 1(a), 1.a, 1-a, (b), (c)). "
     "Use surrounding typography, layout, and sequence to verify. If uncertain of a label, use null; never guess.\n"
-    "4. Subquestions: detect a/b/c/i/ii only when genuine question parts. Never split answer choices (A/B/C/D), match items, or fill-in blanks into separate questions.\n"
+    "4. Subquestions: detect a/b/c/i/ii only when genuine question parts. When a page starts with a subquestion like (b) or (c), keep raw_question_number as '(b)' or '(c)'. Never split answer choices (A/B/C/D), match items, or fill-in blanks into separate questions.\n"
     "5. Answer continuation: subsequent lines or numbered list items (e.g. 1), 2), bullet points) belong to the current question/answer. NEVER split continuation lines into separate questions.\n"
-    "6. Mathematics & Science: preserve exact notation (fractions, powers e.g. 2⁻², a² - b², roots, π, Σ, equations, chemical formulas e.g. H₂SO₄).\n"
-    "7. Tables: preserve table structure as Markdown tables (| Header 1 | Header 2 |) with rows and cells. Never turn table rows into standalone questions.\n"
-    "8. Passages: comprehension passages, poems, and source texts belong to the question context, not as separate question entities.\n"
-    "9. Languages: preserve original language (English, Tamil, Hindi, or bilingual/mixed text) verbatim.\n"
-    "10. Reply with a single valid JSON object and nothing else."
+    "6. Mathematics & Science:\n"
+    "   - Preserve vertical fractions and powers as inline expressions: [((2/3)⁻² × (3/4)⁻³) ÷ (8/9)⁻²].\n"
+    "   - Preserve superscripts and formulas: (a + b)² = a² + b² + 2ab, x² + 1/x² = 34, 16x⁴ - 81y⁴, V = π(R² - r²)h.\n"
+    "   - Preserve chemical equations, reaction arrows, and gas arrows: Na + H₂O → ________ + H₂ ↑, SO₂ + H₂O → ________, Zn + H₂SO₄ → ________ + H₂ ↑.\n"
+    "7. Tables: preserve table structure as Markdown tables (| Header 1 | Header 2 |) with rows and cells. Never flatten table rows into unformatted text.\n"
+    "8. Notice Boxes & Formats: preserve notice borders and formatted text layout.\n"
+    "9. Passages: comprehension passages, poems, and source texts belong to the question context, not as separate question entities.\n"
+    "10. Languages: preserve original language (English, Tamil, Hindi, or bilingual/mixed text) verbatim.\n"
+    "11. Reply with a single valid JSON object and nothing else."
 )
 
 
@@ -28,16 +32,26 @@ def question_paper_prompt(page_number: int, width: int, height: int) -> str:
 Read the entire page visually. Adapt to any layout, curriculum, or typography. Identify every question label and transcribe each question completely.
 
 UNIVERSAL EXTRACTION RULES:
-1. DETECT ELEMENTS: Distinguish headings (e.g. 'SECTION A', 'Part I', 'Reading Skills'), general instructions ('All questions are compulsory'), and reading passages from actual questions. Never return pure section headers as questions. Extract all questions, problems, tasks, and exercises present on the page. Keep reading passages and tables inside the question_text that owns them.
-2. PRESERVE STRUCTURE & TEXT: Transcribe full question text verbatim without truncation or summarisation. Preserve mathematical formulas (powers, roots, fractions, π), equations, chemical symbols, and tables (as Markdown | col1 | col2 |).
-3. QUESTION NUMBERING: Keep question labels exactly as printed (e.g. "1", "Q1", "1.", "(1)", "3(a)", "3.a", "4(i)", "I", "II"). If an exercise or question has no printed question label, set raw_question_number to null, and transcribe the question completely.
+1. DETECT ALL ELEMENTS: Extract EVERY question, problem, task, table, and exercise on the page.
+   - CRITICAL: Look at the VERY TOP of the page. If there is a table, grid, or exercise continuation (e.g. an editing exercise with columns "Line | Incorrect Word | Correct Word" or fill-in blanks), YOU MUST EXTRACT IT as an item with raw_question_number null (or "cont"). NEVER SKIP OR OMIT A TABLE AT THE TOP OF THE PAGE!
+2. PRESERVE STRUCTURE & TEXT: Transcribe full text verbatim without truncation or summarisation.
+   - Mathematical expressions: inline vertical fractions and powers e.g. [((2/3)⁻² × (3/4)⁻³) ÷ (8/9)⁻²], superscripts e.g. x² + 1/x² = 6, 16x⁴ - 81y⁴, π, √.
+   - Chemical equations: keep reaction arrows →, gas evolution ↑, and blanks ________ (e.g. Na + H₂O → ________ + H₂ ↑).
+   - Tables: transcribe every row and cell as clean Markdown tables (| Line | Incorrect Word | Correct Word |).
+3. QUESTION NUMBERING: Keep question labels exactly as printed (e.g. "1", "Q1", "Q7", "Q8", "3(a)", "(b)", "(c)").
+   - DO NOT STRIP printed question labels like "Q7" or "Q8" from the question! If printed as "Q7. Reading Comprehension", set raw_question_number to "Q7" and question_text to "Reading Comprehension:...".
+   - If page starts with a subquestion like (b) or (c), keep raw_question_number as "(b)" or "(c)". If unlabelled, set raw_question_number to null.
 4. SUBQUESTIONS VS CHOICES: Only separate items if they are independent questions. Do NOT split multiple-choice options (A, B, C, D), match items, or fill-in blanks into separate entries; keep them within question_text.
-5. MARKS: Extract marks printed next to the question (or established by section instructions e.g. '4 x 2 = 8 marks' -> 2), or null if not determinable. Never guess marks.
-6. CONTINUATIONS: Text continuing a question from the previous page without a label gets raw_question_number null.
+5. MARKS & SECTIONS:
+   - Identify the enclosing SECTION heading (e.g. "SECTION A: SHORT ANSWER QUESTIONS", "SECTION B: MEDIUM ANSWER QUESTIONS", "SECTION C: LONG ANSWER & WRITING SKILLS") and populate "section" with the full section title for every question in that section.
+   - Extract marks printed next to the question or derived from section instructions (e.g. '4 questions x 2 marks = 8 Marks' -> 2 marks each, '4 questions x 3 marks = 12 Marks' -> 3 marks each, '2 questions x 5 marks = 10 Marks' -> 5 marks each).
+6. CONTINUATIONS ACROSS PAGES:
+   - When a question starts on one page and continues onto the next page (e.g. Question 4 or Question 6 table starts at the bottom of Page 1 and finishes at the top of Page 2), YOU MUST transcribe the continued text/table at the top of Page 2 completely.
+   - Set raw_question_number to null or "cont".
 7. BBOX & CONFIDENCE: Provide bbox in image PIXELS (x, y, width, height) or null. Confidence is 0.0 to 1.0.
 
 Return JSON in exactly this shape:
-{{"page_number": {page_number}, "questions": [{{"raw_question_number": "3(a)", "question_text": "...", "question_type": "descriptive", "marks": 5, "section": null, "confidence": 0.9, "bbox": {{"x": 0, "y": 0, "width": 0, "height": 0}}}}]}}
+{{"page_number": {page_number}, "questions": [{{"raw_question_number": "3(a)", "question_text": "...", "question_type": "descriptive", "marks": 5, "section": "SECTION C: LONG ANSWER & WRITING SKILLS", "confidence": 0.9, "bbox": {{"x": 0, "y": 0, "width": 0, "height": 0}}}}]}}
 question_type is one of: mcq, short_answer, descriptive, fill_blank, true_false, match, numerical, other."""
 
 
@@ -47,14 +61,16 @@ Adapt to any format (tabular marking schemes, point-by-point keys, solution manu
 For every question that has an answer on this page, transcribe the answer and criteria exactly as written.
 
 RULES:
-1. "question_number" is the question label as written (e.g. "1", "Q1", "(1)", "3(a)", "4(i)") or null if unlabelled. Never infer from ordering.
-2. "answer_text" is the complete answer. Preserve lists, formulas, steps, and Markdown tables.
-3. NEVER split continuation points (e.g. 1) point one, 2) point two) into separate questions—they belong to this answer.
-4. "marks" is the marks shown for this answer or null.
-5. "criteria": list of marking points or step allocations.
-6. "accepted_answers": alternative acceptable answers if explicitly listed.
-7. "keywords": keywords if explicitly listed.
-8. "bbox" in image PIXELS (x, y, width, height) or null.
+1. "question_number" is the question label as written (e.g. "1", "Q1", "(1)", "3(a)", "4(i)", "(b)") or null if unlabelled. Never infer from ordering.
+2. "answer_text" is the complete answer. Preserve lists, formulas, steps, chemical equations, and Markdown tables (| col1 | col2 |).
+3. Mathematical notation: preserve exponents ((4/3)⁵ or 1024/243), steps, and formulas: (a + b)² = a² + b² + 2ab, A = P(1 - R1/100)(1 - R2/100).
+4. Notice Writing & Formats: preserve notice structure and enclosing text borders.
+5. CONTINUATIONS ACROSS PAGES: If an answer starts on one page and finishes on the next page, transcribe the continuation text completely with question_number null or matching the question (e.g. "Q4 cont"). NEVER split continuation points into separate questions.
+6. "marks": Total marks for this question. If the marking scheme specifies individual criteria (e.g. "1 Mark: ...", "1 Mark: ..." -> 2 marks; "1.5 Marks: ...", "1.5 Marks: ..." -> 3 marks; "Marking Scheme (5 Marks Total)" -> 5 marks), calculate and set "marks" to the sum of the criteria or explicit question total. NEVER output the section total (like "10 Marks" or "12 Marks" from Section headings) as a question's marks.
+7. "criteria": list of marking points or step allocations (e.g. ["1 Mark: Stating the purpose...", "1 Mark: Mentioning finding the letter..."]).
+8. "accepted_answers": alternative acceptable answers if explicitly listed.
+9. "keywords": keywords if explicitly listed.
+10. "bbox" in image PIXELS (x, y, width, height) or null.
 
 Return JSON in exactly this shape:
 {{"page_number": {page_number}, "answers": [{{"question_number": "3(a)", "answer_text": "...", "marks": 5, "criteria": ["..."], "accepted_answers": [], "keywords": [], "confidence": 0.9, "bbox": null}}]}}"""

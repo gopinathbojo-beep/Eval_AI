@@ -143,12 +143,36 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
 
 def _load_results(doc, schema):
     out = []
+    pdf_doc = None
+    try:
+        orig = abs_path(doc.original_file)
+        if orig.exists() and orig.suffix.lower() == ".pdf":
+            import pymupdf
+            pdf_doc = pymupdf.open(orig)
+    except Exception:
+        pdf_doc = None
+
     for p in doc.pages:
         if p.get("ocr_status") != "OK":
             continue
+        p_dict = dict(p)
+        if pdf_doc and "page_text" not in p_dict:
+            p_num = p_dict.get("page_number", 1)
+            if 1 <= p_num <= len(pdf_doc):
+                try:
+                    p_dict["page_text"] = pdf_doc[p_num - 1].get_text()
+                except Exception:
+                    pass
         data = json.loads(abs_path(p["ocr_file"]).read_text(encoding="utf-8"))
-        out.append((p, schema.model_validate(data["parsed"])))
+        out.append((p_dict, schema.model_validate(data["parsed"])))
+
+    if pdf_doc:
+        try:
+            pdf_doc.close()
+        except Exception:
+            pass
     return out
+
 
 
 def _bbox_and_crop(p: dict, bbox, wd: Path, name: str):
@@ -164,6 +188,7 @@ def _bbox_and_crop(p: dict, bbox, wd: Path, name: str):
 
 
 def _build_questions(db: Session, doc, exam: Exam, wd: Path, results) -> None:
+    db.query(AnswerKey).filter_by(exam_id=exam.id).update({AnswerKey.exam_question_id: None})
     db.query(ExamQuestion).filter_by(exam_id=exam.id).delete()
     struct = parse_question_paper_structure(results)
 
@@ -245,7 +270,9 @@ def _build_questions(db: Session, doc, exam: Exam, wd: Path, results) -> None:
                 r.review_reason = "; ".join(filter(None, [r.review_reason, "Duplicate question number"]))
 
     if rows:
-        set_state(exam, "QUESTIONS_EXTRACTED")
+        from .state import at_least
+        if not at_least(exam, "QUESTIONS_EXTRACTED"):
+            set_state(exam, "QUESTIONS_EXTRACTED")
     else:
         log.warning("No questions extracted for exam %s", exam.id)
         doc.error_message = "No questions could be extracted from this document. Please check the document or add questions manually."

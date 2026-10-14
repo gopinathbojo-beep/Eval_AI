@@ -78,6 +78,12 @@ def refresh_key_state(db: Session, exam_id: str) -> None:
         elif k.mapping_status == "NEEDS_REVIEW" and (k.mapping_note or "").startswith("DUPLICATE_MAPPING"):
             k.mapping_status, k.mapping_note = "MAPPED", None
         q = qmap.get(k.exam_question_id) if k.exam_question_id else None
+        # Inherit question max_marks if answer key marks was missing
+        if (k.marks is None or k.marks == 0.0) and q and q.max_marks is not None:
+            k.marks = q.max_marks
+        # Correct section total misattribution (e.g. 10 Marks from Section C header)
+        elif k.marks is not None and q and q.max_marks is not None and k.marks > q.max_marks * 1.5:
+            k.marks = q.max_marks
         k.mark_mismatch = bool(
             q and k.marks is not None and q.max_marks is not None and abs(k.marks - q.max_marks) > 1e-9
         )

@@ -10,7 +10,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../../theme/ThemeContext";
-import { api } from "../../api/client";
+import { api, downloadAndShareFile } from "../../api/client";
 import type { ClassRow } from "../../types";
 import { Card } from "../../components/Card";
 import { Button } from "../../components/Button";
@@ -41,8 +41,10 @@ export const ClassesScreen: React.FC<ClassesScreenProps> = ({ navigation }) => {
 
   // Modal State
   const [modalVisible, setModalVisible] = useState(false);
+  const [editingClass, setEditingClass] = useState<ClassRow | null>(null);
   const [classNameInput, setClassNameInput] = useState("");
-  const [creating, setCreating] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [exportingMarksheet, setExportingMarksheet] = useState(false);
 
   const fetchClasses = useCallback(async () => {
     try {
@@ -65,24 +67,83 @@ export const ClassesScreen: React.FC<ClassesScreenProps> = ({ navigation }) => {
     fetchClasses();
   };
 
-  const handleCreate = async () => {
+  const handleOpenAdd = () => {
+    setEditingClass(null);
+    setClassNameInput("");
+    setModalVisible(true);
+  };
+
+  const handleOpenEdit = (c: ClassRow) => {
+    setEditingClass(c);
+    setClassNameInput(c.name);
+    setModalVisible(true);
+  };
+
+  const handleSaveClass = async () => {
     if (!classNameInput.trim()) {
       Alert.alert("Validation", "Class name cannot be empty.");
       return;
     }
     try {
-      setCreating(true);
-      await api<ClassRow>("/classes", {
-        method: "POST",
-        json: { name: classNameInput.trim() },
-      });
+      setSaving(true);
+      if (editingClass) {
+        await api<ClassRow>(`/classes/${editingClass.id}`, {
+          method: "PATCH",
+          json: { name: classNameInput.trim() },
+        });
+        Alert.alert("Success", "Class updated successfully.");
+      } else {
+        await api<ClassRow>("/classes", {
+          method: "POST",
+          json: { name: classNameInput.trim() },
+        });
+      }
       setModalVisible(false);
       setClassNameInput("");
+      setEditingClass(null);
       fetchClasses();
     } catch (err: any) {
-      Alert.alert("Error", err.message || "Failed to create class");
+      Alert.alert("Error", err.message || "Failed to save class");
     } finally {
-      setCreating(false);
+      setSaving(false);
+    }
+  };
+
+  const handleDeleteClass = (c: ClassRow) => {
+    Alert.alert(
+      "Delete Class",
+      `Are you sure you want to delete class "${c.name}"? This will also remove all exams and students associated with this class.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              setSaving(true);
+              await api(`/classes/${c.id}`, { method: "DELETE" });
+              setModalVisible(false);
+              setEditingClass(null);
+              fetchClasses();
+            } catch (err: any) {
+              Alert.alert("Error", err.message || "Failed to delete class.");
+            } finally {
+              setSaving(false);
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const handleExportMarksheet = async () => {
+    try {
+      setExportingMarksheet(true);
+      await downloadAndShareFile("/reports/marksheet", "ADEM_Student_Marksheet.xlsx");
+    } catch (err: any) {
+      Alert.alert("Error", err.message || "Failed to download marksheet.");
+    } finally {
+      setExportingMarksheet(false);
     }
   };
 
@@ -186,13 +247,23 @@ export const ClassesScreen: React.FC<ClassesScreenProps> = ({ navigation }) => {
             </TouchableOpacity>
           </View>
 
-          <Button
-            title="Add Class"
-            icon={<Ionicons name="add" size={16} color="#FFFFFF" />}
-            variant="gradient"
-            size="small"
-            onPress={() => setModalVisible(true)}
-          />
+          <View style={{ flexDirection: "row", gap: 6 }}>
+            <Button
+              title="Marksheet"
+              icon={<Ionicons name="download-outline" size={14} color="#FFFFFF" />}
+              variant="secondary"
+              size="small"
+              loading={exportingMarksheet}
+              onPress={handleExportMarksheet}
+            />
+            <Button
+              title="Add Class"
+              icon={<Ionicons name="add" size={16} color="#FFFFFF" />}
+              variant="gradient"
+              size="small"
+              onPress={handleOpenAdd}
+            />
+          </View>
         </View>
       </View>
 
@@ -216,7 +287,7 @@ export const ClassesScreen: React.FC<ClassesScreenProps> = ({ navigation }) => {
               search ? "No classes match your search query." : "Add your first classroom or grade."
             }
             actionTitle={search ? undefined : "Add Class"}
-            onAction={() => setModalVisible(true)}
+            onAction={handleOpenAdd}
           />
         }
         renderItem={({ item }) => (
@@ -237,6 +308,12 @@ export const ClassesScreen: React.FC<ClassesScreenProps> = ({ navigation }) => {
                 label={`${item.student_count} Students`}
                 variant={item.student_count > 0 ? "teal" : "muted"}
               />
+              <TouchableOpacity
+                style={{ padding: 6, marginLeft: 6 }}
+                onPress={() => handleOpenEdit(item)}
+              >
+                <Ionicons name="pencil-outline" size={17} color={colors.primary} />
+              </TouchableOpacity>
             </View>
 
             <View style={[styles.cardFooter, { borderTopColor: colors.border }]}>
@@ -249,7 +326,12 @@ export const ClassesScreen: React.FC<ClassesScreenProps> = ({ navigation }) => {
                   View Enrolled Students
                 </Text>
               </TouchableOpacity>
-              <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
+              <TouchableOpacity
+                style={{ padding: 4 }}
+                onPress={() => handleDeleteClass(item)}
+              >
+                <Ionicons name="trash-outline" size={16} color={colors.error} />
+              </TouchableOpacity>
             </View>
           </Card>
         )}
@@ -265,9 +347,16 @@ export const ClassesScreen: React.FC<ClassesScreenProps> = ({ navigation }) => {
 
       <ModalDialog
         visible={modalVisible}
-        onClose={() => setModalVisible(false)}
-        title="Add New Class"
-        subtitle="Create a class section or grade for examinations"
+        onClose={() => {
+          setModalVisible(false);
+          setEditingClass(null);
+        }}
+        title={editingClass ? `Edit Class (${editingClass.name})` : "Add New Class"}
+        subtitle={
+          editingClass
+            ? "Update the classroom or grade name"
+            : "Create a class section or grade for examinations"
+        }
       >
         <Input
           label="Class Name"
@@ -277,12 +366,24 @@ export const ClassesScreen: React.FC<ClassesScreenProps> = ({ navigation }) => {
           autoFocus
         />
         <Button
-          title="Create Class"
-          onPress={handleCreate}
+          title={editingClass ? "Save Changes" : "Create Class"}
+          onPress={handleSaveClass}
           variant="gradient"
-          loading={creating}
+          loading={saving}
           fullWidth
+          style={{ marginTop: 12 }}
         />
+
+        {editingClass && (
+          <Button
+            title="Delete Class"
+            onPress={() => handleDeleteClass(editingClass)}
+            variant="outline"
+            fullWidth
+            style={{ marginTop: 8, borderColor: colors.error }}
+            textStyle={{ color: colors.error }}
+          />
+        )}
       </ModalDialog>
     </View>
   );

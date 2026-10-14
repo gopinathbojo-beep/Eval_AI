@@ -1,5 +1,6 @@
 from __future__ import annotations
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
@@ -73,6 +74,44 @@ def dashboard(db: Session = Depends(get_db), t: Teacher = Depends(current_teache
     }
 
 
+# ---------- cascade delete helpers ----------
+def cascade_delete_exam_records(db: Session, exam_id: str):
+    """Safely cascades deletion of all dependent records and files for an exam."""
+    evals = db.query(Evaluation).filter_by(exam_id=exam_id).all()
+    eval_ids = [ev.id for ev in evals]
+    if eval_ids:
+        db.query(EvaluationItem).filter(EvaluationItem.evaluation_id.in_(eval_ids)).delete(synchronize_session=False)
+        db.query(StudentAnswer).filter(StudentAnswer.evaluation_id.in_(eval_ids)).delete(synchronize_session=False)
+        db.query(Evaluation).filter_by(exam_id=exam_id).delete(synchronize_session=False)
+
+    db.query(AnswerKey).filter_by(exam_id=exam_id).delete(synchronize_session=False)
+    db.query(AnswerSheetDocument).filter_by(exam_id=exam_id).delete(synchronize_session=False)
+    db.query(AnswerKeyDocument).filter_by(exam_id=exam_id).delete(synchronize_session=False)
+    db.query(QuestionPaperDocument).filter_by(exam_id=exam_id).delete(synchronize_session=False)
+    db.query(ExamQuestion).filter_by(exam_id=exam_id).delete(synchronize_session=False)
+    db.query(AuditLog).filter_by(exam_id=exam_id).delete(synchronize_session=False)
+    db.query(Exam).filter_by(id=exam_id).delete(synchronize_session=False)
+
+    try:
+        exam_dir = get_settings().data_path / "exams" / exam_id
+        if exam_dir.exists():
+            shutil.rmtree(exam_dir, ignore_errors=True)
+    except Exception:
+        pass
+
+
+def cascade_delete_student_records(db: Session, student_id: str):
+    """Safely cascades deletion of evaluations and answer sheets for a student."""
+    evals = db.query(Evaluation).filter_by(student_id=student_id).all()
+    eval_ids = [ev.id for ev in evals]
+    if eval_ids:
+        db.query(EvaluationItem).filter(EvaluationItem.evaluation_id.in_(eval_ids)).delete(synchronize_session=False)
+        db.query(StudentAnswer).filter(StudentAnswer.evaluation_id.in_(eval_ids)).delete(synchronize_session=False)
+        db.query(Evaluation).filter_by(student_id=student_id).delete(synchronize_session=False)
+    db.query(AnswerSheetDocument).filter_by(student_id=student_id).delete(synchronize_session=False)
+    db.query(Student).filter_by(id=student_id).delete(synchronize_session=False)
+
+
 # ---------- classes / subjects / students ----------
 class NameIn(BaseModel):
     name: str = Field(min_length=1, max_length=100)
@@ -94,6 +133,38 @@ def create_class(body: NameIn, db: Session = Depends(get_db), t: Teacher = Depen
     return {"id": c.id, "name": c.name, "student_count": 0}
 
 
+@router.patch("/classes/{class_id}")
+def update_class(class_id: str, body: NameIn, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    c = db.get(SchoolClass, class_id)
+    if not c or c.teacher_id != t.id:
+        raise err(404, "NOT_FOUND", "Class not found.")
+    c.name = body.name.strip()
+    db.commit()
+    return {"id": c.id, "name": c.name, "student_count": db.query(Student).filter_by(class_id=c.id).count()}
+
+
+@router.delete("/classes/{class_id}")
+def delete_class(class_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    c = db.get(SchoolClass, class_id)
+    if not c or c.teacher_id != t.id:
+        raise err(404, "NOT_FOUND", "Class not found.")
+
+    # 1. Cascade delete all exams assigned to this class
+    exams = db.query(Exam).filter_by(class_id=c.id).all()
+    for ex in exams:
+        cascade_delete_exam_records(db, ex.id)
+
+    # 2. Cascade delete all students enrolled in this class
+    students = db.query(Student).filter_by(class_id=c.id).all()
+    for st in students:
+        cascade_delete_student_records(db, st.id)
+
+    # 3. Delete the class itself
+    db.delete(c)
+    db.commit()
+    return {"deleted": True, "id": class_id}
+
+
 @router.get("/subjects")
 def list_subjects(db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     return [{"id": s.id, "name": s.name, "code": s.code}
@@ -108,10 +179,44 @@ def create_subject(body: NameIn, db: Session = Depends(get_db), t: Teacher = Dep
     return {"id": s.id, "name": s.name, "code": s.code}
 
 
+@router.patch("/subjects/{subject_id}")
+def update_subject(subject_id: str, body: NameIn, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    s = db.get(Subject, subject_id)
+    if not s or s.teacher_id != t.id:
+        raise err(404, "NOT_FOUND", "Subject not found.")
+    s.name = body.name.strip()
+    if body.code is not None:
+        s.code = body.code
+    db.commit()
+    return {"id": s.id, "name": s.name, "code": s.code}
+
+
+@router.delete("/subjects/{subject_id}")
+def delete_subject(subject_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    s = db.get(Subject, subject_id)
+    if not s or s.teacher_id != t.id:
+        raise err(404, "NOT_FOUND", "Subject not found.")
+
+    # Cascade delete all exams assigned to this subject
+    exams = db.query(Exam).filter_by(subject_id=s.id).all()
+    for ex in exams:
+        cascade_delete_exam_records(db, ex.id)
+
+    db.delete(s)
+    db.commit()
+    return {"deleted": True, "id": subject_id}
+
+
 class StudentIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     roll_number: str = Field(min_length=1, max_length=50)
     class_id: str
+
+
+class StudentPatch(BaseModel):
+    name: str | None = Field(None, min_length=1, max_length=200)
+    roll_number: str | None = Field(None, min_length=1, max_length=50)
+    class_id: str | None = None
 
 
 @router.get("/students")
@@ -138,6 +243,75 @@ def create_student(body: StudentIn, db: Session = Depends(get_db), t: Teacher = 
         raise err(409, "DUPLICATE_ROLL", f"Roll number {body.roll_number} already exists in {c.name}.")
     db.refresh(s)
     return student_view(s)
+
+
+@router.patch("/students/{student_id}")
+def update_student(student_id: str, body: StudentPatch, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    s = db.get(Student, student_id)
+    if not s:
+        raise err(404, "NOT_FOUND", "Student not found.")
+    orig_c = db.get(SchoolClass, s.class_id)
+    if not orig_c or orig_c.teacher_id != t.id:
+        raise err(404, "NOT_FOUND", "Student not found.")
+
+    target_class_id = s.class_id
+    if body.class_id and body.class_id != s.class_id:
+        new_c = db.get(SchoolClass, body.class_id)
+        if not new_c or new_c.teacher_id != t.id:
+            raise err(404, "NOT_FOUND", "Target class not found.")
+        s.class_id = new_c.id
+        target_class_id = new_c.id
+
+    if body.name is not None and body.name.strip():
+        s.name = body.name.strip()
+    if body.roll_number is not None and body.roll_number.strip():
+        s.roll_number = body.roll_number.strip()
+
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        target_c_name = db.get(SchoolClass, target_class_id).name
+        raise err(409, "DUPLICATE_ROLL", f"Roll number {s.roll_number} already exists in {target_c_name}.")
+    db.refresh(s)
+    return student_view(s)
+
+
+@router.delete("/students/{student_id}")
+def delete_student(student_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    s = db.get(Student, student_id)
+    if not s:
+        raise err(404, "NOT_FOUND", "Student not found.")
+    c = db.get(SchoolClass, s.class_id)
+    if not c or c.teacher_id != t.id:
+        raise err(404, "NOT_FOUND", "Student not found.")
+    cascade_delete_student_records(db, s.id)
+    db.commit()
+    return {"deleted": True, "id": student_id}
+
+
+# ---------- reports ----------
+@router.get("/reports/marksheet")
+def download_marksheet(db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    import traceback
+    import logging
+    from fastapi import Response
+    from fastapi.responses import JSONResponse
+    try:
+        from ..services.marksheet import generate_marksheet_bytes, sync_root_marksheet_file
+        sync_root_marksheet_file(db, t.id)
+        stream = generate_marksheet_bytes(db, teacher_id=t.id)
+        return Response(
+            content=stream.getvalue(),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": "attachment; filename=ADEM_Student_Marksheet.xlsx"}
+        )
+    except Exception as e:
+        logging.getLogger("adem").exception("Marksheet generation error")
+        return JSONResponse(
+            {"code": "MARKSHEET_ERROR", "detail": str(e), "trace": traceback.format_exc()},
+            status_code=500,
+        )
 
 
 # ---------- exams ----------
@@ -226,23 +400,12 @@ def patch_exam(exam_id: str, body: ExamPatch, db: Session = Depends(get_db), t: 
 @router.delete("/exams/{exam_id}")
 def delete_exam(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     e = get_exam(db, t, exam_id)
-    evals = db.query(Evaluation).filter_by(exam_id=e.id).all()
-    eval_ids = [ev.id for ev in evals]
-    if eval_ids:
-        db.query(EvaluationItem).filter(EvaluationItem.evaluation_id.in_(eval_ids)).delete(synchronize_session=False)
-        db.query(StudentAnswer).filter(StudentAnswer.evaluation_id.in_(eval_ids)).delete(synchronize_session=False)
-        db.query(Evaluation).filter_by(exam_id=e.id).delete(synchronize_session=False)
-
-    db.query(AnswerKey).filter_by(exam_id=e.id).delete(synchronize_session=False)
-    db.query(AnswerSheetDocument).filter_by(exam_id=e.id).delete(synchronize_session=False)
-    db.query(AnswerKeyDocument).filter_by(exam_id=e.id).delete(synchronize_session=False)
-    db.query(QuestionPaperDocument).filter_by(exam_id=e.id).delete(synchronize_session=False)
-    db.query(ExamQuestion).filter_by(exam_id=e.id).delete(synchronize_session=False)
-    db.query(AuditLog).filter_by(exam_id=e.id).delete(synchronize_session=False)
-    db.delete(e)
+    cascade_delete_exam_records(db, e.id)
     db.commit()
-
-    exam_dir = get_settings().data_path / "exams" / exam_id
-    if exam_dir.exists():
-        shutil.rmtree(exam_dir, ignore_errors=True)
+    try:
+        from ..services.marksheet import sync_root_marksheet_file
+        sync_root_marksheet_file(db, t.id)
+    except Exception:
+        pass
     return {"ok": True}
+

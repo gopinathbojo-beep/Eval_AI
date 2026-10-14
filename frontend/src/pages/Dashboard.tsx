@@ -1,15 +1,42 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useApi } from "../hooks/useApi";
+import { downloadFile } from "../api/client";
 import type { Dashboard as D } from "../types";
 import { Button, Card, Empty, ErrorPanel, Loading, PageHeader, Stat, StatusBadge } from "../components/ui";
 
 export default function Dashboard() {
   const { data, error, loading } = useApi<D>("/dashboard");
+  const [downloading, setDownloading] = useState(false);
+
+  const handleDownloadMarksheet = async () => {
+    try {
+      setDownloading(true);
+      await downloadFile("/reports/marksheet", "ADEM_Student_Marksheet.xlsx");
+    } catch (err: any) {
+      alert(err.message || "Failed to download marksheet.");
+    } finally {
+      setDownloading(false);
+    }
+  };
+
   if (loading) return <Loading />;
   if (error || !data) return <ErrorPanel error={error} />;
   return (
     <>
-      <PageHeader title="Dashboard" actions={<Link to="/exams/new"><Button variant="primary">Create exam</Button></Link>} />
+      <PageHeader
+        title="Dashboard"
+        actions={
+          <div className="flex items-center gap-2">
+            <Button variant="soft" busy={downloading} onClick={handleDownloadMarksheet}>
+              Download Marksheet (.xlsx)
+            </Button>
+            <Link to="/exams/new">
+              <Button variant="primary">Create exam</Button>
+            </Link>
+          </div>
+        }
+      />
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
         <Stat label="Classes" value={data.total_classes} /><Stat label="Subjects" value={data.total_subjects} />
         <Stat label="Exams" value={data.total_exams} /><Stat label="Students" value={data.total_students} />

@@ -109,8 +109,10 @@ def client(ollama_stub):
     from app.security import hash_password
     with TestClient(app) as c:
         db = SessionLocal()
-        db.add(Teacher(name="Ms Rao", email="rao@school.org", password_hash=hash_password("password123")))
-        db.commit(); db.close()
+        if not db.query(Teacher).filter_by(email="rao@school.org").first():
+            db.add(Teacher(name="Ms Rao", email="rao@school.org", password_hash=hash_password("password123")))
+            db.commit()
+        db.close()
         yield c
 
 

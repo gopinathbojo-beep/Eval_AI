@@ -44,19 +44,22 @@ def render_document(src: Path, ext: str, work_dir: Path) -> list[dict]:
     proc_dir.mkdir(parents=True, exist_ok=True)
     meta: list[dict] = []
 
-    def finish(n: int, img: Image.Image):
+    def finish(n: int, img: Image.Image, page_text: str | None = None):
         name = f"page-{n:03d}.png"
         page_path = pages_dir / name
         img.save(page_path, "PNG")
         ocr_path, info = make_ocr_copy(img, proc_dir / name, s.ocr_max_side)
-        meta.append({
+        entry = {
             "page_number": n, "width": img.width, "height": img.height,
             "source_file": str(page_path.relative_to(s.data_path)),
             "processed_file": str(ocr_path.relative_to(s.data_path)),
             "ocr_width": info["ocr_width"], "ocr_height": info["ocr_height"],
             "content_bbox": info["content_bbox"],
             "ocr_status": "PENDING", "ocr_error": None,
-        })
+        }
+        if page_text:
+            entry["page_text"] = page_text
+        meta.append(entry)
 
     if ext == "docx":
         src = _docx_to_pdf(src, work_dir)
@@ -74,7 +77,8 @@ def render_document(src: Path, ext: str, work_dir: Path) -> list[dict]:
         for i, page in enumerate(doc, start=1):
             pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False)
             img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-            finish(i, img)
+            txt = page.get_text()
+            finish(i, img, page_text=txt)
         doc.close()
     elif ext in ("png", "jpg"):
         try:

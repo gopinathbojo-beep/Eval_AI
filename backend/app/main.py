@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from .config import get_settings
 from .database import init_db
-from .routes import answer_keys, core, documents, evaluations, questions
+from .routes import answer_keys, core, documents, evaluations, questions, reference_collection
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -43,7 +43,7 @@ def create_app() -> FastAPI:
         return JSONResponse({"code": "SERVER_ERROR", "message": "Something went wrong on the server. Details are in the server log."},
                             status_code=500)
 
-    for r in (core.router, documents.router, questions.router, answer_keys.router, evaluations.router):
+    for r in (core.router, documents.router, questions.router, answer_keys.router, evaluations.router, reference_collection.router):
         app.include_router(r)
 
     @app.get("/api/health")

@@ -41,9 +41,10 @@ export const SubjectsScreen: React.FC<SubjectsScreenProps> = () => {
 
   // Modal State
   const [modalVisible, setModalVisible] = useState(false);
+  const [editingSubject, setEditingSubject] = useState<Subject | null>(null);
   const [nameInput, setNameInput] = useState("");
   const [codeInput, setCodeInput] = useState("");
-  const [creating, setCreating] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const fetchSubjects = useCallback(async () => {
     try {
@@ -66,29 +67,82 @@ export const SubjectsScreen: React.FC<SubjectsScreenProps> = () => {
     fetchSubjects();
   };
 
-  const handleCreate = async () => {
+  const handleOpenAdd = () => {
+    setEditingSubject(null);
+    setNameInput("");
+    setCodeInput("");
+    setModalVisible(true);
+  };
+
+  const handleOpenEdit = (s: Subject) => {
+    setEditingSubject(s);
+    setNameInput(s.name);
+    setCodeInput(s.code || "");
+    setModalVisible(true);
+  };
+
+  const handleSaveSubject = async () => {
     if (!nameInput.trim()) {
       Alert.alert("Validation", "Subject name cannot be empty.");
       return;
     }
     try {
-      setCreating(true);
-      await api<Subject>("/subjects", {
-        method: "POST",
-        json: {
-          name: nameInput.trim(),
-          code: codeInput.trim() || null,
-        },
-      });
+      setSaving(true);
+      if (editingSubject) {
+        await api<Subject>(`/subjects/${editingSubject.id}`, {
+          method: "PATCH",
+          json: {
+            name: nameInput.trim(),
+            code: codeInput.trim() || null,
+          },
+        });
+        Alert.alert("Success", "Subject updated successfully.");
+      } else {
+        await api<Subject>("/subjects", {
+          method: "POST",
+          json: {
+            name: nameInput.trim(),
+            code: codeInput.trim() || null,
+          },
+        });
+      }
       setModalVisible(false);
       setNameInput("");
       setCodeInput("");
+      setEditingSubject(null);
       fetchSubjects();
     } catch (err: any) {
-      Alert.alert("Error", err.message || "Failed to create subject");
+      Alert.alert("Error", err.message || "Failed to save subject");
     } finally {
-      setCreating(false);
+      setSaving(false);
     }
+  };
+
+  const handleDeleteSubject = (s: Subject) => {
+    Alert.alert(
+      "Delete Subject",
+      `Are you sure you want to delete subject "${s.name}"? This will also remove any exams associated with this subject.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              setSaving(true);
+              await api(`/subjects/${s.id}`, { method: "DELETE" });
+              setModalVisible(false);
+              setEditingSubject(null);
+              fetchSubjects();
+            } catch (err: any) {
+              Alert.alert("Error", err.message || "Failed to delete subject.");
+            } finally {
+              setSaving(false);
+            }
+          },
+        },
+      ]
+    );
   };
 
   const toggleSort = () => {
@@ -196,7 +250,7 @@ export const SubjectsScreen: React.FC<SubjectsScreenProps> = () => {
             icon={<Ionicons name="add" size={16} color="#FFFFFF" />}
             variant="gradient"
             size="small"
-            onPress={() => setModalVisible(true)}
+            onPress={handleOpenAdd}
           />
         </View>
       </View>
@@ -221,7 +275,7 @@ export const SubjectsScreen: React.FC<SubjectsScreenProps> = () => {
               search ? "No subjects match your search query." : "Add courses and subjects to your curriculum."
             }
             actionTitle={search ? undefined : "Add Subject"}
-            onAction={() => setModalVisible(true)}
+            onAction={handleOpenAdd}
           />
         }
         renderItem={({ item }) => (
@@ -248,6 +302,18 @@ export const SubjectsScreen: React.FC<SubjectsScreenProps> = () => {
               ) : (
                 <Badge label="Standard" variant="muted" />
               )}
+              <TouchableOpacity
+                style={{ padding: 6, marginLeft: 6 }}
+                onPress={() => handleOpenEdit(item)}
+              >
+                <Ionicons name="pencil-outline" size={17} color={colors.primary} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{ padding: 6, marginLeft: 2 }}
+                onPress={() => handleDeleteSubject(item)}
+              >
+                <Ionicons name="trash-outline" size={17} color={colors.error} />
+              </TouchableOpacity>
             </View>
           </Card>
         )}
@@ -263,9 +329,16 @@ export const SubjectsScreen: React.FC<SubjectsScreenProps> = () => {
 
       <ModalDialog
         visible={modalVisible}
-        onClose={() => setModalVisible(false)}
-        title="Add New Subject"
-        subtitle="Define a subject or course module"
+        onClose={() => {
+          setModalVisible(false);
+          setEditingSubject(null);
+        }}
+        title={editingSubject ? `Edit Subject (${editingSubject.name})` : "Add New Subject"}
+        subtitle={
+          editingSubject
+            ? "Update subject name or course code"
+            : "Define a subject or course module"
+        }
       >
         <Input
           label="Subject Name"
@@ -282,12 +355,24 @@ export const SubjectsScreen: React.FC<SubjectsScreenProps> = () => {
           autoCapitalize="characters"
         />
         <Button
-          title="Create Subject"
-          onPress={handleCreate}
+          title={editingSubject ? "Save Changes" : "Create Subject"}
+          onPress={handleSaveSubject}
           variant="gradient"
-          loading={creating}
+          loading={saving}
           fullWidth
+          style={{ marginTop: 12 }}
         />
+
+        {editingSubject && (
+          <Button
+            title="Delete Subject"
+            onPress={() => handleDeleteSubject(editingSubject)}
+            variant="outline"
+            fullWidth
+            style={{ marginTop: 8, borderColor: colors.error }}
+            textStyle={{ color: colors.error }}
+          />
+        )}
       </ModalDialog>
     </View>
   );

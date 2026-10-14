@@ -46,10 +46,11 @@ export const StudentsScreen: React.FC<StudentsScreenProps> = ({ route }) => {
 
   // Modal State
   const [modalVisible, setModalVisible] = useState(false);
+  const [editingStudent, setEditingStudent] = useState<Student | null>(null);
   const [nameInput, setNameInput] = useState("");
   const [rollInput, setRollInput] = useState("");
   const [modalClassId, setModalClassId] = useState<string>("");
-  const [creating, setCreating] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
@@ -79,30 +80,90 @@ export const StudentsScreen: React.FC<StudentsScreenProps> = ({ route }) => {
     fetchData();
   };
 
-  const handleCreate = async () => {
+  const handleOpenAdd = () => {
+    setEditingStudent(null);
+    setNameInput("");
+    setRollInput("");
+    if (selectedClassId) {
+      setModalClassId(selectedClassId);
+    } else if (classes.length > 0) {
+      setModalClassId(classes[0].id);
+    }
+    setModalVisible(true);
+  };
+
+  const handleOpenEdit = (st: Student) => {
+    setEditingStudent(st);
+    setNameInput(st.name);
+    setRollInput(st.roll_number);
+    setModalClassId(st.class_id);
+    setModalVisible(true);
+  };
+
+  const handleSaveStudent = async () => {
     if (!nameInput.trim() || !rollInput.trim() || !modalClassId) {
       Alert.alert("Validation", "Please fill in all fields and select a class.");
       return;
     }
     try {
-      setCreating(true);
-      await api<Student>("/students", {
-        method: "POST",
-        json: {
-          name: nameInput.trim(),
-          roll_number: rollInput.trim(),
-          class_id: modalClassId,
-        },
-      });
+      setSaving(true);
+      if (editingStudent) {
+        await api<Student>(`/students/${editingStudent.id}`, {
+          method: "PATCH",
+          json: {
+            name: nameInput.trim(),
+            roll_number: rollInput.trim(),
+            class_id: modalClassId,
+          },
+        });
+        Alert.alert("Success", "Student details updated successfully.");
+      } else {
+        await api<Student>("/students", {
+          method: "POST",
+          json: {
+            name: nameInput.trim(),
+            roll_number: rollInput.trim(),
+            class_id: modalClassId,
+          },
+        });
+      }
       setModalVisible(false);
       setNameInput("");
       setRollInput("");
+      setEditingStudent(null);
       fetchData();
     } catch (err: any) {
-      Alert.alert("Error", err.message || "Failed to add student");
+      Alert.alert("Error", err.message || "Failed to save student");
     } finally {
-      setCreating(false);
+      setSaving(false);
     }
+  };
+
+  const handleDeleteStudent = (st: Student) => {
+    Alert.alert(
+      "Delete Student",
+      `Are you sure you want to delete ${st.name} (${st.roll_number})? This will also remove all evaluations associated with this student.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              setSaving(true);
+              await api(`/students/${st.id}`, { method: "DELETE" });
+              setModalVisible(false);
+              setEditingStudent(null);
+              fetchData();
+            } catch (err: any) {
+              Alert.alert("Error", err.message || "Failed to delete student.");
+            } finally {
+              setSaving(false);
+            }
+          },
+        },
+      ]
+    );
   };
 
   const toggleSort = () => {
@@ -264,7 +325,7 @@ export const StudentsScreen: React.FC<StudentsScreenProps> = ({ route }) => {
             icon={<Ionicons name="add" size={16} color="#FFFFFF" />}
             variant="gradient"
             size="small"
-            onPress={() => setModalVisible(true)}
+            onPress={handleOpenAdd}
           />
         </View>
       </View>
@@ -291,36 +352,47 @@ export const StudentsScreen: React.FC<StudentsScreenProps> = ({ route }) => {
                 : "Enroll students to start assigning examinations."
             }
             actionTitle={search || selectedClassId ? undefined : "Add Student"}
-            onAction={() => setModalVisible(true)}
+            onAction={handleOpenAdd}
           />
         }
         renderItem={({ item }) => (
-          <Card style={styles.card}>
-            <View style={styles.cardHeader}>
-              <View
-                style={[
-                  styles.avatarCircle,
-                  { backgroundColor: "rgba(7, 159, 189, 0.12)" },
-                ]}
-              >
-                <Text style={[styles.avatarText, { color: colors.primary }]}>
-                  {item.name.charAt(0).toUpperCase()}
-                </Text>
+          <TouchableOpacity
+            activeOpacity={0.7}
+            onPress={() => handleOpenEdit(item)}
+          >
+            <Card style={styles.card}>
+              <View style={styles.cardHeader}>
+                <View
+                  style={[
+                    styles.avatarCircle,
+                    { backgroundColor: "rgba(7, 159, 189, 0.12)" },
+                  ]}
+                >
+                  <Text style={[styles.avatarText, { color: colors.primary }]}>
+                    {item.name.charAt(0).toUpperCase()}
+                  </Text>
+                </View>
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={[styles.studentName, { color: colors.text }]}>
+                    {item.name}
+                  </Text>
+                  <Text style={[styles.metaText, { color: colors.textSecondary }]}>
+                    Roll No: <Text style={{ color: colors.text, fontWeight: "600" }}>{item.roll_number}</Text>
+                  </Text>
+                </View>
+                <Badge
+                  label={item.class_name || "Unassigned"}
+                  variant={item.class_name ? "teal" : "muted"}
+                />
+                <TouchableOpacity
+                  style={{ padding: 6, marginLeft: 6 }}
+                  onPress={() => handleOpenEdit(item)}
+                >
+                  <Ionicons name="pencil-outline" size={17} color={colors.primary} />
+                </TouchableOpacity>
               </View>
-              <View style={{ flex: 1, marginLeft: 12 }}>
-                <Text style={[styles.studentName, { color: colors.text }]}>
-                  {item.name}
-                </Text>
-                <Text style={[styles.metaText, { color: colors.textSecondary }]}>
-                  Roll No: <Text style={{ color: colors.text, fontWeight: "600" }}>{item.roll_number}</Text>
-                </Text>
-              </View>
-              <Badge
-                label={item.class_name || "Unassigned"}
-                variant={item.class_name ? "teal" : "muted"}
-              />
-            </View>
-          </Card>
+            </Card>
+          </TouchableOpacity>
         )}
         ListFooterComponent={
           <Pagination
@@ -334,9 +406,16 @@ export const StudentsScreen: React.FC<StudentsScreenProps> = ({ route }) => {
 
       <ModalDialog
         visible={modalVisible}
-        onClose={() => setModalVisible(false)}
-        title="Add New Student"
-        subtitle="Enroll student with their name and roll number"
+        onClose={() => {
+          setModalVisible(false);
+          setEditingStudent(null);
+        }}
+        title={editingStudent ? "Edit Student Details" : "Add New Student"}
+        subtitle={
+          editingStudent
+            ? "Update student name, roll number, or assigned class"
+            : "Enroll student with their name and roll number"
+        }
       >
         <Input
           label="Full Name"
@@ -384,13 +463,24 @@ export const StudentsScreen: React.FC<StudentsScreenProps> = ({ route }) => {
         </View>
 
         <Button
-          title="Enroll Student"
-          onPress={handleCreate}
+          title={editingStudent ? "Save Student Changes" : "Enroll Student"}
+          onPress={handleSaveStudent}
           variant="gradient"
-          loading={creating}
+          loading={saving}
           fullWidth
           style={{ marginTop: 16 }}
         />
+
+        {editingStudent && (
+          <Button
+            title="Delete Student"
+            onPress={() => handleDeleteStudent(editingStudent)}
+            variant="outline"
+            fullWidth
+            style={{ marginTop: 8, borderColor: colors.error }}
+            textStyle={{ color: colors.error }}
+          />
+        )}
       </ModalDialog>
     </View>
   );

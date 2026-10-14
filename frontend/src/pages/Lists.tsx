@@ -1,5 +1,5 @@
 import { useMemo, useState, type FormEvent } from "react";
-import { api } from "../api/client";
+import { api, downloadFile } from "../api/client";
 import { FilteredEmptyState, TablePagination, TableToolbar } from "../components/TableToolbar";
 import {
   Button,
@@ -64,6 +64,29 @@ function SimpleForm({
 export function Classes() {
   const { data, error, loading, reload } = useApi<ClassRow[]>("/classes");
   const [open, setOpen] = useState(false);
+  const [editingClass, setEditingClass] = useState<ClassRow | null>(null);
+  const [downloading, setDownloading] = useState(false);
+
+  const handleDownloadMarksheet = async () => {
+    try {
+      setDownloading(true);
+      await downloadFile("/reports/marksheet", "ADEM_Student_Marksheet.xlsx");
+    } catch (err: any) {
+      alert(err.message || "Failed to download marksheet.");
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  const handleDeleteClass = async (c: ClassRow) => {
+    if (!window.confirm(`Are you sure you want to delete class "${c.name}"? This will also remove any exams and enrolled students associated with this class.`)) return;
+    try {
+      await api(`/classes/${c.id}`, { method: "DELETE" });
+      reload();
+    } catch (err: any) {
+      alert(err.message || "Failed to delete class.");
+    }
+  };
 
   const table = useTableState<ClassRow>({
     data,
@@ -87,9 +110,14 @@ export function Classes() {
       <PageHeader
         title="Classes"
         actions={
-          <Button variant="primary" onClick={() => setOpen(true)}>
-            Add
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="soft" busy={downloading} onClick={handleDownloadMarksheet}>
+              Download Marksheet (.xlsx)
+            </Button>
+            <Button variant="primary" onClick={() => setOpen(true)}>
+              Add Class
+            </Button>
+          </div>
         }
       />
       <ErrorPanel error={error} />
@@ -128,6 +156,7 @@ export function Classes() {
                   <tr>
                     <th className="px-4 py-2 font-medium">Class</th>
                     <th className="px-4 py-2 font-medium">Students</th>
+                    <th className="px-4 py-2 font-medium text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-line">
@@ -135,6 +164,22 @@ export function Classes() {
                     <tr key={c.id} className="hover:bg-sunken">
                       <td className="px-4 py-2 font-medium">{c.name}</td>
                       <td className="px-4 py-2 text-mute">{c.student_count}</td>
+                      <td className="px-4 py-2 text-right space-x-3">
+                        <button
+                          type="button"
+                          className="text-xs text-primary hover:underline font-medium"
+                          onClick={() => setEditingClass(c)}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          className="text-xs text-danger hover:underline font-medium"
+                          onClick={() => handleDeleteClass(c)}
+                        >
+                          Delete
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -153,6 +198,13 @@ export function Classes() {
         </>
       )}
       {open && <ClassForm done={reload} close={() => setOpen(false)} />}
+      {editingClass && (
+        <EditClassForm
+          cls={editingClass}
+          done={reload}
+          close={() => setEditingClass(null)}
+        />
+      )}
     </>
   );
 }
@@ -183,9 +235,46 @@ function ClassForm({ done, close }: { done: () => void; close: () => void }) {
   );
 }
 
+function EditClassForm({ cls, done, close }: { cls: ClassRow; done: () => void; close: () => void }) {
+  const [name, setName] = useState(cls.name);
+  return (
+    <SimpleForm
+      title={`Edit Class (${cls.name})`}
+      onClose={close}
+      onSubmit={async () => {
+        await api(`/classes/${cls.id}`, { method: "PATCH", json: { name } });
+        done();
+      }}
+    >
+      <Field label="Class name">
+        {(id) => (
+          <Input
+            id={id}
+            required
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="10-A"
+          />
+        )}
+      </Field>
+    </SimpleForm>
+  );
+}
+
 export function Subjects() {
   const { data, error, loading, reload } = useApi<Subject[]>("/subjects");
   const [open, setOpen] = useState(false);
+  const [editingSubject, setEditingSubject] = useState<Subject | null>(null);
+
+  const handleDeleteSubject = async (s: Subject) => {
+    if (!window.confirm(`Are you sure you want to delete subject "${s.name}"? This will also remove any exams associated with this subject.`)) return;
+    try {
+      await api(`/subjects/${s.id}`, { method: "DELETE" });
+      reload();
+    } catch (err: any) {
+      alert(err.message || "Failed to delete subject.");
+    }
+  };
 
   const table = useTableState<Subject>({
     data,
@@ -211,7 +300,7 @@ export function Subjects() {
         title="Subjects"
         actions={
           <Button variant="primary" onClick={() => setOpen(true)}>
-            Add
+            Add Subject
           </Button>
         }
       />
@@ -251,6 +340,7 @@ export function Subjects() {
                   <tr>
                     <th className="px-4 py-2 font-medium">Subject</th>
                     <th className="px-4 py-2 font-medium">Code</th>
+                    <th className="px-4 py-2 font-medium text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-line">
@@ -258,6 +348,22 @@ export function Subjects() {
                     <tr key={s.id} className="hover:bg-sunken">
                       <td className="px-4 py-2 font-medium">{s.name}</td>
                       <td className="px-4 py-2 text-mute">{s.code ?? "–"}</td>
+                      <td className="px-4 py-2 text-right space-x-3">
+                        <button
+                          type="button"
+                          className="text-xs text-primary hover:underline font-medium"
+                          onClick={() => setEditingSubject(s)}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          className="text-xs text-danger hover:underline font-medium"
+                          onClick={() => handleDeleteSubject(s)}
+                        >
+                          Delete
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -276,6 +382,13 @@ export function Subjects() {
         </>
       )}
       {open && <SubjectForm done={reload} close={() => setOpen(false)} />}
+      {editingSubject && (
+        <EditSubjectForm
+          subject={editingSubject}
+          done={reload}
+          close={() => setEditingSubject(null)}
+        />
+      )}
     </>
   );
 }
@@ -302,9 +415,42 @@ function SubjectForm({ done, close }: { done: () => void; close: () => void }) {
   );
 }
 
+function EditSubjectForm({ subject, done, close }: { subject: Subject; done: () => void; close: () => void }) {
+  const [name, setName] = useState(subject.name);
+  const [code, setCode] = useState(subject.code || "");
+  return (
+    <SimpleForm
+      title={`Edit Subject (${subject.name})`}
+      onClose={close}
+      onSubmit={async () => {
+        await api(`/subjects/${subject.id}`, { method: "PATCH", json: { name, code: code || null } });
+        done();
+      }}
+    >
+      <Field label="Subject name">
+        {(id) => <Input id={id} required value={name} onChange={(e) => setName(e.target.value)} />}
+      </Field>
+      <Field label="Code (optional)">
+        {(id) => <Input id={id} value={code} onChange={(e) => setCode(e.target.value)} />}
+      </Field>
+    </SimpleForm>
+  );
+}
+
 export function Students() {
   const { data, error, loading, reload } = useApi<Student[]>("/students");
   const [open, setOpen] = useState(false);
+  const [editingStudent, setEditingStudent] = useState<Student | null>(null);
+
+  const handleDeleteStudent = async (s: Student) => {
+    if (!window.confirm(`Are you sure you want to delete student "${s.name}" (${s.roll_number})? This will also remove any evaluations associated with this student.`)) return;
+    try {
+      await api(`/students/${s.id}`, { method: "DELETE" });
+      reload();
+    } catch (err: any) {
+      alert(err.message || "Failed to delete student.");
+    }
+  };
 
   const classOptions = useMemo(() => {
     if (!data) return [];
@@ -357,7 +503,7 @@ export function Students() {
         title="Students"
         actions={
           <Button variant="primary" onClick={() => setOpen(true)}>
-            Add
+            Add Student
           </Button>
         }
       />
@@ -402,14 +548,31 @@ export function Students() {
                     <th className="px-4 py-2 font-medium">Roll no.</th>
                     <th className="px-4 py-2 font-medium">Name</th>
                     <th className="px-4 py-2 font-medium">Class</th>
+                    <th className="px-4 py-2 font-medium text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-line">
                   {table.paginatedData.map((s) => (
                     <tr key={s.id} className="hover:bg-sunken">
                       <td className="px-4 py-2 font-medium">{s.roll_number}</td>
-                      <td className="px-4 py-2">{s.name}</td>
+                      <td className="px-4 py-2 font-medium text-ink">{s.name}</td>
                       <td className="px-4 py-2 text-mute">{s.class_name ?? "–"}</td>
+                      <td className="px-4 py-2 text-right space-x-3">
+                        <button
+                          type="button"
+                          className="text-xs text-primary hover:underline font-medium"
+                          onClick={() => setEditingStudent(s)}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          className="text-xs text-danger hover:underline font-medium"
+                          onClick={() => handleDeleteStudent(s)}
+                        >
+                          Delete
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -428,6 +591,13 @@ export function Students() {
         </>
       )}
       {open && <StudentForm done={reload} close={() => setOpen(false)} />}
+      {editingStudent && (
+        <EditStudentForm
+          student={editingStudent}
+          done={reload}
+          close={() => setEditingStudent(null)}
+        />
+      )}
     </>
   );
 }
@@ -459,6 +629,44 @@ function StudentForm({ done, close }: { done: () => void; close: () => void }) {
         {(id) => (
           <Select id={id} required value={cls} onChange={(e) => setCls(e.target.value)}>
             <option value="">Choose a class</option>
+            {classes.data?.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </Select>
+        )}
+      </Field>
+    </SimpleForm>
+  );
+}
+
+function EditStudentForm({ student, done, close }: { student: Student; done: () => void; close: () => void }) {
+  const classes = useApi<ClassRow[]>("/classes");
+  const [name, setName] = useState(student.name);
+  const [roll, setRoll] = useState(student.roll_number);
+  const [cls, setCls] = useState(student.class_id);
+  return (
+    <SimpleForm
+      title={`Edit Student (${student.name})`}
+      onClose={close}
+      onSubmit={async () => {
+        await api(`/students/${student.id}`, {
+          method: "PATCH",
+          json: { name, roll_number: roll, class_id: cls },
+        });
+        done();
+      }}
+    >
+      <Field label="Student Name">
+        {(id) => <Input id={id} required value={name} onChange={(e) => setName(e.target.value)} />}
+      </Field>
+      <Field label="Roll Number">
+        {(id) => <Input id={id} required value={roll} onChange={(e) => setRoll(e.target.value)} />}
+      </Field>
+      <Field label="Class">
+        {(id) => (
+          <Select id={id} required value={cls} onChange={(e) => setCls(e.target.value)}>
             {classes.data?.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}

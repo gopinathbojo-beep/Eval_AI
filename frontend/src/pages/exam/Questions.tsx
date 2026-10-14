@@ -6,6 +6,8 @@ import { fmt, pct } from "../../utils/format";
 import { Badge, Button, Card, Confirm, Empty, ErrorPanel, Field, Input, Loading, Modal, Select, StatusBadge, Textarea } from "../../components/ui";
 import { PageViewer } from "../../components/PageViewer";
 import { AuthImage } from "../../components/AuthImage";
+import { ExtractionDiagnosticsModal } from "../../components/ExtractionDiagnosticsModal";
+import { SaveToVerifiedCollectionModal } from "../../components/SaveToVerifiedCollectionModal";
 import { useExam } from "../ExamWorkspace";
 
 type Dlg = { kind: "edit" | "split" | "merge" | "delete" | "review" | "add"; q?: Question } | null;
@@ -19,6 +21,8 @@ export default function Questions() {
   const [actionErr, setActionErr] = useState<unknown>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [referenceTarget, setReferenceTarget] = useState<Question | null>(null);
   const after = async () => { await Promise.all([reload(), reloadExam()]); };
   const run = async (key: string, fn: () => Promise<unknown>) => {
     setBusy(key); setActionErr(null);
@@ -49,13 +53,16 @@ export default function Questions() {
     <div className="space-y-4">
       <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-surface p-3">
         <p className="text-sm"><b>{counts.ok}</b> of {qs.length} accepted · <span className={counts.review ? "font-medium text-mark" : ""}>{counts.review} need review</span> · marks add up to <b>{fmt(data.sum_of_marks)}</b> of {fmt(data.exam_total_marks)}</p>
-        {!data.locked && (
-          <div className="flex flex-wrap gap-2">
-            <Button onClick={() => setDlg({ kind: "add" })}>Add question</Button>
-            <Button busy={busy === "bulk"} onClick={() => run("bulk", () => api(`/exams/${exam.id}/questions/accept-valid`, { method: "POST" }))}>Accept all complete questions</Button>
-            <Button variant="primary" busy={busy === "verify"} onClick={() => run("verify", () => api(`/exams/${exam.id}/questions/verify`, { method: "POST" }))}>Verify questions</Button>
-          </div>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="soft" onClick={() => setShowDiagnostics(true)}>📊 Diagnostics & Accuracy</Button>
+          {!data.locked && (
+            <>
+              <Button onClick={() => setDlg({ kind: "add" })}>Add question</Button>
+              <Button busy={busy === "bulk"} onClick={() => run("bulk", () => api(`/exams/${exam.id}/questions/accept-valid`, { method: "POST" }))}>Accept all complete questions</Button>
+              <Button variant="primary" busy={busy === "verify"} onClick={() => run("verify", () => api(`/exams/${exam.id}/questions/verify`, { method: "POST" }))}>Verify questions</Button>
+            </>
+          )}
+        </div>
       </div>
       {data.marks_warning && <div className="rounded-lg border border-warn/40 bg-warn-soft p-3 text-sm">{data.marks_warning} This is only a warning, since some papers let students choose which questions to answer.</div>}
       <ErrorPanel error={actionErr} />
@@ -99,16 +106,19 @@ export default function Questions() {
                 <p className="doc-text mt-2 line-clamp-5 text-[15px]">{q.question_text || <em className="text-mute">(empty)</em>}</p>
               </button>
               {sel === q.id && q.has_crop && <div className="mt-3 rounded border border-line bg-sunken p-2"><p className="mb-1 text-xs text-mute">What the model read (approximate crop)</p><AuthImage path={`/crops/question/${q.id}`} alt={`Crop of question ${q.display_number}`} className="max-h-48" /></div>}
-              {!data.locked && (
-                <div className="mt-3 flex flex-wrap gap-1.5">
-                  <Button small variant="primary" disabled={q.verification_status === "VERIFIED"} busy={busy === q.id} onClick={() => run(q.id, () => api(`/exam-questions/${q.id}`, { method: "PATCH", json: { verification_status: "VERIFIED" } }))}>Accept</Button>
-                  <Button small onClick={() => setDlg({ kind: "edit", q })}>Edit</Button>
-                  <Button small onClick={() => setDlg({ kind: "split", q })}>Split</Button>
-                  <Button small onClick={() => setDlg({ kind: "merge", q })}>Merge</Button>
-                  <Button small onClick={() => setDlg({ kind: "review", q })}>Mark as review</Button>
-                  <Button small variant="ghost" onClick={() => setDlg({ kind: "delete", q })}>Delete</Button>
-                </div>
-              )}
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                {!data.locked && (
+                  <>
+                    <Button small variant="primary" disabled={q.verification_status === "VERIFIED"} busy={busy === q.id} onClick={() => run(q.id, () => api(`/exam-questions/${q.id}`, { method: "PATCH", json: { verification_status: "VERIFIED" } }))}>Accept</Button>
+                    <Button small onClick={() => setDlg({ kind: "edit", q })}>Edit</Button>
+                    <Button small onClick={() => setDlg({ kind: "split", q })}>Split</Button>
+                    <Button small onClick={() => setDlg({ kind: "merge", q })}>Merge</Button>
+                    <Button small onClick={() => setDlg({ kind: "review", q })}>Mark as review</Button>
+                    <Button small variant="ghost" onClick={() => setDlg({ kind: "delete", q })}>Delete</Button>
+                  </>
+                )}
+                <Button small variant="soft" onClick={() => setReferenceTarget(q)} title="Add to verified local reference collection">Save as Reference</Button>
+              </div>
             </Card>
           ))}
         </div>
@@ -121,6 +131,25 @@ export default function Questions() {
       {dlg?.kind === "review" && dlg.q && <ReviewDlg q={dlg.q} onClose={() => setDlg(null)} onDone={after} />}
       {dlg?.kind === "delete" && dlg.q && <Confirm title={`Delete question ${dlg.q.display_number}`} danger confirmLabel="Delete" body={<p>This removes the question from the exam. The deletion is recorded in the audit log.</p>}
         onConfirm={async () => { await api(`/exam-questions/${dlg.q!.id}`, { method: "DELETE" }); await after(); }} onClose={() => setDlg(null)} />}
+
+      {showDiagnostics && <ExtractionDiagnosticsModal onClose={() => setShowDiagnostics(false)} />}
+      {referenceTarget && (
+        <SaveToVerifiedCollectionModal
+          initialData={{
+            document_type: "question_paper",
+            subject: exam.subject_name || "General",
+            source_document: doc?.original_filename || exam.name,
+            page_number: referenceTarget.page_start || 1,
+            question_number: referenceTarget.display_number,
+            normalized_number: referenceTarget.normalized_number,
+            original_ocr: referenceTarget.raw_ocr_text || referenceTarget.question_text,
+            corrected_text: referenceTarget.question_text,
+            approved_marks: referenceTarget.max_marks,
+          }}
+          onClose={() => setReferenceTarget(null)}
+          onSuccess={after}
+        />
+      )}
     </div>
   );
 }

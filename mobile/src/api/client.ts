@@ -39,12 +39,18 @@ export async function getBaseUrl(): Promise<string> {
   const stored = await AsyncStorage.getItem(BASE_URL_KEY);
   const detected = getDefaultBackendUrl();
 
-  // If stored URL was 10.0.2.2 or localhost on a real device, prefer the auto-detected LAN IP
-  if (!stored || (stored.includes("10.0.2.2") && !detected.includes("10.0.2.2"))) {
+  const isRealIp = (url: string) =>
+    url && !url.includes("10.0.2.2") && !url.includes("127.0.0.1") && !url.includes("localhost");
+
+  // If Metro detected an active LAN IP, but stored has a stale/different IP from a previous Wi-Fi network,
+  // automatically update to the current active LAN IP
+  if (isRealIp(detected) && (!stored || !isRealIp(stored) || stored !== detected)) {
     cachedBaseUrl = detected;
     await AsyncStorage.setItem(BASE_URL_KEY, detected);
-  } else {
+  } else if (stored) {
     cachedBaseUrl = stored;
+  } else {
+    cachedBaseUrl = detected;
   }
 
   return cachedBaseUrl;
@@ -192,19 +198,42 @@ export async function downloadAndShareFile(
   const cleanFilename = fallbackFilename.replace(/[^a-zA-Z0-9._-]/g, "_");
   const fileUri = `${FileSystem.cacheDirectory}${cleanFilename}`;
 
+  // Remove existing file if present to guarantee a fresh download
+  const info = await FileSystem.getInfoAsync(fileUri);
+  if (info.exists) {
+    await FileSystem.deleteAsync(fileUri, { idempotent: true });
+  }
+
   const downloadResult = await FileSystem.downloadAsync(fullUrl, fileUri, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
 
   if (downloadResult.status !== 200) {
-    throw new Error(`Failed to download report (HTTP ${downloadResult.status}).`);
+    let errorDetail = "";
+    try {
+      const errText = await FileSystem.readAsStringAsync(downloadResult.uri);
+      const parsed = JSON.parse(errText);
+      errorDetail = parsed.detail || parsed.message || "";
+    } catch {
+      // not json or unreadable
+    }
+    throw new Error(
+      `Failed to download report (HTTP ${downloadResult.status})${errorDetail ? `: ${errorDetail}` : "."}`
+    );
   }
+
+  const isXlsx = cleanFilename.endsWith(".xlsx");
+  const mimeType = isXlsx
+    ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    : "application/pdf";
 
   if (await Sharing.isAvailableAsync()) {
     await Sharing.shareAsync(downloadResult.uri, {
-      mimeType: "application/pdf",
-      dialogTitle: "Share or View PDF Report",
+      mimeType,
+      dialogTitle: isXlsx ? "Share or Open Student Marksheet" : "Share or View PDF Report",
     });
+  } else {
+    throw new Error("Sharing is not available on this device.");
   }
 }
 

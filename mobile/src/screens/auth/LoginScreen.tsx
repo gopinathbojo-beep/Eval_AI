@@ -232,10 +232,12 @@ export const LoginScreen: React.FC = () => {
               {/* Quick Preset Buttons */}
               <View style={{ flexDirection: "row", gap: 6, marginBottom: 8 }}>
                 <TouchableOpacity
-                  onPress={() => setServerUrlState("http://10.195.96.202:8000")}
+                  onPress={() => setServerUrlState(getDefaultBackendUrl())}
                   style={[styles.presetChip, { borderColor: colors.border, backgroundColor: colors.surfaceElevated }]}
                 >
-                  <Text style={[styles.presetChipText, { color: colors.primary }]}>PC Wi-Fi (10.195.96.202)</Text>
+                  <Text style={[styles.presetChipText, { color: colors.primary }]}>
+                    Auto IP ({getDefaultBackendUrl().replace("http://", "").replace(":8000", "")})
+                  </Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   onPress={() => setServerUrlState("http://10.0.2.2:8000")}

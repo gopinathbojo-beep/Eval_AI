@@ -230,3 +230,28 @@ class AuditLog(Base):
     new_value: Mapped[dict | list | str | None] = mapped_column(JSON, nullable=True)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class VerifiedReferenceExample(Base):
+    """Local, reusable collection of teacher-approved ground-truth examples."""
+    __tablename__ = "verified_reference_examples"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+    exam_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    teacher_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    document_type: Mapped[str] = mapped_column(String(50))  # question_paper, answer_key, student_answer
+    subject: Mapped[str] = mapped_column(String(100), default="General")
+    source_document: Mapped[str] = mapped_column(String(300))
+    page_number: Mapped[int] = mapped_column(Integer, default=1)
+    question_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    normalized_number: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
+    original_ocr: Mapped[str] = mapped_column(Text, default="")
+    corrected_text: Mapped[str] = mapped_column(Text, default="")
+    error_category: Mapped[str] = mapped_column(String(60), default="none")
+    # mathematical_symbols, chemical_formula, table_formatting, numbering, word_typo, missing_content, option_structure, none
+    structure_type: Mapped[str] = mapped_column(String(60), default="descriptive")
+    # formula, equation, table, notice_box, subquestion, descriptive, mcq
+    approved_marks: Mapped[float | None] = mapped_column(Float, nullable=True)
+    criteria: Mapped[list] = mapped_column(JSON, default=list)
+    verification_status: Mapped[str] = mapped_column(String(30), default="APPROVED")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+

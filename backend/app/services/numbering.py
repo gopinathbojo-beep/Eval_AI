@@ -108,3 +108,23 @@ def parent_number(normalized: str) -> str:
 
 def is_sub_question(normalized: str) -> bool:
     return "(" in normalized
+
+
+def extract_subquestion_token(raw: str | None) -> str | None:
+    """Extracts a bare subquestion token (e.g. '(b)' -> 'b', '(ii)' -> 'ii') if raw is purely a subquestion label."""
+    if raw is None:
+        return None
+    s = str(raw).strip()
+    if s.lower() in _NULLISH:
+        return None
+    s = _PREFIX.sub("", s).strip()
+    s = s.replace("（", "(").replace("）", ")").replace("[", "(").replace("]", ")")
+    # Subquestion in parentheses e.g. (a), (b), (i)
+    pm = re.match(r"^\(\s*([a-zA-Z]{1,4}|[ivxIVX]{1,5})\s*\)$", s)
+    if pm:
+        return _clean_token(pm.group(1))
+    # Subquestion with dot or paren: a), b., i)
+    sm = re.match(r"^([a-zA-Z]{1,4}|[ivxIVX]{1,5})[\.\)\:]$", s)
+    if sm:
+        return _clean_token(sm.group(1))
+    return None

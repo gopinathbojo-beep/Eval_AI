@@ -7,6 +7,8 @@ import { Badge, Button, Card, Confirm, Empty, ErrorPanel, Field, Input, Loading,
 import { DocProgress, UploadZone } from "../../components/DocPanel";
 import { PageViewer } from "../../components/PageViewer";
 import { CriteriaEditor } from "../../components/CriteriaEditor";
+import { ExtractionDiagnosticsModal } from "../../components/ExtractionDiagnosticsModal";
+import { SaveToVerifiedCollectionModal } from "../../components/SaveToVerifiedCollectionModal";
 import { useExam } from "../ExamWorkspace";
 
 const lines = (s: string) => s.split("\n").map((x) => x.trim()).filter(Boolean);
@@ -20,6 +22,8 @@ export default function AnswerKey() {
   const [dlg, setDlg] = useState<{ kind: "edit" | "delete" | "add" | "split" | "merge"; row?: AnswerKeyRow; qid?: string } | null>(null);
   const [err, setErr] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [referenceTarget, setReferenceTarget] = useState<AnswerKeyRow | null>(null);
 
   // Two options state: "upload" or "ai"
   const [sourceMode, setSourceMode] = useState<"upload" | "ai">("upload");
@@ -181,6 +185,7 @@ export default function AnswerKey() {
           <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-surface p-3">
             <p className="text-sm"><b>{k.keys.length}</b> answer rows · <span className={k.missing_question_ids.length ? "font-medium text-mark" : ""}>{k.missing_question_ids.length} question(s) without an answer</span></p>
             <div className="flex items-center gap-2">
+              <Button variant="soft" onClick={() => setShowDiagnostics(true)}>📊 Diagnostics & Accuracy</Button>
               {!isLocked && (
                 <Button small variant="soft" onClick={() => setShowReplace((v) => !v)}>
                   {showReplace ? "Hide Options" : "Replace / Re-generate"}
@@ -232,14 +237,17 @@ export default function AnswerKey() {
                       </div>
                     )}
                   </button>
-                  {!isLocked && (
-                    <div className="mt-3 flex flex-wrap gap-1.5">
-                      <Button small onClick={() => setDlg({ kind: "edit", row: r })}>Edit</Button>
-                      <Button small onClick={() => setDlg({ kind: "split", row: r })}>Split</Button>
-                      <Button small onClick={() => setDlg({ kind: "merge", row: r })}>Merge</Button>
-                      <Button small variant="ghost" onClick={() => setDlg({ kind: "delete", row: r })}>Delete</Button>
-                    </div>
-                  )}
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    {!isLocked && (
+                      <>
+                        <Button small onClick={() => setDlg({ kind: "edit", row: r })}>Edit</Button>
+                        <Button small onClick={() => setDlg({ kind: "split", row: r })}>Split</Button>
+                        <Button small onClick={() => setDlg({ kind: "merge", row: r })}>Merge</Button>
+                        <Button small variant="ghost" onClick={() => setDlg({ kind: "delete", row: r })}>Delete</Button>
+                      </>
+                    )}
+                    <Button small variant="soft" onClick={() => setReferenceTarget(r)} title="Add to verified local reference collection">Save as Reference</Button>
+                  </div>
                 </Card>
               ))}
             </div>
@@ -261,6 +269,26 @@ export default function AnswerKey() {
       {dlg?.kind === "merge" && dlg.row && k && <MergeKeyModal row={dlg.row} allKeys={k.keys} onClose={() => setDlg(null)} onDone={after} />}
       {dlg?.kind === "delete" && dlg.row && <Confirm title="Delete answer row" danger confirmLabel="Delete" body={<p>Remove the row for “{dlg.row.raw_question_number}”? This is recorded in the audit log.</p>}
         onConfirm={async () => { await api(`/answer-keys/${dlg.row!.id}`, { method: "DELETE" }); await after(); }} onClose={() => setDlg(null)} />}
+
+      {showDiagnostics && <ExtractionDiagnosticsModal onClose={() => setShowDiagnostics(false)} />}
+      {referenceTarget && (
+        <SaveToVerifiedCollectionModal
+          initialData={{
+            document_type: "answer_key",
+            subject: exam.subject_name || "General",
+            source_document: d?.original_filename || exam.name,
+            page_number: referenceTarget.page_number || 1,
+            question_number: referenceTarget.raw_question_number,
+            normalized_number: referenceTarget.normalized_number,
+            original_ocr: referenceTarget.answer_text,
+            corrected_text: referenceTarget.answer_text,
+            approved_marks: referenceTarget.marks,
+            criteria: referenceTarget.criteria,
+          }}
+          onClose={() => setReferenceTarget(null)}
+          onSuccess={after}
+        />
+      )}
     </div>
   );
 }
