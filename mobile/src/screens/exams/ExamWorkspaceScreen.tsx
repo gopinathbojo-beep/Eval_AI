@@ -262,7 +262,6 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
   const [totalMarksModalVisible, setTotalMarksModalVisible] = useState(false);
   const [customTotalMarks, setCustomTotalMarks] = useState("");
   const hasAutoPromptedTotalMarks = useRef(false);
-  const autoPromptUploadHandled = useRef(false);
 
   const handleUpdateTotalMarks = async (marks: number) => {
     try {
@@ -340,50 +339,20 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
     scrollToActiveTab(activeTab);
   }, [activeTab, loadTabData, scrollToActiveTab]);
 
-  // Auto-prompt to upload question paper if navigated from exam creation
-  useEffect(() => {
-    if (
-      route.params?.autoPromptUpload &&
-      !autoPromptUploadHandled.current &&
-      exam &&
-      !exam.question_paper
-    ) {
-      autoPromptUploadHandled.current = true;
-      Alert.alert(
-        "Upload Question Paper",
-        `Welcome to "${exam.name}"! Please upload or scan the question paper to extract questions and verify total marks.`,
-        [
-          {
-            text: "Scan with Camera",
-            onPress: () => {
-              setScannerTarget("question_paper");
-              setCameraScannerVisible(true);
-            },
-          },
-          {
-            text: "Upload File (PDF/Image)",
-            onPress: handleUploadQuestionPaper,
-          },
-          { text: "Dismiss", style: "cancel" },
-        ]
-      );
-    }
-  }, [exam, route.params?.autoPromptUpload]);
-
-  // When question paper extracts questions and computes total marks, show popup to confirm or adjust
+  // When question paper extracts questions and computes total marks, show popup if discrepancy exists
   useEffect(() => {
     if (!questionsData || !exam) return;
     const paperSum = questionsData.sum_of_marks;
     if (
       paperSum > 0 &&
       !hasAutoPromptedTotalMarks.current &&
-      (Math.abs(paperSum - exam.total_marks) > 0.001 || route.params?.autoPromptUpload)
+      Math.abs(paperSum - exam.total_marks) > 0.001
     ) {
       hasAutoPromptedTotalMarks.current = true;
       setCustomTotalMarks(String(paperSum));
       setTotalMarksModalVisible(true);
     }
-  }, [questionsData, exam, route.params?.autoPromptUpload]);
+  }, [questionsData, exam]);
 
   // Active polling while question paper, answer key, or any student sheet is running OCR or extraction
   const BUSY_DOC = ["UPLOADED", "RENDERING", "OCR_PROCESSING", "EXTRACTING"];
@@ -437,11 +406,14 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
       const res = await api<{ accepted: number }>(`/exams/${examId}/questions/accept-valid`, {
         method: "POST",
       });
-      Alert.alert(
-        "Bulk Accept Complete",
-        `${res.accepted} complete question(s) verified and accepted.`
-      );
       await Promise.all([loadTabData("questions"), fetchExamDetail()]);
+      setActiveTab("answerKey");
+      scrollToActiveTab("answerKey");
+      loadTabData("answerKey");
+      Alert.alert(
+        "Questions Verified",
+        `${res.accepted} complete question(s) verified! Moving to Answer Key module.`
+      );
     } catch (err: any) {
       Alert.alert("Bulk Accept Error", err.message || "Failed to accept valid questions");
     } finally {
@@ -720,14 +692,24 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
       loadTabData("answerKey");
       fetchExamDetail();
 
-      // Show summary containing total processed, verified, needs review, and failed entries
-      setValidationResult({
-        valid: res.valid,
-        summary: res.summary,
-        blocking_issues: res.blocking_issues || [],
-        issues: res.issues || [],
-      });
-      setValidationModalVisible(true);
+      if (res.valid) {
+        setActiveTab("submissions");
+        scrollToActiveTab("submissions");
+        loadTabData("submissions");
+        Alert.alert(
+          "Answer Key Verified",
+          `All ${res.summary?.verified_count ?? "official"} answers verified and locked! Moving to the Submissions module.`
+        );
+      } else {
+        // Show summary containing total processed, verified, needs review, and failed entries
+        setValidationResult({
+          valid: res.valid,
+          summary: res.summary,
+          blocking_issues: res.blocking_issues || [],
+          issues: res.issues || [],
+        });
+        setValidationModalVisible(true);
+      }
     } catch (err: any) {
       if (err.issues && err.issues.length > 0) {
         setValidationResult({
@@ -879,11 +861,14 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
       const res = await api<{ verified: number }>(`/exams/${examId}/answer-keys/verify`, {
         method: "POST",
       });
+      await Promise.all([loadTabData("answerKey"), fetchExamDetail()]);
+      setActiveTab("submissions");
+      scrollToActiveTab("submissions");
+      loadTabData("submissions");
       Alert.alert(
         "Answer Key Verified",
-        `All ${res.verified} official answers verified and locked! Exam is now ready for evaluation.`
+        `All ${res.verified} official answers verified and locked! Moving to the Submissions module.`
       );
-      await Promise.all([loadTabData("answerKey"), fetchExamDetail()]);
     } catch (err: any) {
       Alert.alert("Verification Failed", err.message || "Failed to verify answer key.");
     } finally {
@@ -898,9 +883,14 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
       await api(`/exams/${examId}/questions/verify`, {
         method: "POST",
       });
-      Alert.alert("Verified", "All canonical questions have been verified!");
-      fetchExamDetail();
-      loadTabData("questions");
+      await Promise.all([loadTabData("questions"), fetchExamDetail()]);
+      setActiveTab("answerKey");
+      scrollToActiveTab("answerKey");
+      loadTabData("answerKey");
+      Alert.alert(
+        "Questions Verified",
+        "All canonical questions have been verified! Moving to the Answer Key module."
+      );
     } catch (err: any) {
       Alert.alert("Error", err.message || "Verification failed");
     } finally {
@@ -3191,6 +3181,11 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
         validation={validationResult}
         onClose={() => setValidationModalVisible(false)}
         onReviewIssue={handleReviewValidationIssue}
+        onProceedToSubmissions={() => {
+          setActiveTab("submissions");
+          scrollToActiveTab("submissions");
+          loadTabData("submissions");
+        }}
       />
 
       {/* Multi-Page Document Scanner Camera Modal */}
