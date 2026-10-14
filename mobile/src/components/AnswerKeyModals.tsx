@@ -681,6 +681,7 @@ interface ValidationSummaryModalProps {
   validation: AnswerKeyValidationResponse | null;
   onClose: () => void;
   onReviewIssue: (keyId: string | null, issue: AnswerKeyValidationIssue) => void;
+  onProceedToSubmissions?: () => void;
 }
 
 export const ValidationSummaryModal: React.FC<ValidationSummaryModalProps> = ({
@@ -688,6 +689,7 @@ export const ValidationSummaryModal: React.FC<ValidationSummaryModalProps> = ({
   validation,
   onClose,
   onReviewIssue,
+  onProceedToSubmissions,
 }) => {
   const { colors } = useTheme();
 
@@ -899,7 +901,30 @@ export const ValidationSummaryModal: React.FC<ValidationSummaryModalProps> = ({
 
             {/* Footer */}
             <View style={[modalStyles.footer, { borderTopColor: colors.border, backgroundColor: colors.surface }]}>
-              <Button title="Close Summary" variant="secondary" size="medium" onPress={onClose} fullWidth />
+              {isAllValid && onProceedToSubmissions ? (
+                <View style={{ flexDirection: "row", gap: 10, width: "100%" }}>
+                  <Button
+                    title="Close"
+                    variant="secondary"
+                    size="medium"
+                    onPress={onClose}
+                    style={{ flex: 1 }}
+                  />
+                  <Button
+                    title="Go to Submissions"
+                    icon={<Ionicons name="arrow-forward" size={16} color="#FFFFFF" />}
+                    variant="gradient"
+                    size="medium"
+                    onPress={() => {
+                      onClose();
+                      onProceedToSubmissions();
+                    }}
+                    style={{ flex: 1.5 }}
+                  />
+                </View>
+              ) : (
+                <Button title="Close Summary" variant="secondary" size="medium" onPress={onClose} fullWidth />
+              )}
             </View>
           </View>
         </View>

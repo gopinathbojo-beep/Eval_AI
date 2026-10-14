@@ -148,11 +148,10 @@ export const ExamCreateScreen: React.FC<ExamCreateScreenProps> = ({ navigation }
         },
       });
 
-      // Automatically move directly to the Question Upload module
+      // Automatically move directly to the Question Upload module without any alerts
       navigation.replace("ExamWorkspace", {
         examId: res.id,
         initialTab: "paper",
-        autoPromptUpload: true,
       });
     } catch (err: any) {
       Alert.alert("Error", err.message || "Failed to create examination");

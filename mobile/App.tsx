@@ -12,6 +12,8 @@ LogBox.ignoreLogs([
   "Response.blob() is using React Native's Blob",
 ]);
 
+import { AlertProvider } from "./src/context/AlertContext";
+
 function MainApp() {
   const { isDark } = useTheme();
 
@@ -27,9 +29,11 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <ThemeProvider>
-        <AuthProvider>
-          <MainApp />
-        </AuthProvider>
+        <AlertProvider>
+          <AuthProvider>
+            <MainApp />
+          </AuthProvider>
+        </AlertProvider>
       </ThemeProvider>
     </SafeAreaProvider>
   );
