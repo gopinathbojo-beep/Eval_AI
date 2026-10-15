@@ -134,6 +134,8 @@ export interface AnswerKeyRow {
   mapping_status: string;
   mapping_note: string | null;
   mapping_candidates: string[];
+  mapping_candidate_details: CandidateDetail[];
+  mapping_confirmed: boolean;
   mark_mismatch: boolean;
   verification_status: string;
 }
@@ -225,7 +227,16 @@ export interface StudentAnswer {
   status: string;
   mapping_note: string | null;
   mapping_candidates: string[];
+  mapping_candidate_details: CandidateDetail[];
+  mapping_confirmed: boolean;
   edited: boolean;
+}
+
+export interface CandidateDetail {
+  id: string;
+  num: string | null;
+  score: number;
+  reason: string;
 }
 
 export interface EvalItem {
@@ -270,6 +281,7 @@ export interface EvaluationDetail {
     unmapped: number;
     missing: number;
     ignored: number;
+    missing_question_ids?: string[];
   };
   issues: Issue[];
 }

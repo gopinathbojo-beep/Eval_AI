@@ -1,7 +1,7 @@
 """Test harness. The stub below imitates the *Ollama HTTP server* so the real client code runs end-to-end.
 It lives only in tests; the application itself has no mock mode."""
-import json, os, re, tempfile, threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
+import json, os, re, tempfile, threading, time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 _tmp = tempfile.mkdtemp(prefix="adem-test-")
 os.environ["DATA_DIR"] = _tmp
@@ -14,7 +14,7 @@ import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 MODEL = "blaifa/InternVL3_5:4B"
-BEHAVIOUR = {"garbage_pages": set(), "sheet": "main"}   # tweakable per test
+BEHAVIOUR = {"garbage_pages": set(), "sheet": "main", "page_delay": 0.0, "page_calls": []}   # tweakable per test
 
 
 def _page(prompt: str) -> int:
@@ -66,8 +66,9 @@ def _reply(system: str, user: str) -> str:
             rows = [("1", "Osmosis is water movement"), ("Q1", "Another try at one"), ("2", "Diffusion text"),
                     ("3(a)", "Photosynthesis"), ("3(b)", "Leaf diagram")]
         else:
-            rows = [("Q1", "Osmosis is movement of water"), ("Q2", "WRONG diffusion answer"), ("3", "Photosynthesis makes food"),
-                    ("3(b)", "OVERSHOOT leaf drawing"), (None, "stray text continued from earlier")]
+            # the unlabelled block comes before any labelled answer, so it has nothing to continue -> UNMAPPED
+            rows = [(None, "stray text continued from earlier"), ("Q1", "Osmosis is movement of water"),
+                    ("Q2", "WRONG diffusion answer"), ("3", "Photosynthesis makes food"), ("3(b)", "OVERSHOOT leaf drawing")]
         return json.dumps({"page_number": 1, "answers": [
             {"question_number": n, "answer_text": t, "ocr_confidence": 0.9} for n, t in rows]})
     return "{}"
@@ -86,14 +87,21 @@ class _H(BaseHTTPRequestHandler):
         msgs = req["messages"]
         if "images" in msgs[1]:
             assert len(msgs[1]["images"][0]) > 100          # real base64 image was sent
+        if "images" in msgs[1]:
+            BEHAVIOUR["page_calls"].append(_page(msgs[1]["content"]))
+            time.sleep(BEHAVIOUR["page_delay"])         # imitates a slow page so a cancel can land mid-call
         out = _reply(msgs[0]["content"], msgs[1]["content"])
         body = json.dumps({"message": {"role": "assistant", "content": out}}).encode()
-        self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(body)
+        try:
+            self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            pass                                        # client aborted the call (cancelled OCR)
 
 
 @pytest.fixture(scope="session", autouse=True)
 def ollama_stub():
-    srv = HTTPServer(("127.0.0.1", 0), _H)
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), _H)
+    srv.daemon_threads = True
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     from app.config import get_settings
     get_settings().internvl_api_url = f"http://127.0.0.1:{srv.server_port}"

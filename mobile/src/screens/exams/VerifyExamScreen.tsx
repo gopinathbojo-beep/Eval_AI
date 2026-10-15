@@ -99,11 +99,11 @@ export const VerifyExamScreen: React.FC<VerifyExamScreenProps> = ({
       issues.push({
         id: "qp_ocr_failed",
         category: "question_paper",
-        title: "Question Paper OCR Incomplete",
-        description: "One or more pages failed OCR processing with InternVL3.5. Retry failed pages.",
+        title: "Question Paper Reading Incomplete",
+        description: "One or more pages could not be read by InternVL3.5. Retry failed pages.",
         severity: "critical",
         resolved: false,
-        actionTitle: "Retry OCR",
+        actionTitle: "Retry Reading",
         onAction: () => navigation.navigate("ExamWorkspace", { examId, initialTab: "paper" }),
       });
     }
@@ -231,7 +231,7 @@ export const VerifyExamScreen: React.FC<VerifyExamScreenProps> = ({
   const criticalCount = issues.filter((i) => i.severity === "critical").length;
   const warningCount = issues.filter((i) => i.severity === "warning").length;
 
-  const handleVerifyExam = async () => {
+  const handleVerifyExam = async (confirmMarksMismatch = false) => {
     if (criticalCount > 0) {
       Alert.alert(
         "Verification Blocked",
@@ -244,7 +244,10 @@ export const VerifyExamScreen: React.FC<VerifyExamScreenProps> = ({
       setVerifying(true);
       // Run backend question verification
       if (exam?.status === "QUESTIONS_EXTRACTED") {
-        await api(`/exams/${examId}/questions/verify`, { method: "POST" });
+        await api(`/exams/${examId}/questions/verify`, {
+          method: "POST",
+          json: confirmMarksMismatch ? { confirm_marks_mismatch: true } : undefined,
+        });
       }
       // Run backend answer key verification
       if (exam?.status === "ANSWER_KEY_UPLOADED") {
@@ -263,6 +266,13 @@ export const VerifyExamScreen: React.FC<VerifyExamScreenProps> = ({
       );
       fetchData();
     } catch (err: any) {
+      if (err?.code === "MARKS_TOTAL_MISMATCH" && !confirmMarksMismatch) {
+        Alert.alert("Marks Do Not Add Up", err.message, [
+          { text: "Cancel", style: "cancel" },
+          { text: "Verify Anyway", onPress: () => handleVerifyExam(true) },
+        ]);
+        return;
+      }
       Alert.alert("Verification Failed", err.message || "Backend verification checks rejected the exam.");
     } finally {
       setVerifying(false);
@@ -452,7 +462,7 @@ export const VerifyExamScreen: React.FC<VerifyExamScreenProps> = ({
             icon={<Ionicons name="shield-checkmark" size={18} color="#FFFFFF" />}
             variant="gradient"
             disabled={criticalCount > 0 || verifying}
-            onPress={handleVerifyExam}
+            onPress={() => handleVerifyExam()}
           />
           {criticalCount > 0 && (
             <Text style={[styles.blockedHint, { color: colors.error }]}>

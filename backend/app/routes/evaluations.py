@@ -124,6 +124,7 @@ def patch_mapping(ev_id: str, answer_id: str, body: MappingPatch, bg: Background
                             answer_text=a.answer_text, answer_position=a.position)
             a.normalized_number, a.exam_question_id = res.normalized_number, res.question_id
             a.mapping_note, a.mapping_candidates = res.note, res.candidates
+            a.mapping_candidate_details = res.candidate_details
             a.status = res.status if res.status != "MAPPED" else "MAPPED"
     if d.get("accept_suggestion"):
         if not a.mapping_candidates:
@@ -135,6 +136,7 @@ def patch_mapping(ev_id: str, answer_id: str, body: MappingPatch, bg: Background
         log("student_answer_suggestion_accepted", a.exam_question_id, q.id)
         a.exam_question_id, a.normalized_number = q.id, q.normalized_number
         a.mapping_confirmed, a.status, a.mapping_note, a.mapping_candidates = True, "MAPPED", "Accepted candidate suggestion", []
+        a.mapping_candidate_details = []
     elif d.get("exam_question_id"):
         q = next((x for x in qs if x.id == d["exam_question_id"]), None)
         if not q:
@@ -142,6 +144,7 @@ def patch_mapping(ev_id: str, answer_id: str, body: MappingPatch, bg: Background
         log("student_answer_mapping_changed", a.exam_question_id, q.id)
         a.exam_question_id, a.normalized_number = q.id, q.normalized_number
         a.mapping_confirmed, a.status, a.mapping_note, a.mapping_candidates = True, "MAPPED", "Confirmed by teacher", []
+        a.mapping_candidate_details = []
     elif d.get("confirm"):
         if not a.exam_question_id:
             raise err(400, "NOTHING_TO_CONFIRM", "This answer has no suggested question. Choose one.")
@@ -278,7 +281,7 @@ def run(ev_id: str, bg: BackgroundTasks, db: Session = Depends(get_db), t: Teach
                    "reason": "Student answer is unmapped" if a.status == "UNMAPPED" else (a.mapping_note or "Needs mapping review")}
                   for a in unresolved]
         if doc.status == "NEEDS_ATTENTION":
-            issues.append({"question": "Answer sheet", "reason": "Some pages failed OCR. Retry them first."})
+            issues.append({"question": "Answer sheet", "reason": "Some pages could not be read. Retry them first."})
         raise err(400, "MAPPING_INCOMPLETE", f"{len(issues)} issue(s) must be resolved before evaluation can run.", issues)
     ev.run_status, ev.run_progress = "RUNNING", 0
     db.commit()

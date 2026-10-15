@@ -14,13 +14,13 @@ from ..documents.storage import abs_path, rel
 from ..models import (AnswerKey, AnswerKeyDocument, AnswerSheetDocument, Evaluation, Exam, ExamQuestion,
                       QuestionPaperDocument, StudentAnswer)
 from ..ocr import prompts
-from ..ocr.internvl import AIResponseError, AIUnavailable, chat_structured, check_model
+from ..ocr.internvl import AIResponseError, AIUnavailable, Cancelled, chat_structured, check_model
 from ..ocr.schemas import AnswerKeyPageResult, QuestionPageResult, StudentPageResult
 from .doc_structure import parse_question_paper_structure, StructuredQuestion
 from .key_segmentation import segment_answer_keys
 from .student_segmentation import segment_student_answers
 from .mapping_service import apply_key_mapping, apply_student_mapping, refresh_key_state
-from .numbering import normalize_question_number
+from .numbering import is_sub_question, normalize_question_number, parent_number
 from .state import set_state
 
 log = logging.getLogger("adem.pipeline")
@@ -40,15 +40,45 @@ def _set_pages(db: Session, doc, idx: int, **kw) -> None:
     db.commit()
 
 
-def _progress(db: Session, doc, stage: str, cur: int | None = None, total: int | None = None, status: str | None = None):
+def _progress(db: Session, doc, stage: str, cur: int | None = None, total: int | None = None):
     doc.stage = stage
     if cur is not None:
         doc.progress_current = cur
     if total is not None:
         doc.progress_total = total
-    if status:
-        doc.status = status
     db.commit()
+
+
+# Cancel requests and pipeline status changes come from different sessions, so every status change the pipeline
+# makes is one conditional UPDATE that never overwrites a cancel (see routes/documents.py cancel_processing).
+CANCEL_STATUSES = ("CANCELLING", "CANCELLED")
+CANCELLED_MESSAGE = "Reading was cancelled. Continue reading to pick up from where it stopped."
+
+
+def _set_status(db: Session, doc, status: str, **vals) -> bool:
+    """Set the status unless a cancel arrived first. Returns False (and finishes the cancel) if it did."""
+    db.flush()
+    model = type(doc)
+    n = (db.query(model).filter(model.id == doc.id, model.status.notin_(CANCEL_STATUSES))
+         .update({"status": status, **vals}, synchronize_session=False))
+    db.commit()  # also expires `doc`, so the next read sees the stored row
+    if n == 0:
+        _finish_cancel(db, doc)
+        return False
+    return True
+
+
+def _cancelled(db: Session, doc) -> bool:
+    db.refresh(doc, attribute_names=["status"])
+    return doc.status in CANCEL_STATUSES
+
+
+def _finish_cancel(db: Session, doc) -> None:
+    db.rollback()
+    db.refresh(doc)
+    doc.status, doc.stage, doc.error_message = "CANCELLED", "Cancelled", CANCELLED_MESSAGE
+    db.commit()
+    log.info("Processing cancelled for document %s", doc.id)
 
 
 def process_document(kind: str, doc_id: str, only_failed: bool = False) -> None:
@@ -61,8 +91,7 @@ def process_document(kind: str, doc_id: str, only_failed: bool = False) -> None:
         model_cls = KINDS[kind][0]
         doc = db.get(model_cls, doc_id)
         if doc:
-            doc.status, doc.error_message = "FAILED", "Processing failed unexpectedly. See the server log for details."
-            db.commit()
+            _set_status(db, doc, "FAILED", error_message="Processing failed unexpectedly. See the server log for details.")
     finally:
         db.close()
 
@@ -74,65 +103,79 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
     original = abs_path(doc.original_file)
     wd = original.parent
     ext = original.suffix.lstrip(".").lower()
-    doc.error_message = None
 
     if not (only_failed and doc.pages):
-        _progress(db, doc, "Rendering pages", 0, 0, "RENDERING")
-        try:
-            doc.pages = render_document(original, ext, wd)
-        except RenderError as e:
-            doc.status, doc.error_message = "FAILED", str(e)
-            db.commit()
+        if not _set_status(db, doc, "RENDERING", stage="Rendering pages", error_message=None,
+                           progress_current=0, progress_total=0):
             return
-        doc.progress_total = len(doc.pages)
+        try:
+            pages = render_document(original, ext, wd)
+        except RenderError as e:
+            _set_status(db, doc, "FAILED", error_message=str(e))
+            return
+        doc.pages = pages
+        doc.progress_total = len(pages)
         db.commit()
 
     try:
         check_model()
     except AIUnavailable as e:
         log.error("AI unavailable: %s", e.detail)
-        doc.status, doc.error_message, doc.stage = "AI_ERROR", AI_UNAVAILABLE_MESSAGE, "AI service unavailable"
-        db.commit()
+        _set_status(db, doc, "AI_ERROR", error_message=AI_UNAVAILABLE_MESSAGE, stage="AI service unavailable")
         return
 
     (wd / "ocr").mkdir(exist_ok=True)
     total = len(doc.pages)
-    _progress(db, doc, f"OCR: page 1 of {total}", 0, total, "OCR_PROCESSING")
+    # Exam labels help the model read ambiguous handwritten numbers (it is told to copy what is written).
+    labels = [q.display_number for q in _exam_questions(db, exam.id)] if kind == "answer-sheet" else None
+    done = sum(p.get("ocr_status") == "OK" for p in doc.pages) if only_failed else 0
+    if not _set_status(db, doc, "OCR_PROCESSING", stage=f"Reading page 1 of {total}", error_message=None,
+                       progress_current=done, progress_total=total):
+        return
+    stop = lambda: _cancelled(db, doc)  # noqa: E731 - polled by the OCR client while a page is being read
     for i, p in enumerate(list(doc.pages)):
         if only_failed and p.get("ocr_status") == "OK":
             continue
-        _progress(db, doc, f"OCR: processing page {p['page_number']} of {total}", i)
+        if stop():
+            _finish_cancel(db, doc)
+            return
+        _progress(db, doc, f"Reading page {p['page_number']} of {total}", done)
         img = abs_path(p["processed_file"])
         out = wd / "ocr" / f"page-{p['page_number']:03d}.json"
-        prompt_kwargs = {}
-        if kind == "answer-sheet":
-            canonical_qs = [
-                f"Q{q.display_number}: {q.question_text[:80]}"
-                for q in db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all()
-            ]
-            if canonical_qs:
-                prompt_kwargs["canonical_questions"] = canonical_qs
-        prompt_str = prompt_fn(p["page_number"], p["ocr_width"], p["ocr_height"], **prompt_kwargs)
         try:
-            call = chat_structured(prompts.OCR_SYSTEM, prompt_str,
-                                   schema, img)
+            prompt = prompt_fn(p["page_number"], p["ocr_width"], p["ocr_height"],
+                               page_text=p.get("page_text"), canonical_questions=labels)
+            call = chat_structured(prompts.OCR_SYSTEM, prompt, schema, img, should_stop=stop)
             out.write_text(json.dumps({"status": "OK", "raw": call.raw, "parsed": call.parsed.model_dump(),
-                                       "attempts": call.attempts}, ensure_ascii=False, indent=1), encoding="utf-8")
-            _set_pages(db, doc, i, ocr_status="OK", ocr_error=None, ocr_file=rel(out))
+                                       "attempts": call.attempts, "dropped_items": call.dropped_items},
+                                      ensure_ascii=False, indent=1), encoding="utf-8")
+            partial = (f"{call.dropped_items} item(s) on this page could not be read and were left out. "
+                       "Compare with the original and add them by hand, or retry the page.") if call.dropped_items else None
+            _set_pages(db, doc, i, ocr_status="OK", ocr_error=partial, ocr_file=rel(out))
+        except Cancelled:
+            _finish_cancel(db, doc)
+            return
         except AIUnavailable as e:
             log.error("AI became unavailable mid-run: %s", e.detail)
-            doc.status, doc.error_message = "AI_ERROR", AI_UNAVAILABLE_MESSAGE
-            db.commit()
+            _set_status(db, doc, "AI_ERROR", error_message=AI_UNAVAILABLE_MESSAGE)
             return
         except AIResponseError as e:
             log.error("Page %s: %s | raw=%r", p["page_number"], e.detail, e.raw[:500])
             out.write_text(json.dumps({"status": e.kind, "raw": e.raw, "parsed": None, "error": e.detail},
                                       ensure_ascii=False, indent=1), encoding="utf-8")
             _set_pages(db, doc, i, ocr_status=e.kind, ocr_error=AI_BAD_RESPONSE_MESSAGE, ocr_file=rel(out))
-    doc.progress_current = total
+        done += 1
 
-    _progress(db, doc, "Extracting and validating", None, None, "EXTRACTING")
-    results = _load_results(doc, schema)
+    # Last point a cancel can take effect: extraction replaces stored questions/answers and must not stop halfway.
+    if not _set_status(db, doc, "EXTRACTING", stage="Extracting and validating", progress_current=total):
+        return
+    results = _load_results(db, doc, schema)
+    if not results:
+        # Nothing was read: keep whatever was built from an earlier run instead of replacing it with nothing.
+        doc.status, doc.stage = "FAILED", "No pages could be read"
+        doc.error_message = f"{AI_BAD_RESPONSE_MESSAGE} No page of this document could be read; retry it."
+        db.commit()
+        return
     if kind == "question-paper":
         _build_questions(db, doc, exam, wd, results)
     elif kind == "answer-key":
@@ -147,10 +190,19 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
         doc.stage = "Needs attention"
     else:
         doc.status, doc.stage = "READY", "Ready for review"
+        partial = [p["page_number"] for p in doc.pages if p.get("ocr_error")]
+        if partial:  # readable, but something on these pages was dropped
+            doc.stage = "Ready for review (check flagged pages)"
+            doc.error_message = (f"Some items could not be read on page(s) {', '.join(map(str, partial))}. "
+                                 "Check them against the original.")
     db.commit()
 
 
-def _load_results(doc, schema):
+def _exam_questions(db: Session, exam_id: str) -> list[ExamQuestion]:
+    return db.query(ExamQuestion).filter_by(exam_id=exam_id).order_by(ExamQuestion.position).all()
+
+
+def _load_results(db: Session, doc, schema):
     out = []
     pdf_doc = None
     try:
@@ -161,7 +213,7 @@ def _load_results(doc, schema):
     except Exception:
         pdf_doc = None
 
-    for p in doc.pages:
+    for p in list(doc.pages):
         if p.get("ocr_status") != "OK":
             continue
         p_dict = dict(p)
@@ -172,8 +224,14 @@ def _load_results(doc, schema):
                     p_dict["page_text"] = pdf_doc[p_num - 1].get_text()
                 except Exception:
                     pass
-        data = json.loads(abs_path(p["ocr_file"]).read_text(encoding="utf-8"))
-        out.append((p_dict, schema.model_validate(data["parsed"])))
+        try:
+            data = json.loads(abs_path(p["ocr_file"]).read_text(encoding="utf-8"))
+            parsed = schema.model_validate(data["parsed"])
+        except Exception:
+            log.exception("Stored OCR output for page %s is unreadable", p.get("page_number"))
+            _set_pages(db, doc, doc.pages.index(p), ocr_status="FAILED_PARSE", ocr_error=AI_BAD_RESPONSE_MESSAGE)
+            continue
+        out.append((p_dict, parsed))
 
     if pdf_doc:
         try:
@@ -197,7 +255,10 @@ def _bbox_and_crop(p: dict, bbox, wd: Path, name: str):
 
 
 def _build_questions(db: Session, doc, exam: Exam, wd: Path, results) -> None:
-    db.query(AnswerKey).filter_by(exam_id=exam.id).update({AnswerKey.exam_question_id: None})
+    db.query(AnswerKey).filter_by(exam_id=exam.id).update(
+        {AnswerKey.exam_question_id: None, AnswerKey.mapping_status: "UNMAPPED", AnswerKey.mapping_confirmed: False,
+         AnswerKey.mapping_note: "Question paper was re-extracted", AnswerKey.mapping_candidates: [],
+         AnswerKey.mapping_candidate_details: []}, synchronize_session=False)
     db.query(ExamQuestion).filter_by(exam_id=exam.id).delete()
     struct = parse_question_paper_structure(results)
 
@@ -277,6 +338,13 @@ def _build_questions(db: Session, doc, exam: Exam, wd: Path, results) -> None:
             for r in grp:
                 r.verification_status = "NEEDS_REVIEW"
                 r.review_reason = "; ".join(filter(None, [r.review_reason, "Duplicate question number"]))
+    for num, grp in seen.items():
+        if is_sub_question(num) and parent_number(num) in seen:
+            for r in grp + seen[parent_number(num)]:
+                if "sub-part" not in (r.review_reason or ""):
+                    r.verification_status = "NEEDS_REVIEW"
+                    r.review_reason = "; ".join(filter(None, [r.review_reason,
+                                                              "Whole question and its sub-part both extracted"]))
 
     if rows:
         from .state import at_least
@@ -291,8 +359,7 @@ def _build_questions(db: Session, doc, exam: Exam, wd: Path, results) -> None:
 def _build_answer_key(db: Session, doc, exam: Exam, wd: Path, results) -> None:
     db.query(AnswerKey).filter_by(document_id=doc.id).delete()
     pages_by_num = {p["page_number"]: p for p, _ in results}
-    canonical_qs = db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all()
-    keys = segment_answer_keys(results, canonical_questions=canonical_qs)
+    keys = segment_answer_keys(results)
     n = 0
     for k in keys:
         n += 1
@@ -322,8 +389,8 @@ def _build_student_answers(db: Session, doc, exam: Exam, wd: Path, results) -> N
     ev = db.query(Evaluation).filter_by(answer_sheet_id=doc.id).one()
     db.query(StudentAnswer).filter_by(evaluation_id=ev.id).delete()
     pages_by_num = {p["page_number"]: p for p, _ in results}
-    canonical_qs = db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all()
-    answers = segment_student_answers(results, canonical_questions=canonical_qs)
+    known = [q.normalized_number for q in _exam_questions(db, exam.id) if q.normalized_number]
+    answers = segment_student_answers(results, known)
     n = 0
     for a in answers:
         n += 1
@@ -350,3 +417,28 @@ def _build_student_answers(db: Session, doc, exam: Exam, wd: Path, results) -> N
     if at_least(exam, "ANSWER_KEY_VERIFIED") and exam.status == "ANSWER_KEY_VERIFIED":
         set_state(exam, "READY_FOR_EVALUATION")
     db.commit()
+
+
+def recover_interrupted_jobs() -> None:
+    """Background tasks do not survive a restart. Anything left mid-run would stay 'processing' forever and the
+    retry button refuses busy documents, so mark such work as failed and retryable."""
+    from .state import set_state as _set
+    db = SessionLocal()
+    try:
+        busy = ("UPLOADED", "RENDERING", "OCR_PROCESSING", "EXTRACTING")
+        for model_cls, _, _ in KINDS.values():
+            for doc in db.query(model_cls).filter_by(status="CANCELLING"):
+                doc.status, doc.stage, doc.error_message = "CANCELLED", "Cancelled", CANCELLED_MESSAGE
+            for doc in db.query(model_cls).filter(model_cls.status.in_(busy)):
+                doc.status, doc.stage = "FAILED", "Interrupted"
+                doc.error_message = "Processing was interrupted because the server restarted. Retry this document."
+        for ev in db.query(Evaluation).filter_by(run_status="RUNNING"):
+            ev.run_status = "ERROR"
+        for exam in db.query(Exam).filter_by(status="EVALUATING"):
+            _set(exam, "REVIEW_REQUIRED")
+        db.commit()
+    except Exception:
+        log.exception("Could not recover interrupted jobs")
+        db.rollback()
+    finally:
+        db.close()

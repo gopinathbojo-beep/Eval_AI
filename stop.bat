@@ -1,1 +1,2 @@
-@call "%~dp0stop_all.bat"
+@echo off
+call "%~dp0stop_all.bat"

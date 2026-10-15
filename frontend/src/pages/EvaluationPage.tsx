@@ -11,7 +11,7 @@ import { DocProgress } from "../components/DocPanel";
 import { BUSY_DOC } from "../utils/format";
 
 type Tab = "mapping" | "marks";
-const FILTERS = ["All", "Mapped", "Suggested", "Needs review", "Unmapped", "Missing", "OCR error"] as const;
+const FILTERS = ["All", "Mapped", "Suggested", "Needs review", "Unmapped", "Missing", "Read error"] as const;
 
 export default function EvaluationPage() {
   const { id } = useParams();
@@ -52,8 +52,9 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
   const [busy, setBusy] = useState<string | null>(null);
   const locked = d.evaluation.status === "FINALIZED";
   const qmap = new Map(d.questions.map((q) => [q.id, q]));
-  const answered = new Set(d.answers.filter((a) => a.status !== "IGNORED" && a.exam_question_id).map((a) => a.exam_question_id));
-  const missing = d.questions.filter((q) => !answered.has(q.id));
+  // Same buckets as the summary counts: questions with neither a mapped answer nor a suggestion.
+  const missingIds = new Set(d.summary.missing_question_ids ?? []);
+  const missing = d.questions.filter((q) => missingIds.has(q.id));
   const ocrErrors = d.document.pages.filter((p) => p.ocr_status !== "OK");
 
   const rows = d.answers.filter((a) => {
@@ -62,7 +63,7 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
       case "Suggested": return a.status === "NEEDS_REVIEW" && a.mapping_candidates.length > 0;
       case "Unmapped": return a.status === "UNMAPPED";
       case "Needs review": return a.status === "NEEDS_REVIEW";
-      case "Missing": case "OCR error": return false;
+      case "Missing": case "Read error": return false;
       default: return true;
     }
   });
@@ -81,7 +82,7 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
         <Stat label="Suggested" value={d.summary.suggested ?? 0} tone={d.summary.suggested ? "pen" : undefined} />
         <Stat label="Needs review" value={d.summary.needs_review} tone={d.summary.needs_review ? "mark" : undefined} />
         <Stat label="Missing" value={d.summary.missing} tone={d.summary.missing ? "mark" : undefined} />
-        <Stat label="OCR errors" value={ocrErrors.length} tone={ocrErrors.length ? "mark" : undefined} />
+        <Stat label="Read errors" value={ocrErrors.length} tone={ocrErrors.length ? "mark" : undefined} />
       </div>
       <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Filter answers">
         {FILTERS.map((f) => <button key={f} role="tab" aria-selected={filter === f} onClick={() => setFilter(f)} className={`rounded-full px-3 py-1 text-sm ${filter === f ? "bg-pen text-surface" : "bg-sunken hover:bg-line"}`}>{f}</button>)}
@@ -93,11 +94,12 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
         </Card>
         <div className="h-[calc(100vh-20rem)] min-h-[26rem] space-y-3 overflow-y-auto pr-1">
           {filter === "Missing" && (missing.length ? missing.map((q) => <Card key={q.id} className="border-warn/50 p-4"><p className="font-semibold">Question {q.display_number}: no answer detected</p><p className="doc-text mt-1 line-clamp-2 text-sm text-mute">{q.question_text}</p></Card>) : <Empty title="No missing answers" />)}
-          {filter === "OCR error" && (ocrErrors.length ? ocrErrors.map((p) => <Card key={p.page_number} className="border-mark/50 p-4"><p className="font-semibold">Page {p.page_number}: {label(p.ocr_status)}</p><p className="text-sm text-mute">{p.ocr_error}</p></Card>) : <Empty title="No OCR errors" />)}
-          {!["Missing", "OCR error"].includes(filter) && (rows.length === 0 ? <Empty title="Nothing here" /> : rows.map((a) => {
+          {filter === "Read error" && (ocrErrors.length ? ocrErrors.map((p) => <Card key={p.page_number} className="border-mark/50 p-4"><p className="font-semibold">Page {p.page_number}: {label(p.ocr_status)}</p><p className="text-sm text-mute">{p.ocr_error}</p></Card>) : <Empty title="No read errors" />)}
+          {!["Missing", "Read error"].includes(filter) && (rows.length === 0 ? <Empty title="Nothing here" /> : rows.map((a) => {
             const q = a.exam_question_id ? qmap.get(a.exam_question_id) : undefined;
             const topCandId = a.mapping_candidates?.[0];
             const topCand = topCandId ? qmap.get(topCandId) : undefined;
+            const topDetail = a.mapping_candidate_details?.find((c) => c.id === topCandId);
             const needs = a.status === "UNMAPPED" || a.status === "NEEDS_REVIEW";
             return (
               <Card key={a.id} className={`p-4 ${sel === a.id ? "ring-2 ring-pen" : ""} ${needs ? "border-mark/50" : ""} ${a.status === "IGNORED" ? "opacity-60" : ""}`}>
@@ -105,7 +107,7 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="font-semibold">Student wrote “{a.raw_question_number ?? "no number"}”</span>
                     <div className="flex items-center gap-2">
-                      {topCand && a.status === "NEEDS_REVIEW" && <Badge tone="pen">Suggested: Q{topCand.display_number}</Badge>}
+                      {topCand && a.status === "NEEDS_REVIEW" && <Badge tone="pen">Suggested: Q{topCand.display_number}{topDetail ? ` (${pct(topDetail.score)})` : ""}</Badge>}
                       <Badge tone="mute">page {a.page_number}</Badge>
                       <Badge tone="mute">conf. {pct(a.ocr_confidence)}</Badge>
                       <StatusBadge status={a.status} />
@@ -113,8 +115,9 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
                   </div>
                   <p className="mt-1 text-sm">{q ? <>Mapped to <b>Question {q.display_number}</b> <span className="text-mute">— {q.question_text.slice(0, 70)}</span></> : <span className="text-mark">Not mapped to a question</span>}</p>
                   {a.mapping_note && needs && <p className="mt-1 text-sm font-medium text-mark">{a.mapping_note}</p>}
+                  {topDetail && a.status === "NEEDS_REVIEW" && <p className="mt-0.5 text-xs text-mute">Why Q{topCand?.display_number}: {topDetail.reason}</p>}
                   <p className="doc-text mt-2 line-clamp-4 text-[15px]">{a.answer_text || <em className="text-mute">(empty)</em>}</p>
-                  {a.edited && <p className="mt-1 text-xs text-mute">Edited by you. Original OCR text is kept.</p>}
+                  {a.edited && <p className="mt-1 text-xs text-mute">Edited by you. Original transcribed text is kept.</p>}
                 </button>
                 {sel === a.id && a.has_crop && <div className="mt-3 rounded border border-line bg-sunken p-2"><p className="mb-1 text-xs text-mute">What the model read (approximate crop)</p><AuthImage path={`/crops/student-answer/${a.id}`} alt="Crop of detected answer" className="max-h-48" /></div>}
                 {!locked && (
@@ -125,11 +128,8 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
                           Accept suggestion (Q{topCand.display_number})
                         </Button>
                       )}
-                      {a.status === "MAPPED" && (
-                        <Button small variant="primary" disabled={!a.exam_question_id} busy={busy === a.id + "c"} onClick={() => act(a, { confirm: true }, "c")}>Confirm</Button>
-                      )}
                       <Button small onClick={() => setDlg(a)}>Change mapping</Button>
-                      <Button small onClick={() => setDlg(a)}>Edit OCR</Button>
+                      <Button small onClick={() => setDlg(a)}>Edit text</Button>
                       <Button small onClick={() => setSplitAns(a)}>Split</Button>
                       <Button small onClick={() => setMergeAns(a)}>Merge</Button>
                       <Button small variant="ghost" busy={busy === a.id + "i"} onClick={() => act(a, { ignore: true }, "i")}>Ignore</Button></>)}
@@ -174,7 +174,7 @@ function MapDlg({ a, d, onClose, onDone }: { a: StudentAnswer; d: EvaluationDeta
             {(id) => <Select id={id} value={qid} onChange={(e) => setQid(e.target.value)}><option value="">Not mapped</option>
               {[...d.questions].sort((x, y) => Number(hint.has(y.id)) - Number(hint.has(x.id)) || x.position - y.position).map((q: EvalQuestion) =>
                 <option key={q.id} value={q.id}>{hint.has(q.id) ? "★ " : ""}Q{q.display_number} — {q.question_text.slice(0, 60)}</option>)}</Select>}</Field>
-          <Field label="Answer text (OCR)">{(id) => <Textarea id={id} rows={7} className="font-doc" value={text} onChange={(e) => setText(e.target.value)} />}</Field>
+          <Field label="Answer text (transcribed)">{(id) => <Textarea id={id} rows={7} className="font-doc" value={text} onChange={(e) => setText(e.target.value)} />}</Field>
           <Field label="Reason (optional)">{(id) => <Input id={id} value={reason} onChange={(e) => setReason(e.target.value)} />}</Field>
           <ErrorPanel error={err} />
         </div>
@@ -279,7 +279,7 @@ function MarksTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<vo
       {d.questions.length === 0 ? <Empty title="No questions" /> : d.questions.map((q) => {
         const it = items.get(q.id), a = ans.get(q.id);
         return (
-          <Card key={q.id} className={`p-4 ${it && ["EVALUATION_ERROR", "MISSING"].includes(it.status) ? "border-mark/50" : ""}`}>
+          <Card key={q.id} className={`p-4 ${it && it.status === "EVALUATION_ERROR" ? "border-mark/50" : ""}`}>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0 flex-1"><p className="font-semibold">Question {q.display_number} <span className="font-normal text-mute">· {fmt(q.max_marks)} marks</span></p>
                 <p className="doc-text mt-1 line-clamp-2 text-sm text-mute">{q.question_text}</p></div>
@@ -287,12 +287,12 @@ function MarksTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<vo
             </div>
             <div className="mt-3 grid gap-3 md:grid-cols-2">
               <div><p className="mb-1 text-xs font-medium text-mute">Official answer</p><p className="doc-text rounded bg-sunken p-2 text-sm">{q.official_answer ?? "–"}</p></div>
-              <div><p className="mb-1 text-xs font-medium text-mute">Student answer</p><p className="doc-text rounded bg-sunken p-2 text-sm">{a ? a.answer_text : <em className="text-mute">No answer mapped</em>}</p></div>
+              <div><p className="mb-1 text-xs font-medium text-mute">Student answer</p><p className="doc-text rounded bg-sunken p-2 text-sm">{a ? a.answer_text : <em className="text-mute">Unanswered (no response detected)</em>}</p></div>
             </div>
             {it?.error && <p className="mt-2 text-sm font-medium text-mark">{it.error}</p>}
             {it && it.ai_marks !== null && (
               <div className="mt-3 space-y-1 text-sm">
-                <p><b>AI suggested {fmt(it.ai_marks)}/{fmt(q.max_marks)}</b> {it.ai_decision && <Badge tone="pen">{label(it.ai_decision)}</Badge>} {it.ai_confidence !== null && <span className="text-xs text-mute">confidence {pct(it.ai_confidence)}</span>}</p>
+                <p><b>AI suggested {fmt(it.ai_marks)}/{fmt(q.max_marks)}</b> {it.ai_decision && <Badge tone={it.ai_decision === "UNANSWERED" ? "mute" : "pen"}>{label(it.ai_decision)}</Badge>} {it.ai_confidence !== null && <span className="text-xs text-mute">confidence {pct(it.ai_confidence)}</span>}</p>
                 {it.ai_feedback && <p className="text-mute">{it.ai_feedback}</p>}
                 {it.matched_points.length > 0 && <p><span className="text-ok">Matched:</span> {it.matched_points.join("; ")}</p>}
                 {it.missing_points.length > 0 && <p><span className="text-mark">Missing:</span> {it.missing_points.join("; ")}</p>}
@@ -300,7 +300,7 @@ function MarksTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<vo
               </div>)}
             {it && !locked && (
               <div className="mt-3 flex flex-wrap gap-1.5">
-                {it.status !== "APPROVED" && it.status !== "PENDING" && <Button small variant="primary" disabled={it.status === "MISSING" && !it.not_attempted_confirmed && false} busy={busy === it.id} onClick={() => it.status === "MISSING" ? setEdit({ q, item: it }) : call(it.id, () => api(`/evaluations/${ev.id}/items/${it.id}`, { method: "PATCH", json: { approve: true } }))}>{it.status === "MISSING" ? "Resolve…" : "Approve"}</Button>}
+                {it.status !== "APPROVED" && it.status !== "PENDING" && <Button small variant="primary" busy={busy === it.id} onClick={() => call(it.id, () => api(`/evaluations/${ev.id}/items/${it.id}`, { method: "PATCH", json: { approve: true } }))}>Approve</Button>}
                 {it.status === "APPROVED" && <Button small busy={busy === it.id} onClick={() => call(it.id, () => api(`/evaluations/${ev.id}/items/${it.id}`, { method: "PATCH", json: { approve: false } }))}>Unapprove</Button>}
                 {it.status !== "PENDING" && <Button small onClick={() => setEdit({ q, item: it })}>Change marks</Button>}
                 {it.status !== "PENDING" && <Button small variant="ghost" busy={busy === it.id + "r"} onClick={() => call(it.id + "r", () => api(`/evaluations/${ev.id}/items/${it.id}/rerun`, { method: "POST" }))}>Re-evaluate</Button>}

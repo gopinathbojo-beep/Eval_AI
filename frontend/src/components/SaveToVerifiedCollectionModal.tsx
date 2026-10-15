@@ -119,7 +119,7 @@ export function SaveToVerifiedCollectionModal({ onClose, onSuccess, initialData 
                 <option value="chemical_formula">Chemical Formula / Reaction Arrow</option>
                 <option value="table_formatting">Table Formatting / Alignment</option>
                 <option value="numbering">Question Numbering / Subquestions</option>
-                <option value="word_typo">Word Typo / OCR Misread</option>
+                <option value="word_typo">Word Typo / Misread</option>
                 <option value="missing_content">Missing Words or Lines</option>
                 <option value="none">None (Clean Ground Truth)</option>
               </Select>
@@ -142,7 +142,7 @@ export function SaveToVerifiedCollectionModal({ onClose, onSuccess, initialData 
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <Field label="Original OCR Output (Preserved)">
+          <Field label="Original Transcription (Preserved)">
             {(id) => (
               <Textarea
                 id={id}

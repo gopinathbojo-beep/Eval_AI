@@ -2,7 +2,8 @@
 
 Rules:
 * Only an EXACT normalised-number match with exactly one candidate maps automatically (MAPPED).
-* "3" vs {3(a), 3(b)}, "3(a)" vs {3}, duplicates, unknown labels never auto-map.
+* "3" vs {3(a), 3(b)}, duplicates, unknown labels never auto-map.
+* "3(a)" vs an exam whose question 3 is a single question (parts kept inside it) maps to 3 as a part of it.
 * When OCR misreads handwritten labels (e.g. Q17 for Q1, Q27 for Q2), evidence-based
   recovery generates ranked candidates with confidence scores and explanations for teacher review.
 * Teacher can accept suggestions with a single click.
@@ -10,7 +11,7 @@ Rules:
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterable, Protocol
-from .numbering import normalize_question_number, parent_number
+from .numbering import is_sub_question, normalize_question_number, parent_number
 from .ocr_recovery import find_recovery_candidates, _tokenize
 
 MAPPED = "MAPPED"
@@ -32,6 +33,10 @@ class MappingResult:
     note: str | None = None
     candidates: list[str] = field(default_factory=list)  # exam question ids offered to teacher
     candidate_details: list[dict] = field(default_factory=list)
+
+
+def _details(questions: list, score: float, reason: str) -> list[dict]:
+    return [{"id": q.id, "num": q.normalized_number, "score": score, "reason": reason} for q in questions]
 
 
 def map_label(
@@ -86,8 +91,9 @@ def map_label(
                 NEEDS_REVIEW,
                 None,
                 norm,
-                f"Exact label match but OCR confidence {ocr_confidence:.2f} is low",
+                f"Exact label match but reading confidence {ocr_confidence:.2f} is low",
                 [exact[0].id],
+                _details(exact, round(ocr_confidence, 2), "exact label match, low reading confidence"),
             )
         return MappingResult(MAPPED, exact[0].id, norm)
     if len(exact) > 1:
@@ -97,6 +103,7 @@ def map_label(
             norm,
             "Several exam questions share this number",
             [q.id for q in exact],
+            _details(exact, 0.5, "same question number"),
         )
 
     # No exact match. Offer structurally related questions to the teacher.
@@ -110,8 +117,18 @@ def map_label(
                 norm,
                 f"Label '{norm}' has no exact question; exam has sub-questions",
                 [q.id for q in related],
+                _details(related, 0.5, f"sub-question of {norm}"),
             )
     else:  # "3(a)" but exam only has "3" or a different depth
+        whole = [q for q in qs if q.normalized_number == parent]
+        if len(whole) == 1 and not any(is_sub_question(q.normalized_number) and parent_number(q.normalized_number) == parent
+                                       for q in qs):
+            # The exam keeps question 3 as one question with its parts inside, so "3(a)" is part of it
+            if ocr_confidence is not None and ocr_confidence < min_confidence:
+                return MappingResult(NEEDS_REVIEW, None, norm,
+                                     f"Part of question {parent} but reading confidence {ocr_confidence:.2f} is low",
+                                     [whole[0].id], _details(whole, round(ocr_confidence, 2), f"part of question {parent}"))
+            return MappingResult(MAPPED, whole[0].id, norm, f"Part of question {parent}")
         related = [
             q for q in qs
             if q.normalized_number == parent or (parent_number(q.normalized_number) == parent and q.normalized_number.startswith(norm))
@@ -123,6 +140,7 @@ def map_label(
                 norm,
                 f"Label '{norm}' has no exact question; related questions exist",
                 [q.id for q in related],
+                _details(related, 0.5, f"related to {norm}"),
             )
 
     # Check OCR recovery for digit confusion (e.g. Q17 -> Q1, Q27 -> Q2) or sequence/content
@@ -141,11 +159,23 @@ def map_label(
     return MappingResult(UNMAPPED, None, norm, f"No exam question numbered '{norm}'")
 
 
-def flag_duplicates(rows: list, id_attr: str = "exam_question_id") -> set[str]:
-    """Return question ids targeted by 2+ rows. Caller marks those rows DUPLICATE_MAPPING."""
-    seen: dict[str, int] = {}
+def flag_duplicates(rows: list, id_attr: str = "exam_question_id", allow_parts: bool = True) -> set[str]:
+    """Return question ids targeted by 2+ rows. Caller marks those rows DUPLICATE_MAPPING.
+
+    With allow_parts, rows that are different parts of one question ("9(a)", "9(b)" -> question 9) are not
+    duplicates (student answers). Answer keys need exactly one row per question, so they pass allow_parts=False.
+    """
+    groups: dict[str, list] = {}
     for r in rows:
         qid = getattr(r, id_attr)
         if qid:
-            seen[qid] = seen.get(qid, 0) + 1
-    return {q for q, n in seen.items() if n > 1}
+            groups.setdefault(qid, []).append(r)
+    return {q for q, rs in groups.items() if len(rs) > 1 and not (allow_parts and _distinct_parts(rs))}
+
+
+def _distinct_parts(rows: list) -> bool:
+    """Different parts of one question, possibly after one block for the question itself ("1" that opened with
+    part (a), then "1(b)" written later on the sheet)."""
+    nums = [getattr(r, "normalized_number", None) for r in rows]
+    whole = [n for n in nums if not (n and is_sub_question(n))]
+    return all(nums) and len(whole) <= 1 and len(set(nums)) == len(nums)

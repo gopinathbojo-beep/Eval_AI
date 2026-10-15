@@ -51,6 +51,14 @@ export function DocProgress({ doc, onChanged, rebuildWarning, canRetry = true, a
   const failedPages = doc.pages.filter((p) => p.ocr_status && !["OK", "PENDING"].includes(p.ocr_status));
   const step = stepIndex(doc);
   const retry = async () => { await api(`/documents/${doc.kind}/${doc.id}/reprocess`, { method: "POST" }); onChanged(); };
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelErr, setCancelErr] = useState<unknown>(null);
+  const cancel = async () => {
+    setCancelling(true); setCancelErr(null);
+    try { await api(`/documents/${doc.kind}/${doc.id}/cancel`, { method: "POST" }); onChanged(); }
+    catch (e) { setCancelErr(e); }
+    finally { setCancelling(false); }
+  };
   const openDiag = async (n: number) => {
     setDiagErr(null);
     try { setDiag({ page: n, ...(await api<{ status: string; error: string | null; raw: string }>(`/documents/${doc.kind}/${doc.id}/pages/${n}/ocr`)) }); }
@@ -71,7 +79,11 @@ export function DocProgress({ doc, onChanged, rebuildWarning, canRetry = true, a
             {STEPS.map((s, i) => <li key={s} className={i < step ? "text-ok" : i === step ? "font-semibold text-pen" : "text-mute"}>{i < step ? "✓ " : ""}{s}</li>)}
           </ol>
           <ProgressBar value={doc.progress_current} max={Math.max(doc.progress_total, 1)} />
-          <p className="text-sm text-mute" aria-live="polite">{doc.stage}</p>
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-sm text-mute" aria-live="polite">{doc.stage}</p>
+            {["UPLOADED", "RENDERING", "OCR_PROCESSING"].includes(doc.status) && <Button small busy={cancelling} onClick={cancel}>Cancel</Button>}
+          </div>
+          <ErrorPanel error={cancelErr} />
         </div>
       )}
       {doc.error_message && !busy && (
@@ -88,9 +100,9 @@ export function DocProgress({ doc, onChanged, rebuildWarning, canRetry = true, a
         </ul>
       )}
       <ErrorPanel error={diagErr} />
-      {!busy && canRetry && ["AI_ERROR", "NEEDS_ATTENTION", "FAILED"].includes(doc.status) && (
+      {!busy && canRetry && ["AI_ERROR", "NEEDS_ATTENTION", "FAILED", "CANCELLED"].includes(doc.status) && (
         <div className="mt-3"><Button variant="primary" onClick={() => (rebuildWarning ? setConfirm(true) : retry().catch(() => {}))}>
-          {doc.status === "AI_ERROR" ? "Retry now that Ollama is running" : "Retry failed pages"}</Button></div>
+          {doc.status === "AI_ERROR" ? "Retry now that Ollama is running" : doc.status === "CANCELLED" ? "Continue reading" : "Retry failed pages"}</Button></div>
       )}
       {confirm && <Confirm title="Retry reading" confirmLabel="Retry" body={<p>{rebuildWarning}</p>} onConfirm={retry} onClose={() => setConfirm(false)} />}
       {diag && (

@@ -55,6 +55,9 @@ Production-style: `npm run build`, then `npm run preview` (proxy target is set i
 | `INTERNVL_MODEL` | `blaifa/InternVL3_5:4B` | The only model used. There is no fallback model |
 | `INTERNVL_API_URL` | `http://127.0.0.1:11434` | Ollama server (native `/api/chat`) |
 | `INTERNVL_TIMEOUT` | `300` | Seconds per model call |
+| `INTERNVL_NUM_CTX` | `16384` | Context tokens per call (image + prompt + reply). Too small and Ollama silently drops instructions or page text |
+| `INTERNVL_NUM_PREDICT` | `4096` | Reply token budget; a truncated reply is retried with double the budget (up to `INTERNVL_MAX_NUM_PREDICT`, 8192) |
+| `OCR_MAX_SIDE` | `2560` | Longest side (px) of the image sent to the model; lower is faster, higher reads small handwriting better |
 | `SECRET_KEY` | auto | JWT secret. If empty, one is generated into `data/.secret_key` |
 | `DATA_DIR` | `../data` | SQLite DB and all files |
 | `PDF_RENDER_DPI` | `300` | Render resolution for PDFs |

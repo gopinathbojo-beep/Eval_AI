@@ -4,14 +4,12 @@ Solves:
 - Answer key initially showing 0 answer rows / persistence sync.
 - Merging cross-page answer key content (Question starts on page 1, answer continues on page 2).
 - Distinguishing absent answers vs unmapped vs OCR failed.
-- Splitting swallowed questions within a single OCR block.
-- Accurate criteria parsing and marks calculation matching exam questions.
-""" 
+"""
 from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from typing import Any
-from .numbering import normalize_question_number
+from .numbering import extract_subquestion_token, normalize_question_number
 
 
 @dataclass
@@ -41,7 +39,12 @@ def parse_criteria_marks(criteria: list[str], text: str = "") -> float | None:
         if m_tot:
             return float(m_tot.group(1))
 
-    # 3. Sum of itemized criteria marks:
+    # 3. "N mark(s) each / per point" gives no count, so no total can be computed here. Leave it to the
+    #    printed marks or the question's maximum marks (a fixed guess would silently corrupt the key).
+    if any(re.search(r"\d+(?:\.\d+)?\s*marks?\s+(?:each|per)\b", c, re.I) for c in criteria):
+        return None
+
+    # 4. Sum of itemized criteria marks:
     total = 0.0
     found_count = 0
     for c in criteria:
@@ -67,95 +70,79 @@ def parse_criteria_marks(criteria: list[str], text: str = "") -> float | None:
     return None
 
 
-def extract_criteria_from_block(text: str) -> tuple[str, list[str]]:
-    """Extract clean answer text and itemized criteria if a Marking Scheme is embedded in the block."""
-    ms_match = re.search(r"(?:Marking\s+Scheme\s*(?:\([^\)]+\))?[:\s]*)(.*)", text, re.DOTALL | re.I)
-    if not ms_match:
-        return text.strip(), []
-    ans_text = text[:ms_match.start()].strip()
-    crit_items = re.findall(
-        r"(?:^|\n)\s*[o•\-\*]?\s*(\d+(?:\.\d+)?\s*marks?[:\s][^\n]+|1 mark per[^\n]+|\([^\)]+marks?[^\)]*\)[^\n]*)",
-        text[ms_match.start():],
-        re.I,
-    )
-    return ans_text, [c.strip() for c in crit_items if c.strip()]
+def _bare_part(label: str | None) -> str | None:
+    """'(b)' -> 'b', 'c)' -> 'c', '(ii)' -> 'ii'; None for anything that can be a main question label ('I.', '2')."""
+    tok = extract_subquestion_token(label)
+    if not tok or not re.fullmatch(r"[a-h]|[ivx]{1,4}", tok):
+        return None
+    # An upper-case roman numeral alone ("II.") numbers main questions; a lower-case one is a part
+    return tok if re.fullmatch(r"[a-h]", tok) or tok in label else None
 
 
-def split_key_text(raw_lbl: str | None, text: str) -> list[tuple[str | None, str]]:
-    """Split an answer block if it swallowed subsequent question keys (e.g. Q8 inside Q7, or Q9 cont inside Q10)."""
-    pat = re.compile(r"(?:\n+)\s*(?:Q(?:uestion)?\.?\s*([0-9]{1,2}))[\.\:\s\-]+", re.I)
-    boundaries = []
-    for m in pat.finditer(text):
-        if m.start() > 15:
-            boundaries.append((m.start(), f"Q{m.group(1)}"))
-    if not boundaries:
-        return [(raw_lbl, text)]
+_SCHEME_HEADER = re.compile(r"(?:^|\n)[^\S\n]*[•○\-\*]?[^\S\n]*Marking\s+Scheme[^\n]*", re.I)
+_SCHEME_LINE = re.compile(r"^\s*(?:[•○o\-\*–]\s*)?(\d+(?:\.\d+)?\s*marks?\s*[:\-][^\n]+)$", re.I)
 
-    res: list[tuple[str | None, str]] = []
-    last_idx = 0
-    curr_lbl = raw_lbl
-    for b_start, b_lbl in boundaries:
-        chunk = text[last_idx:b_start].strip()
-        if chunk:
-            if raw_lbl == b_lbl and last_idx == 0:
-                res.append((None, chunk))
-            else:
-                res.append((curr_lbl, chunk))
-        curr_lbl = b_lbl
-        last_idx = b_start
-    rem = text[last_idx:].strip()
-    if rem:
-        res.append((curr_lbl, rem))
-    return res
+
+def criteria_from_text(text: str) -> list[str]:
+    """Marking points as printed under the last 'Marking Scheme' heading in `text` ('2 Marks: ...' lines)."""
+    heads = list(_SCHEME_HEADER.finditer(text or ""))
+    if not heads:
+        return []
+    out = []
+    for line in text[heads[-1].end():].split("\n"):
+        m = _SCHEME_LINE.match(line)
+        if m:
+            out.append(m.group(1).strip())
+        elif out and line.strip() and not line.strip().startswith(("(", "-", "•", "○")):
+            break  # the scheme ended and other text follows
+    return out
+
+
+def _label_pattern(norm_num: str) -> str | None:
+    """Regex for a normalized label as printed: '3(a)' matches '3(a)', '3 (a)', '3a', '3.a'."""
+    m = re.fullmatch(r"(\d+)((?:\([a-z0-9]+\))*)", norm_num or "")
+    if not m:
+        return None
+    parts = re.findall(r"\(([a-z0-9]+)\)", m.group(2))
+    return re.escape(m.group(1)) + "".join(rf"\s*[\.\-]?\s*\(?{re.escape(t)}\)?" for t in parts)
 
 
 def extract_from_full_pdf_text(full_text: str, norm_num: str) -> tuple[str | None, list[str]]:
     """Extract answer text and criteria for a specific question number from full document text."""
-    pat = re.compile(rf"(?:^|\n)\s*(?:Q(?:uestion)?\.?\s*{norm_num}|{norm_num}\.)\b[^\n]*\n(.*)", re.DOTALL | re.I)
+    label = _label_pattern(norm_num)
+    if label is None:
+        return None, []
+    # "1." / "1)" / "Q1" / "Question 1" / a bare "1" on its own line, but not "1.5 Marks" or "10."
+    pat = re.compile(rf"(?:^|\n)[ \t]*(?:Q(?:uestion)?\.?\s*{label}(?![\d\(])|{label}[\.\)](?!\d)|{label}[ \t]*(?=\n))[^\n]*\n(.*)",
+                     re.DOTALL | re.I)
     m = pat.search(full_text)
     if not m:
         return None, []
 
     rest = m.group(1)
-    curr_n = int(norm_num) if norm_num.isdigit() else None
-    next_pat = re.compile(r"(?:^|\n)\s*(?:Q(?:uestion)?\.?\s*(\d+)|(\d+)\.)\b", re.I)
+    # Stop at next question
+    next_q = re.search(r"(?:^|\n)[ \t]*(?:Q(?:uestion)?\.?\s*\d+|\d+[\.\)](?!\d)|\d+\s*\(\s*[a-z]{1,4}\s*\)|\d{1,3}[ \t]*\n)", rest, re.I)
+    block = rest[:next_q.start()].strip() if next_q else rest.strip()
 
-    next_idx = None
-    for nm in next_pat.finditer(rest):
-        next_n_str = nm.group(1) or nm.group(2)
-        if next_n_str and next_n_str.isdigit():
-            val = int(next_n_str)
-            if curr_n is not None:
-                if val > curr_n:
-                    next_idx = nm.start()
-                    break
-            else:
-                next_idx = nm.start()
-                break
-
-    block = rest[:next_idx].strip() if next_idx is not None else rest.strip()
+    # Strip page boundary markers
     clean_block = re.sub(r"--- PAGE \d+ ---", "", block).strip()
 
+    # Extract marking scheme from clean_block
     ms_match = re.search(r"(?:Marking\s+Scheme\s*(\([^\)]+\))?[:\s]*)(.*)", clean_block, re.DOTALL | re.I)
     criteria = []
     answer_text = clean_block
     if ms_match:
         answer_text = clean_block[:ms_match.start()].strip()
-        crit_items = re.findall(
-            r"(?:^|\n)\s*[o•\-\*]?\s*(\d+(?:\.\d+)?\s*marks?[:\s][^\n]+|1 mark per[^\n]+|\([^\)]+marks?[^\)]*\)[^\n]*)",
-            clean_block[ms_match.start():],
-            re.I,
-        )
+        ms_text = ms_match.group(2)
+        crit_items = re.findall(r"(?:^|\n)\s*[o•\-\*]?\s*(\d+(?:\.\d+)?\s*marks?[:\s][^\n]+|1 mark per[^\n]+|\([^\)]+marks?[^\)]*\)[^\n]*)", ms_text, re.I)
         criteria = [c.strip() for c in crit_items if c.strip()]
 
-    answer_text = re.sub(r"^\s*(?:[•\-\*]\s*)?Answer\s*:\s*", "", answer_text, flags=re.I).strip()
+    # Strip "Answer:" prefix from answer_text
+    answer_text = re.sub(r"^\s*[•\-\*]?\s*Answer\s*:\s*", "", answer_text, flags=re.I).strip()
     return answer_text, criteria
 
 
-def segment_answer_keys(
-    page_results: list[tuple[dict, Any]],
-    canonical_questions: list[Any] | None = None,
-) -> list[SegmentedKey]:
+def segment_answer_keys(page_results: list[tuple[dict, Any]]) -> list[SegmentedKey]:
     """Segment and group answer key blocks across pages, merging continuations and computing marks."""
     grouped: list[SegmentedKey] = []
     full_text = ""
@@ -176,90 +163,78 @@ def segment_answer_keys(
             bb = a.bbox.model_dump() if getattr(a, "bbox", None) else None
             conf = getattr(a, "confidence", None)
 
-            splits = split_key_text(raw_lbl, text)
-            for s_lbl, s_txt in splits:
-                norm = normalize_question_number(s_lbl) if s_lbl else None
-                is_cont_label = bool(s_lbl and re.search(r"\b(?:cont|continued|contd)\b", s_lbl, re.IGNORECASE))
-                is_same_q_new_page = bool(grouped and norm and norm == grouped[-1].normalized_number and page_num > grouped[-1].page_number)
-                is_unnumbered = s_lbl is None or s_lbl.lower() in ("null", "none", "?", "unknown", "[unclear]", "")
-                is_bare_subpart = bool(
-                    grouped
-                    and s_lbl
-                    and re.match(r"^\s*\(?\s*([a-zA-Z]|[ivxIVX]{1,4})\s*\)?\s*[\:\.\)]?\s*$", s_lbl)
-                    and not (canonical_questions and any(str(getattr(q, "display_number", "")) == s_lbl for q in canonical_questions))
-                )
-                clean_txt, crit_from_block = extract_criteria_from_block(s_txt)
-                crit_list = crit_from_block if crit_from_block else list(a.criteria or [])
+            norm = normalize_question_number(raw_lbl) if raw_lbl else None
+            # A bare part label "(b)" / "b)" / "(ii)" with no question number (often at the top of the next page)
+            # is the next part of the answer before it, never an answer of its own.
+            part = _bare_part(raw_lbl)
+            if part and grouped and text:
+                if not re.match(rf"^\s*\(?\s*{re.escape(part)}\s*[\)\.]", text, re.IGNORECASE):
+                    text = f"({part}) {text}"
+                raw_lbl = norm = None
+            is_cont_label = bool(raw_lbl and re.search(r"\b(?:cont|continued|contd)\b", raw_lbl, re.IGNORECASE))
+            is_same_q_new_page = bool(grouped and norm and norm == grouped[-1].normalized_number and page_num > grouped[-1].page_number)
+            is_unnumbered = raw_lbl is None or raw_lbl.lower() in ("null", "none", "?", "unknown", "[unclear]", "")
 
-                # Check if this is an unnumbered continuation block, explicit continuation, bare subpart, or same question on next page
-                if is_unnumbered or is_cont_label or is_same_q_new_page or is_bare_subpart:
-                    if grouped and s_txt:
-                        last = grouped[-1]
-                        sep = "\n\n" if "\n" in clean_txt else " "
-                        last.answer_text = f"{last.answer_text}{sep}{clean_txt}".strip()
-                        if crit_list:
-                            last.criteria.extend(crit_list)
-                        if getattr(a, "accepted_answers", None):
-                            last.accepted_answers.extend(a.accepted_answers)
-                        if getattr(a, "keywords", None):
-                            last.keywords.extend(a.keywords)
+            # Check if this is an unnumbered continuation block, explicit continuation, or same question on next page
+            if is_unnumbered or is_cont_label or is_same_q_new_page:
+                if grouped and text:
+                    # Append continuation text to previous answer key row
+                    last = grouped[-1]
+                    sep = "\n\n" if "\n" in text or "|" in text else " "
+                    last.answer_text = f"{last.answer_text}{sep}{text}".strip()
+                    if getattr(a, "criteria", None):
+                        last.criteria.extend(a.criteria)
+                    if getattr(a, "accepted_answers", None):
+                        last.accepted_answers.extend(a.accepted_answers)
+                    if getattr(a, "keywords", None):
+                        last.keywords.extend(a.keywords)
 
-                        c_marks = parse_criteria_marks(last.criteria, last.answer_text)
-                        if c_marks is not None:
-                            last.marks = c_marks
-                        elif getattr(a, "marks", None) is not None and last.marks is None:
-                            last.marks = a.marks
-                        continue
-                    elif not s_txt:
-                        continue
+                    # Recompute marks for the merged question
+                    c_marks = parse_criteria_marks(last.criteria, last.answer_text)
+                    if c_marks is not None:
+                        last.marks = c_marks
+                    elif getattr(a, "marks", None) is not None and last.marks is None:
+                        last.marks = a.marks
+                    continue
+                elif not text:
+                    continue
 
-                calc_m = parse_criteria_marks(crit_list, s_txt)
-                init_marks = calc_m if calc_m is not None else a.marks
+            crit_list = list(a.criteria or [])
+            calc_m = parse_criteria_marks(crit_list, text)
+            init_marks = calc_m if calc_m is not None else a.marks
 
-                k = SegmentedKey(
-                    raw_question_number=s_lbl,
-                    normalized_number=norm,
-                    answer_text=clean_txt,
-                    marks=init_marks,
-                    criteria=crit_list,
-                    accepted_answers=list(a.accepted_answers or []),
-                    keywords=list(a.keywords or []),
-                    page_number=page_num,
-                    bbox=bb,
-                    ocr_confidence=conf,
-                )
-                grouped.append(k)
+            k = SegmentedKey(
+                raw_question_number=raw_lbl,
+                normalized_number=norm,
+                answer_text=text,
+                marks=init_marks,
+                criteria=crit_list,
+                accepted_answers=list(a.accepted_answers or []),
+                keywords=list(a.keywords or []),
+                page_number=page_num,
+                bbox=bb,
+                ocr_confidence=conf,
+            )
+            grouped.append(k)
+
+    # The marking scheme printed in a key's own text is the source of truth for its criteria: the model sometimes
+    # copies a neighbouring question's criteria into its list (Q10 given Q9's points, so 5 marks became 18).
+    for k in grouped:
+        printed = criteria_from_text(k.answer_text)
+        if printed:
+            k.criteria = printed
+            k.marks = parse_criteria_marks(printed, k.answer_text)
 
     # Recovery / alignment pass using full_text from document
     if full_text:
-        existing_norms = {k.normalized_number for k in grouped if k.normalized_number}
-
-        # If any canonical questions were omitted by OCR (e.g. Q8 swallowed), recover from full_text
-        if canonical_questions:
-            for q in canonical_questions:
-                q_norm = str(getattr(q, "display_number", None) or getattr(q, "normalized_number", None))
-                if q_norm and q_norm not in existing_norms:
-                    rec_ans, rec_crit = extract_from_full_pdf_text(full_text, q_norm)
-                    if rec_ans:
-                        c_marks = parse_criteria_marks(rec_crit, rec_ans) or getattr(q, "max_marks", None)
-                        grouped.append(
-                            SegmentedKey(
-                                raw_question_number=f"Q{q_norm}",
-                                normalized_number=q_norm,
-                                answer_text=rec_ans,
-                                marks=c_marks,
-                                criteria=rec_crit,
-                                page_number=1,
-                            )
-                        )
-                        existing_norms.add(q_norm)
-
-        # Align criteria and text from clean digital text
         for k in grouped:
             if not k.normalized_number:
                 continue
             rec_ans, rec_crit = extract_from_full_pdf_text(full_text, k.normalized_number)
-            if rec_ans and (len(k.answer_text) < 15 or len(rec_ans) > len(k.answer_text)):
+            # The exact text layer replaces OCR only when OCR clearly lost text: OCR is near-empty, or the
+            # text-layer block is longer but still plausibly the same answer (not the rest of the document).
+            if rec_ans and (len(k.answer_text) < 15
+                            or len(k.answer_text) < len(rec_ans) <= max(400, 2.5 * len(k.answer_text))):
                 k.answer_text = rec_ans
             if rec_crit:
                 k.criteria = rec_crit
@@ -267,9 +242,5 @@ def segment_answer_keys(
             if c_marks is not None:
                 k.marks = c_marks
 
-    # Sort grouped by question sequence
-    grouped.sort(
-        key=lambda k: int(k.normalized_number) if k.normalized_number and k.normalized_number.isdigit() else 999
-    )
-
     return grouped
+

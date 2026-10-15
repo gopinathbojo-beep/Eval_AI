@@ -38,6 +38,7 @@ import { Input } from "../../components/Input";
 import { ModalDialog } from "../../components/ModalDialog";
 import { DocumentScannerModal, DocumentScannerResult } from "../../components/DocumentScannerModal";
 import { AuthImage } from "../../components/AuthImage";
+import { OcrControls } from "../../components/OcrControls";
 import {
   EditQuestionModal,
   SplitQuestionModal,
@@ -355,7 +356,8 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
   }, [questionsData, exam]);
 
   // Active polling while question paper, answer key, or any student sheet is running OCR or extraction
-  const BUSY_DOC = ["UPLOADED", "RENDERING", "OCR_PROCESSING", "EXTRACTING"];
+  const BUSY_DOC = ["UPLOADED", "RENDERING", "PROCESSING", "EXTRACTING", "CANCELLING"];
+  const reloadAfterOcrAction = () => { fetchExamDetail(); loadTabData(activeTab); };
   const isPaperBusy = !!(exam?.question_paper && BUSY_DOC.includes(exam.question_paper.status));
   const isKeyBusy = !!(exam?.answer_key_document && BUSY_DOC.includes(exam.answer_key_document.status));
   const hasBusySheet = evaluations.some(
@@ -464,7 +466,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
         mimeType: file.mimeType,
       });
 
-      Alert.alert("Success", "Question paper uploaded! OCR extraction started.");
+      Alert.alert("Success", "Question paper uploaded! Reading started.");
       setActiveTab("questions");
       fetchExamDetail();
       loadTabData("questions");
@@ -534,7 +536,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
         mimeType: file.mimeType,
       });
 
-      Alert.alert("Success", "Answer key uploaded! OCR extraction started.");
+      Alert.alert("Success", "Answer key uploaded! Reading started.");
       fetchExamDetail();
       loadTabData("answerKey");
     } catch (err: any) {
@@ -877,11 +879,12 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
   };
 
   // Verify Questions
-  const handleVerifyQuestions = async () => {
+  const handleVerifyQuestions = async (confirmMarksMismatch = false) => {
     try {
       setActionLoading(true);
       await api(`/exams/${examId}/questions/verify`, {
         method: "POST",
+        json: confirmMarksMismatch ? { confirm_marks_mismatch: true } : undefined,
       });
       await Promise.all([loadTabData("questions"), fetchExamDetail()]);
       setActiveTab("answerKey");
@@ -892,6 +895,13 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
         "All canonical questions have been verified! Moving to the Answer Key module."
       );
     } catch (err: any) {
+      if (err?.code === "MARKS_TOTAL_MISMATCH" && !confirmMarksMismatch) {
+        Alert.alert("Marks Do Not Add Up", err.message, [
+          { text: "Cancel", style: "cancel" },
+          { text: "Verify Anyway", onPress: () => handleVerifyQuestions(true) },
+        ]);
+        return;
+      }
       Alert.alert("Error", err.message || "Verification failed");
     } finally {
       setActionLoading(false);
@@ -1009,7 +1019,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
 
       Alert.alert(
         "Upload Confirmed",
-        `Student answer sheet (${actualPageCount} page${actualPageCount === 1 ? "" : "s"}) uploaded and confirmed by backend!\nStatus: ${docStatus}. OCR analysis in progress.`
+        `Student answer sheet (${actualPageCount} page${actualPageCount === 1 ? "" : "s"}) uploaded and confirmed by backend!\nStatus: ${docStatus}. Reading in progress.`
       );
       fetchExamDetail();
       loadTabData("submissions");
@@ -1061,7 +1071,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
     if (targetEv?.document && BUSY_DOC.includes(targetEv.document.status)) {
       Alert.alert(
         "Processing in Progress",
-        `The student's answer sheet is currently ${targetEv.document.stage || "being processed by OCR"}. Please wait until reading finishes.`
+        `The student's answer sheet is currently ${targetEv.document.stage || "being read"}. Please wait until reading finishes.`
       );
       return;
     }
@@ -1098,7 +1108,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
       } else if (err.code === "OCR_NOT_FINISHED") {
         Alert.alert(
           "Processing in Progress",
-          "The answer sheet is still being read and processed by OCR. Please wait a few seconds and try again."
+          "The answer sheet is still being read and processed. Please wait a few seconds and try again."
         );
       } else if (err.code === "ALREADY_RUNNING") {
         Alert.alert("Already Running", "AI evaluation is already in progress for this student.");
@@ -1404,6 +1414,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                     </View>
                     <StatusBadge status={exam.question_paper.status} />
                   </View>
+                  <OcrControls doc={exam.question_paper} onChanged={reloadAfterOcrAction} />
 
                   {/* Live OCR Progress Indicator inside Paper tab */}
                   {isPaperBusy && (
@@ -1714,7 +1725,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                         variant="gradient"
                         size="small"
                         loading={actionLoading}
-                        onPress={handleVerifyQuestions}
+                        onPress={() => handleVerifyQuestions()}
                       />
                     )}
                   </View>
@@ -2092,6 +2103,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                 </Text>
               </Card>
             )}
+            <OcrControls doc={exam.answer_key_document} onChanged={reloadAfterOcrAction} />
 
             {actionLoading && !isKeyBusy && (
               <Card style={[styles.ocrProgressCard, { borderColor: colors.primary, marginBottom: 12 }]}>
@@ -2577,10 +2589,11 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                       >
                         <ActivityIndicator size="small" color={colors.primary} />
                         <Text style={[styles.docBusyBannerText, { color: colors.primary }]} numberOfLines={1}>
-                          {ev.document?.stage || "Reading student paper with OCR..."}
+                          {ev.document?.stage || "Reading student paper..."}
                         </Text>
                       </View>
                     )}
+                    <OcrControls doc={ev.document} onChanged={reloadAfterOcrAction} />
 
                     {/* AI Evaluation Running indicator */}
                     {isRunning && (

@@ -8,7 +8,7 @@ from ..models import Exam, ExamQuestion, QuestionPaperDocument, Teacher
 from ..security import current_teacher
 from ..serializers import question_view
 from ..services.audit import audit
-from ..services.numbering import normalize_question_number
+from ..services.numbering import is_sub_question, normalize_question_number, parent_number
 from ..services.state import set_state
 
 router = APIRouter(prefix="/api")
@@ -41,6 +41,15 @@ def _validate_for_verified(q: ExamQuestion, siblings: list[ExamQuestion]) -> lis
         probs.append("question number is missing or unreadable")
     elif sum(s.normalized_number == q.normalized_number for s in siblings if s.id != q.id):
         probs.append(f"question number {q.normalized_number} is used more than once")
+    else:
+        # A whole question and its own sub-parts (e.g. "3" and "3(a)") would double-count marks and make
+        # student labels ambiguous; one of them must go (or be merged).
+        if is_sub_question(q.normalized_number):
+            if any(s.id != q.id and s.normalized_number == parent_number(q.normalized_number) for s in siblings):
+                probs.append(f"question {parent_number(q.normalized_number)} also exists as a whole question alongside its sub-part {q.normalized_number}")
+        elif any(s.id != q.id and s.normalized_number and is_sub_question(s.normalized_number)
+                 and parent_number(s.normalized_number) == q.normalized_number for s in siblings):
+            probs.append(f"question {q.normalized_number} also has separate sub-parts; keep either the whole question or its parts")
     if not (q.question_text or "").strip():
         probs.append("question text is empty")
     if q.max_marks is None or q.max_marks <= 0:
@@ -227,8 +236,16 @@ def accept_valid(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depen
     return {"accepted": n}
 
 
+class VerifyIn(BaseModel):
+    # Some papers let students choose questions, so the marks total may legitimately differ from the
+    # exam total; the teacher must say so explicitly.
+    confirm_marks_mismatch: bool = False
+
+
 @router.post("/exams/{exam_id}/questions/verify")
-def verify_questions(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+def verify_questions(exam_id: str, body: VerifyIn | None = None, db: Session = Depends(get_db),
+                     t: Teacher = Depends(current_teacher)):
+    body = body or VerifyIn()
     exam = get_exam(db, t, exam_id)
     if exam.status != "QUESTIONS_EXTRACTED":
         raise err(409, "INVALID_EXAM_STATE", "Questions can only be verified after they have been extracted.")
@@ -236,7 +253,7 @@ def verify_questions(exam_id: str, db: Session = Depends(get_db), t: Teacher = D
     qs = db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all()
     issues = []
     if doc is None or doc.status != "READY":
-        issues.append({"question": "Question paper", "reason": "Some pages failed OCR. Retry them before verifying."})
+        issues.append({"question": "Question paper", "reason": "Some pages could not be read. Retry them before verifying."})
     if not qs:
         issues.append({"question": "Question paper", "reason": "No questions have been extracted."})
     for q in qs:
@@ -246,10 +263,16 @@ def verify_questions(exam_id: str, db: Session = Depends(get_db), t: Teacher = D
             issues.append({"question": q.display_number, "reason": f"Not accepted yet ({q.verification_status.replace('_', ' ').lower()})"})
     if issues:
         raise err(400, "QUESTIONS_NOT_READY", f"{len(issues)} issue(s) must be resolved before the questions can be verified.", issues)
-    set_state(exam, "QUESTIONS_VERIFIED")
-    audit(db, exam_id=exam.id, teacher_id=t.id, entity_type="exam", entity_id=exam.id, action="questions_verified", new=len(qs))
-    db.commit()
     total = sum(q.max_marks for q in qs)
-    return {"verified": len(qs), "sum_of_marks": total,
-            "marks_warning": (f"Questions add up to {total:g} marks but the exam total is {exam.total_marks:g}."
-                              if abs(total - exam.total_marks) > 1e-9 else None)}
+    marks_warning = (f"Questions add up to {total:g} marks but the exam total is {exam.total_marks:g}."
+                     if abs(total - exam.total_marks) > 1e-9 else None)
+    if marks_warning and not body.confirm_marks_mismatch:
+        raise err(409, "MARKS_TOTAL_MISMATCH",
+                  marks_warning + " Confirm this is intended (e.g. students choose which questions to answer), "
+                                  "or fix the question marks or the exam total.",
+                  [{"question": "Marks total", "reason": marks_warning}])
+    set_state(exam, "QUESTIONS_VERIFIED")
+    audit(db, exam_id=exam.id, teacher_id=t.id, entity_type="exam", entity_id=exam.id, action="questions_verified",
+          new=len(qs), reason=f"Marks total mismatch confirmed: {marks_warning}" if marks_warning else None)
+    db.commit()
+    return {"verified": len(qs), "sum_of_marks": total, "marks_warning": marks_warning}

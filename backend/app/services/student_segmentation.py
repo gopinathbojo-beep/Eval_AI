@@ -1,19 +1,19 @@
 """Student Answer Segmentation and Grouping Engine.
 
-Solves:
-- Answer splitting into multiple fragmented records (e.g. Q7(a) broken by '1)' and '2)').
-- Missing question number treated as new answer instead of continuation.
-- Content numbering (1), 2), 3), (i), (ii)) confused with question numbering.
-- Loss of continuation text across OCR blocks and pages.
-- Loss of sub-question context (current_question = 7, part = a).
-- Reconstructs semantic answer groups with merged text, bounding boxes, and confidence.
+Turns the per-page OCR blocks into one record per answered question:
+- Unlabelled blocks continue the answer in progress, including across page breaks (an answer that starts at the
+  bottom of page 1 and continues at the top of page 2 stays ONE answer).
+- A repeated label ("Q3" again at the top of the next page, "Q3 contd") continues that answer.
+- Content numbering inside an answer (1), 2), (i), (ii), bullets) is kept as answer text, not split off.
+- A bare part label ("(b)", "b)") after "7(a)" starts the next part "7(b)".
+- When the exam's question labels are known they decide ambiguous cases ("2)" under Q7 is a point of the
+  answer unless it is the start of an unanswered exam question 2).
 """
 from __future__ import annotations
 import re
-from dataclasses import dataclass
-from typing import Any
-from .numbering import normalize_question_number, is_sub_question, parent_number
-from .ocr_recovery import find_recovery_candidates, _tokenize
+from dataclasses import dataclass, field
+from typing import Any, Iterable
+from .numbering import extract_subquestion_token, is_sub_question, normalize_question_number, parent_number
 
 
 @dataclass
@@ -28,56 +28,15 @@ class SegmentedAnswer:
     position: int = 0
 
 
-# Sub-part markers: e.g. "(a)", "(b)", "a)", "b)", "(i)", "(ii)"
-_SUBPART_PATTERN = re.compile(
-    r"^\s*\(?\s*([a-zA-Z]|[ivxIVX]{1,4})\s*\)?\s*[\:\.\)]?\s*$",
-)
-
-
-def _is_content_bullet(label: str | None, text: str, current_q: str | None) -> bool:
-    """Determine if a block's label/prefix is merely an answer content bullet rather than a new exam question."""
-    if not current_q:
-        return False
-    lbl_clean = str(label or "").strip()
-    txt_clean = text.strip()
-
-    # Punctuation/delimiter indicating list bullet: '1)', '2.', '(1)', '(2)', '(i)'
-    bullet_delim = re.match(r"^(?:(\d{1,2}|[ivxIVX]{1,4})\s*[\)\.\-]|(?:\(([0-9a-zA-Z]{1,4})\)))\s*$", lbl_clean)
-    text_delim = re.match(r"^(?:(\d{1,2}|[ivxIVX]{1,4})\s*[\)\.\-]|(?:\(([0-9a-zA-Z]{1,4})\)))\s*", txt_clean)
-
-    if bullet_delim:
-        num = bullet_delim.group(1) or bullet_delim.group(2)
-        curr_p = parent_number(current_q)
-        # If current question is e.g. 7, and bullet is 1 or 2
-        if curr_p.isdigit() and num.isdigit():
-            if int(curr_p) > int(num):
-                return True
-        elif is_sub_question(current_q):
-            # Inside sub-questions like 7(a), any 1), 2), 3) or (i), (ii) is a content bullet
-            if num.isdigit() or num.lower() in ("i", "ii", "iii", "iv", "v", "a", "b", "c"):
-                return True
-
-    if text_delim and not lbl_clean:
-        # Unlabelled block starting with 1), 2), etc.
-        return True
-
-    return False
-
-
-def _is_subpart_transition(label: str | None, current_parent: str | None) -> str | None:
-    """If the label is just a bare subpart like '(b)' or 'b)' or 'part b', return the subpart token."""
-    if not label or not current_parent:
-        return None
-    s = str(label).strip()
-    # Ensure it's not a full question like "3(b)"
-    if "(" in s and any(c.isdigit() for c in s.split("(")[0]):
-        return None
-    m = _SUBPART_PATTERN.match(s)
-    if m:
-        sub = m.group(1).lower()
-        if len(sub) <= 4:
-            return sub
-    return None
+_NULL_LABELS = {"", "null", "none", "?", "unknown", "[unclear]", "unclear", "n/a", "-"}
+_CONT_LABEL = re.compile(r"\b(?:cont|contd|continued|continuation)\b\.?", re.IGNORECASE)
+# "1)", "2.", "(3)", "ii)", "(iv)" - forms that are used both for question labels and for points inside an answer
+_BULLET_LABEL = re.compile(r"^\s*(?:(\d{1,2}|[ivxIVX]{1,4})\s*[\)\.\-]|\(\s*(\d{1,2}|[a-zA-Z]{1,4})\s*\))\s*$")
+_BULLET_TEXT = re.compile(r"^\s*(?:\d{1,2}\s*[\)\.]|\(\s*(?:\d{1,2}|[ivx]{1,4})\s*\)|[ivx]{1,4}\s*\)|[•\-\*→])\s*", re.IGNORECASE)
+# Text that opens with a part marker: "c) ...", "(c) ...", "b. ..."
+_PART_START = re.compile(r"^\s*(?:\(\s*[a-h]\s*\)|[a-h]\s*[\)\.])\s", re.IGNORECASE)
+_ROMAN_PARTS = {"i","ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"}
+LOW_LABEL_CONFIDENCE = 0.5
 
 
 def _merge_bboxes(bb1: dict | None, bb2: dict | None) -> dict | None:
@@ -95,282 +54,292 @@ def _merge_bboxes(bb1: dict | None, bb2: dict | None) -> dict | None:
         return bb1
 
 
-def _split_swallowed_answers(
-    raw_lbl: str | None,
-    text: str,
-    canonical_questions: list[Any] | None = None,
-) -> list[tuple[str | None, str]]:
-    if not text or len(text.strip()) < 40:
-        return [(raw_lbl, text)]
+@dataclass
+class _Group:
+    raw_label: str | None
+    norm: str | None
+    page: int
+    bbox: dict | None = None
+    parts: list[str] = field(default_factory=list)
+    confs: list[float] = field(default_factory=list)
+    label_conf: float | None = None
+    last_bullet: int | None = None
+    last_bullet_style: str | None = None
+    last_page: int = 0
 
-    boundaries: list[tuple[int, str]] = []
+    def __post_init__(self):
+        self.last_page = self.page
 
-    valid_nums: set[str] = set()
-    curr_p_num: int | None = None
-    if raw_lbl:
-        m_curr = re.search(r"(\d+)", str(raw_lbl))
-        if m_curr:
-            curr_p_num = int(m_curr.group(1))
-            if curr_p_num == 17:
-                curr_p_num = 1
-            elif curr_p_num == 27:
-                curr_p_num = 2
+    def add(self, text: str, page: int, bbox: dict | None, conf: float | None, prefix: str | None = None):
+        t = f"{prefix} {text}".strip() if prefix else text
+        if t:
+            self.parts.append(t)
+        if bbox and page == self.page:
+            self.bbox = _merge_bboxes(self.bbox, bbox)
+        if conf is not None:
+            self.confs.append(conf)
+        self.last_page = max(self.last_page, page)
 
-    topic_patterns: list[tuple[str, str]] = [
-        (r"(?:\n\n+|\n)\s*(?:The\s+Tsunami|The\s+Earth'?s\s+wife|Igneous|Ignesious)", "5"),
-        (r"(?:\n\n+|\n)\s*(?:This\s+is\s+(?:Sody|Jody|Jodi)'?s?\s+(?:fan|fawn)|(?:Sody|Jody)\s+wanted\s+to\s+bring)", "8"),
-        (r"(?:\n\n+|\n)\s*(?:Writing\s+Skills|Notice\s+Writing|NOTICE\b)", "9"),
-        (r"(?:\n\n+|\n)\s*(?:Dear\s+Jim|Imagine\s+you\s+are\s+Connie)", "10"),
-    ]
 
-    if canonical_questions:
-        for q in canonical_questions:
-            q_num = getattr(q, "display_number", None) or getattr(q, "normalized_number", None)
-            if q_num:
-                valid_nums.add(str(q_num))
-            q_txt = getattr(q, "question_text", "")
-            if not q_num or not q_txt:
-                continue
+def _is_null_label(lbl: str | None) -> bool:
+    return lbl is None or lbl.strip().lower() in _NULL_LABELS
 
-            for line in q_txt.splitlines()[:3]:
-                clean_l = re.sub(r"^[A-Za-z\s&]+:\s*", "", line)
-                clean_l = re.sub(r"^\([a-z0-9]+\)\s*", "", clean_l)
-                phrases = re.findall(r"\b[A-Za-z]{4,}(?:\s+[A-Za-z]{3,}){1,3}\b", clean_l)
-                for ph in phrases[:2]:
-                    if len(ph) >= 9 and ph.lower() not in ("short answer", "long answer", "following questions", "following chemical"):
-                        topic_patterns.append((rf"(?:\n\n+|\n)\s*(?:[a-zA-Z0-9\(\)\.\-:\s]{{0,10}})?\b{re.escape(ph)}\b", str(q_num)))
 
-    # 1. Embedded question labels: e.g. \n\nQ5, \n\nQ.5, \n\nQuestion 5, or bare \n\n3), \n\n4), \n\n6)
-    num_pat = re.compile(
-        r"(?:\n+)\s*(?:(?:Q(?:uestion)?\.?\s*([0-9]{1,2}))|([0-9]{1,2})\s*[\)\.\-:])(?:\s+|(?:[a-zA-Z]))",
-        re.IGNORECASE
-    )
-    for m in num_pat.finditer(text):
-        if m.start() < 15:
+def _has_question(known: set[str] | None, norm: str) -> bool:
+    """Exam has this question or sub-questions of it."""
+    return bool(known) and (norm in known or any(k.startswith(norm + "(") for k in known))
+
+
+def _bullet_style(s: str) -> str:
+    """Delimiter style of a list marker: '1)' -> ')', '2.' -> '.', '(3)' -> '()'."""
+    s = s.strip()
+    if s.startswith("("):
+        return "()"
+    m = re.match(r"^\w{1,4}\s*([\)\.\-])", s)
+    return m.group(1) if m else ""
+
+
+def _bullet_token(lbl: str) -> str | None:
+    m = _BULLET_LABEL.match(lbl)
+    if not m:
+        return None
+    return (m.group(1) or m.group(2)).lower()
+
+
+def _repair_label(lbl: str, known: set[str] | None) -> str | None:
+    """A handwritten closing bracket is often read as a 7: "1)" -> "17", "3)" -> "37".
+    When the exam has no such question but has the number without the trailing 7, that is the label."""
+    norm = normalize_question_number(lbl)
+    if not known or norm is None or _has_question(known, norm):
+        return None
+    main, sep, rest = norm.partition("(")
+    if len(main) > 1 and main.endswith("7") and _has_question(known, main[:-1] + sep + rest):
+        return f"Q{main[:-1]}{sep}{rest}"
+    return None
+
+
+# A line that starts with a question number: "3)", "3.", "Q3", "Ans 3:", "37 " (bracket read as 7), or a bare "3"
+_LINE_LABEL = re.compile(r"^\s*(?P<pre>(?:Q|Qn|Ans|Answer)\s*\.?\s*)?(?P<num>\d{1,3})\s*(?P<delim>[\)\.\:])?(?=\s|$)\s*",
+                         re.IGNORECASE)
+
+
+def _line_number(line: str, known: set[str], has_body: bool = False) -> int | None:
+    m = _LINE_LABEL.match(line)
+    if not m:
+        return None
+    num = m.group("num")
+    if m.group("pre") or m.group("delim"):
+        return int(num)
+    # A bare "3" alone on its line with the answer written below it
+    if has_body and line.strip() == num:
+        return int(num)
+    if len(num) > 1 and num.endswith("7") and num not in known and num[:-1] in known:
+        return int(num[:-1])
+    return None
+
+
+def _split_embedded(text: str, ref: int, known: set[str] | None, seen: set[str],
+                    prev_bullet: int | None) -> list[tuple[str | None, str]]:
+    """The model sometimes returns several answers as one block ("1) ... 3) ... 4) ..."). Split the block where a
+    line starts with the number of a later exam question that has not been answered yet. Points of a list
+    inside an answer ("1) .. 2) .. 3)") are kept: a number right after its predecessor is a list item, and so
+    is any number not above the question being answered.
+    Returns [(label or None, text)], the first entry being the part before any split."""
+    if not known or not text:
+        return [(None, text)]
+    out: list[tuple[str | None, str]] = [(None, "")]
+    lines: list[str] = []
+    taken = set(seen)
+    last_item = prev_bullet
+    all_lines = text.split("\n")
+    for i, line in enumerate(all_lines):
+        n = _line_number(line, known, has_body=any(x.strip() for x in all_lines[i + 1:]))
+        if n is not None and str(n) in known and n > ref and str(n) not in taken \
+                and not (last_item is not None and n == last_item + 1):
+            out[-1] = (out[-1][0], "\n".join(lines).strip())
+            out.append((f"Q{n}", ""))
+            lines, ref, last_item = [_LINE_LABEL.sub("", line, count=1)], n, None
+            taken.add(str(n))
             continue
-        num_str = m.group(1) or m.group(2)
-        if not num_str:
-            continue
-
-        # Check if preceding line indicates a content bullet (e.g. 'zones:', 'properties:')
-        preceding = text[:m.start()].rstrip()
-        last_line = preceding.splitlines()[-1] if preceding.splitlines() else ""
-        if last_line.strip().endswith(":") or any(w in last_line.lower() for w in [
-            "zones", "reasons", "types", "properties", "following", "because", "points", "steps", "factors", "principles"
-        ]):
-            continue
-
-        # If current question is >= num_str and num_str is a small bullet (1, 2, 3), it's a content bullet
-        int_n = int(num_str) if num_str.isdigit() else 0
-        if curr_p_num is not None and curr_p_num >= int_n and int_n in (1, 2, 3):
-            continue
-
-        # If canonical questions are known, ensure this is a question number in the exam
-        if valid_nums and num_str not in valid_nums:
-            # Allow 5 when exam has 6 if student misnumbered destructive distillation
-            if not (num_str == "5" and "6" in valid_nums):
-                continue
-
-        boundaries.append((m.start(), num_str))
-
-    # 2. Topic/story patterns matching exam questions
-    for pat_str, target_num in topic_patterns:
-        try:
-            for m in re.finditer(pat_str, text, re.IGNORECASE):
-                if m and m.start() > 20:
-                    if not any(abs(b[0] - m.start()) < 25 for b in boundaries):
-                        boundaries.append((m.start(), target_num))
-        except re.error:
-            pass
-
-    boundaries.sort(key=lambda x: x[0])
-    if not boundaries:
-        return [(raw_lbl, text)]
-
-    res: list[tuple[str | None, str]] = []
-    last_idx = 0
-    curr_lbl = raw_lbl
-    for b_start, b_num in boundaries:
-        first_part = text[last_idx:b_start].strip()
-        if first_part:
-            res.append((curr_lbl, first_part))
-        curr_lbl = f"Q{b_num}"
-        last_idx = b_start
-    rem = text[last_idx:].strip()
-    if rem:
-        res.append((curr_lbl, rem))
-    return res
+        if n is not None:
+            last_item = n
+        lines.append(line)
+    out[-1] = (out[-1][0], "\n".join(lines).strip())
+    return out
 
 
-def segment_student_answers(
-    page_results: list[tuple[dict, Any]],
-    canonical_questions: list[Any] | None = None,
-) -> list[SegmentedAnswer]:
-    """Segment and group raw OCR blocks into coherent student answers across pages."""
+def _ref_number(norm: str | None) -> int:
+    p = parent_number(norm) if norm else ""
+    return int(p) if p.isdigit() else 0
+
+
+def _classify(lbl: str, cur: _Group | None, known: set[str] | None, seen: set[str],
+              page_num: int) -> tuple[str, str | None]:
+    """Decide what a labelled block is. Returns (kind, normalized) with kind in
+    'bullet' (point inside current answer), 'continue' (same answer goes on), 'new' (start a new answer)."""
+    cur_norm = cur.norm if cur else None
+    if _CONT_LABEL.search(lbl):
+        base = normalize_question_number(_CONT_LABEL.sub("", lbl).strip(" -:.()"))
+        if cur and (base is None or base == cur_norm):
+            return "continue", cur_norm
+    norm = normalize_question_number(lbl)
+    # The same label again after a page break is the answer carrying on ("Q3" repeated at the top of page 2).
+    # On the same page it is a second attempt -> separate record, flagged as a duplicate for the teacher.
+    if cur_norm and norm == cur_norm and page_num > cur.last_page:
+        return "continue", cur_norm
+
+    # "1b" / "1(c)" while question 1 is being answered: the next part of the same answer, unless the exam keeps
+    # that part as a question of its own
+    if cur_norm and norm and is_sub_question(norm) and parent_number(norm) == parent_number(cur_norm) \
+            and not (known and norm in known):
+        return "bullet", None
+
+    tok = _bullet_token(lbl)
+    sub_tok = extract_subquestion_token(lbl)
+
+    # Bare part label: "(b)", "b)", "(ii)", "ii)" relative to the current question.
+    # ("ii)" also normalizes to main question 2, so roman labels are checked against both readings.)
+    part = sub_tok or (tok if tok and not tok.isdigit() else None)
+    if cur_norm and part:
+        parent = parent_number(cur_norm)
+        nested = f"{cur_norm}({part})"
+        sibling = f"{cur_norm.rsplit('(', 1)[0]}({part})" if is_sub_question(cur_norm) else f"{parent}({part})"
+        if known:
+            for cand in (nested, sibling, f"{parent}({part})"):
+                if cand in known:
+                    return "new", cand
+        if norm and part in _ROMAN_PARTS and not is_sub_question(cur_norm) and parent.isdigit() \
+                and norm == str(int(parent) + 1) and (not known or norm in known):
+            return "new", norm  # roman-numbered paper: "II." right after question I
+        # A part is answered inside its question's answer (one answer per question number)
+        return "bullet", None
+
+    # Numeric "2)" / "2." / "(2)" while an answer is in progress: a point of that answer, or a new question?
+    if cur and tok and tok.isdigit():
+        n = int(tok)
+        running_list = cur.last_bullet is not None and n == cur.last_bullet + 1 \
+            and cur.last_bullet_style == _bullet_style(lbl)
+        if known is not None and known:
+            if not _has_question(known, str(n)) or str(n) in seen or running_list:
+                return "bullet", None
+            return "new", norm
+        cur_p = parent_number(cur_norm) if cur_norm else ""
+        if running_list or is_sub_question(cur_norm or "") or (cur_p.isdigit() and int(cur_p) > n and str(n) in seen) \
+                or (cur_p.isdigit() and n == 1 and int(cur_p) > 1):
+            return "bullet", None
+    return "new", norm
+
+
+def segment_student_answers(page_results: list[tuple[dict, Any]],
+                            known_numbers: Iterable[str] | None = None) -> list[SegmentedAnswer]:
+    """Group raw OCR blocks into coherent student answers across pages.
+
+    `known_numbers` are the exam's normalized question numbers; when given they resolve ambiguous labels.
+    """
+    known = {k for k in (known_numbers or []) if k} or None
     grouped: list[SegmentedAnswer] = []
+    seen: set[str] = set()
+    cur: _Group | None = None
 
-    curr_raw_label: str | None = None
-    curr_norm_num: str | None = None
-    curr_text_parts: list[str] = []
-    curr_page: int = 1
-    curr_bbox: dict | None = None
-    curr_confs: list[float] = []
-
-    def flush_current():
-        nonlocal curr_raw_label, curr_norm_num, curr_text_parts, curr_page, curr_bbox, curr_confs
-        if not curr_text_parts and not curr_raw_label:
+    def flush():
+        nonlocal cur
+        if cur is None:
             return
-        full_text = "\n".join(curr_text_parts).strip()
-        if not full_text and not curr_raw_label:
+        text = "\n".join(cur.parts).strip()
+        if text or cur.raw_label:
+            conf = sum(cur.confs) / len(cur.confs) if cur.confs else None
+            if cur.label_conf is not None and cur.label_conf < LOW_LABEL_CONFIDENCE:
+                conf = min(conf, cur.label_conf) if conf is not None else cur.label_conf
+            grouped.append(SegmentedAnswer(
+                raw_question_number=cur.raw_label,
+                normalized_number=cur.norm,
+                answer_text=text,
+                raw_ocr_text=text,
+                page_number=cur.page,
+                bbox=cur.bbox,
+                ocr_confidence=round(conf, 2) if conf is not None else None,
+                position=len(grouped) + 1,
+            ))
+        if cur.norm:
+            seen.add(cur.norm)
+            seen.add(parent_number(cur.norm))
+        cur = None
+
+    def place(raw_lbl: str | None, text: str, page_num: int, bb: dict | None, conf: float | None,
+              label_conf: float | None) -> None:
+        nonlocal cur
+        if _is_null_label(raw_lbl):
+            if not text:
+                return
+            if cur is None:
+                # Text before any label (first page top, or the student never numbered it)
+                cur = _Group(None, None, page_num, bb)
+            cur.add(text, page_num, bb, conf)
+            if _BULLET_TEXT.match(text):
+                m = re.match(r"^\s*\(?(\d{1,2})", text)
+                if m:
+                    cur.last_bullet, cur.last_bullet_style = int(m.group(1)), _bullet_style(text)
             return
-        avg_conf = sum(curr_confs) / len(curr_confs) if curr_confs else None
 
-        ans = SegmentedAnswer(
-            raw_question_number=curr_raw_label,
-            normalized_number=curr_norm_num,
-            answer_text=full_text,
-            raw_ocr_text=full_text,
-            page_number=curr_page,
-            bbox=curr_bbox,
-            ocr_confidence=round(avg_conf, 2) if avg_conf is not None else None,
-            position=len(grouped) + 1,
-        )
-        grouped.append(ans)
+        kind, norm = _classify(raw_lbl, cur, known, seen, page_num)
+        if kind == "continue" and cur is not None:
+            cur.add(text, page_num, bb, conf)
+            return
+        if kind == "bullet" and cur is not None:
+            cur.add(text, page_num, bb, conf, prefix=raw_lbl)
+            tok = _bullet_token(raw_lbl)
+            if tok and tok.isdigit():
+                cur.last_bullet, cur.last_bullet_style = int(tok), _bullet_style(raw_lbl)
+            return
 
-        curr_raw_label = None
-        curr_norm_num = None
-        curr_text_parts = []
-        curr_bbox = None
-        curr_confs = []
+        flush()
+        if norm and norm != normalize_question_number(raw_lbl):
+            # Bare part label resolved against the previous question: "(b)" after Q7(a) -> Q7(b)
+            raw_lbl = f"Q{norm}"
+        prefix = None
+        if norm and is_sub_question(norm) and not (known and norm in known) \
+                and parent_number(norm) not in seen and (not known or parent_number(norm) in known):
+            # The answer starts at its first part ("1a" with no "1" before it): it is the answer to question 1,
+            # and the part label stays in the text so the grader can tell the parts apart
+            prefix, norm = raw_lbl, parent_number(norm)
+            raw_lbl = f"Q{norm}"
+        cur = _Group(raw_lbl, norm, page_num, bb, label_conf=label_conf)
+        cur.add(text, page_num, None, conf, prefix=prefix)
 
     for page_info, page_res in page_results:
         page_num = page_info["page_number"]
-        answers_raw = getattr(page_res, "answers", [])
+        for a in getattr(page_res, "answers", []) or []:
+            text = (a.answer_text or "").strip()
+            raw_lbl = (a.question_number or "").strip() or None
+            bb = a.bbox.model_dump() if getattr(a, "bbox", None) else None
+            conf = getattr(a, "ocr_confidence", None)
+            label_conf = getattr(a, "question_number_confidence", None)
+            if not _is_null_label(raw_lbl):
+                raw_lbl = _repair_label(raw_lbl, known) or raw_lbl
+                # A number the exam does not have, on a block that opens with a part ("11" over "c) 5R Principles"
+                # in a 10 question exam), is a misread mark on the next part of the current answer.
+                norm = normalize_question_number(raw_lbl)
+                if cur is not None and known and norm and not _has_question(known, norm) \
+                        and _PART_START.match(text):
+                    raw_lbl = None
 
-        # Expand any swallowed answers within blocks
-        expanded_items: list[tuple[str | None, str, dict | None, float | None]] = []
-        for a in answers_raw:
-            a_text = (a.answer_text or "").strip()
-            a_lbl = (a.question_number or "").strip() or None
-            a_bb = a.bbox.model_dump() if getattr(a, "bbox", None) else None
-            a_conf = getattr(a, "ocr_confidence", None)
-            splits = _split_swallowed_answers(a_lbl, a_text, canonical_questions)
-            for s_lbl, s_txt in splits:
-                expanded_items.append((s_lbl, s_txt, a_bb, a_conf))
+            # Where does this block sit in the exam's numbering? Later question numbers inside it are split off.
+            if _is_null_label(raw_lbl):
+                ref, prev_bullet = _ref_number(cur.norm if cur else None), (cur.last_bullet if cur else None)
+            else:
+                kind, norm = _classify(raw_lbl, cur, known, seen, page_num)
+                own = kind == "new" or cur is None
+                ref = _ref_number(norm if own else cur.norm)
+                prev_bullet = None if own else cur.last_bullet
+            segments = _split_embedded(text, ref, known, seen, prev_bullet)
 
-        for raw_lbl, text, bb, conf in expanded_items:
-            # Check if this item is a content bullet e.g. "1)", "2)", "3)" under an ongoing question
-            if curr_norm_num and _is_content_bullet(raw_lbl, text, curr_norm_num):
-                bullet_prefix = f"{raw_lbl} " if raw_lbl else ""
-                curr_text_parts.append(f"{bullet_prefix}{text}".strip())
-                if bb and curr_page == page_num:
-                    curr_bbox = _merge_bboxes(curr_bbox, bb)
-                if conf is not None:
-                    curr_confs.append(conf)
-                continue
+            head_text = segments[0][1]
+            if head_text or not _is_null_label(raw_lbl):
+                place(raw_lbl, head_text, page_num, bb, conf, label_conf)
+            for lbl, seg_text in segments[1:]:
+                place(lbl, seg_text, page_num, None, conf, None)
 
-            # Case: Label is null/empty or 'none'/'unclear'
-            if raw_lbl is None or raw_lbl.lower() in ("null", "none", "?", "unknown", "[unclear]"):
-                # Top-of-page continuation across pages
-                if page_num > 1 and not curr_text_parts and grouped:
-                    last = grouped[-1]
-                    last.answer_text = f"{last.answer_text}\n{text}".strip()
-                    last.raw_ocr_text = f"{last.raw_ocr_text}\n{text}".strip()
-                    continue
-                else:
-                    # Unnumbered independent block -> create unmapped record
-                    flush_current()
-                    curr_raw_label = None
-                    curr_norm_num = None
-                    curr_page = page_num
-                    if text:
-                        curr_text_parts.append(text)
-                    curr_bbox = bb
-                    if conf is not None:
-                        curr_confs.append(conf)
-                    flush_current()
-                    continue
-
-            # Check if content strongly matches a different canonical question (redirecting misread labels)
-            norm = normalize_question_number(raw_lbl)
-            if norm and canonical_questions and text and len(_tokenize(text)) >= 3:
-                exact_match = [q for q in canonical_questions if q.normalized_number == parent_number(norm)]
-                q_tok = _tokenize(exact_match[0].question_text) if exact_match else set()
-                ans_tok = _tokenize(text)
-                if len(ans_tok & q_tok) == 0:
-                    rec = find_recovery_candidates(raw_lbl, text, canonical_questions)
-                    if rec and rec[0].score >= 0.65:
-                        norm = rec[0].normalized_number
-                        raw_lbl = f"Q{norm}"
-
-            p = parent_number(norm) if norm else None
-            exam_has_subq = any(
-                is_sub_question(getattr(q, "normalized_number", ""))
-                and parent_number(getattr(q, "normalized_number", "")) == p
-                for q in (canonical_questions or [])
-            )
-
-            # Case: Sub-part transition or sub-question where exam defines only the parent question
-            sub_part = _is_subpart_transition(raw_lbl, parent_number(curr_norm_num) if curr_norm_num else None)
-            if sub_part and curr_norm_num:
-                parent = parent_number(curr_norm_num)
-                parent_has_subq = any(
-                    is_sub_question(getattr(q, "normalized_number", ""))
-                    and parent_number(getattr(q, "normalized_number", "")) == parent
-                    for q in (canonical_questions or [])
-                )
-                if not parent_has_subq:
-                    curr_text_parts.append(text)
-                    if bb and curr_page == page_num:
-                        curr_bbox = _merge_bboxes(curr_bbox, bb)
-                    if conf is not None:
-                        curr_confs.append(conf)
-                    continue
-                else:
-                    flush_current()
-                    curr_raw_label = f"Q{parent}({sub_part})"
-                    curr_norm_num = f"{parent}({sub_part})"
-                    curr_page = page_num
-                    if text:
-                        curr_text_parts.append(text)
-                    curr_bbox = bb
-                    if conf is not None:
-                        curr_confs.append(conf)
-                    continue
-
-            if canonical_questions and p and not exam_has_subq and is_sub_question(norm):
-                if curr_norm_num and parent_number(curr_norm_num) == p:
-                    curr_text_parts.append(text)
-                    if bb and curr_page == page_num:
-                        curr_bbox = _merge_bboxes(curr_bbox, bb)
-                    if conf is not None:
-                        curr_confs.append(conf)
-                    continue
-                else:
-                    flush_current()
-                    curr_raw_label = f"Q{p}"
-                    curr_norm_num = p
-                    curr_page = page_num
-                    if text:
-                        curr_text_parts.append(text)
-                    curr_bbox = bb
-                    if conf is not None:
-                        curr_confs.append(conf)
-                    continue
-
-            # Case: Genuine question label (e.g. Q1, 2, 3, 3(b))
-            flush_current()
-            curr_raw_label = raw_lbl
-            curr_norm_num = norm
-            curr_page = page_num
-            if text:
-                curr_text_parts.append(text)
-            curr_bbox = bb
-            if conf is not None:
-                curr_confs.append(conf)
-
-    flush_current()
-
+    flush()
     for i, g in enumerate(grouped, 1):
         g.position = i
     return grouped

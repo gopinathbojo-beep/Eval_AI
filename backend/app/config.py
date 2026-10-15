@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 import secrets
 from functools import lru_cache
 from pathlib import Path
@@ -19,8 +20,9 @@ class Settings(BaseSettings):
     internvl_api_url: str = "http://127.0.0.1:11434"
     internvl_timeout: int = 300
     internvl_max_retries: int = 2
-    internvl_num_ctx: int = 8192
+    internvl_num_ctx: int = 16384
     internvl_num_predict: int = 4096
+    internvl_max_num_predict: int = 8192
 
     secret_key: str = ""
     access_token_minutes: int = 480
@@ -33,8 +35,10 @@ class Settings(BaseSettings):
 
     @property
     def data_path(self) -> Path:
+        # An explicit DATA_DIR in the process environment always wins (the test suite relies on this to
+        # stay out of the real database); otherwise prefer the repository's data/ folder.
         root_data = Path(__file__).resolve().parent.parent.parent / "data"
-        if root_data.exists():
+        if not os.environ.get("DATA_DIR") and root_data.exists():
             return root_data
         p = Path(self.data_dir).resolve()
         p.mkdir(parents=True, exist_ok=True)

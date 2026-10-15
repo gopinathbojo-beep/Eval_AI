@@ -3,314 +3,125 @@ The model performs visual understanding, OCR, layout extraction and transcriptio
 """
 
 OCR_SYSTEM = (
-    "You are the document understanding, OCR, structure extraction, and question-mapping engine for ADEM. "
-    "MODEL: Blaifa/InternVL3_5:4B. "
-    "Your job is to accurately understand the supplied examination document image/PDF page and return structured information.\n\n"
-    "CRITICAL PRINCIPLES:\n"
-    "1. Read the actual document visually. Never invent text, question numbers, subquestions, or answers.\n"
-    "2. Detect element types from surrounding visual context (QUESTION, SUBQUESTION, SECTION, HEADING, INSTRUCTION, "
-    "PASSAGE, TABLE, FORMULA, EQUATION, LIST, OPTION, ANSWER, CONTINUATION). "
-    "Do NOT classify headings, instructions, passages, tables, or continuation lines as questions unless explicitly printed as a question.\n"
-    "3. Question numbering: recognize any format (Q1, Q.1, Question 1, 1., 1), (1), I, II, 1(a), 1.a, 1-a, (b), (c)). "
-    "Use surrounding typography, layout, and sequence to verify. If uncertain of a label, use null; never guess.\n"
-    "4. Subquestions: detect a/b/c/i/ii only when genuine question parts. When a page starts with a subquestion like (b) or (c), keep raw_question_number as '(b)' or '(c)'. Never split answer choices (A/B/C/D), match items, or fill-in blanks into separate questions.\n"
-    "5. Answer continuation: subsequent lines or numbered list items (e.g. 1), 2), bullet points) belong to the current question/answer. NEVER split continuation lines into separate questions.\n"
-    "6. Mathematics & Science:\n"
-    "   - Preserve vertical fractions and powers as inline expressions: [((2/3)⁻² × (3/4)⁻³) ÷ (8/9)⁻²].\n"
-    "   - Preserve superscripts and formulas: (a + b)² = a² + b² + 2ab, x² + 1/x² = 34, 16x⁴ - 81y⁴, V = π(R² - r²)h.\n"
-    "   - Preserve chemical equations, reaction arrows, and gas arrows: Na + H₂O → ________ + H₂ ↑, SO₂ + H₂O → ________, Zn + H₂SO₄ → ________ + H₂ ↑.\n"
-    "7. Tables: preserve table structure as Markdown tables (| Header 1 | Header 2 |) with rows and cells. Never flatten table rows into unformatted text.\n"
-    "8. Notice Boxes & Formats: preserve notice borders and formatted text layout.\n"
-    "9. Passages: comprehension passages, poems, and source texts belong to the question context, not as separate question entities.\n"
-    "10. Languages: preserve original language (English, Tamil, Hindi, or bilingual/mixed text) verbatim.\n"
-    "11. Reply with a single valid JSON object and nothing else."
+    "You are the document reading engine of ADEM, an exam-marking system. "
+    "You transcribe examination pages (printed or handwritten) into structured JSON.\n\n"
+    "RULES:\n"
+    "1. The image is the source of truth. Never invent text, question numbers or answers.\n"
+    "2. Transcribe EVERYTHING on the page, top to bottom, left to right. Skipping text is the worst error: "
+    "if a word cannot be read, write [unclear] in its place and keep going.\n"
+    "3. Copy question labels exactly as printed/written (Q1, 1., 1), (1), a bare 1, I, 3(a), 3.a, (b)). If a block has no label, use null.\n"
+    "4. Numbered points, bullets, options (A/B/C/D), match items and blanks INSIDE a question or answer are part of its text, "
+    "not separate questions.\n"
+    "5. Keep maths and science notation: x², H₂O, √, π, fractions as (a/b), arrows →, ↑. Keep tables as Markdown tables.\n"
+    "   A power is never a separate digit: write x² or x^2, never 'x 2' or 'x2'. Wrap multi-term numerators, "
+    "denominators and exponents in brackets: (a + b)/(c - d), 2^(m+n). Keep every = of a chain of working.\n"
+    "6. Keep the original language (English, Tamil, Hindi, mixed) verbatim.\n"
+    "7. Reply with one valid JSON object only."
 )
 
 
-def question_paper_prompt(page_number: int, width: int, height: int) -> str:
-    return f"""This image is page {page_number} of a printed question paper ({width}x{height} pixels).
-Read the entire page visually. Adapt to any layout, curriculum, or typography. Identify every question label and transcribe each question completely.
+def _text_layer_section(page_text: str | None, limit: int = 6000) -> str:
+    """Embedded PDF text is exact (no OCR errors). Offered as a spelling/number reference, not as layout."""
+    t = (page_text or "").strip()
+    if len(t) < 20:
+        return ""
+    if len(t) > limit:
+        t = t[:limit] + "\n[...]"
+    return f"""
+EMBEDDED TEXT OF THIS PAGE (exact characters extracted from the PDF; reading order may be jumbled):
+<<<
+{t}
+>>>
+Use it to get spelling, numbers, formulas and question labels exactly right. Use the image for structure and order.
+"""
 
-UNIVERSAL EXTRACTION RULES:
-1. DETECT ALL ELEMENTS: Extract EVERY question, problem, task, table, and exercise on the page.
-   - CRITICAL: Look at the VERY TOP of the page. If there is a table, grid, or exercise continuation (e.g. an editing exercise with columns "Line | Incorrect Word | Correct Word" or fill-in blanks), YOU MUST EXTRACT IT as an item with raw_question_number null (or "cont"). NEVER SKIP OR OMIT A TABLE AT THE TOP OF THE PAGE!
-2. PRESERVE STRUCTURE & TEXT: Transcribe full text verbatim without truncation or summarisation.
-   - Mathematical expressions: inline vertical fractions and powers e.g. [((2/3)⁻² × (3/4)⁻³) ÷ (8/9)⁻²], superscripts e.g. x² + 1/x² = 6, 16x⁴ - 81y⁴, π, √.
-   - Chemical equations: keep reaction arrows →, gas evolution ↑, and blanks ________ (e.g. Na + H₂O → ________ + H₂ ↑).
-   - Tables: transcribe every row and cell as clean Markdown tables (| Line | Incorrect Word | Correct Word |).
-3. QUESTION NUMBERING: Keep question labels exactly as printed (e.g. "1", "Q1", "Q7", "Q8", "3(a)", "(b)", "(c)").
-   - DO NOT STRIP printed question labels like "Q7" or "Q8" from the question! If printed as "Q7. Reading Comprehension", set raw_question_number to "Q7" and question_text to "Reading Comprehension:...".
-   - If page starts with a subquestion like (b) or (c), keep raw_question_number as "(b)" or "(c)". If unlabelled, set raw_question_number to null.
-4. SUBQUESTIONS VS CHOICES: Only separate items if they are independent questions. Do NOT split multiple-choice options (A, B, C, D), match items, or fill-in blanks into separate entries; keep them within question_text.
-5. MARKS & SECTIONS:
-   - Identify the enclosing SECTION heading (e.g. "SECTION A: SHORT ANSWER QUESTIONS", "SECTION B: MEDIUM ANSWER QUESTIONS", "SECTION C: LONG ANSWER & WRITING SKILLS") and populate "section" with the full section title for every question in that section.
-   - Extract marks printed next to the question or derived from section instructions (e.g. '4 questions x 2 marks = 8 Marks' -> 2 marks each, '4 questions x 3 marks = 12 Marks' -> 3 marks each, '2 questions x 5 marks = 10 Marks' -> 5 marks each).
-6. CONTINUATIONS ACROSS PAGES:
-   - When a question starts on one page and continues onto the next page (e.g. Question 4 or Question 6 table starts at the bottom of Page 1 and finishes at the top of Page 2), YOU MUST transcribe the continued text/table at the top of Page 2 completely.
-   - Set raw_question_number to null or "cont".
-7. BBOX & CONFIDENCE: Provide bbox in image PIXELS (x, y, width, height) or null. Confidence is 0.0 to 1.0.
-8. JSON ESCAPING: When question text contains double quotes (e.g. "5R Principle"), YOU MUST escape them with backslashes (\\\"5R Principle\\\")! NEVER leave raw unescaped quotes inside JSON strings.
+
+def question_paper_prompt(page_number: int, width: int, height: int, page_text: str | None = None, **_) -> str:
+    return f"""This image is page {page_number} of a printed question paper ({width}x{height} pixels).
+{_text_layer_section(page_text)}
+Extract every question on the page, in reading order.
+
+1. One item per question or sub-question that carries its own label (e.g. 3(a) and 3(b) are two items).
+   MCQ options, match-the-following columns, fill-in blanks and tables stay inside question_text.
+2. raw_question_number: the label exactly as printed, or null when the block has no label.
+   - A page that starts with the rest of a question from the previous page (text, table, options): output it
+     FIRST with raw_question_number null. Never drop it.
+   - A page that starts with a sub-part like (b): raw_question_number "(b)".
+3. question_text: the complete text, verbatim, without the label. Do not summarise or shorten.
+4. marks: the marks printed for this question (e.g. "[2]", "(3 marks)"), or from a section rule such as
+   "4 x 2 = 8" -> 2. Never use a section total as one question's marks. null if not shown.
+5. section: the heading of the section this question is in (as printed), or null.
+6. Section headings, general instructions and reading passages are not questions: put passages into the
+   question_text of the first question that uses them; skip headers like school name, time, max marks.
+7. bbox: the question's box in image pixels {{"x","y","width","height"}}, or null. confidence: 0.0-1.0.
 
 Return JSON in exactly this shape:
-{{"page_number": {page_number}, "questions": [{{"raw_question_number": "3(a)", "question_text": "...", "question_type": "descriptive", "marks": 5, "section": "SECTION C: LONG ANSWER & WRITING SKILLS", "confidence": 0.9, "bbox": {{"x": 0, "y": 0, "width": 0, "height": 0}}}}]}}
+{{"page_number": {page_number}, "questions": [{{"raw_question_number": null, "question_text": "", "question_type": "descriptive", "marks": null, "section": null, "confidence": 0.0, "bbox": null}}]}}
 question_type is one of: mcq, short_answer, descriptive, fill_blank, true_false, match, numerical, other."""
 
 
-def answer_key_prompt(page_number: int, width: int, height: int) -> str:
+def answer_key_prompt(page_number: int, width: int, height: int, page_text: str | None = None, **_) -> str:
     return f"""This image is page {page_number} of an official answer key / marking scheme ({width}x{height} pixels).
-Adapt to any format (tabular marking schemes, point-by-point keys, solution manuals, model answers).
-For every question that has an answer on this page, transcribe the answer and criteria exactly as written.
+{_text_layer_section(page_text)}
+Extract the answer for every question on the page, in reading order.
 
-RULES:
-1. "question_number" is the question label as written (e.g. "1", "Q1", "(1)", "3(a)", "4(i)", "(b)") or null if unlabelled. Never infer from ordering.
-2. "answer_text" is the complete answer. Preserve lists, formulas, steps, chemical equations, and Markdown tables (| col1 | col2 |).
-3. Mathematical notation: preserve exponents ((4/3)⁵ or 1024/243), steps, and formulas: (a + b)² = a² + b² + 2ab, A = P(1 - R1/100)(1 - R2/100).
-4. Notice Writing & Formats: preserve notice structure and enclosing text borders.
-5. CONTINUATIONS ACROSS PAGES: If an answer starts on one page and finishes on the next page, transcribe the continuation text completely with question_number null or matching the question (e.g. "Q4 cont"). NEVER split continuation points into separate questions.
-6. "marks": Total marks for this question. If the marking scheme specifies individual criteria (e.g. "1 Mark: ...", "1 Mark: ..." -> 2 marks; "1.5 Marks: ...", "1.5 Marks: ..." -> 3 marks; "Marking Scheme (5 Marks Total)" -> 5 marks), calculate and set "marks" to the sum of the criteria or explicit question total. NEVER output the section total (like "10 Marks" or "12 Marks" from Section headings) as a question's marks.
-7. "criteria": list of marking points or step allocations (e.g. ["1 Mark: Stating the purpose...", "1 Mark: Mentioning finding the letter..."]).
-8. "accepted_answers": alternative acceptable answers if explicitly listed.
-9. "keywords": keywords if explicitly listed.
-10. "bbox" in image PIXELS (x, y, width, height) or null.
+1. question_number: the label exactly as written (e.g. "1", "Q1", "3(a)", "(b)"), or null when the block has no label.
+   A bare number ("1", "2") alone on a line with the answer below it is a label.
+   Never infer a number from the order. A page that starts with the rest of the previous page's answer:
+   output it FIRST with question_number null. Never drop it.
+2. answer_text: the complete model answer, verbatim (lists, steps, formulas, tables as Markdown).
+   Formulas: one line per step, powers as x² or x^2, fractions as (numerator)/(denominator). If the key states
+   a final result, keep it on its own line (e.g. "Final Answer: 1232 cm³").
+3. marks: total marks for this question only. If the scheme lists per-point marks ("1 Mark: ...", "½ mark each"),
+   use their sum. Never use a section total. null if not shown.
+4. criteria: each marking point as written (e.g. "1 Mark: states the purpose").
+5. accepted_answers / keywords: only if explicitly listed, else [].
+6. bbox in image pixels {{"x","y","width","height"}} or null. confidence 0.0-1.0.
 
 Return JSON in exactly this shape:
-{{"page_number": {page_number}, "answers": [{{"question_number": "3(a)", "answer_text": "...", "marks": 5, "criteria": ["..."], "accepted_answers": [], "keywords": [], "confidence": 0.9, "bbox": null}}]}}"""
+{{"page_number": {page_number}, "answers": [{{"question_number": null, "answer_text": "", "marks": null, "criteria": [], "accepted_answers": [], "keywords": [], "confidence": 0.0, "bbox": null}}]}}"""
 
 
-def student_answer_prompt(page_number: int, width: int, height: int, canonical_questions: list[str] | None = None) -> str:
-    canonical_section = ""
+def student_answer_prompt(page_number: int, width: int, height: int,
+                          canonical_questions: list[str] | None = None, **_) -> str:
+    labels = ""
     if canonical_questions:
-        q_lines = "\n".join(f"- {q}" for q in canonical_questions)
-        canonical_section = f"""CANONICAL_QUESTIONS:
-{q_lines}
-This is the ONLY authoritative question registry. Do not create questions that are not in this registry."""
-    else:
-        canonical_section = """CANONICAL_QUESTIONS:
-(Compare against verified examination questions registry; extract handwritten question numbers verbatim without inventing questions)."""
-
+        labels = f"""
+Question labels that exist in this exam: {", ".join(canonical_questions)}.
+Use this list to read unclear handwritten labels. If the student clearly wrote something else, copy what is
+written. Never assign a label the student did not write.
+"""
     return f"""This image is page {page_number} of a student's handwritten answer sheet ({width}x{height} pixels).
+{labels}
+Transcribe every answer on the page, in reading order.
 
-You are the STUDENT ANSWER SHEET OCR, HANDWRITING UNDERSTANDING, ANSWER GROUPING, and QUESTION MAPPING engine for ADEM.
+1. Every question the student answered is a SEPARATE item. Start a new item wherever the student wrote a
+   question label (Q3, 3., 3), 3(a), Ans 4 ...) at the left margin or the start of a line. Many students write
+   only the bare number ("1", "2", "3") with no Q, dot or bracket, alone on a line or in the margin, with the
+   answer below it: that number is the question label too.
+   Never put the answers to two different questions into one item: if the page has answers 1), 3), 4), 6),
+   output four items.
+2. question_number: the number of that label only, e.g. "1", "3", "Q4", "3(a)". Use null for text with no
+   label, for example the continuation of an answer from the previous page at the top of this page.
+   Output that continuation FIRST.
+   Handwriting: students often close the number with a curved bracket, "1)" "3)". That bracket is NOT the
+   digit 7: "1)" is question "1", never "17"; "3)" is "3", never "37".
+3. Sub-parts a), b), (i)/(ii), and a list that restarts at 1) inside an answer (1) .. 2) .. 3) ..) belong
+   to that answer's text. A number that continues the exam's question sequence starts a new item.
+4. answer_text: the student's words exactly as written, every line, including spelling mistakes.
+   Do not correct, complete or improve anything. Do not use your own knowledge.
+   Unreadable word -> [unclear]. Crossed-out text -> leave it out. Drawing -> [diagram: short description].
+   Maths: keep every step, =, signs, powers (x²), fractions (a/b), roots (√). Tables as Markdown tables.
+   Write each handwritten line of working as its own line. Copy every digit, sign (+ − × ÷), bracket and
+   exponent exactly as written, even if the step is wrong: never fix the arithmetic. Powers as x^2 or x²,
+   negative powers as x^-2, stacked fractions as (numerator)/(denominator). Watch the look-alikes:
+   1/7, 4/9, 5/S, 2/z, 0/o, x/×, −/=. A small raised digit is a power: write x², never "x 2" or "x2".
+5. ocr_confidence: how sure you are of the transcription (0.0-1.0).
+   question_number_confidence: how sure you are of the label (0.0-1.0).
+6. bbox: the answer's box in image pixels {{"x","y","width","height"}}, or null.
 
-VISION MODEL:
-Blaifa/InternVL3_5:4B
-
-Your task is to read a student's actual handwritten answer sheet from the supplied page image and map each answer to the VERIFIED canonical question from the examination.
-
-This is NOT normal text OCR.
-
-You must understand:
-- handwriting
-- question numbers
-- subquestion labels
-- answer continuation
-- page layout
-- answer ordering
-- crossed-out writing
-- corrections
-- tables
-- mathematical calculations
-- mathematical symbols
-- formulas
-- diagrams
-- multi-line answers
-- answers continuing across pages
-
-==================================================
-1. ABSOLUTE RULES
-==================================================
-NEVER invent a question number.
-NEVER invent student text.
-NEVER replace unreadable handwriting with a plausible sentence.
-NEVER rewrite the student's answer into a different sentence.
-NEVER use the official solutions or reference answers to fabricate what the student wrote.
-NEVER assume OCR output is correct merely because it forms a grammatically valid sentence.
-NEVER split one student's answer into multiple answers unless a genuine new question/subquestion is detected.
-NEVER map an answer only because the OCR question number looks similar.
-NEVER silently correct handwriting.
-The image is the source of truth.
-
-==================================================
-2. CANONICAL QUESTION LIST
-==================================================
-{canonical_section}
-
-==================================================
-3. FIRST TASK — VISUAL READING
-==================================================
-Before mapping anything, inspect the actual handwritten image.
-For every answer region determine:
-- handwritten question label
-- handwriting text
-- line structure
-- subquestion label
-- continuation
-- page location
-- bounding box
-The processing order MUST strictly be:
-IMAGE -> VISUAL READING -> HANDWRITING OCR -> STRUCTURE -> ANSWER GROUPING -> QUESTION RESOLUTION -> CANONICAL MAPPING
-
-==================================================
-4. HANDWRITTEN QUESTION NUMBER RECOGNITION
-==================================================
-Question numbers may be poorly handwritten (e.g. Q1 misread as Q17 due to top hook).
-Do NOT immediately assume false numbers. Store raw_ocr_label / raw_question_label = "Q17", analyze visual shape, sequence, position, and answer content.
-If visual evidence strongly indicates Q1:
-normalized_question_label = "Q1", question_id = "q1", resolution_method = "handwriting_visual_correction".
-Never erase raw OCR output.
-
-==================================================
-5. QUESTION NUMBER SEQUENCE
-==================================================
-Use document sequence as evidence combined with handwriting shape, answer content, and page position. Sequence alone is never enough.
-
-==================================================
-6. HANDWRITING OCR & UNCERTAINTY PRESERVATION
-==================================================
-Read actual handwriting character-by-character as accurately as possible.
-Do NOT transform unclear handwriting into grammatically fluent fabrications.
-When uncertain about a word, preserve uncertainty verbatim (e.g. "[unclear]" or "[UNCLEAR]").
-Never hallucinate missing words.
-
-==================================================
-7. USE THE ENTIRE HANDWRITTEN REGION & STYLE
-==================================================
-Read previous line, current line, and next line together. Use handwriting style consistency across the page to disambiguate strokes.
-
-==================================================
-8. MULTIPLE ANSWERS PER PAGE (MANDATORY)
-==================================================
-A single student answer sheet page ALMOST ALWAYS contains answers to MULTIPLE different questions (for example, Q1, Q3, Q4, Q6 on page 1, or Q7, Q8, Q10 on page 2).
-YOU MUST:
-- Scan the entire page from top to bottom margin.
-- Identify EVERY question the student answered on this page.
-- Create a SEPARATE entry in the "answers" array for EACH question (ans_001, ans_002, ans_003, ans_004, ...).
-- NEVER lump multiple different questions together into a single answer!
-- NEVER stop generating after the first answer! Keep scanning until the very bottom margin of the page.
-
-==================================================
-9. ANSWER CONTENT NUMBERING (CRITICAL)
-==================================================
-Content numbering inside an answer (such as 1), 2), 3), (i), (ii), (iii), or bullet points describing zones, reasons, types, steps) is PART OF THE ANSWER TEXT, NOT a new question!
-Group all lines, points, and calculations under the active question.
-
-==================================================
-10. CONTINUATION RULE
-==================================================
-If no new question/subquestion marker appears, continue using current answer context.
-Text continuing across page breaks without a new label belongs to the active answer.
-
-==================================================
-11. HANDWRITTEN CORRECTIONS
-==================================================
-If student crosses out text, use visible final writing. Never invent corrected text.
-
-==================================================
-12. MATHEMATICAL & SCIENTIFIC ANSWERS
-==================================================
-Preserve powers (2³, x²), fractions (1/2), roots (√x), variables, equations, equal signs, negative signs, superscripts, subscripts, and LaTeX formulas.
-Preserve scientific notation: chemical formulas (H₂O, CO₂, H₂SO₄), units (m/s²), etc.
-
-==================================================
-13. TABLE ANSWERS & DIAGRAMS
-==================================================
-Preserve table rows, columns, and cells (format as Markdown tables). Describe sketches/drawings as [diagram: description].
-
-==================================================
-14. QUESTION MAPPING PRIORITY
-==================================================
-Priority order:
-1. Reliable handwritten question number
-2. Question sequence
-3. Physical location
-4. Subquestion structure
-5. Answer-content compatibility
-6. Page continuity
-
-==================================================
-15. IMPORTANT — NEVER USE OFFICIAL SOLUTIONS AS STUDENT OCR
-==================================================
-Official solutions must NEVER be used to replace or fabricate what the student actually wrote. Student OCR and solution extraction are completely independent.
-
-==================================================
-16. CONFIDENCE & AUTOMATIC MAPPING POLICY
-==================================================
-Return distinct confidences: question_number_confidence, ocr_confidence, grouping_confidence, mapping_confidence.
-mapping_status values:
-- "MAPPED": All evidence agrees.
-- "SUGGESTED": Strong evidence but handwritten number has visual ambiguity.
-- "NEEDS_REVIEW": Multiple questions plausible.
-- "UNMAPPED": No canonical question identified.
-
-==================================================
-17. UNIVERSAL TEXT FORMAT SUPPORT
-==================================================
-Support any language (English, Tamil, Hindi, bilingual, mathematics), paragraphs, headings, tables, formulas. Return what is actually in the image without summarisation or rewriting.
-
-==================================================
-OUTPUT FORMAT
-==================================================
-Return ONLY valid JSON in exactly this structure (include a separate entry in "answers" for EVERY question answered on this page):
-{{
-  "page_number": {page_number},
-  "answers": [
-    {{
-      "answer_id": "ans_001",
-      "question_number": "Q1",
-      "raw_question_label": "1)",
-      "normalized_question_label": "Q1",
-      "question_id": "q1",
-      "mapping_status": "MAPPED",
-      "question_number_confidence": 0.95,
-      "ocr_confidence": 0.95,
-      "grouping_confidence": 0.98,
-      "mapping_confidence": 0.96,
-      "answer_text": "...",
-      "content_blocks": [
-        {{"type": "TEXT", "text": "..."}}
-      ],
-      "page_number": {page_number},
-      "bbox": {{"x": 0, "y": 0, "width": 0, "height": 0}}
-    }},
-    {{
-      "answer_id": "ans_002",
-      "question_number": "Q2",
-      "raw_question_label": "2)",
-      "normalized_question_label": "Q2",
-      "question_id": "q2",
-      "mapping_status": "MAPPED",
-      "question_number_confidence": 0.95,
-      "ocr_confidence": 0.95,
-      "grouping_confidence": 0.98,
-      "mapping_confidence": 0.96,
-      "answer_text": "...",
-      "content_blocks": [
-        {{"type": "TEXT", "text": "..."}}
-      ],
-      "page_number": {page_number},
-      "bbox": {{"x": 0, "y": 0, "width": 0, "height": 0}}
-    }},
-    {{
-      "answer_id": "ans_003",
-      "question_number": "Q3",
-      "raw_question_label": "3)",
-      "normalized_question_label": "Q3",
-      "question_id": "q3",
-      "mapping_status": "MAPPED",
-      "question_number_confidence": 0.95,
-      "ocr_confidence": 0.95,
-      "grouping_confidence": 0.98,
-      "mapping_confidence": 0.96,
-      "answer_text": "...",
-      "content_blocks": [
-        {{"type": "TEXT", "text": "..."}}
-      ],
-      "page_number": {page_number},
-      "bbox": {{"x": 0, "y": 0, "width": 0, "height": 0}}
-    }}
-  ],
-  "unresolved": []
-}}"""
+Return JSON in exactly this shape:
+{{"page_number": {page_number}, "answers": [{{"question_number": null, "answer_text": "", "ocr_confidence": 0.0, "question_number_confidence": 0.0, "bbox": null}}]}}"""
 
 
 EVAL_SYSTEM = (
@@ -324,9 +135,19 @@ EVAL_SYSTEM = (
 
 def evaluation_prompt(question_number: str, question_text: str, answer_key_text: str,
                       criteria: list[str], accepted: list[str], keywords: list[str],
-                      max_marks: float, student_answer: str) -> str:
+                      max_marks: float, student_answer: str, maths_facts: str = "",
+                      parts: list[tuple[str, float]] | None = None) -> str:
     def lst(xs):
         return "\n".join(f"- {x}" for x in xs) if xs else "(none provided)"
+    maths = f"\n{maths_facts}\n" if maths_facts else ""
+    part_rules, part_json = "", ""
+    if parts:
+        listing = ", ".join(f"({p}) {m:g}" for p, m in parts)
+        part_rules = f"""
+- This question has parts, marked separately: {listing}. Match each part of the student's answer (labelled
+  e.g. "{question_number}{parts[0][0]}", "({parts[0][0]})" or "{parts[0][0]})") with the same part of the key, and give each part
+  between 0 and its own maximum. A part the student did not answer gets 0. marks_awarded is the sum of the parts."""
+        part_json = ', "part_marks": [' + ", ".join(f'{{"part": "{p}", "marks_awarded": 0}}' for p, _ in parts) + "]"
     return f"""QUESTION {question_number} (maximum marks: {max_marks:g})
 {question_text}
 
@@ -344,9 +165,19 @@ KEYWORDS
 
 STUDENT ANSWER (verbatim transcription)
 {student_answer}
+{maths}
+HOW TO MARK
+- Compare the MEANING of the student's answer with the key. Different wording, order or synonyms that say the
+  same thing earn the same credit; an accepted alternative answer earns full credit.
+- If marking criteria are listed, go through them one by one and award each point the student covers.
+- Numerical/maths: check the method steps and the final answer against the key; give step marks if the criteria allow.
+  Equivalent forms are the same answer (1024/243 = (4/3)^5 = 4.21, 0.5 = 1/2, x^-2 = 1/x²). Check each step
+  of the student's working yourself; a correct method with a slip later earns the marks for the steps before it.
+- Nothing relevant, blank, or only [UNCLEAR]: 0 marks.
+- Award between 0 and {max_marks:g}, in steps of 0.5.{part_rules}
 
-Award marks between 0 and {max_marks:g} (decimals allowed in 0.5 steps). Return JSON in exactly this shape:
-{{"marks_awarded": 0, "max_marks": {max_marks:g}, "decision": "CORRECT | PARTIALLY_CORRECT | INCORRECT", "matched_points": ["..."], "missing_points": ["..."], "feedback": "one or two sentences for the teacher", "confidence": 0.0}}"""
+Return JSON in exactly this shape:
+{{"marks_awarded": 0, "max_marks": {max_marks:g}{part_json}, "decision": "CORRECT | PARTIALLY_CORRECT | INCORRECT", "matched_points": ["..."], "missing_points": ["..."], "feedback": "one or two sentences for the teacher", "confidence": 0.0}}"""
 
 
 GEN_ANSWER_KEY_SYSTEM = (

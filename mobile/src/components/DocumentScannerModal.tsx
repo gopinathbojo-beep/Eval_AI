@@ -776,7 +776,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                 Processing Scanned Question Paper
               </Text>
               <Text style={[styles.compilingSubtitle, { color: colors.textSecondary }]}>
-                Compiling {scannedPages.length} {scannedPages.length === 1 ? "page" : "pages"} into aligned document for OCR analysis...
+                Compiling {scannedPages.length} {scannedPages.length === 1 ? "page" : "pages"} into aligned document for page reading...
               </Text>
             </View>
           </View>

@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { api, downloadFile } from "../../api/client";
+import { api, ApiError, downloadFile } from "../../api/client";
 import { useApi } from "../../hooks/useApi";
 import type { Question, QuestionsResponse } from "../../types";
 import { fmt, pct } from "../../utils/format";
@@ -23,6 +23,7 @@ export default function Questions() {
   const [downloading, setDownloading] = useState(false);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [referenceTarget, setReferenceTarget] = useState<Question | null>(null);
+  const [marksConfirm, setMarksConfirm] = useState<string | null>(null);
   const after = async () => { await Promise.all([reload(), reloadExam()]); };
   const run = async (key: string, fn: () => Promise<unknown>) => {
     setBusy(key); setActionErr(null);
@@ -59,12 +60,20 @@ export default function Questions() {
             <>
               <Button onClick={() => setDlg({ kind: "add" })}>Add question</Button>
               <Button busy={busy === "bulk"} onClick={() => run("bulk", () => api(`/exams/${exam.id}/questions/accept-valid`, { method: "POST" }))}>Accept all complete questions</Button>
-              <Button variant="primary" busy={busy === "verify"} onClick={() => run("verify", () => api(`/exams/${exam.id}/questions/verify`, { method: "POST" }))}>Verify questions</Button>
+              <Button variant="primary" busy={busy === "verify"} onClick={() => run("verify", async () => {
+                try { await api(`/exams/${exam.id}/questions/verify`, { method: "POST" }); }
+                catch (e) { if (e instanceof ApiError && e.code === "MARKS_TOTAL_MISMATCH") setMarksConfirm(e.message); else throw e; }
+              })}>Verify questions</Button>
             </>
           )}
         </div>
       </div>
-      {data.marks_warning && <div className="rounded-lg border border-warn/40 bg-warn-soft p-3 text-sm">{data.marks_warning} This is only a warning, since some papers let students choose which questions to answer.</div>}
+      {data.marks_warning && <div className="rounded-lg border border-warn/40 bg-warn-soft p-3 text-sm">{data.marks_warning} You will be asked to confirm this when verifying, since some papers let students choose which questions to answer.</div>}
+      {marksConfirm && (
+        <Confirm title="Marks do not add up" confirmLabel="Verify anyway" onClose={() => setMarksConfirm(null)}
+          body={<p>{marksConfirm}</p>}
+          onConfirm={async () => { await api(`/exams/${exam.id}/questions/verify`, { method: "POST", json: { confirm_marks_mismatch: true } }); await after(); }} />
+      )}
       <ErrorPanel error={actionErr} />
       {data.locked && <div className="rounded-lg border border-ok/40 bg-ok-soft p-3 text-sm">Questions are verified and locked.</div>}
 
@@ -180,7 +189,7 @@ function EditDlg({ q, examId, onClose, onDone }: { q?: Question; examId?: string
           <Field label="Section">{(id) => <Input id={id} value={section} onChange={(e) => setSection(e.target.value)} />}</Field>
         </div>
         <Field label="Question text">{(id) => <Textarea id={id} rows={8} className="font-doc" value={text} onChange={(e) => setText(e.target.value)} />}</Field>
-        {q && q.raw_ocr_text && q.raw_ocr_text !== text && <p className="text-xs text-mute">Original OCR text is kept separately and is never overwritten.</p>}
+        {q && q.raw_ocr_text && q.raw_ocr_text !== text && <p className="text-xs text-mute">Original transcribed text is kept separately and is never overwritten.</p>}
         {q && <Field label="Reason for change (optional)">{(id) => <Input id={id} value={reason} onChange={(e) => setReason(e.target.value)} />}</Field>}
         <ErrorPanel error={err} />
       </div>

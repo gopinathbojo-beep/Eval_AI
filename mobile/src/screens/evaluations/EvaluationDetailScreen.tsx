@@ -59,7 +59,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
   // Tab State: Mapping Review vs Marks & Finalize
   const [activeTab, setActiveTab] = useState<"mapping" | "marks">("mapping");
   const [mappingFilter, setMappingFilter] = useState<
-    "All" | "Mapped" | "Suggested" | "Needs review" | "Unmapped" | "Missing" | "OCR error"
+    "All" | "Mapped" | "Suggested" | "Needs review" | "Unmapped" | "Missing" | "Read error"
   >("All");
   const [activeSheetPage, setActiveSheetPage] = useState(1);
 
@@ -444,7 +444,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
     if (!transcriptionReason.trim()) {
       Alert.alert(
         "Reason Required",
-        "Please enter a reason for the transcription correction (e.g. OCR misread handwriting, Tamil script, or missing mathematical steps)."
+        "Please enter a reason for the transcription correction (e.g. misread handwriting, Tamil script, or missing mathematical steps)."
       );
       return;
     }
@@ -727,7 +727,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
   let evalBlockReason = "";
   if (document?.status !== "READY" && document?.status !== "NEEDS_ATTENTION") {
     isEvalBlocked = true;
-    evalBlockReason = "Answer sheet is still undergoing OCR reading. Please wait for OCR to complete.";
+    evalBlockReason = "Answer sheet is still being read. Please wait for reading to complete.";
   } else if (!isExamReady) {
     isEvalBlocked = true;
     evalBlockReason = "Question paper and answer key must be verified in Exam Workspace before evaluation.";
@@ -736,17 +736,14 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
     evalBlockReason = `${mappingIssuesCount} student answer(s) are unmapped or need mapping review before running evaluation.`;
   } else if (ocrFailedCount > 0) {
     isEvalBlocked = true;
-    evalBlockReason = `${ocrFailedCount} answer sheet page(s) failed OCR. Retry page reading before evaluating.`;
+    evalBlockReason = `${ocrFailedCount} answer sheet page(s) could not be read. Retry page reading before evaluating.`;
   }
 
   // Mapping review data derived
   const qmap = new Map(questions.map((q) => [q.id, q]));
-  const answeredQuestionIds = new Set(
-    answers
-      .filter((a) => a.status !== "IGNORED" && a.exam_question_id)
-      .map((a) => a.exam_question_id!)
-  );
-  const missingQuestions = questions.filter((q) => !answeredQuestionIds.has(q.id));
+  // Same buckets as the summary counts: questions with neither a mapped answer nor a suggestion.
+  const missingQuestionIds = new Set(summary?.missing_question_ids ?? []);
+  const missingQuestions = questions.filter((q) => missingQuestionIds.has(q.id));
   const ocrErrorPages =
     document?.pages?.filter((p) => p.ocr_status && p.ocr_status !== "OK") || [];
 
@@ -765,7 +762,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
       case "Needs review":
         return a.status === "NEEDS_REVIEW";
       case "Missing":
-      case "OCR error":
+      case "Read error":
         return false;
       default:
         return true;
@@ -1036,13 +1033,13 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
                 <Text style={[styles.statBoxNumber, { color: ocrErrorPages.length > 0 ? colors.error : colors.textSecondary }]}>
                   {ocrErrorPages.length}
                 </Text>
-                <Text style={[styles.statBoxLabel, { color: colors.textSecondary }]}>OCR Errors</Text>
+                <Text style={[styles.statBoxLabel, { color: colors.textSecondary }]}>Read Errors</Text>
               </View>
             </View>
 
             {/* Filter Pills */}
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterPillsRow}>
-              {(["All", "Mapped", "Suggested", "Needs review", "Unmapped", "Missing", "OCR error"] as const).map((f) => (
+              {(["All", "Mapped", "Suggested", "Needs review", "Unmapped", "Missing", "Read error"] as const).map((f) => (
                 <TouchableOpacity
                   key={f}
                   onPress={() => setMappingFilter(f)}
@@ -1139,7 +1136,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
               ) : (
                 <Empty title="No Missing Questions" description="Every exam question has at least one mapped student answer." />
               )
-            ) : mappingFilter === "OCR error" ? (
+            ) : mappingFilter === "Read error" ? (
               ocrErrorPages.length > 0 ? (
                 ocrErrorPages.map((p) => (
                   <Card key={p.page_number} style={[styles.mappingCard, { borderColor: colors.error }]}>
@@ -1147,12 +1144,12 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
                       Page {p.page_number}: {p.ocr_status}
                     </Text>
                     <Text style={[styles.mappingCardSub, { color: colors.textSecondary }]}>
-                      {p.ocr_error || "OCR failed on this page."}
+                      {p.ocr_error || "This page could not be read."}
                     </Text>
                   </Card>
                 ))
               ) : (
-                <Empty title="No OCR Errors" description="All pages were processed cleanly." />
+                <Empty title="No Read Errors" description="All pages were processed cleanly." />
               )
             ) : mappingRows.length === 0 ? (
               <Empty title="No Answers Found" description="No student responses match the current filter." />
@@ -1161,6 +1158,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
                 const q = a.exam_question_id ? qmap.get(a.exam_question_id) : undefined;
                 const topCandId = a.mapping_candidates?.[0];
                 const topCand = topCandId ? qmap.get(topCandId) : undefined;
+                const topDetail = a.mapping_candidate_details?.find((c) => c.id === topCandId);
                 const needs = a.status === "UNMAPPED" || a.status === "NEEDS_REVIEW";
                 return (
                   <Card
@@ -1177,7 +1175,11 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
                       </Text>
                       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
                         {topCand && a.status === "NEEDS_REVIEW" && (
-                          <Badge label={`Suggested: Q${topCand.display_number}`} variant="teal" size="small" />
+                          <Badge
+                            label={`Suggested: Q${topCand.display_number}${topDetail ? ` (${Math.round(topDetail.score * 100)}%)` : ""}`}
+                            variant="teal"
+                            size="small"
+                          />
                         )}
                         <Badge label={`Page ${a.page_number || 1}`} variant="muted" size="small" />
                         {a.ocr_confidence !== null && (
@@ -1205,6 +1207,8 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
                         <Ionicons name="information-circle-outline" size={14} color={colors.warning} />
                         <Text style={[styles.mappingNoteText, { color: colors.warning }]}>
                           {a.mapping_note}
+                          {topDetail && a.status === "NEEDS_REVIEW" ? `
+Why Q${topCand?.display_number}: ${topDetail.reason}` : ""}
                         </Text>
                       </View>
                     )}
@@ -1215,7 +1219,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
 
                     {a.edited && (
                       <Text style={{ fontSize: 11, fontStyle: "italic", color: colors.brandGreen, marginTop: 2 }}>
-                        ✓ Edited by teacher. Original OCR preserved in audit.
+                        ✓ Edited by teacher. Original transcription preserved in audit.
                       </Text>
                     )}
 
@@ -1252,15 +1256,6 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
                                 loading={actionLoading}
                               />
                             )}
-                            {a.status === "MAPPED" && (
-                              <Button
-                                title="Confirm"
-                                variant="primary"
-                                size="small"
-                                onPress={() => handleMappingAction(a, { confirm: true }, "confirm mapping")}
-                                loading={actionLoading}
-                              />
-                            )}
                             <Button
                               title="Change Mapping"
                               variant="outline"
@@ -1268,7 +1263,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
                               onPress={() => handleOpenChangeMapping(a)}
                             />
                             <Button
-                              title="Edit OCR"
+                              title="Edit Text"
                               variant="outline"
                               size="small"
                               onPress={() => handleOpenEditTranscription(a, q || null)}
@@ -1457,7 +1452,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
                   )}
                   {isItemMissing && (
                     <Badge
-                      label={item?.not_attempted_confirmed ? "Not Attempted (Confirmed)" : "Not Attempted"}
+                      label="Unanswered"
                       variant="muted"
                       size="small"
                     />
@@ -1526,7 +1521,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 4 }}>
                     <Ionicons name="create" size={12} color={colors.brandGreen} />
                     <Text style={{ fontSize: 11, fontStyle: "italic", color: colors.brandGreen }}>
-                      Corrected by teacher (OCR audit record preserved)
+                      Corrected by teacher (original transcription preserved)
                     </Text>
                   </View>
                 )}
@@ -2046,7 +2041,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
             }}
           >
             <Text style={{ fontSize: 10, fontWeight: "700", color: colors.textSecondary, textTransform: "uppercase" }}>
-              Original OCR Transcription (Audit Preserved):
+              Original Transcription (Audit Preserved):
             </Text>
             <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 3, fontStyle: "italic" }} numberOfLines={2}>
               "{activeAnswer.raw_ocr_text}"
@@ -2067,7 +2062,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
         {/* Mandatory correction reason */}
         <Input
           label="Correction Reason *"
-          placeholder="e.g. OCR misread handwriting; corrected Tamil/math script"
+          placeholder="e.g. misread handwriting; corrected Tamil/math script"
           value={transcriptionReason}
           onChangeText={setTranscriptionReason}
         />

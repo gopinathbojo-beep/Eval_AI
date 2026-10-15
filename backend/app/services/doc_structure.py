@@ -41,6 +41,11 @@ _MAX_MARKS_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+_PAGE_FURNITURE = re.compile(
+    r"\W*(?:page\s*\d+(?:\s*of\s*\d+)?|\d{1,3}|p\.?\s*t\.?\s*o\.?|please\s+turn\s+over|turn\s+over|continued(?:\s+on\s+next\s+page)?)\W*",
+    re.IGNORECASE,
+)
+
 _INLINE_MARKS_PATTERN = re.compile(
     r"\(\s*(\d+(?:\.\d+)?)\s*(?:marks?|m)\s*\)\s*$",
     re.IGNORECASE,
@@ -62,6 +67,9 @@ class StructuredQuestion:
     ocr_confidence: float | None
     verification_status: str = "UNVERIFIED"
     review_reason: str | None = None
+    has_parts: bool = False          # sub-parts (a)/(i)/(1)... were merged into this question
+    last_part: str | None = None     # token of the most recently merged part, e.g. "b", "ii", "2"
+    part_style: str | None = None    # trailing punctuation of that part's label, e.g. ")" in "1)"
 
 
 @dataclass
@@ -101,11 +109,7 @@ def is_instruction(text: str) -> bool:
     s = text.strip()
     if not s:
         return False
-    if any(p.search(s) for p in _INSTRUCTION_PATTERNS):
-        return True
-    if any(p.search(s) for p in _MARKS_RULE_PATTERNS) and "?" not in s and len(s) < 120:
-        return True
-    return False
+    return any(p.search(s) for p in _INSTRUCTION_PATTERNS)
 
 
 def extract_section_marks_rule(text: str) -> float | None:
@@ -169,7 +173,8 @@ def _is_question_continuation(
     text: str,
     last_q: StructuredQuestion | None,
     page_num: int,
-    marks: float | None = None,
+    first_on_page: bool = False,
+    own_marks: float | None = None,
 ) -> bool:
     if not last_q:
         return False
@@ -199,6 +204,16 @@ def _is_question_continuation(
     if is_table_block(text):
         return True
 
+    # 3b. First unlabelled block at the top of a new page: the question from the previous page carries on
+    #     (text, options, table). Headings/instructions were already filtered out by the caller; a block with its
+    #     own printed marks is a separate unnumbered question.
+    if is_unnumbered and first_on_page and page_num > last_q.page_end and own_marks is None:
+        return True
+
+    # An unlabelled block with its own marks is its own question, not the tail of the previous one
+    if is_unnumbered and own_marks is not None:
+        return False
+
     # 4. Check negative signals that prove this is a NEW question, NEVER a continuation
     # If the text has a new section or subject header e.g. "Reading Comprehension:", "Literature:", "Grammar:", "Section C:"
     if re.match(r"^\s*(?:Reading\s+Comprehension|Literature|Grammar|Writing\s+Skills|Section\s+[A-Z]|Part\s+[A-Z])[\:\b]", text, re.IGNORECASE):
@@ -209,11 +224,9 @@ def _is_question_continuation(
     # If it has subquestions starting at (a), it's a new multi-part question
     if re.search(r"^\s*\(a\)\s+", text, re.MULTILINE):
         return False
-    # If this block has its own marks, it is a new question
-    if marks is not None and marks > 0:
-        return False
-    # If the text starts with a capitalized imperative question verb, it's a new question
-    if re.match(r"^\s*(?:Define|Explain|State|Calculate|What|Why|How|Arrange|Find|Describe|Name|Differentiate|Evaluate|Factorise|Expand|Simplify)\b", text):
+    # If it contains its own question marks and is a complete standalone question while last_q is already complete
+    last_clean = last_q.question_text.rstrip()
+    if "?" in text and last_clean.endswith(("?", ".", "!")):
         return False
 
     # 5. Unnumbered block continuation signals
@@ -227,10 +240,9 @@ def _is_question_continuation(
             return True
 
         # Previous question text ended abruptly without sentence terminator
-        last_clean = (last_q.question_text or "").rstrip()
         if last_clean and not last_clean.endswith(("?", ".", ":", "!", '"', "”", ")")):
             return True
-        if last_clean and re.search(r"\b(?:and|or|to|of|in|with|that|which|is|are|the|a|an)\s*$", last_clean, re.IGNORECASE):
+        if re.search(r"\b(?:and|or|to|of|in|with|that|which|is|are|the|a|an)\s*$", last_clean, re.IGNORECASE):
             return True
 
     return False
@@ -279,128 +291,101 @@ def _extract_label_from_text_prefix(text: str) -> tuple[str | None, str]:
     return None, s
 
 
-def _is_pure_topic_title(raw_label: str | None, text: str) -> bool:
-    """Check if this item is purely a subject/topic header (e.g. 'Fluid Mechanics & Atmospheric Physics:')."""
-    s = text.strip()
-    if not s or len(s) > 80:
-        return False
-    if s.endswith(":") and "?" not in s:
-        verbs = ("define", "explain", "state", "calculate", "what", "why", "how", "differentiate", "arrange", "name", "choose", "write", "find", "draw", "describe")
-        if not any(v in s.lower().split() for v in verbs):
-            return True
-    return False
+_PART_TEXT_PREFIX = re.compile(
+    r"^\s*(\(\s*(?:[a-zA-Z]|[ivxIVX]{1,5}|\d{1,2})\s*\)|(?:[a-zA-Z]|[ivxIVX]{1,5})[\)\.])\s+(.+)$", re.DOTALL)
+_NUMERIC_OR_ROMAN_LABEL = re.compile(r"^\(?\s*(\d{1,2}|[ivxIVX]{1,5})\s*[\)\.\:]?$")
+_ANY_INLINE_MARKS = re.compile(r"\(\s*(\d+(?:\.\d+)?)\s*(?:marks?|m)\s*\)", re.IGNORECASE)
+_ROMAN_TO_INT = {"i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6, "vii": 7, "viii": 8, "ix": 9, "x": 10}
 
 
-def _is_numbered_substep_or_item(raw_label: str | None, text: str, last_q: StructuredQuestion | None) -> bool:
-    """Detect if label '1.', '2.', '3.' is a calculation step or bullet under an ongoing question."""
-    if not last_q or not raw_label:
-        return False
-    m = re.match(r"^\s*([0-9]{1,2})\.?\s*$", raw_label)
+def _seq_value(tok: str | None) -> int | None:
+    if not tok:
+        return None
+    if tok.isdigit():
+        return int(tok)
+    return _ROMAN_TO_INT.get(tok.lower())
+
+
+def _part_token(label: str | None, last_q: StructuredQuestion | None, used_numbers: set[str]) -> str | None:
+    """If `label` marks a sub-part of `last_q` (a whole question), return the part token, else None.
+
+    Sub-parts are merged into their question (one question per printed number). Recognised forms:
+    letters (a) a) b.; roman (i) ii) iii.; numbers (1) (2); "9(b)", "9.1", "9b" under question 9; and bare
+    "1." / "2)" only when they open or continue the current part sequence and cannot be the next main number.
+    """
+    if not label or last_q is None or not last_q.normalized_number or is_sub_question(last_q.normalized_number):
+        return None
+    lbl, own = label.strip(), last_q.normalized_number
+    norm = normalize_question_number(lbl)
+    if norm and is_sub_question(norm) and parent_number(norm) == own:
+        return norm[len(own) + 1:].split(")", 1)[0]
+    m = _NUMERIC_OR_ROMAN_LABEL.match(lbl)
     if not m:
-        return False
-    num = int(m.group(1))
-    last_norm = last_q.normalized_number or last_q.display_number or ""
-    last_parent = parent_number(last_norm)
-    last_p_int = int(last_parent) if last_parent.isdigit() else 0
-    last_clean = last_q.question_text.rstrip()
-    if last_p_int >= 2 or is_sub_question(last_norm) or last_clean.endswith(":"):
-        if num <= 5:
-            return True
-    return False
+        return extract_subquestion_token(lbl)          # (a), a), b.
+    raw = m.group(1).lower()
+    val, prev = _seq_value(raw), last_q.last_part
+    continues = (prev is not None and _seq_value(prev) is not None and val == _seq_value(prev) + 1
+                 and prev.isdigit() == raw.isdigit())
+    opens = val == 1 and not last_q.has_parts
+    if lbl.startswith("(") or not raw.isdigit():       # (1) (ii) ii) iii.
+        return raw if continues or opens or str(val) in used_numbers else None
+    # bare "1." / "2)": normally a main question number. Accept it as a part when its punctuation differs from the
+    # question's own label ("2." ... "1)" "2)"), or when it cannot be the next main number.
+    style = _label_style(lbl)
+    distinct = style != _label_style(last_q.raw_question_number)
+    if continues and ((distinct and style == last_q.part_style) or str(val) != _next_main(used_numbers)):
+        return raw
+    if opens and (distinct or raw != own) and str(val) != _next_main(used_numbers):
+        return raw
+    return None
 
 
-def _consolidate_subquestions(questions: list[StructuredQuestion]) -> list[StructuredQuestion]:
-    """Consolidate fragmented subquestions (e.g. 1(a), 1(b)) into parent questions (1, 2...)."""
-    parent_map: dict[str, list[StructuredQuestion]] = {}
-    for q in questions:
-        norm = q.normalized_number or q.display_number or ""
-        p = parent_number(norm)
-        parent_map.setdefault(p, []).append(q)
-
-    has_multi = any(len(qs) > 1 for qs in parent_map.values())
-    if not has_multi:
-        return questions
-
-    consolidated = []
-    for p_num, sub_qs in parent_map.items():
-        if len(sub_qs) == 1:
-            consolidated.append(sub_qs[0])
-            continue
-        first_q = sub_qs[0]
-        merged_texts = []
-        for sq in sub_qs:
-            st = sq.question_text.strip()
-            sub_tok = extract_subquestion_token(sq.raw_question_number or sq.display_number or "")
-            if sub_tok and not st.startswith(f"({sub_tok})"):
-                st = f"({sub_tok}) {st}"
-            merged_texts.append(st)
-        combined_text = "\n".join(merged_texts)
-
-        sec = first_q.section or ""
-        rule_mark = extract_section_marks_rule(sec)
-        if rule_mark is None:
-            if "SECTION A" in sec.upper():
-                rule_mark = 2.0
-            elif "SECTION B" in sec.upper():
-                rule_mark = 3.0
-            elif "SECTION C" in sec.upper():
-                rule_mark = 5.0
-
-        if rule_mark is None:
-            consolidated.extend(sub_qs)
-            continue
-
-        sub_marks = [sq.max_marks for sq in sub_qs if sq.max_marks is not None]
-        if rule_mark is not None:
-            parent_marks = rule_mark
-        elif sub_marks:
-            parent_marks = sum(sub_marks)
-        else:
-            parent_marks = None
-
-        new_q = StructuredQuestion(
-            raw_question_number=f"Q{p_num}",
-            normalized_number=p_num,
-            display_number=p_num,
-            question_text=combined_text,
-            question_type=first_q.question_type or "descriptive",
-            max_marks=parent_marks,
-            section=first_q.section,
-            page_start=first_q.page_start,
-            page_end=max(sq.page_end for sq in sub_qs),
-            bbox=first_q.bbox,
-            ocr_confidence=first_q.ocr_confidence,
-            verification_status="UNVERIFIED",
-        )
-        consolidated.append(new_q)
-    return consolidated
+def _label_style(label: str | None) -> str:
+    s = (label or "").strip()
+    return s[-1] if s and s[-1] in ").:" else ""
 
 
-def split_swallowed_qp_blocks(
-    raw_label: str | None,
-    text: str,
-) -> list[tuple[str | None, str]]:
-    """Split a block if it contains multiple embedded questions (e.g. Q9 and Q10 in one section block)."""
-    pat = re.compile(r"(?:^|\n+)\s*(?:Q(?:uestion)?\.?\s*([0-9]{1,2}))[\.\:\s\-]+", re.I)
-    boundaries = []
-    for m in pat.finditer(text):
-        boundaries.append((m.start(), f"Q{m.group(1)}", m.end()))
-    if not boundaries:
-        return [(raw_label, text)]
-    if len(boundaries) == 1 and not (raw_label and is_heading_or_title(raw_label)):
-        return [(raw_label, text)]
+def _next_main(used_numbers: set[str]) -> str:
+    nums = [int(n) for n in used_numbers if n.isdigit()]
+    return str(max(nums) + 1) if nums else "1"
 
-    res: list[tuple[str | None, str]] = []
-    first_start = boundaries[0][0]
-    intro = text[:first_start].strip()
-    if intro or (raw_label and is_heading_or_title(raw_label)):
-        res.append((raw_label if (raw_label and is_heading_or_title(raw_label)) else None, intro))
-    for i in range(len(boundaries)):
-        b_start, b_lbl, b_end = boundaries[i]
-        next_start = boundaries[i + 1][0] if i + 1 < len(boundaries) else len(text)
-        chunk = text[b_end:next_start].strip()
-        res.append((b_lbl, chunk))
-    return res
+
+def _merge_part(last_q: StructuredQuestion, tok: str, text: str, marks: float | None, page_num: int,
+                label: str | None = None) -> None:
+    body = text.strip()
+    if marks is not None and not _ANY_INLINE_MARKS.search(body):
+        body = f"{body} ({marks:g} mark{'s' if marks != 1 else ''})"
+    if not re.match(rf"^\(?\s*{re.escape(tok)}\s*[\)\.]", body, re.IGNORECASE):
+        body = f"({tok}) {body}"
+    # The model sometimes returns the whole question (parts included) and then each part again: keep one copy
+    if _squash(body) not in _squash(last_q.question_text):
+        last_q.question_text = f"{last_q.question_text.rstrip()}\n{body}".strip()
+    last_q.page_end = max(last_q.page_end, page_num)
+    last_q.has_parts, last_q.last_part, last_q.part_style = True, tok, _label_style(label)
+
+
+def _squash(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip().lower()
+
+
+# The first part label in a question's text: "(a)", "(ii)", "(1)", or "a)" / "1." at the start of a line
+_FIRST_PART_LABEL = re.compile(r"\(\s*(?:[a-h]|[ivx]{1,4}|\d{1,2})\s*\)|(?:^|\n)\s*(?:[a-h]|[ivx]{1,4}|\d{1,2})[\)\.]\s",
+                               re.IGNORECASE)
+
+
+def _finalise_parts(q: StructuredQuestion) -> None:
+    """A question with merged parts is worth the sum of its printed part marks (never less than it was given).
+    Only marks after the first part label count: a total printed on the stem ("9. ... (5 marks) (a) ... (2 marks)")
+    must not be added to its parts, or a 5 mark question split 2+2+1 becomes worth 10."""
+    first = _FIRST_PART_LABEL.search(q.question_text)
+    parts_sum = sum(float(x) for x in _ANY_INLINE_MARKS.findall(q.question_text[first.start() if first else 0:]))
+    if parts_sum > 0 and (q.max_marks is None or parts_sum > q.max_marks + 1e-9):
+        q.max_marks = parts_sum
+    if q.max_marks is not None and q.review_reason:
+        reasons = [r for r in q.review_reason.split("; ") if r != "Marks not found"]
+        q.review_reason = "; ".join(reasons) or None
+        if not reasons and q.verification_status == "NEEDS_REVIEW":
+            q.verification_status = "UNVERIFIED"
 
 
 def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> DocumentStructure:
@@ -409,7 +394,6 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
     current_section: str | None = None
     section_marks_rule: float | None = None
     current_passage: str | None = None
-    pending_topic: tuple[str | None, str] | None = None
 
     for page_info, page_res in page_results:
         page_num = page_info["page_number"]
@@ -429,19 +413,36 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
                     "rule": rule,
                 })
 
-        expanded_items: list[tuple[str | None, str, float | None, Any]] = []
+        first_on_page = True
         for q in questions_raw:
-            q_text = (q.question_text or "").strip()
-            q_lbl = (q.raw_question_number or "").strip() or None
-            splits = split_swallowed_qp_blocks(q_lbl, q_text)
-            for s_lbl, s_txt in splits:
-                s_marks = q.marks if len(splits) == 1 else None
-                expanded_items.append((s_lbl, s_txt, s_marks, q))
+            text = (q.question_text or "").strip()
+            raw_label = (q.raw_question_number or "").strip() or None
+            marks = q.marks
+            if not raw_label and _PAGE_FURNITURE.fullmatch(text):
+                continue  # "Page 2", "P.T.O.", "Turn over" - never content
+            is_first_block, first_on_page = first_on_page, False
 
-        for raw_label, text, marks, q in expanded_items:
+            # Sub-part of the current question ((a), (ii), (2), 9(b), 9.1 ...): merge it into that question
+            last_q = doc_struct.questions[-1] if doc_struct.questions else None
+            used = {parent_number(x.normalized_number) for x in doc_struct.questions if x.normalized_number}
+            part_label, part_text = raw_label, text
+            if raw_label is None or raw_label.lower() in ("null", "none", "?", "unknown", ""):
+                pm = _PART_TEXT_PREFIX.match(text)
+                part_label, part_text = (pm.group(1), pm.group(2)) if pm else (None, text)
+            tok = _part_token(part_label, last_q, used)
+            if tok is not None:
+                _merge_part(last_q, tok, part_text, marks, page_num, part_label)
+                continue
+
             # If raw_label is missing or empty, attempt to extract label from start of question text
             if raw_label is None or raw_label.lower() in ("null", "none", "?", "unknown", ""):
                 extracted_lbl, rest_text = _extract_label_from_text_prefix(text)
+                ext_norm = normalize_question_number(extracted_lbl) if extracted_lbl else None
+                # A number read out of the text that an earlier question already has (e.g. "5R Principle" inside
+                # Q10) is part of the sentence, not a new label.
+                if (ext_norm and parent_number(ext_norm) in used and last_q is not None
+                        and parent_number(ext_norm) != parent_number(last_q.normalized_number or "")):
+                    extracted_lbl = None
                 if extracted_lbl:
                     raw_label = extracted_lbl
                     text = rest_text
@@ -453,13 +454,12 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
 
             # Check if this block is a section heading
             if (raw_label is None and is_heading_or_title(text)) or (raw_label and is_heading_or_title(raw_label)):
-                current_section = (raw_label or text or "") if is_heading_or_title(raw_label or "") else (text if len(text) < 80 else (raw_label or text[:80]))
-                if current_section and current_section not in doc_struct.sections:
+                current_section = text if len(text) < 80 else (raw_label or text[:80])
+                if current_section not in doc_struct.sections:
                     doc_struct.sections.append(current_section)
-                rule = extract_section_marks_rule(text) or extract_section_marks_rule(raw_label or "")
+                rule = extract_section_marks_rule(text)
                 section_marks_rule = rule if rule is not None else marks
-                if not text or is_heading_or_title(text) or is_instruction(text) or is_heading_or_title(raw_label or ""):
-                    continue
+                continue
 
             # Check if this block is a section instruction
             if raw_label is None and is_instruction(text):
@@ -469,24 +469,13 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
                     section_marks_rule = rule
                 continue
 
-            last_q = doc_struct.questions[-1] if doc_struct.questions else None
-
-            # Check if this item is a pure topic title like 'Fluid Mechanics & Atmospheric Physics:'
-            if _is_pure_topic_title(raw_label, text):
-                pending_topic = (raw_label, text)
-                continue
-
-            # Check if this is an internal numbered step like '1.', '2.', '3.' under ongoing question
-            if _is_numbered_substep_or_item(raw_label, text, last_q):
-                last_q.question_text = f"{last_q.question_text}\n{raw_label} {text}".strip()
-                last_q.page_end = max(last_q.page_end, page_num)
-                continue
-
             # Check if this block continues the previous question (cross-page continuation e.g. Q4 or Q6 table)
-            if _is_question_continuation(raw_label, text, last_q, page_num, marks):
+            last_q = doc_struct.questions[-1] if doc_struct.questions else None
+            if _is_question_continuation(raw_label, text, last_q, page_num, is_first_block, marks):
                 sep = "\n\n" if is_table_block(text) else " " if (last_q.question_text and not last_q.question_text.endswith(("\n", ".", "?", ":", ";", "!"))) else "\n"
                 last_q.question_text = f"{last_q.question_text}{sep}{text}".strip()
                 last_q.page_end = max(last_q.page_end, page_num)
+                # If last_q had no marks assigned, check if the continuation provides marks
                 if last_q.max_marks is None:
                     m_inline = _INLINE_MARKS_PATTERN.search(text)
                     if m_inline:
@@ -500,6 +489,7 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
 
             # Check if this is an option/blank belonging to previous question
             if _is_option_or_blank_item(raw_label, text) and doc_struct.questions:
+                # Attach to the last question instead of creating a standalone sub-question
                 last_q = doc_struct.questions[-1]
                 bullet = f"({raw_label.strip('()')})" if not raw_label.startswith("(") else raw_label
                 last_q.question_text = f"{last_q.question_text}\n{bullet} {text}".strip()
@@ -512,7 +502,6 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
                 continue
 
             # Section alignment from digital PDF page text if available
-            has_pdf_sec_alignment = False
             if page_sections and page_text:
                 q_pos = -1
                 if raw_label:
@@ -527,7 +516,6 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
                         q_pos = m_snip.start()
 
                 if q_pos != -1:
-                    has_pdf_sec_alignment = True
                     applicable = [s for s in page_sections if s["offset"] <= q_pos]
                     if applicable:
                         latest_sec = applicable[-1]
@@ -537,9 +525,13 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
                         if current_section not in doc_struct.sections:
                             doc_struct.sections.append(current_section)
 
-            # If not explicitly aligned by PDF offset, check q.section
-            if not has_pdf_sec_alignment and q.section and q.section.strip():
-                new_sec = q.section.strip()
+            # Check if question itself specifies a section
+            # (a question's own title, e.g. "Corrosion & Chemical Properties:", is not a section)
+            own_section = q.section.strip() if q.section and q.section.strip() else None
+            if own_section and own_section.rstrip(":") == text.strip().rstrip(":"):
+                own_section = None
+            if own_section:
+                new_sec = own_section
                 if new_sec != current_section:
                     current_section = new_sec
                     if current_section not in doc_struct.sections:
@@ -568,42 +560,22 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
                     if current_section not in doc_struct.sections:
                         doc_struct.sections.append(current_section)
 
-            # Recover truncated question text from digital page_text if available
-            if page_text and len(text.strip()) < 35 and not text.strip().endswith((".", "?", "!", ")")):
-                search_lbl = raw_label or ""
-                pat_rec = re.compile(rf"{re.escape(search_lbl)}[.\s\-]+({re.escape(text.strip())}[^\n]+)", re.IGNORECASE)
-                m_rec = pat_rec.search(page_text)
-                if m_rec:
-                    text = m_rec.group(1).strip()
-                elif text.strip():
-                    pat_snip = re.compile(rf"({re.escape(text.strip())}[^\n]+)", re.IGNORECASE)
-                    m_snip = pat_snip.search(page_text)
-                    if m_snip:
-                        text = m_snip.group(1).strip()
-
-            # Attach pending topic if present
-            full_text = text
-            if pending_topic:
-                t_raw, t_text = pending_topic
-                full_text = f"{t_text}\n{full_text}"
-                if (raw_label is None or raw_label.startswith("(")) and t_raw:
-                    t_norm = normalize_question_number(t_raw)
-                    if t_norm:
-                        raw_label = f"{t_norm}{raw_label or ''}"
-                pending_topic = None
 
             # Check if unnumbered block is standalone
             is_unnumbered = raw_label is None or raw_label.lower() in ("null", "none", "?", "unknown", "")
             if is_unnumbered:
                 if doc_struct.questions:
+                    # Standalone unnumbered item following existing questions
                     inferred_pos = len(doc_struct.questions) + 1
                     raw_label = None
                     norm = str(inferred_pos)
                     display_num = str(inferred_pos)
                 else:
+                    # No prior question; check if it's text/instruction
                     if is_instruction(text):
                         doc_struct.instructions.append(text)
                         continue
+                    # Standalone first question without a label
                     inferred_pos = 1
                     raw_label = None
                     norm = "1"
@@ -611,8 +583,10 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
             else:
                 norm = normalize_question_number(raw_label)
                 if norm is None:
+                    # Check if raw_label is a subquestion token like '(b)', '(c)', 'b.', 'c.'
                     sub_tok = extract_subquestion_token(raw_label)
                     if sub_tok and doc_struct.questions:
+                        # Find the parent question number from the last question
                         last_q = doc_struct.questions[-1]
                         parent = parent_number(last_q.normalized_number or last_q.display_number or "1")
                         norm = f"{parent}({sub_tok})"
@@ -622,21 +596,37 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
                 else:
                     display_num = norm
 
-            # Inherit section marks or extract inline marks
-            assigned_marks = marks
-            m_inline = _INLINE_MARKS_PATTERN.search(text)
-            inline_val = float(m_inline.group(1)) if m_inline else None
-            if section_marks_rule is not None:
-                if inline_val is not None and inline_val >= section_marks_rule:
-                    assigned_marks = inline_val
-                else:
-                    assigned_marks = section_marks_rule
-            elif inline_val is not None:
-                assigned_marks = inline_val
+            # A question that opens with a part label ("Q5(a)", "3a", "3 (a)"): the question is 5 and "(a)" its first
+            # part, so "5(b)" that follows merges into it. One question per printed number, parts kept inside.
+            opened_part = None
+            first_part = re.fullmatch(r"\d+\(([a-z]|[ivx]{1,4})\)", norm or "")
+            if first_part and parent_number(norm) not in used:
+                opened_part = first_part.group(1)
+                norm = display_num = parent_number(norm)
+                if marks is not None and not _ANY_INLINE_MARKS.search(text):
+                    text = f"{text} ({marks:g} mark{'s' if marks != 1 else ''})"
+                if not re.search(rf"(?:^|\s)\(?\s*{re.escape(opened_part)}\s*\)\s", text, re.IGNORECASE):
+                    text = f"({opened_part}) {text}"
 
+            # Inherit section marks or extract inline marks if not explicitly found
+            assigned_marks = marks
+            if assigned_marks is None:
+                # Check for explicit inline marks e.g. "(2 marks)", "(1 mark)", "(1.5 marks)"
+                m_inline = _INLINE_MARKS_PATTERN.search(text)
+                if m_inline:
+                    try:
+                        assigned_marks = float(m_inline.group(1))
+                    except ValueError:
+                        pass
+            if assigned_marks is None and section_marks_rule is not None:
+                assigned_marks = section_marks_rule
+
+            # If a passage was pending and belongs to this section/group, attach note or prefix if first question
+            full_text = text
             if current_passage:
-                full_text = f"[Reading Passage Context]\n{current_passage}\n\n{full_text}"
-                current_passage = None
+                # Prepend reference to passage
+                full_text = f"[Reading Passage Context]\n{current_passage}\n\n{text}"
+                current_passage = None  # consumed for this group
 
             bbox_dict = q.bbox.model_dump() if getattr(q, "bbox", None) else None
 
@@ -650,10 +640,7 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
             if not full_text.strip():
                 reasons.append("Empty question text")
             if q.confidence is not None and q.confidence < 0.6:
-                reasons.append("Low OCR confidence")
-
-            if is_heading_or_title(display_num) or is_heading_or_title(raw_label or ""):
-                continue
+                reasons.append("Low reading confidence")
 
             sq = StructuredQuestion(
                 raw_question_number=raw_label,
@@ -662,7 +649,7 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
                 question_text=full_text,
                 question_type=q.question_type or "descriptive",
                 max_marks=assigned_marks,
-                section=current_section or q.section,
+                section=own_section or current_section,
                 page_start=page_num,
                 page_end=page_num,
                 bbox=bbox_dict,
@@ -670,7 +657,11 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
                 verification_status="NEEDS_REVIEW" if reasons else "UNVERIFIED",
                 review_reason="; ".join(reasons) or None,
             )
+            if opened_part:
+                sq.has_parts, sq.last_part, sq.part_style = True, opened_part, ")"
             doc_struct.questions.append(sq)
 
-    doc_struct.questions = _consolidate_subquestions(doc_struct.questions)
+    for sq in doc_struct.questions:
+        if sq.has_parts:
+            _finalise_parts(sq)
     return doc_struct

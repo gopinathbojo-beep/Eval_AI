@@ -106,3 +106,51 @@ def extract_json_object(raw: str) -> dict:
     if best is not None:
         return _normalize_extracted_obj(best)
     raise ParseError("No complete JSON object found in model response")
+
+
+def salvage_truncated_object(raw: str) -> dict | None:
+    """Recover the complete prefix of a JSON object that was cut off mid-output (token limit).
+
+    Cuts after the last fully closed value inside the outermost object and closes the open brackets, so every
+    item the model finished is kept and only the half-written last item is dropped. Returns None if nothing
+    usable can be recovered.
+    """
+    if not raw:
+        return None
+    text = raw.lstrip("﻿")
+    start = text.find("{")
+    if start < 0:
+        return None
+    stack: list[str] = []
+    in_str = esc = False
+    cut_points: list[tuple[int, list[str]]] = []
+    for j in range(start, len(text)):
+        c = text[j]
+        if in_str:
+            if esc:
+                esc = False
+            elif c == "\\":
+                esc = True
+            elif c == '"':
+                in_str = False
+            continue
+        if c == '"':
+            in_str = True
+        elif c in "{[":
+            stack.append("}" if c == "{" else "]")
+        elif c in "}]":
+            if not stack:
+                break
+            stack.pop()
+            if not stack:
+                break
+            cut_points.append((j + 1, list(stack)))
+    for pos, open_stack in reversed(cut_points):
+        candidate = text[start:pos].rstrip().rstrip(",") + "".join(reversed(open_stack))
+        try:
+            obj = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):
+            return obj
+    return None
