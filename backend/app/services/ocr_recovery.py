@@ -111,6 +111,20 @@ def find_recovery_candidates(
         for alt in alternatives:
             if alt in q_by_norm:
                 target_q = q_by_norm[alt]
+
+                # Keyword overlap
+                q_tokens = _tokenize(getattr(target_q, "question_text", None))
+                common = ans_tokens & q_tokens
+
+                # Distinct numerical constants match
+                q_nums = _extract_distinct_numbers(getattr(target_q, "question_text", None))
+                shared_nums = ans_nums & q_nums
+
+                # If norm is an existing question in the exam, digit confusion MUST have supporting evidence
+                # (keyword overlap or shared numbers) to avoid hijacking valid answers into false duplicates
+                if norm in q_by_norm and not (len(common) >= 1 or shared_nums):
+                    continue
+
                 score = 0.70
                 reasons = [f"OCR digit misread: '{norm}' is commonly misread for '{alt}'"]
 
@@ -120,16 +134,10 @@ def find_recovery_candidates(
                     score += 0.15
                     reasons.append(f"position matches exam sequence (#{q_pos})")
 
-                # Keyword overlap boost
-                q_tokens = _tokenize(getattr(target_q, "question_text", None))
-                common = ans_tokens & q_tokens
                 if len(common) >= 2:
                     score += 0.10
                     reasons.append(f"content keyword overlap ({', '.join(list(common)[:3])})")
 
-                # Distinct numerical constants match
-                q_nums = _extract_distinct_numbers(getattr(target_q, "question_text", None))
-                shared_nums = ans_nums & q_nums
                 if shared_nums:
                     score += 0.12
                     reasons.append(f"shared exam constants ({', '.join(list(shared_nums)[:3])})")

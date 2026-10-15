@@ -366,7 +366,7 @@ def segment_student_answers(
                         curr_confs.append(conf)
                     continue
 
-            if canonical_questions and p and not exam_has_subq and is_sub_question(norm):
+            if canonical_questions and p and not exam_has_subq:
                 if curr_norm_num and parent_number(curr_norm_num) == p:
                     curr_text_parts.append(text)
                     if bb and curr_page == page_num:
@@ -385,6 +385,15 @@ def segment_student_answers(
                     if conf is not None:
                         curr_confs.append(conf)
                     continue
+
+            # If current block has the exact same normalized number as ongoing question, merge as continuation
+            if curr_norm_num and norm == curr_norm_num:
+                curr_text_parts.append(text)
+                if bb and curr_page == page_num:
+                    curr_bbox = _merge_bboxes(curr_bbox, bb)
+                if conf is not None:
+                    curr_confs.append(conf)
+                continue
 
             # Case: Genuine question label (e.g. Q1, 2, 3, 3(b))
             flush_current()
