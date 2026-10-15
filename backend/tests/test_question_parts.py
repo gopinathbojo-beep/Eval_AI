@@ -100,3 +100,20 @@ def test_key_part_rows_combine_into_one_key():
     assert head.answer_text == "(a) Iron oxide forms\n(b) Copper carbonate\n(c) Painting, galvanising"
     assert head.marks == 5 and head.normalized_number == "9" and head.keywords == ["rust", "paint"]
     assert head.criteria[0] == "(a) 1 mark: oxide" and deleted == keys[1:]
+
+
+def test_stem_total_is_not_added_to_part_marks():
+    """A 5 mark question printed as "Q9 ... (5 marks)" with parts 2+2+1 stays worth 5, not 10."""
+    assert parse(page(1, [("Q9", "Corrosion: (5 marks)", 5), ("(a)", "What is rusting? (2 marks)", 2),
+                          ("(b)", "Why do copper vessels turn green? (2 marks)", 2),
+                          ("(c)", "Two ways to prevent corrosion. (1 mark)", 1),
+                          ("Q10", "Define a polymer.", 3)])) == [("9", 5), ("10", 3)]
+
+
+def test_stem_that_repeats_its_parts_is_not_counted_twice():
+    """The model returned the whole question with its parts, then each part again (seen on a physics paper)."""
+    a = "(a) Calculate the depth of the seabed. (2 marks)"
+    b = "(b) A string completes 1200 oscillations in 15 s. Calculate: 1. Frequency (1.5 marks) 2. Period (1.5 marks)"
+    st = parse_question_paper_structure([page(1, [("Q9", f"Wave Motion: {a} {b}", None), ("(a)", a, 2), ("(b)", b, 3)])])
+    assert [(q.display_number, q.max_marks) for q in st.questions] == [("9", 5)]
+    assert st.questions[0].question_text.count("Calculate the depth") == 1

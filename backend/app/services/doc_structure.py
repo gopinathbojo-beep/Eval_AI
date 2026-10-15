@@ -357,14 +357,28 @@ def _merge_part(last_q: StructuredQuestion, tok: str, text: str, marks: float | 
         body = f"{body} ({marks:g} mark{'s' if marks != 1 else ''})"
     if not re.match(rf"^\(?\s*{re.escape(tok)}\s*[\)\.]", body, re.IGNORECASE):
         body = f"({tok}) {body}"
-    last_q.question_text = f"{last_q.question_text.rstrip()}\n{body}".strip()
+    # The model sometimes returns the whole question (parts included) and then each part again: keep one copy
+    if _squash(body) not in _squash(last_q.question_text):
+        last_q.question_text = f"{last_q.question_text.rstrip()}\n{body}".strip()
     last_q.page_end = max(last_q.page_end, page_num)
     last_q.has_parts, last_q.last_part, last_q.part_style = True, tok, _label_style(label)
 
 
+def _squash(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip().lower()
+
+
+# The first part label in a question's text: "(a)", "(ii)", "(1)", or "a)" / "1." at the start of a line
+_FIRST_PART_LABEL = re.compile(r"\(\s*(?:[a-h]|[ivx]{1,4}|\d{1,2})\s*\)|(?:^|\n)\s*(?:[a-h]|[ivx]{1,4}|\d{1,2})[\)\.]\s",
+                               re.IGNORECASE)
+
+
 def _finalise_parts(q: StructuredQuestion) -> None:
-    """A question with merged parts is worth the sum of its printed part marks (never less than it was given)."""
-    parts_sum = sum(float(x) for x in _ANY_INLINE_MARKS.findall(q.question_text))
+    """A question with merged parts is worth the sum of its printed part marks (never less than it was given).
+    Only marks after the first part label count: a total printed on the stem ("9. ... (5 marks) (a) ... (2 marks)")
+    must not be added to its parts, or a 5 mark question split 2+2+1 becomes worth 10."""
+    first = _FIRST_PART_LABEL.search(q.question_text)
+    parts_sum = sum(float(x) for x in _ANY_INLINE_MARKS.findall(q.question_text[first.start() if first else 0:]))
     if parts_sum > 0 and (q.max_marks is None or parts_sum > q.max_marks + 1e-9):
         q.max_marks = parts_sum
     if q.max_marks is not None and q.review_reason:

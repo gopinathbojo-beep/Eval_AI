@@ -9,7 +9,7 @@ OCR_SYSTEM = (
     "1. The image is the source of truth. Never invent text, question numbers or answers.\n"
     "2. Transcribe EVERYTHING on the page, top to bottom, left to right. Skipping text is the worst error: "
     "if a word cannot be read, write [unclear] in its place and keep going.\n"
-    "3. Copy question labels exactly as printed/written (Q1, 1., 1), (1), I, 3(a), 3.a, (b)). If a block has no label, use null.\n"
+    "3. Copy question labels exactly as printed/written (Q1, 1., 1), (1), a bare 1, I, 3(a), 3.a, (b)). If a block has no label, use null.\n"
     "4. Numbered points, bullets, options (A/B/C/D), match items and blanks INSIDE a question or answer are part of its text, "
     "not separate questions.\n"
     "5. Keep maths and science notation: x², H₂O, √, π, fractions as (a/b), arrows →, ↑. Keep tables as Markdown tables.\n"
@@ -64,6 +64,7 @@ def answer_key_prompt(page_number: int, width: int, height: int, page_text: str 
 Extract the answer for every question on the page, in reading order.
 
 1. question_number: the label exactly as written (e.g. "1", "Q1", "3(a)", "(b)"), or null when the block has no label.
+   A bare number ("1", "2") alone on a line with the answer below it is a label.
    Never infer a number from the order. A page that starts with the rest of the previous page's answer:
    output it FIRST with question_number null. Never drop it.
 2. answer_text: the complete model answer, verbatim (lists, steps, formulas, tables as Markdown).
@@ -91,7 +92,9 @@ written. Never assign a label the student did not write.
 Transcribe every answer on the page, in reading order.
 
 1. Every question the student answered is a SEPARATE item. Start a new item wherever the student wrote a
-   question label (Q3, 3., 3), 3(a), Ans 4 ...) at the left margin or the start of a line.
+   question label (Q3, 3., 3), 3(a), Ans 4 ...) at the left margin or the start of a line. Many students write
+   only the bare number ("1", "2", "3") with no Q, dot or bracket, alone on a line or in the margin, with the
+   answer below it: that number is the question label too.
    Never put the answers to two different questions into one item: if the page has answers 1), 3), 4), 6),
    output four items.
 2. question_number: the number of that label only, e.g. "1", "3", "Q4", "3(a)". Use null for text with no
@@ -105,6 +108,10 @@ Transcribe every answer on the page, in reading order.
    Do not correct, complete or improve anything. Do not use your own knowledge.
    Unreadable word -> [unclear]. Crossed-out text -> leave it out. Drawing -> [diagram: short description].
    Maths: keep every step, =, signs, powers (x²), fractions (a/b), roots (√). Tables as Markdown tables.
+   Write each handwritten line of working as its own line. Copy every digit, sign (+ − × ÷), bracket and
+   exponent exactly as written, even if the step is wrong: never fix the arithmetic. Powers as x^2 or x²,
+   negative powers as x^-2, stacked fractions as (numerator)/(denominator). Watch the look-alikes:
+   1/7, 4/9, 5/S, 2/z, 0/o, x/×, −/=.
 5. ocr_confidence: how sure you are of the transcription (0.0-1.0).
    question_number_confidence: how sure you are of the label (0.0-1.0).
 6. bbox: the answer's box in image pixels {{"x","y","width","height"}}, or null.
@@ -150,6 +157,8 @@ HOW TO MARK
   same thing earn the same credit; an accepted alternative answer earns full credit.
 - If marking criteria are listed, go through them one by one and award each point the student covers.
 - Numerical/maths: check the method steps and the final answer against the key; give step marks if the criteria allow.
+  Equivalent forms are the same answer (1024/243 = (4/3)^5 = 4.21, 0.5 = 1/2, x^-2 = 1/x²). Check each step
+  of the student's working yourself; a correct method with a slip later earns the marks for the steps before it.
 - Nothing relevant, blank, or only [UNCLEAR]: 0 marks.
 - Award between 0 and {max_marks:g}, in steps of 0.5.
 

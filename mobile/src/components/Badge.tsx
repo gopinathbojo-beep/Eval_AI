@@ -92,7 +92,10 @@ export const StatusBadge: React.FC<{ status: string; style?: ViewStyle }> = ({ s
       break;
     case "DRAFT":
     case "UNVERIFIED":
+    case "MISSING":
+    case "UNANSWERED":
       variant = "muted";
+      if (status === "MISSING") label = "Unanswered";
       break;
     default:
       variant = "teal";

@@ -67,3 +67,11 @@ def test_unlabelled_page_with_inline_labels():
 def test_without_exam_labels_nothing_is_split():
     out = _sheet([[A("1", "a\n3) b")]], known=None)
     assert _nums(out) == ["1"]
+
+
+def test_bare_number_labels_with_answer_below():
+    text = "1\nPhotosynthesis makes food in leaves.\n2\nx = 5\n25\n3\nThe heart pumps blood."
+    out = _sheet([[A(None, text)]])
+    assert _nums(out) == ["1", "2", "3"]
+    assert "25" in out[-2].answer_text            # a bare result inside an answer is not a question label
+    assert out[-1].answer_text == "The heart pumps blood."

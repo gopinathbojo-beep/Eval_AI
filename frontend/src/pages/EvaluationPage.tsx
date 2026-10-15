@@ -128,9 +128,6 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
                           Accept suggestion (Q{topCand.display_number})
                         </Button>
                       )}
-                      {a.status === "MAPPED" && (
-                        <Button small variant="primary" disabled={!a.exam_question_id} busy={busy === a.id + "c"} onClick={() => act(a, { confirm: true }, "c")}>Confirm</Button>
-                      )}
                       <Button small onClick={() => setDlg(a)}>Change mapping</Button>
                       <Button small onClick={() => setDlg(a)}>Edit OCR</Button>
                       <Button small onClick={() => setSplitAns(a)}>Split</Button>
@@ -282,7 +279,7 @@ function MarksTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<vo
       {d.questions.length === 0 ? <Empty title="No questions" /> : d.questions.map((q) => {
         const it = items.get(q.id), a = ans.get(q.id);
         return (
-          <Card key={q.id} className={`p-4 ${it && ["EVALUATION_ERROR", "MISSING"].includes(it.status) ? "border-mark/50" : ""}`}>
+          <Card key={q.id} className={`p-4 ${it && it.status === "EVALUATION_ERROR" ? "border-mark/50" : ""}`}>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0 flex-1"><p className="font-semibold">Question {q.display_number} <span className="font-normal text-mute">· {fmt(q.max_marks)} marks</span></p>
                 <p className="doc-text mt-1 line-clamp-2 text-sm text-mute">{q.question_text}</p></div>
@@ -290,12 +287,12 @@ function MarksTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<vo
             </div>
             <div className="mt-3 grid gap-3 md:grid-cols-2">
               <div><p className="mb-1 text-xs font-medium text-mute">Official answer</p><p className="doc-text rounded bg-sunken p-2 text-sm">{q.official_answer ?? "–"}</p></div>
-              <div><p className="mb-1 text-xs font-medium text-mute">Student answer</p><p className="doc-text rounded bg-sunken p-2 text-sm">{a ? a.answer_text : <em className="text-mute">No answer mapped</em>}</p></div>
+              <div><p className="mb-1 text-xs font-medium text-mute">Student answer</p><p className="doc-text rounded bg-sunken p-2 text-sm">{a ? a.answer_text : <em className="text-mute">Unanswered (no response detected)</em>}</p></div>
             </div>
             {it?.error && <p className="mt-2 text-sm font-medium text-mark">{it.error}</p>}
             {it && it.ai_marks !== null && (
               <div className="mt-3 space-y-1 text-sm">
-                <p><b>AI suggested {fmt(it.ai_marks)}/{fmt(q.max_marks)}</b> {it.ai_decision && <Badge tone="pen">{label(it.ai_decision)}</Badge>} {it.ai_confidence !== null && <span className="text-xs text-mute">confidence {pct(it.ai_confidence)}</span>}</p>
+                <p><b>AI suggested {fmt(it.ai_marks)}/{fmt(q.max_marks)}</b> {it.ai_decision && <Badge tone={it.ai_decision === "UNANSWERED" ? "mute" : "pen"}>{label(it.ai_decision)}</Badge>} {it.ai_confidence !== null && <span className="text-xs text-mute">confidence {pct(it.ai_confidence)}</span>}</p>
                 {it.ai_feedback && <p className="text-mute">{it.ai_feedback}</p>}
                 {it.matched_points.length > 0 && <p><span className="text-ok">Matched:</span> {it.matched_points.join("; ")}</p>}
                 {it.missing_points.length > 0 && <p><span className="text-mark">Missing:</span> {it.missing_points.join("; ")}</p>}
@@ -303,7 +300,7 @@ function MarksTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<vo
               </div>)}
             {it && !locked && (
               <div className="mt-3 flex flex-wrap gap-1.5">
-                {it.status !== "APPROVED" && it.status !== "PENDING" && <Button small variant="primary" disabled={it.status === "MISSING" && !it.not_attempted_confirmed && false} busy={busy === it.id} onClick={() => it.status === "MISSING" ? setEdit({ q, item: it }) : call(it.id, () => api(`/evaluations/${ev.id}/items/${it.id}`, { method: "PATCH", json: { approve: true } }))}>{it.status === "MISSING" ? "Resolve…" : "Approve"}</Button>}
+                {it.status !== "APPROVED" && it.status !== "PENDING" && <Button small variant="primary" busy={busy === it.id} onClick={() => call(it.id, () => api(`/evaluations/${ev.id}/items/${it.id}`, { method: "PATCH", json: { approve: true } }))}>Approve</Button>}
                 {it.status === "APPROVED" && <Button small busy={busy === it.id} onClick={() => call(it.id, () => api(`/evaluations/${ev.id}/items/${it.id}`, { method: "PATCH", json: { approve: false } }))}>Unapprove</Button>}
                 {it.status !== "PENDING" && <Button small onClick={() => setEdit({ q, item: it })}>Change marks</Button>}
                 {it.status !== "PENDING" && <Button small variant="ghost" busy={busy === it.id + "r"} onClick={() => call(it.id + "r", () => api(`/evaluations/${ev.id}/items/${it.id}/rerun`, { method: "POST" }))}>Re-evaluate</Button>}

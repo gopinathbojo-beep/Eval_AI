@@ -1256,15 +1256,6 @@ Why Q${topCand?.display_number}: ${topDetail.reason}` : ""}
                                 loading={actionLoading}
                               />
                             )}
-                            {a.status === "MAPPED" && (
-                              <Button
-                                title="Confirm"
-                                variant="primary"
-                                size="small"
-                                onPress={() => handleMappingAction(a, { confirm: true }, "confirm mapping")}
-                                loading={actionLoading}
-                              />
-                            )}
                             <Button
                               title="Change Mapping"
                               variant="outline"
@@ -1461,7 +1452,7 @@ Why Q${topCand?.display_number}: ${topDetail.reason}` : ""}
                   )}
                   {isItemMissing && (
                     <Badge
-                      label={item?.not_attempted_confirmed ? "Not Attempted (Confirmed)" : "Not Attempted"}
+                      label="Unanswered"
                       variant="muted"
                       size="small"
                     />

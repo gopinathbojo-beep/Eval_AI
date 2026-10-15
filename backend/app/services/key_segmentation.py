@@ -84,8 +84,8 @@ def extract_from_full_pdf_text(full_text: str, norm_num: str) -> tuple[str | Non
     label = _label_pattern(norm_num)
     if label is None:
         return None, []
-    # "1." / "1)" / "Q1" / "Question 1" at line start, but not "1.5 Marks" or "10."
-    pat = re.compile(rf"(?:^|\n)[ \t]*(?:Q(?:uestion)?\.?\s*{label}(?![\d\(])|{label}[\.\)](?!\d))[^\n]*\n(.*)",
+    # "1." / "1)" / "Q1" / "Question 1" / a bare "1" on its own line, but not "1.5 Marks" or "10."
+    pat = re.compile(rf"(?:^|\n)[ \t]*(?:Q(?:uestion)?\.?\s*{label}(?![\d\(])|{label}[\.\)](?!\d)|{label}[ \t]*(?=\n))[^\n]*\n(.*)",
                      re.DOTALL | re.I)
     m = pat.search(full_text)
     if not m:
@@ -93,7 +93,7 @@ def extract_from_full_pdf_text(full_text: str, norm_num: str) -> tuple[str | Non
 
     rest = m.group(1)
     # Stop at next question
-    next_q = re.search(r"(?:^|\n)[ \t]*(?:Q(?:uestion)?\.?\s*\d+|\d+[\.\)](?!\d)|\d+\s*\(\s*[a-z]{1,4}\s*\))", rest, re.I)
+    next_q = re.search(r"(?:^|\n)[ \t]*(?:Q(?:uestion)?\.?\s*\d+|\d+[\.\)](?!\d)|\d+\s*\(\s*[a-z]{1,4}\s*\)|\d{1,3}[ \t]*\n)", rest, re.I)
     block = rest[:next_q.start()].strip() if next_q else rest.strip()
 
     # Strip page boundary markers

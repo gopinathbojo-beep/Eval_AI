@@ -116,17 +116,20 @@ def _repair_label(lbl: str, known: set[str] | None) -> str | None:
     return None
 
 
-# A line that starts with a question number: "3)", "3.", "Q3", "Ans 3:", or "37 " (bracket read as 7)
+# A line that starts with a question number: "3)", "3.", "Q3", "Ans 3:", "37 " (bracket read as 7), or a bare "3"
 _LINE_LABEL = re.compile(r"^\s*(?P<pre>(?:Q|Qn|Ans|Answer)\s*\.?\s*)?(?P<num>\d{1,3})\s*(?P<delim>[\)\.\:])?(?=\s|$)\s*",
                          re.IGNORECASE)
 
 
-def _line_number(line: str, known: set[str]) -> int | None:
+def _line_number(line: str, known: set[str], has_body: bool = False) -> int | None:
     m = _LINE_LABEL.match(line)
     if not m:
         return None
     num = m.group("num")
     if m.group("pre") or m.group("delim"):
+        return int(num)
+    # A bare "3" alone on its line with the answer written below it
+    if has_body and line.strip() == num:
         return int(num)
     if len(num) > 1 and num.endswith("7") and num not in known and num[:-1] in known:
         return int(num[:-1])
@@ -146,8 +149,9 @@ def _split_embedded(text: str, ref: int, known: set[str] | None, seen: set[str],
     lines: list[str] = []
     taken = set(seen)
     last_item = prev_bullet
-    for line in text.split("\n"):
-        n = _line_number(line, known)
+    all_lines = text.split("\n")
+    for i, line in enumerate(all_lines):
+        n = _line_number(line, known, has_body=any(x.strip() for x in all_lines[i + 1:]))
         if n is not None and str(n) in known and n > ref and str(n) not in taken \
                 and not (last_item is not None and n == last_item + 1):
             out[-1] = (out[-1][0], "\n".join(lines).strip())

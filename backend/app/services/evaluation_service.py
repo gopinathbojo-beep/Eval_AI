@@ -242,7 +242,11 @@ def evaluate_item(db: Session, ev: Evaluation, q: ExamQuestion, item: Evaluation
 
     elif resolved.status == STUDENT_ANSWER_NOT_ATTEMPTED:
         item.status = "MISSING"
-        item.error = "Question was not attempted by student."
+        item.ai_marks = 0.0
+        item.final_marks = 0.0
+        item.ai_decision = "UNANSWERED"
+        item.not_attempted_confirmed = True
+        item.error = None
         db.commit()
         return
 
@@ -336,7 +340,7 @@ def finalize_issues(db: Session, ev: Evaluation) -> list[dict]:
             if not getattr(it, "not_attempted_confirmed", False):
                 res = resolve_student_answer(db, ev, q)
                 if res.status == STUDENT_ANSWER_NOT_ATTEMPTED:
-                    add(q.display_number, "No student answer found. Map an answer or confirm it was not attempted")
+                    pass
                 elif res.status == STUDENT_ANSWER_MAPPING_REVIEW:
                     add(q.display_number, f"Student answer detected but mapping needs review: {res.reason}")
                 elif res.status == STUDENT_ANSWER_UNMAPPED:
@@ -345,8 +349,6 @@ def finalize_issues(db: Session, ev: Evaluation) -> list[dict]:
                     add(q.display_number, f"Answer sheet OCR failed: {res.reason}")
                 elif res.status in (STUDENT_ANSWER_RELATIONSHIP_ERROR, DATA_INTEGRITY_ERROR):
                     add(q.display_number, f"Database relationship error: {res.reason}")
-                else:
-                    add(q.display_number, "No student answer found. Map an answer or confirm it was not attempted")
         elif it.status == "EVALUATED":
             add(q.display_number, "Awaiting teacher approval")
         if it and it.final_marks is not None and q.max_marks is not None and it.final_marks > q.max_marks + 1e-9:
