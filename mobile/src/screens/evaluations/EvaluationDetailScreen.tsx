@@ -741,12 +741,9 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
 
   // Mapping review data derived
   const qmap = new Map(questions.map((q) => [q.id, q]));
-  const answeredQuestionIds = new Set(
-    answers
-      .filter((a) => a.status !== "IGNORED" && a.exam_question_id)
-      .map((a) => a.exam_question_id!)
-  );
-  const missingQuestions = questions.filter((q) => !answeredQuestionIds.has(q.id));
+  // Same buckets as the summary counts: questions with neither a mapped answer nor a suggestion.
+  const missingQuestionIds = new Set(summary?.missing_question_ids ?? []);
+  const missingQuestions = questions.filter((q) => missingQuestionIds.has(q.id));
   const ocrErrorPages =
     document?.pages?.filter((p) => p.ocr_status && p.ocr_status !== "OK") || [];
 
@@ -1161,6 +1158,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
                 const q = a.exam_question_id ? qmap.get(a.exam_question_id) : undefined;
                 const topCandId = a.mapping_candidates?.[0];
                 const topCand = topCandId ? qmap.get(topCandId) : undefined;
+                const topDetail = a.mapping_candidate_details?.find((c) => c.id === topCandId);
                 const needs = a.status === "UNMAPPED" || a.status === "NEEDS_REVIEW";
                 return (
                   <Card
@@ -1177,7 +1175,11 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
                       </Text>
                       <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
                         {topCand && a.status === "NEEDS_REVIEW" && (
-                          <Badge label={`Suggested: Q${topCand.display_number}`} variant="teal" size="small" />
+                          <Badge
+                            label={`Suggested: Q${topCand.display_number}${topDetail ? ` (${Math.round(topDetail.score * 100)}%)` : ""}`}
+                            variant="teal"
+                            size="small"
+                          />
                         )}
                         <Badge label={`Page ${a.page_number || 1}`} variant="muted" size="small" />
                         {a.ocr_confidence !== null && (
@@ -1205,6 +1207,8 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
                         <Ionicons name="information-circle-outline" size={14} color={colors.warning} />
                         <Text style={[styles.mappingNoteText, { color: colors.warning }]}>
                           {a.mapping_note}
+                          {topDetail && a.status === "NEEDS_REVIEW" ? `
+Why Q${topCand?.display_number}: ${topDetail.reason}` : ""}
                         </Text>
                       </View>
                     )}

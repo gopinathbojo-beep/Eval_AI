@@ -83,9 +83,15 @@ def test_3a_vs_3b_never():
     assert r.question_id is None
 
 
-def test_sub_label_with_parent_only_exam_needs_review():
+def test_sub_label_maps_to_question_kept_whole():
+    # question 3 is stored as one question with its parts inside, so "3(a)" is part of it
     r = map_label("3(a)", exam("3"))
-    assert r.status == NEEDS_REVIEW and r.candidates == ["id-3"]
+    assert r.status == MAPPED and r.question_id == "id-3"
+
+
+def test_sub_label_with_parent_and_other_parts_needs_review():
+    r = map_label("3(a)", exam("3", "3(b)"))
+    assert r.status == NEEDS_REVIEW and r.question_id is None
 
 
 def test_duplicate_exam_numbers_review():

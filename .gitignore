@@ -47,3 +47,6 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+*.db
+*.db-shm
+*.db-wal

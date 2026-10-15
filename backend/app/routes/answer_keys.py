@@ -83,6 +83,14 @@ def patch_key(kid: str, body: KeyPatch, db: Session = Depends(get_db), t: Teache
         log("answer_key_mapping_changed", k.exam_question_id, q.id)
         k.exam_question_id, k.normalized_number = q.id, q.normalized_number
         k.mapping_status, k.mapping_note, k.mapping_candidates = "MAPPED", "Confirmed by teacher", []
+        k.mapping_candidate_details, k.mapping_confirmed = [], True
+        content_changed = True
+    elif "exam_question_id" in d:  # explicit null: the teacher clears a wrong mapping
+        if k.exam_question_id:
+            log("answer_key_unmapped", k.exam_question_id, None)
+        k.exam_question_id, k.mapping_confirmed = None, False
+        k.mapping_status, k.mapping_note, k.mapping_candidates = "UNMAPPED", "Unmapped by teacher", []
+        k.mapping_candidate_details = []
         content_changed = True
     elif "raw_question_number" in d:
         log("answer_key_label_changed", k.raw_question_number, d["raw_question_number"])
@@ -90,6 +98,7 @@ def patch_key(kid: str, body: KeyPatch, db: Session = Depends(get_db), t: Teache
         res = map_label(k.raw_question_number, qs)
         k.normalized_number, k.exam_question_id = res.normalized_number, res.question_id
         k.mapping_status, k.mapping_note, k.mapping_candidates = res.status, res.note, res.candidates
+        k.mapping_candidate_details, k.mapping_confirmed = res.candidate_details, False
         content_changed = True
     for f in ("answer_text", "marks", "criteria", "accepted_answers", "keywords"):
         if f in d and d[f] != getattr(k, f):
@@ -154,7 +163,8 @@ def add_key(exam_id: str, body: KeyCreate, db: Session = Depends(get_db), t: Tea
     k = AnswerKey(exam_id=exam.id, document_id=doc.id if doc else None, raw_question_number=q.display_number,
                   normalized_number=q.normalized_number, exam_question_id=q.id, answer_text=body.answer_text,
                   raw_ocr_text="", marks=body.marks, criteria=body.criteria, accepted_answers=body.accepted_answers,
-                  keywords=body.keywords, mapping_status="MAPPED", mapping_note="Entered by teacher")
+                  keywords=body.keywords, mapping_status="MAPPED", mapping_note="Entered by teacher",
+                  mapping_confirmed=True)
     db.add(k)
     db.flush()
     if exam.status == "QUESTIONS_VERIFIED":
@@ -210,6 +220,7 @@ def split_key(kid: str, body: SplitKeyIn, db: Session = Depends(get_db), t: Teac
         mapping_status=res.status,
         mapping_note=res.note,
         mapping_candidates=res.candidates,
+        mapping_candidate_details=res.candidate_details,
     )
     k.answer_text = head
     db.add(new_k)
@@ -348,7 +359,7 @@ def generate_answer_keys_ai(exam_id: str, db: Session = Depends(get_db), t: Teac
 class SaveGeneratedItem(BaseModel):
     exam_question_id: str
     answer_text: str = ""
-    marks: float | None = None
+    marks: float | None = Field(None, ge=0)
     criteria: list[str] = []
     keywords: list[str] = []
     accepted_answers: list[str] = []
@@ -393,6 +404,7 @@ def save_generated_answer_keys(exam_id: str, body: SaveGeneratedIn, db: Session 
             accepted_answers=item.accepted_answers,
             mapping_status="MAPPED",
             mapping_note="Generated with AI and approved by teacher",
+            mapping_confirmed=True,
             verification_status="UNVERIFIED",
         )
         db.add(k)

@@ -28,7 +28,7 @@ def test_ai_generate_and_save_answer_key(client, auth):
     c.post(f"/api/exams/{eid}/question-paper", headers=h, files={"file": ("physics.pdf", make_pdf(2), "application/pdf")})
     # Accept all questions and verify
     c.post(f"/api/exams/{eid}/questions/accept-valid", headers=h)
-    r_ver = c.post(f"/api/exams/{eid}/questions/verify", headers=h)
+    r_ver = c.post(f"/api/exams/{eid}/questions/verify", headers=h, json={"confirm_marks_mismatch": True})
     assert r_ver.status_code == 200
 
     qs_res = c.get(f"/api/exams/{eid}/questions", headers=h).json()
@@ -100,7 +100,7 @@ def test_upload_answer_key_sheet_option(client, auth):
     # Upload and verify questions
     c.post(f"/api/exams/{eid}/question-paper", headers=h, files={"file": ("chem_q.pdf", make_pdf(2), "application/pdf")})
     c.post(f"/api/exams/{eid}/questions/accept-valid", headers=h)
-    c.post(f"/api/exams/{eid}/questions/verify", headers=h)
+    c.post(f"/api/exams/{eid}/questions/verify", headers=h, json={"confirm_marks_mismatch": True})
 
     # 2. Upload Answer Key Sheet (Option 1)
     r_up = c.post(f"/api/exams/{eid}/answer-key", headers=h, files={"file": ("chem_key.png", make_png(), "image/png")})
@@ -165,7 +165,7 @@ def test_answer_key_not_locked_in_questions_verified(client, auth):
     # Upload question paper and verify questions
     c.post(f"/api/exams/{exam_id}/question-paper", headers=h, files={"file": ("maths.pdf", make_pdf(1), "application/pdf")})
     c.post(f"/api/exams/{exam_id}/questions/accept-valid", headers=h)
-    v_res = c.post(f"/api/exams/{exam_id}/questions/verify", headers=h)
+    v_res = c.post(f"/api/exams/{exam_id}/questions/verify", headers=h, json={"confirm_marks_mismatch": True})
     assert v_res.status_code == 200
 
     exam_detail = c.get(f"/api/exams/{exam_id}", headers=h).json()

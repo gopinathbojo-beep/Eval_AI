@@ -20,7 +20,7 @@ from .doc_structure import parse_question_paper_structure, StructuredQuestion
 from .key_segmentation import segment_answer_keys
 from .student_segmentation import segment_student_answers
 from .mapping_service import apply_key_mapping, apply_student_mapping, refresh_key_state
-from .numbering import normalize_question_number
+from .numbering import is_sub_question, normalize_question_number, parent_number
 from .state import set_state
 
 log = logging.getLogger("adem.pipeline")
@@ -111,8 +111,11 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
                                page_text=p.get("page_text"), canonical_questions=labels)
             call = chat_structured(prompts.OCR_SYSTEM, prompt, schema, img)
             out.write_text(json.dumps({"status": "OK", "raw": call.raw, "parsed": call.parsed.model_dump(),
-                                       "attempts": call.attempts}, ensure_ascii=False, indent=1), encoding="utf-8")
-            _set_pages(db, doc, i, ocr_status="OK", ocr_error=None, ocr_file=rel(out))
+                                       "attempts": call.attempts, "dropped_items": call.dropped_items},
+                                      ensure_ascii=False, indent=1), encoding="utf-8")
+            partial = (f"{call.dropped_items} item(s) on this page could not be read and were left out. "
+                       "Compare with the original and add them by hand, or retry the page.") if call.dropped_items else None
+            _set_pages(db, doc, i, ocr_status="OK", ocr_error=partial, ocr_file=rel(out))
         except AIUnavailable as e:
             log.error("AI became unavailable mid-run: %s", e.detail)
             doc.status, doc.error_message = "AI_ERROR", AI_UNAVAILABLE_MESSAGE
@@ -126,7 +129,13 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
     doc.progress_current = total
 
     _progress(db, doc, "Extracting and validating", None, None, "EXTRACTING")
-    results = _load_results(doc, schema)
+    results = _load_results(db, doc, schema)
+    if not results:
+        # Nothing was read: keep whatever was built from an earlier run instead of replacing it with nothing.
+        doc.status, doc.stage = "FAILED", "No pages could be read"
+        doc.error_message = f"{AI_BAD_RESPONSE_MESSAGE} No page of this document could be read; retry it."
+        db.commit()
+        return
     if kind == "question-paper":
         _build_questions(db, doc, exam, wd, results)
     elif kind == "answer-key":
@@ -141,6 +150,11 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
         doc.stage = "Needs attention"
     else:
         doc.status, doc.stage = "READY", "Ready for review"
+        partial = [p["page_number"] for p in doc.pages if p.get("ocr_error")]
+        if partial:  # readable, but something on these pages was dropped
+            doc.stage = "Ready for review (check flagged pages)"
+            doc.error_message = (f"Some items could not be read on page(s) {', '.join(map(str, partial))}. "
+                                 "Check them against the original.")
     db.commit()
 
 
@@ -148,7 +162,7 @@ def _exam_questions(db: Session, exam_id: str) -> list[ExamQuestion]:
     return db.query(ExamQuestion).filter_by(exam_id=exam_id).order_by(ExamQuestion.position).all()
 
 
-def _load_results(doc, schema):
+def _load_results(db: Session, doc, schema):
     out = []
     pdf_doc = None
     try:
@@ -159,7 +173,7 @@ def _load_results(doc, schema):
     except Exception:
         pdf_doc = None
 
-    for p in doc.pages:
+    for p in list(doc.pages):
         if p.get("ocr_status") != "OK":
             continue
         p_dict = dict(p)
@@ -170,8 +184,14 @@ def _load_results(doc, schema):
                     p_dict["page_text"] = pdf_doc[p_num - 1].get_text()
                 except Exception:
                     pass
-        data = json.loads(abs_path(p["ocr_file"]).read_text(encoding="utf-8"))
-        out.append((p_dict, schema.model_validate(data["parsed"])))
+        try:
+            data = json.loads(abs_path(p["ocr_file"]).read_text(encoding="utf-8"))
+            parsed = schema.model_validate(data["parsed"])
+        except Exception:
+            log.exception("Stored OCR output for page %s is unreadable", p.get("page_number"))
+            _set_pages(db, doc, doc.pages.index(p), ocr_status="FAILED_PARSE", ocr_error=AI_BAD_RESPONSE_MESSAGE)
+            continue
+        out.append((p_dict, parsed))
 
     if pdf_doc:
         try:
@@ -195,7 +215,10 @@ def _bbox_and_crop(p: dict, bbox, wd: Path, name: str):
 
 
 def _build_questions(db: Session, doc, exam: Exam, wd: Path, results) -> None:
-    db.query(AnswerKey).filter_by(exam_id=exam.id).update({AnswerKey.exam_question_id: None})
+    db.query(AnswerKey).filter_by(exam_id=exam.id).update(
+        {AnswerKey.exam_question_id: None, AnswerKey.mapping_status: "UNMAPPED", AnswerKey.mapping_confirmed: False,
+         AnswerKey.mapping_note: "Question paper was re-extracted", AnswerKey.mapping_candidates: [],
+         AnswerKey.mapping_candidate_details: []}, synchronize_session=False)
     db.query(ExamQuestion).filter_by(exam_id=exam.id).delete()
     struct = parse_question_paper_structure(results)
 
@@ -275,6 +298,13 @@ def _build_questions(db: Session, doc, exam: Exam, wd: Path, results) -> None:
             for r in grp:
                 r.verification_status = "NEEDS_REVIEW"
                 r.review_reason = "; ".join(filter(None, [r.review_reason, "Duplicate question number"]))
+    for num, grp in seen.items():
+        if is_sub_question(num) and parent_number(num) in seen:
+            for r in grp + seen[parent_number(num)]:
+                if "sub-part" not in (r.review_reason or ""):
+                    r.verification_status = "NEEDS_REVIEW"
+                    r.review_reason = "; ".join(filter(None, [r.review_reason,
+                                                              "Whole question and its sub-part both extracted"]))
 
     if rows:
         from .state import at_least
@@ -347,3 +377,26 @@ def _build_student_answers(db: Session, doc, exam: Exam, wd: Path, results) -> N
     if at_least(exam, "ANSWER_KEY_VERIFIED") and exam.status == "ANSWER_KEY_VERIFIED":
         set_state(exam, "READY_FOR_EVALUATION")
     db.commit()
+
+
+def recover_interrupted_jobs() -> None:
+    """Background tasks do not survive a restart. Anything left mid-run would stay 'processing' forever and the
+    retry button refuses busy documents, so mark such work as failed and retryable."""
+    from .state import set_state as _set
+    db = SessionLocal()
+    try:
+        busy = ("UPLOADED", "RENDERING", "OCR_PROCESSING", "EXTRACTING")
+        for model_cls, _, _ in KINDS.values():
+            for doc in db.query(model_cls).filter(model_cls.status.in_(busy)):
+                doc.status, doc.stage = "FAILED", "Interrupted"
+                doc.error_message = "Processing was interrupted because the server restarted. Retry this document."
+        for ev in db.query(Evaluation).filter_by(run_status="RUNNING"):
+            ev.run_status = "ERROR"
+        for exam in db.query(Exam).filter_by(status="EVALUATING"):
+            _set(exam, "REVIEW_REQUIRED")
+        db.commit()
+    except Exception:
+        log.exception("Could not recover interrupted jobs")
+        db.rollback()
+    finally:
+        db.close()

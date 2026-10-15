@@ -33,6 +33,26 @@ class AICall:
     parsed: BaseModel
     raw: str
     attempts: int
+    dropped_items: int = 0   # malformed list entries left out to keep the rest of the page
+
+
+def _drop_malformed_items(obj):
+    """Keep the well-formed entries of item lists (e.g. "questions") when the model garbled one of them.
+    Returns (cleaned object, number of entries dropped)."""
+    def clean(lst):
+        if not isinstance(lst, list) or not any(isinstance(x, dict) for x in lst):
+            return lst, 0
+        kept = [x for x in lst if isinstance(x, dict)]
+        return kept, len(lst) - len(kept)
+    if isinstance(obj, list):
+        return clean(obj)
+    if isinstance(obj, dict):
+        out, dropped = dict(obj), 0
+        for k, v in obj.items():
+            out[k], n = clean(v)
+            dropped += n
+        return out, dropped
+    return obj, 0
 
 
 def _same_model(a: str, b: str) -> bool:
@@ -113,6 +133,7 @@ def chat_structured(system: str, user: str, schema: Type[T], image_path: Path | 
     raw, last_err, kind = "", "", "AI_ERROR"
     num_predict = s.internvl_num_predict
     prompt = user
+    partial: AICall | None = None   # best page salvaged by dropping malformed items, used only as a last resort
     for i in range(1, attempts + 1):
         temperature = 0.0 if i == 1 else 0.1 * (i - 1)
         try:
@@ -145,6 +166,17 @@ def chat_structured(system: str, user: str, schema: Type[T], image_path: Path | 
             last_err, kind = f"JSON parse failed: {e}", "FAILED_PARSE"
         except ValidationError as e:
             last_err, kind = f"Schema validation failed: {e.errors()[:3]}", "FAILED_PARSE"
+            cleaned, dropped = _drop_malformed_items(obj)
+            if dropped:
+                try:
+                    cand = AICall(schema.model_validate(cleaned), raw, i, dropped)
+                    if partial is None or dropped < partial.dropped_items:
+                        partial = cand
+                except ValidationError:
+                    pass
         prompt = user + _RETRY_HINT
         log.warning("InternVL attempt %d/%d invalid output: %s | raw[:300]=%r", i, attempts, last_err, raw[:300])
+    if partial is not None:
+        log.warning("Using page with %d malformed item(s) dropped: %s", partial.dropped_items, last_err)
+        return partial
     raise AIResponseError(kind, last_err, raw)

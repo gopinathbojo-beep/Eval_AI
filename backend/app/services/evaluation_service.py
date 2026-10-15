@@ -76,8 +76,14 @@ def resolve_student_answer(db: Session, ev: Evaluation, q: ExamQuestion) -> Reso
     constituent: list[StudentAnswer] = []
     if direct_answers:
         constituent = direct_answers
-        # Combine all answer blocks / cross-page continuations
-        combined_parts = [a.answer_text.strip() for a in constituent if a.answer_text and a.answer_text.strip()]
+        # Combine all answer blocks / cross-page continuations; label the parts of a question kept whole
+        # ("9(a)", "9(b)" -> question 9) so the grader can tell them apart
+        labelled = len({a.normalized_number for a in constituent}) > 1
+        combined_parts = [
+            (f"[{a.raw_question_number or a.normalized_number}]\n"
+             if labelled and (a.raw_question_number or a.normalized_number) else "") + a.answer_text.strip()
+            for a in constituent if a.answer_text and a.answer_text.strip()
+        ]
         combined_text = "\n\n".join(combined_parts)
     elif sub_answers:
         constituent = sub_answers
@@ -289,6 +295,9 @@ def run_evaluation(ev_id: str, only_question_ids: list[str] | None = None) -> No
         ev = db.get(Evaluation, ev_id)
         if ev:
             ev.run_status = "ERROR"
+            exam = db.get(Exam, ev.exam_id)
+            if exam and exam.status == "EVALUATING":  # don't leave the exam stuck mid-evaluation
+                set_state(exam, "REVIEW_REQUIRED")
             db.commit()
     finally:
         db.close()

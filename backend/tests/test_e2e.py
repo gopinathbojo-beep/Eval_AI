@@ -120,7 +120,8 @@ def test_full_workflow(client, auth):
     assert set(st["3"]["mapping_candidates"]) == {qid["3(a)"], qid["3(b)"]}
     assert st[None]["status"] == "UNMAPPED"
     assert d["evaluation"]["status"] == "MAPPING_REVIEW"
-    assert d["summary"]["needs_review"] == 1 and d["summary"]["unmapped"] == 1 and d["summary"]["missing"] == 1
+    assert d["summary"]["needs_review"] == 1 and d["summary"]["unmapped"] == 1 and d["summary"]["missing"] == 0
+    assert d["summary"]["suggested"] == 1 and d["summary"]["mapped"] + d["summary"]["suggested"] + d["summary"]["missing"] == 4
     assert j(c.get(f"/api/exams/{eid}", headers=h))["status"] == "READY_FOR_EVALUATION"
 
     # evaluation + finalize are refused with structured reasons

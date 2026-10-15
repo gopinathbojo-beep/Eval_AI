@@ -148,6 +148,8 @@ class AnswerKey(Base):
     mapping_status: Mapped[str] = mapped_column(String(20), default="UNMAPPED")  # MAPPED|NEEDS_REVIEW|UNMAPPED
     mapping_note: Mapped[str | None] = mapped_column(String(300), nullable=True)
     mapping_candidates: Mapped[list] = mapped_column(JSON, default=list)
+    mapping_candidate_details: Mapped[list] = mapped_column(JSON, default=list)  # [{id, num, score, reason}]
+    mapping_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
     mark_mismatch: Mapped[bool] = mapped_column(Boolean, default=False)
     verification_status: Mapped[str] = mapped_column(String(20), default="UNVERIFIED")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -191,6 +193,7 @@ class StudentAnswer(Base):
     status: Mapped[str] = mapped_column(String(20), default="UNMAPPED")
     mapping_note: Mapped[str | None] = mapped_column(String(300), nullable=True)
     mapping_candidates: Mapped[list] = mapped_column(JSON, default=list)
+    mapping_candidate_details: Mapped[list] = mapped_column(JSON, default=list)  # [{id, num, score, reason}]
     mapping_confirmed: Mapped[bool] = mapped_column(Boolean, default=False)
     position: Mapped[int] = mapped_column(Integer, default=0)
 

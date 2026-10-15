@@ -52,8 +52,9 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
   const [busy, setBusy] = useState<string | null>(null);
   const locked = d.evaluation.status === "FINALIZED";
   const qmap = new Map(d.questions.map((q) => [q.id, q]));
-  const answered = new Set(d.answers.filter((a) => a.status !== "IGNORED" && a.exam_question_id).map((a) => a.exam_question_id));
-  const missing = d.questions.filter((q) => !answered.has(q.id));
+  // Same buckets as the summary counts: questions with neither a mapped answer nor a suggestion.
+  const missingIds = new Set(d.summary.missing_question_ids ?? []);
+  const missing = d.questions.filter((q) => missingIds.has(q.id));
   const ocrErrors = d.document.pages.filter((p) => p.ocr_status !== "OK");
 
   const rows = d.answers.filter((a) => {
@@ -98,6 +99,7 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
             const q = a.exam_question_id ? qmap.get(a.exam_question_id) : undefined;
             const topCandId = a.mapping_candidates?.[0];
             const topCand = topCandId ? qmap.get(topCandId) : undefined;
+            const topDetail = a.mapping_candidate_details?.find((c) => c.id === topCandId);
             const needs = a.status === "UNMAPPED" || a.status === "NEEDS_REVIEW";
             return (
               <Card key={a.id} className={`p-4 ${sel === a.id ? "ring-2 ring-pen" : ""} ${needs ? "border-mark/50" : ""} ${a.status === "IGNORED" ? "opacity-60" : ""}`}>
@@ -105,7 +107,7 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <span className="font-semibold">Student wrote “{a.raw_question_number ?? "no number"}”</span>
                     <div className="flex items-center gap-2">
-                      {topCand && a.status === "NEEDS_REVIEW" && <Badge tone="pen">Suggested: Q{topCand.display_number}</Badge>}
+                      {topCand && a.status === "NEEDS_REVIEW" && <Badge tone="pen">Suggested: Q{topCand.display_number}{topDetail ? ` (${pct(topDetail.score)})` : ""}</Badge>}
                       <Badge tone="mute">page {a.page_number}</Badge>
                       <Badge tone="mute">conf. {pct(a.ocr_confidence)}</Badge>
                       <StatusBadge status={a.status} />
@@ -113,6 +115,7 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
                   </div>
                   <p className="mt-1 text-sm">{q ? <>Mapped to <b>Question {q.display_number}</b> <span className="text-mute">— {q.question_text.slice(0, 70)}</span></> : <span className="text-mark">Not mapped to a question</span>}</p>
                   {a.mapping_note && needs && <p className="mt-1 text-sm font-medium text-mark">{a.mapping_note}</p>}
+                  {topDetail && a.status === "NEEDS_REVIEW" && <p className="mt-0.5 text-xs text-mute">Why Q{topCand?.display_number}: {topDetail.reason}</p>}
                   <p className="doc-text mt-2 line-clamp-4 text-[15px]">{a.answer_text || <em className="text-mute">(empty)</em>}</p>
                   {a.edited && <p className="mt-1 text-xs text-mute">Edited by you. Original OCR text is kept.</p>}
                 </button>

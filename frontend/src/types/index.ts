@@ -30,11 +30,13 @@ export interface QuestionsResponse {
   questions: Question[]; document_id: string | null; sum_of_marks: number; exam_total_marks: number;
   marks_warning: string | null; locked: boolean;
 }
+export interface CandidateDetail { id: string; num: string | null; score: number; reason: string }
 export interface AnswerKeyRow {
   id: string; raw_question_number: string | null; normalized_number: string | null; exam_question_id: string | null;
   answer_text: string; marks: number | null; criteria: string[]; accepted_answers: string[]; keywords: string[];
   page_number: number | null; bbox: BBox | null; has_crop: boolean; ocr_confidence: number | null;
-  mapping_status: string; mapping_note: string | null; mapping_candidates: string[]; mark_mismatch: boolean;
+  mapping_status: string; mapping_note: string | null; mapping_candidates: string[];
+  mapping_candidate_details: CandidateDetail[]; mapping_confirmed: boolean; mark_mismatch: boolean;
   verification_status: string;
 }
 export interface KeysResponse {
@@ -56,7 +58,7 @@ export interface StudentAnswer {
   id: string; raw_question_number: string | null; normalized_number: string | null; exam_question_id: string | null;
   raw_ocr_text: string; answer_text: string; page_number: number | null; bbox: BBox | null; has_crop: boolean;
   ocr_confidence: number | null; status: string; mapping_note: string | null; mapping_candidates: string[];
-  edited: boolean;
+  mapping_candidate_details: CandidateDetail[]; mapping_confirmed: boolean; edited: boolean;
 }
 export interface EvalItem {
   id: string; exam_question_id: string; status: string; ai_marks: number | null; ai_decision: string | null;
@@ -69,7 +71,7 @@ export interface EvalQuestion extends Question { official_answer: string | null;
 export interface EvaluationDetail {
   evaluation: Evaluation; exam: { id: string; name: string; status: string }; document: DocInfo;
   questions: EvalQuestion[]; answers: StudentAnswer[]; items: EvalItem[];
-  summary: { total_questions: number; mapped: number; suggested?: number; needs_review: number; unmapped: number; missing: number; ignored: number };
+  summary: { total_questions: number; mapped: number; suggested?: number; needs_review: number; unmapped: number; missing: number; ignored: number; missing_question_ids?: string[] };
   issues: Issue[];
 }
 export interface ResultRow {

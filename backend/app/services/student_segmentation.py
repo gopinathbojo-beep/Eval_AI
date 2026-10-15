@@ -104,6 +104,69 @@ def _bullet_token(lbl: str) -> str | None:
     return (m.group(1) or m.group(2)).lower()
 
 
+def _repair_label(lbl: str, known: set[str] | None) -> str | None:
+    """A handwritten closing bracket is often read as a 7: "1)" -> "17", "3)" -> "37".
+    When the exam has no such question but has the number without the trailing 7, that is the label."""
+    norm = normalize_question_number(lbl)
+    if not known or norm is None or _has_question(known, norm):
+        return None
+    main, sep, rest = norm.partition("(")
+    if len(main) > 1 and main.endswith("7") and _has_question(known, main[:-1] + sep + rest):
+        return f"Q{main[:-1]}{sep}{rest}"
+    return None
+
+
+# A line that starts with a question number: "3)", "3.", "Q3", "Ans 3:", or "37 " (bracket read as 7)
+_LINE_LABEL = re.compile(r"^\s*(?P<pre>(?:Q|Qn|Ans|Answer)\s*\.?\s*)?(?P<num>\d{1,3})\s*(?P<delim>[\)\.\:])?(?=\s|$)\s*",
+                         re.IGNORECASE)
+
+
+def _line_number(line: str, known: set[str]) -> int | None:
+    m = _LINE_LABEL.match(line)
+    if not m:
+        return None
+    num = m.group("num")
+    if m.group("pre") or m.group("delim"):
+        return int(num)
+    if len(num) > 1 and num.endswith("7") and num not in known and num[:-1] in known:
+        return int(num[:-1])
+    return None
+
+
+def _split_embedded(text: str, ref: int, known: set[str] | None, seen: set[str],
+                    prev_bullet: int | None) -> list[tuple[str | None, str]]:
+    """The model sometimes returns several answers as one block ("1) ... 3) ... 4) ..."). Split the block where a
+    line starts with the number of a later exam question that has not been answered yet. Points of a list
+    inside an answer ("1) .. 2) .. 3)") are kept: a number right after its predecessor is a list item, and so
+    is any number not above the question being answered.
+    Returns [(label or None, text)], the first entry being the part before any split."""
+    if not known or not text:
+        return [(None, text)]
+    out: list[tuple[str | None, str]] = [(None, "")]
+    lines: list[str] = []
+    taken = set(seen)
+    last_item = prev_bullet
+    for line in text.split("\n"):
+        n = _line_number(line, known)
+        if n is not None and str(n) in known and n > ref and str(n) not in taken \
+                and not (last_item is not None and n == last_item + 1):
+            out[-1] = (out[-1][0], "\n".join(lines).strip())
+            out.append((f"Q{n}", ""))
+            lines, ref, last_item = [_LINE_LABEL.sub("", line, count=1)], n, None
+            taken.add(str(n))
+            continue
+        if n is not None:
+            last_item = n
+        lines.append(line)
+    out[-1] = (out[-1][0], "\n".join(lines).strip())
+    return out
+
+
+def _ref_number(norm: str | None) -> int:
+    p = parent_number(norm) if norm else ""
+    return int(p) if p.isdigit() else 0
+
+
 def _classify(lbl: str, cur: _Group | None, known: set[str] | None, seen: set[str],
               page_num: int) -> tuple[str, str | None]:
     """Decide what a labelled block is. Returns (kind, normalized) with kind in
@@ -194,6 +257,40 @@ def segment_student_answers(page_results: list[tuple[dict, Any]],
             seen.add(parent_number(cur.norm))
         cur = None
 
+    def place(raw_lbl: str | None, text: str, page_num: int, bb: dict | None, conf: float | None,
+              label_conf: float | None) -> None:
+        nonlocal cur
+        if _is_null_label(raw_lbl):
+            if not text:
+                return
+            if cur is None:
+                # Text before any label (first page top, or the student never numbered it)
+                cur = _Group(None, None, page_num, bb)
+            cur.add(text, page_num, bb, conf)
+            if _BULLET_TEXT.match(text):
+                m = re.match(r"^\s*\(?(\d{1,2})", text)
+                if m:
+                    cur.last_bullet, cur.last_bullet_style = int(m.group(1)), _bullet_style(text)
+            return
+
+        kind, norm = _classify(raw_lbl, cur, known, seen, page_num)
+        if kind == "continue" and cur is not None:
+            cur.add(text, page_num, bb, conf)
+            return
+        if kind == "bullet" and cur is not None:
+            cur.add(text, page_num, bb, conf, prefix=raw_lbl)
+            tok = _bullet_token(raw_lbl)
+            if tok and tok.isdigit():
+                cur.last_bullet, cur.last_bullet_style = int(tok), _bullet_style(raw_lbl)
+            return
+
+        flush()
+        if norm and norm != normalize_question_number(raw_lbl):
+            # Bare part label resolved against the previous question: "(b)" after Q7(a) -> Q7(b)
+            raw_lbl = f"Q{norm}"
+        cur = _Group(raw_lbl, norm, page_num, bb, label_conf=label_conf)
+        cur.add(text, page_num, None, conf)
+
     for page_info, page_res in page_results:
         page_num = page_info["page_number"]
         for a in getattr(page_res, "answers", []) or []:
@@ -202,37 +299,24 @@ def segment_student_answers(page_results: list[tuple[dict, Any]],
             bb = a.bbox.model_dump() if getattr(a, "bbox", None) else None
             conf = getattr(a, "ocr_confidence", None)
             label_conf = getattr(a, "question_number_confidence", None)
+            if not _is_null_label(raw_lbl):
+                raw_lbl = _repair_label(raw_lbl, known) or raw_lbl
 
+            # Where does this block sit in the exam's numbering? Later question numbers inside it are split off.
             if _is_null_label(raw_lbl):
-                if not text:
-                    continue
-                if cur is None:
-                    # Text before any label (first page top, or the student never numbered it)
-                    cur = _Group(None, None, page_num, bb)
-                cur.add(text, page_num, bb, conf)
-                if _BULLET_TEXT.match(text):
-                    m = re.match(r"^\s*\(?(\d{1,2})", text)
-                    if m:
-                        cur.last_bullet, cur.last_bullet_style = int(m.group(1)), _bullet_style(text)
-                continue
+                ref, prev_bullet = _ref_number(cur.norm if cur else None), (cur.last_bullet if cur else None)
+            else:
+                kind, norm = _classify(raw_lbl, cur, known, seen, page_num)
+                own = kind == "new" or cur is None
+                ref = _ref_number(norm if own else cur.norm)
+                prev_bullet = None if own else cur.last_bullet
+            segments = _split_embedded(text, ref, known, seen, prev_bullet)
 
-            kind, norm = _classify(raw_lbl, cur, known, seen, page_num)
-            if kind == "continue" and cur is not None:
-                cur.add(text, page_num, bb, conf)
-                continue
-            if kind == "bullet" and cur is not None:
-                cur.add(text, page_num, bb, conf, prefix=raw_lbl)
-                tok = _bullet_token(raw_lbl)
-                if tok and tok.isdigit():
-                    cur.last_bullet, cur.last_bullet_style = int(tok), _bullet_style(raw_lbl)
-                continue
-
-            flush()
-            if norm and norm != normalize_question_number(raw_lbl):
-                # Bare part label resolved against the previous question: "(b)" after Q7(a) -> Q7(b)
-                raw_lbl = f"Q{norm}"
-            cur = _Group(raw_lbl, norm, page_num, bb, label_conf=label_conf)
-            cur.add(text, page_num, None, conf)
+            head_text = segments[0][1]
+            if head_text or not _is_null_label(raw_lbl):
+                place(raw_lbl, head_text, page_num, bb, conf, label_conf)
+            for lbl, seg_text in segments[1:]:
+                place(lbl, seg_text, page_num, None, conf, None)
 
     flush()
     for i, g in enumerate(grouped, 1):

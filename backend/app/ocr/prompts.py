@@ -83,18 +83,24 @@ def student_answer_prompt(page_number: int, width: int, height: int,
     if canonical_questions:
         labels = f"""
 Question labels that exist in this exam: {", ".join(canonical_questions)}.
-Use this list only to read an unclear handwritten label (e.g. a 1 with a hook that looks like 7).
-If the student clearly wrote something else, copy what is written. Never assign a label the student did not write.
+Use this list to read unclear handwritten labels. If the student clearly wrote something else, copy what is
+written. Never assign a label the student did not write.
 """
     return f"""This image is page {page_number} of a student's handwritten answer sheet ({width}x{height} pixels).
 {labels}
 Transcribe every answer on the page, in reading order.
 
-1. Start a new item ONLY where the student wrote a question label (Q3, 3., 3), 3(a), (b), Ans 4 ...),
-   usually at the left margin or at the start of a line.
-2. question_number: that label exactly as written. Use null for text with no label, for example the
-   continuation of an answer from the previous page at the top of this page. Output that continuation FIRST.
-3. Numbered points, (i)/(ii), bullets and steps inside an answer belong to that answer's text.
+1. Every question the student answered is a SEPARATE item. Start a new item wherever the student wrote a
+   question label (Q3, 3., 3), 3(a), Ans 4 ...) at the left margin or the start of a line.
+   Never put the answers to two different questions into one item: if the page has answers 1), 3), 4), 6),
+   output four items.
+2. question_number: the number of that label only, e.g. "1", "3", "Q4", "3(a)". Use null for text with no
+   label, for example the continuation of an answer from the previous page at the top of this page.
+   Output that continuation FIRST.
+   Handwriting: students often close the number with a curved bracket, "1)" "3)". That bracket is NOT the
+   digit 7: "1)" is question "1", never "17"; "3)" is "3", never "37".
+3. Sub-parts a), b), (i)/(ii), and a list that restarts at 1) inside an answer (1) .. 2) .. 3) ..) belong
+   to that answer's text. A number that continues the exam's question sequence starts a new item.
 4. answer_text: the student's words exactly as written, every line, including spelling mistakes.
    Do not correct, complete or improve anything. Do not use your own knowledge.
    Unreadable word -> [unclear]. Crossed-out text -> leave it out. Drawing -> [diagram: short description].

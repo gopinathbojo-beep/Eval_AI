@@ -67,6 +67,9 @@ class StructuredQuestion:
     ocr_confidence: float | None
     verification_status: str = "UNVERIFIED"
     review_reason: str | None = None
+    has_parts: bool = False          # sub-parts (a)/(i)/(1)... were merged into this question
+    last_part: str | None = None     # token of the most recently merged part, e.g. "b", "ii", "2"
+    part_style: str | None = None    # trailing punctuation of that part's label, e.g. ")" in "1)"
 
 
 @dataclass
@@ -288,6 +291,89 @@ def _extract_label_from_text_prefix(text: str) -> tuple[str | None, str]:
     return None, s
 
 
+_PART_TEXT_PREFIX = re.compile(
+    r"^\s*(\(\s*(?:[a-zA-Z]|[ivxIVX]{1,5}|\d{1,2})\s*\)|(?:[a-zA-Z]|[ivxIVX]{1,5})[\)\.])\s+(.+)$", re.DOTALL)
+_NUMERIC_OR_ROMAN_LABEL = re.compile(r"^\(?\s*(\d{1,2}|[ivxIVX]{1,5})\s*[\)\.\:]?$")
+_ANY_INLINE_MARKS = re.compile(r"\(\s*(\d+(?:\.\d+)?)\s*(?:marks?|m)\s*\)", re.IGNORECASE)
+_ROMAN_TO_INT = {"i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6, "vii": 7, "viii": 8, "ix": 9, "x": 10}
+
+
+def _seq_value(tok: str | None) -> int | None:
+    if not tok:
+        return None
+    if tok.isdigit():
+        return int(tok)
+    return _ROMAN_TO_INT.get(tok.lower())
+
+
+def _part_token(label: str | None, last_q: StructuredQuestion | None, used_numbers: set[str]) -> str | None:
+    """If `label` marks a sub-part of `last_q` (a whole question), return the part token, else None.
+
+    Sub-parts are merged into their question (one question per printed number). Recognised forms:
+    letters (a) a) b.; roman (i) ii) iii.; numbers (1) (2); "9(b)", "9.1", "9b" under question 9; and bare
+    "1." / "2)" only when they open or continue the current part sequence and cannot be the next main number.
+    """
+    if not label or last_q is None or not last_q.normalized_number or is_sub_question(last_q.normalized_number):
+        return None
+    lbl, own = label.strip(), last_q.normalized_number
+    norm = normalize_question_number(lbl)
+    if norm and is_sub_question(norm) and parent_number(norm) == own:
+        return norm[len(own) + 1:].split(")", 1)[0]
+    m = _NUMERIC_OR_ROMAN_LABEL.match(lbl)
+    if not m:
+        return extract_subquestion_token(lbl)          # (a), a), b.
+    raw = m.group(1).lower()
+    val, prev = _seq_value(raw), last_q.last_part
+    continues = (prev is not None and _seq_value(prev) is not None and val == _seq_value(prev) + 1
+                 and prev.isdigit() == raw.isdigit())
+    opens = val == 1 and not last_q.has_parts
+    if lbl.startswith("(") or not raw.isdigit():       # (1) (ii) ii) iii.
+        return raw if continues or opens or str(val) in used_numbers else None
+    # bare "1." / "2)": normally a main question number. Accept it as a part when its punctuation differs from the
+    # question's own label ("2." ... "1)" "2)"), or when it cannot be the next main number.
+    style = _label_style(lbl)
+    distinct = style != _label_style(last_q.raw_question_number)
+    if continues and ((distinct and style == last_q.part_style) or str(val) != _next_main(used_numbers)):
+        return raw
+    if opens and (distinct or raw != own) and str(val) != _next_main(used_numbers):
+        return raw
+    return None
+
+
+def _label_style(label: str | None) -> str:
+    s = (label or "").strip()
+    return s[-1] if s and s[-1] in ").:" else ""
+
+
+def _next_main(used_numbers: set[str]) -> str:
+    nums = [int(n) for n in used_numbers if n.isdigit()]
+    return str(max(nums) + 1) if nums else "1"
+
+
+def _merge_part(last_q: StructuredQuestion, tok: str, text: str, marks: float | None, page_num: int,
+                label: str | None = None) -> None:
+    body = text.strip()
+    if marks is not None and not _ANY_INLINE_MARKS.search(body):
+        body = f"{body} ({marks:g} mark{'s' if marks != 1 else ''})"
+    if not re.match(rf"^\(?\s*{re.escape(tok)}\s*[\)\.]", body, re.IGNORECASE):
+        body = f"({tok}) {body}"
+    last_q.question_text = f"{last_q.question_text.rstrip()}\n{body}".strip()
+    last_q.page_end = max(last_q.page_end, page_num)
+    last_q.has_parts, last_q.last_part, last_q.part_style = True, tok, _label_style(label)
+
+
+def _finalise_parts(q: StructuredQuestion) -> None:
+    """A question with merged parts is worth the sum of its printed part marks (never less than it was given)."""
+    parts_sum = sum(float(x) for x in _ANY_INLINE_MARKS.findall(q.question_text))
+    if parts_sum > 0 and (q.max_marks is None or parts_sum > q.max_marks + 1e-9):
+        q.max_marks = parts_sum
+    if q.max_marks is not None and q.review_reason:
+        reasons = [r for r in q.review_reason.split("; ") if r != "Marks not found"]
+        q.review_reason = "; ".join(reasons) or None
+        if not reasons and q.verification_status == "NEEDS_REVIEW":
+            q.verification_status = "UNVERIFIED"
+
+
 def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> DocumentStructure:
     """Parse raw page extraction results into a unified DocumentStructure model."""
     doc_struct = DocumentStructure()
@@ -322,9 +408,27 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
                 continue  # "Page 2", "P.T.O.", "Turn over" - never content
             is_first_block, first_on_page = first_on_page, False
 
+            # Sub-part of the current question ((a), (ii), (2), 9(b), 9.1 ...): merge it into that question
+            last_q = doc_struct.questions[-1] if doc_struct.questions else None
+            used = {parent_number(x.normalized_number) for x in doc_struct.questions if x.normalized_number}
+            part_label, part_text = raw_label, text
+            if raw_label is None or raw_label.lower() in ("null", "none", "?", "unknown", ""):
+                pm = _PART_TEXT_PREFIX.match(text)
+                part_label, part_text = (pm.group(1), pm.group(2)) if pm else (None, text)
+            tok = _part_token(part_label, last_q, used)
+            if tok is not None:
+                _merge_part(last_q, tok, part_text, marks, page_num, part_label)
+                continue
+
             # If raw_label is missing or empty, attempt to extract label from start of question text
             if raw_label is None or raw_label.lower() in ("null", "none", "?", "unknown", ""):
                 extracted_lbl, rest_text = _extract_label_from_text_prefix(text)
+                ext_norm = normalize_question_number(extracted_lbl) if extracted_lbl else None
+                # A number read out of the text that an earlier question already has (e.g. "5R Principle" inside
+                # Q10) is part of the sentence, not a new label.
+                if (ext_norm and parent_number(ext_norm) in used and last_q is not None
+                        and parent_number(ext_norm) != parent_number(last_q.normalized_number or "")):
+                    extracted_lbl = None
                 if extracted_lbl:
                     raw_label = extracted_lbl
                     text = rest_text
@@ -408,8 +512,12 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
                             doc_struct.sections.append(current_section)
 
             # Check if question itself specifies a section
-            if q.section and q.section.strip():
-                new_sec = q.section.strip()
+            # (a question's own title, e.g. "Corrosion & Chemical Properties:", is not a section)
+            own_section = q.section.strip() if q.section and q.section.strip() else None
+            if own_section and own_section.rstrip(":") == text.strip().rstrip(":"):
+                own_section = None
+            if own_section:
+                new_sec = own_section
                 if new_sec != current_section:
                     current_section = new_sec
                     if current_section not in doc_struct.sections:
@@ -515,7 +623,7 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
                 question_text=full_text,
                 question_type=q.question_type or "descriptive",
                 max_marks=assigned_marks,
-                section=q.section or current_section,
+                section=own_section or current_section,
                 page_start=page_num,
                 page_end=page_num,
                 bbox=bbox_dict,
@@ -525,4 +633,7 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
             )
             doc_struct.questions.append(sq)
 
+    for sq in doc_struct.questions:
+        if sq.has_parts:
+            _finalise_parts(sq)
     return doc_struct

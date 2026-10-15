@@ -877,11 +877,12 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
   };
 
   // Verify Questions
-  const handleVerifyQuestions = async () => {
+  const handleVerifyQuestions = async (confirmMarksMismatch = false) => {
     try {
       setActionLoading(true);
       await api(`/exams/${examId}/questions/verify`, {
         method: "POST",
+        json: confirmMarksMismatch ? { confirm_marks_mismatch: true } : undefined,
       });
       await Promise.all([loadTabData("questions"), fetchExamDetail()]);
       setActiveTab("answerKey");
@@ -892,6 +893,13 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
         "All canonical questions have been verified! Moving to the Answer Key module."
       );
     } catch (err: any) {
+      if (err?.code === "MARKS_TOTAL_MISMATCH" && !confirmMarksMismatch) {
+        Alert.alert("Marks Do Not Add Up", err.message, [
+          { text: "Cancel", style: "cancel" },
+          { text: "Verify Anyway", onPress: () => handleVerifyQuestions(true) },
+        ]);
+        return;
+      }
       Alert.alert("Error", err.message || "Verification failed");
     } finally {
       setActionLoading(false);
@@ -1714,7 +1722,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                         variant="gradient"
                         size="small"
                         loading={actionLoading}
-                        onPress={handleVerifyQuestions}
+                        onPress={() => handleVerifyQuestions()}
                       />
                     )}
                   </View>
