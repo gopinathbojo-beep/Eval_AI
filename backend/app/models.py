@@ -100,7 +100,7 @@ class _DocMixin:
     original_file: Mapped[str] = mapped_column(String(500))      # path relative to data dir
     mime_type: Mapped[str] = mapped_column(String(100))
     file_size: Mapped[int] = mapped_column(Integer)
-    # UPLOADED, RENDERING, OCR_PROCESSING, EXTRACTING, READY, NEEDS_ATTENTION, AI_ERROR, FAILED
+    # UPLOADED, RENDERING, OCR_PROCESSING, EXTRACTING, READY, NEEDS_ATTENTION, AI_ERROR, FAILED, CANCELLING, CANCELLED
     status: Mapped[str] = mapped_column(String(30), default="UPLOADED")
     stage: Mapped[str | None] = mapped_column(String(100), nullable=True)
     progress_current: Mapped[int] = mapped_column(Integer, default=0)

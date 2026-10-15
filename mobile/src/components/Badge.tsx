@@ -66,7 +66,7 @@ export const Badge: React.FC<BadgeProps> = ({
 
 export const StatusBadge: React.FC<{ status: string; style?: ViewStyle }> = ({ status, style }) => {
   let variant: "default" | "success" | "warning" | "danger" | "teal" | "muted" = "default";
-  let label = status.replace(/_/g, " ");
+  let label = status === "OCR_PROCESSING" ? "READING PAGES" : status.replace(/_/g, " ").replace(/\bOCR\b/g, "READING");
 
   switch (status) {
     case "FINALIZED":
@@ -94,6 +94,8 @@ export const StatusBadge: React.FC<{ status: string; style?: ViewStyle }> = ({ s
     case "UNVERIFIED":
     case "MISSING":
     case "UNANSWERED":
+    case "CANCELLING":
+    case "CANCELLED":
       variant = "muted";
       if (status === "MISSING") label = "Unanswered";
       break;

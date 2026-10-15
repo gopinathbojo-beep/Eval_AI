@@ -59,16 +59,16 @@ def _exam_with_questions(c, h, total=15):
     j(c.post(f"/api/exams/{exam['id']}/question-paper", headers=h,
              files={"file": ("paper.pdf", make_pdf(2), "application/pdf")}), 202)
     qs = j(c.get(f"/api/exams/{exam['id']}/questions", headers=h), 200)["questions"]
-    assert [q["display_number"] for q in qs] == ["1", "2", "3(a)", "3(b)"]
+    assert [q["display_number"] for q in qs] == ["1", "2", "3"]
     return exam["id"], {q["display_number"]: q["id"] for q in qs}
 
 
 def test_whole_question_and_sub_part_cannot_both_be_verified(client, auth):
     c, h = client, auth
-    eid, _ = _exam_with_questions(c, h)
-    q3 = j(c.post(f"/api/exams/{eid}/questions", headers=h,
-                  json={"display_number": "3", "question_text": "Plants", "max_marks": 8}), 201)
-    r = c.patch(f"/api/exam-questions/{q3['id']}", headers=h, json={"verification_status": "VERIFIED"})
+    eid, qid = _exam_with_questions(c, h)
+    j(c.post(f"/api/exams/{eid}/questions", headers=h,
+             json={"display_number": "3(a)", "question_text": "Plants", "max_marks": 3}), 201)
+    r = c.patch(f"/api/exam-questions/{qid['3']}", headers=h, json={"verification_status": "VERIFIED"})
     assert r.status_code == 400 and "sub-parts" in r.json()["message"]
     j(c.post(f"/api/exams/{eid}/questions/accept-valid", headers=h), 200)
     r = c.post(f"/api/exams/{eid}/questions/verify", headers=h, json={"confirm_marks_mismatch": True})

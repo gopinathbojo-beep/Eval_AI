@@ -99,11 +99,11 @@ export const VerifyExamScreen: React.FC<VerifyExamScreenProps> = ({
       issues.push({
         id: "qp_ocr_failed",
         category: "question_paper",
-        title: "Question Paper OCR Incomplete",
-        description: "One or more pages failed OCR processing with InternVL3.5. Retry failed pages.",
+        title: "Question Paper Reading Incomplete",
+        description: "One or more pages could not be read by InternVL3.5. Retry failed pages.",
         severity: "critical",
         resolved: false,
-        actionTitle: "Retry OCR",
+        actionTitle: "Retry Reading",
         onAction: () => navigation.navigate("ExamWorkspace", { examId, initialTab: "paper" }),
       });
     }

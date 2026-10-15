@@ -33,7 +33,9 @@ _CONT_LABEL = re.compile(r"\b(?:cont|contd|continued|continuation)\b\.?", re.IGN
 # "1)", "2.", "(3)", "ii)", "(iv)" - forms that are used both for question labels and for points inside an answer
 _BULLET_LABEL = re.compile(r"^\s*(?:(\d{1,2}|[ivxIVX]{1,4})\s*[\)\.\-]|\(\s*(\d{1,2}|[a-zA-Z]{1,4})\s*\))\s*$")
 _BULLET_TEXT = re.compile(r"^\s*(?:\d{1,2}\s*[\)\.]|\(\s*(?:\d{1,2}|[ivx]{1,4})\s*\)|[ivx]{1,4}\s*\)|[•\-\*→])\s*", re.IGNORECASE)
-_ROMAN_PARTS = {"i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"}
+# Text that opens with a part marker: "c) ...", "(c) ...", "b. ..."
+_PART_START = re.compile(r"^\s*(?:\(\s*[a-h]\s*\)|[a-h]\s*[\)\.])\s", re.IGNORECASE)
+_ROMAN_PARTS = {"i","ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"}
 LOW_LABEL_CONFIDENCE = 0.5
 
 
@@ -186,6 +188,12 @@ def _classify(lbl: str, cur: _Group | None, known: set[str] | None, seen: set[st
     if cur_norm and norm == cur_norm and page_num > cur.last_page:
         return "continue", cur_norm
 
+    # "1b" / "1(c)" while question 1 is being answered: the next part of the same answer, unless the exam keeps
+    # that part as a question of its own
+    if cur_norm and norm and is_sub_question(norm) and parent_number(norm) == parent_number(cur_norm) \
+            and not (known and norm in known):
+        return "bullet", None
+
     tok = _bullet_token(lbl)
     sub_tok = extract_subquestion_token(lbl)
 
@@ -203,12 +211,8 @@ def _classify(lbl: str, cur: _Group | None, known: set[str] | None, seen: set[st
         if norm and part in _ROMAN_PARTS and not is_sub_question(cur_norm) and parent.isdigit() \
                 and norm == str(int(parent) + 1) and (not known or norm in known):
             return "new", norm  # roman-numbered paper: "II." right after question I
-        if known:
-            return "bullet", None
-        # Without the exam's labels: letters are parts, roman numerals inside a part are points
-        if part in _ROMAN_PARTS and is_sub_question(cur_norm):
-            return "bullet", None
-        return "new", sibling
+        # A part is answered inside its question's answer (one answer per question number)
+        return "bullet", None
 
     # Numeric "2)" / "2." / "(2)" while an answer is in progress: a point of that answer, or a new question?
     if cur and tok and tok.isdigit():
@@ -292,8 +296,15 @@ def segment_student_answers(page_results: list[tuple[dict, Any]],
         if norm and norm != normalize_question_number(raw_lbl):
             # Bare part label resolved against the previous question: "(b)" after Q7(a) -> Q7(b)
             raw_lbl = f"Q{norm}"
+        prefix = None
+        if norm and is_sub_question(norm) and not (known and norm in known) \
+                and parent_number(norm) not in seen and (not known or parent_number(norm) in known):
+            # The answer starts at its first part ("1a" with no "1" before it): it is the answer to question 1,
+            # and the part label stays in the text so the grader can tell the parts apart
+            prefix, norm = raw_lbl, parent_number(norm)
+            raw_lbl = f"Q{norm}"
         cur = _Group(raw_lbl, norm, page_num, bb, label_conf=label_conf)
-        cur.add(text, page_num, None, conf)
+        cur.add(text, page_num, None, conf, prefix=prefix)
 
     for page_info, page_res in page_results:
         page_num = page_info["page_number"]
@@ -305,6 +316,12 @@ def segment_student_answers(page_results: list[tuple[dict, Any]],
             label_conf = getattr(a, "question_number_confidence", None)
             if not _is_null_label(raw_lbl):
                 raw_lbl = _repair_label(raw_lbl, known) or raw_lbl
+                # A number the exam does not have, on a block that opens with a part ("11" over "c) 5R Principles"
+                # in a 10 question exam), is a misread mark on the next part of the current answer.
+                norm = normalize_question_number(raw_lbl)
+                if cur is not None and known and norm and not _has_question(known, norm) \
+                        and _PART_START.match(text):
+                    raw_lbl = None
 
             # Where does this block sit in the exam's numbering? Later question numbers inside it are split off.
             if _is_null_label(raw_lbl):

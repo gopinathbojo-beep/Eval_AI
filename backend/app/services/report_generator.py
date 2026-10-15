@@ -718,7 +718,7 @@ def build_evaluation_pdf_report(db: Session, teacher: Teacher, evaluation_id: st
     story.append(Paragraph("Detailed Question-Wise Evaluation Record", style_sec_header))
     story.append(
         Paragraph(
-            "Below is the complete audit record for each question, including official answer expectations, OCR transcribed student responses, AI evaluation notes, and teacher verification.",
+            "Below is the complete audit record for each question, including official answer expectations, transcribed student responses, AI evaluation notes, and teacher verification.",
             style_subtitle,
         )
     )
@@ -837,7 +837,7 @@ def build_evaluation_pdf_report(db: Session, teacher: Teacher, evaluation_id: st
             [
                 [
                     Paragraph("<b>OFFICIAL ANSWER KEY</b>", style_meta_label),
-                    Paragraph("<b>STUDENT SUBMISSION (OCR)</b>", style_meta_label),
+                    Paragraph("<b>STUDENT SUBMISSION (TRANSCRIBED)</b>", style_meta_label),
                 ],
                 [
                     Paragraph(official_ans_text, style_mono),

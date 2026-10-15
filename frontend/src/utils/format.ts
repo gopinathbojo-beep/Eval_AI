@@ -5,16 +5,17 @@ const TONES: Record<string, Tone> = {
   FINALIZABLE: "ok", AI_EVALUATED: "pen", TEACHER_REVIEW: "pen", OK: "ok",
   UNVERIFIED: "mute", PENDING: "mute", UPLOADED: "mute", DRAFT: "mute", IDLE: "mute", IGNORED: "mute",
   NEEDS_REVIEW: "mark", UNMAPPED: "mark", MISSING: "mute", EVALUATION_ERROR: "mark", AI_ERROR: "mark", FAILED: "mark",
-  FAILED_PARSE: "mark", NEEDS_ATTENTION: "warn", MAPPING_REVIEW: "warn", OCR_REVIEW: "warn", REVIEW_REQUIRED: "warn",
+  FAILED_PARSE: "mark", CANCELLING: "mute", CANCELLED: "mute", NEEDS_ATTENTION: "warn", MAPPING_REVIEW: "warn", OCR_REVIEW: "warn", REVIEW_REQUIRED: "warn",
   RENDERING: "pen", OCR_PROCESSING: "pen", EXTRACTING: "pen", EVALUATING: "pen", RUNNING: "pen", ERROR: "mark",
 };
 export const toneOf = (s: string): Tone => TONES[s] ?? "pen";
 export const label = (s: string | null | undefined) => {
   if (s === "MISSING") return "Unanswered";
+  if (s === "OCR_PROCESSING") return "Reading pages";
   return (s ?? "").toLowerCase().replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase())
-    .replace(/\bai\b/gi, "AI").replace(/\bocr\b/gi, "OCR");
+    .replace(/\bai\b/gi, "AI").replace(/^ocr\b/i, "Reading").replace(/\bocr\b/gi, "reading");
 };
-export const BUSY_DOC = ["UPLOADED", "RENDERING", "OCR_PROCESSING", "EXTRACTING"];
+export const BUSY_DOC = ["UPLOADED", "RENDERING", "OCR_PROCESSING", "EXTRACTING", "CANCELLING"];
 export const fmt = (n: number | null | undefined) => (n === null || n === undefined ? "–" : Number.isInteger(n) ? String(n) : n.toFixed(1));
 export const pct = (c: number | null) => (c === null ? "–" : `${Math.round(c * 100)}%`);
 export const date = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : "–");

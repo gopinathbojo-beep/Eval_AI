@@ -56,7 +56,7 @@ export function ExtractionDiagnosticsModal({ onClose }: { onClose: () => void })
   }, []);
 
   return (
-    <Modal title="OCR & Extraction Diagnostics (Verified Reference Benchmarks)" wide onClose={onClose}
+    <Modal title="Reading & Extraction Diagnostics (Verified Reference Benchmarks)" wide onClose={onClose}
       footer={<Button variant="primary" onClick={onClose}>Close</Button>}>
       {loading ? (
         <Loading />
@@ -182,7 +182,7 @@ export function ExtractionDiagnosticsModal({ onClose }: { onClose: () => void })
                     {selectedEx?.id === ex.id && (
                       <div className="mt-3 pt-2.5 border-t border-line grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
                         <div className="rounded bg-sunken p-2.5">
-                          <span className="block font-semibold text-mute mb-1">Original Model OCR:</span>
+                          <span className="block font-semibold text-mute mb-1">Original Model Transcription:</span>
                           <pre className="whitespace-pre-wrap font-doc text-ink text-[11px] leading-relaxed max-h-40 overflow-y-auto">{ex.original_ocr || "(empty)"}</pre>
                         </div>
                         <div className="rounded bg-ok-soft/30 p-2.5 border border-ok/30">

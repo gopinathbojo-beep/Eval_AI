@@ -9,8 +9,9 @@ from ..models import AnswerKey, AnswerSheetDocument, Evaluation, Exam, ExamQuest
 from ..ocr import prompts
 from ..ocr.internvl import AIResponseError, AIUnavailable, chat_structured, check_model
 from ..ocr.schemas import EvaluationResult
-from .evaluation_rules import EvaluationValidationError, validate_evaluation
+from .evaluation_rules import EvaluationValidationError, apply_part_marks, question_parts, validate_evaluation
 from .mapping_service import exam_questions
+from .math_check import review_note, safe_analyze
 from .numbering import parent_number
 from .state import set_state
 
@@ -159,7 +160,7 @@ def resolve_student_answer(db: Session, ev: Evaluation, q: ExamQuestion) -> Reso
         if failed_pages:
             return ResolvedAnswer(
                 status=STUDENT_ANSWER_OCR_FAILED,
-                reason=f"Student answer sheet OCR failed on page(s): {', '.join(map(str, failed_pages))}.",
+                reason=f"Student answer sheet could not be read on page(s): {', '.join(map(str, failed_pages))}.",
             )
 
     # Truly not attempted
@@ -209,15 +210,26 @@ def evaluate_item(db: Session, ev: Evaluation, q: ExamQuestion, item: Evaluation
         for a in resolved.constituent_answers:
             a.status = "EVALUATING"
         db.commit()
+        maths = safe_analyze(key.answer_text or "", resolved.combined_text, key.accepted_answers)
+        parts = question_parts(q.question_text, q.max_marks)  # [] unless every part prints its own marks
         prompt = prompts.evaluation_prompt(q.display_number, q.question_text, key.answer_text, key.criteria,
-                                           key.accepted_answers, key.keywords, q.max_marks, resolved.combined_text)
+                                           key.accepted_answers, key.keywords, q.max_marks, resolved.combined_text,
+                                           maths_facts=maths.prompt_section() if maths else "", parts=parts)
         try:
             call = chat_structured(prompts.EVAL_SYSTEM, prompt, EvaluationResult)
             item.raw_response = call.raw
+            apply_part_marks(call.parsed, parts)  # type: ignore[arg-type]
             res = validate_evaluation(call.parsed, q.max_marks)  # type: ignore[arg-type]
             item.ai_marks, item.ai_decision = res.marks_awarded, res.decision
             item.matched_points, item.missing_points = res.matched_points, res.missing_points
             item.ai_feedback, item.ai_confidence = res.feedback, res.confidence
+            if parts and all(p in res.part_marks for p, _ in parts):
+                split = ", ".join(f"({p}) {res.part_marks[p]:g}/{m:g}" for p, m in parts)
+                item.ai_feedback = f"Parts: {split}. {item.ai_feedback or ''}".strip()
+            note, cap = review_note(maths, res.marks_awarded, q.max_marks)
+            if note:  # the AI's marks contradict the maths check, or the maths may be misread: flag it for the teacher
+                item.ai_feedback = f"{note} {item.ai_feedback or ''}".strip()
+                item.ai_confidence = min(item.ai_confidence, cap) if item.ai_confidence is not None else cap
             item.final_marks = res.marks_awarded  # proposal; becomes official only on teacher approval
             item.status = "EVALUATED"
             for a in resolved.constituent_answers:
@@ -346,7 +358,7 @@ def finalize_issues(db: Session, ev: Evaluation) -> list[dict]:
                 elif res.status == STUDENT_ANSWER_UNMAPPED:
                     add(q.display_number, f"Student answer detected on page but remains unmapped: {res.reason}")
                 elif res.status == STUDENT_ANSWER_OCR_FAILED:
-                    add(q.display_number, f"Answer sheet OCR failed: {res.reason}")
+                    add(q.display_number, f"Answer sheet could not be read: {res.reason}")
                 elif res.status in (STUDENT_ANSWER_RELATIONSHIP_ERROR, DATA_INTEGRITY_ERROR):
                     add(q.display_number, f"Database relationship error: {res.reason}")
         elif it.status == "EVALUATED":

@@ -323,6 +323,22 @@ class StudentPageResult(_Base):
         return self
 
 
+def _part_marks(v: Any) -> dict[str, float]:
+    """Per-part marks from the evaluator: [{"part": "a", "marks_awarded": 1}] or {"a": 1} -> {"a": 1.0}.
+    Unreadable entries are dropped (the question total is then used instead)."""
+    items = v.items() if isinstance(v, dict) else (
+        [((x or {}).get("part"), (x or {}).get("marks_awarded", (x or {}).get("marks"))) for x in v
+         if isinstance(x, dict)] if isinstance(v, list) else [])
+    out: dict[str, float] = {}
+    for part, marks in items:
+        tok = re.sub(r"[^a-z0-9]", "", str(part or "").lower())
+        tok = re.sub(r"^\d+", "", tok) or tok   # "3b" / "3(b)" -> "b"
+        m = _awarded(marks)
+        if tok and m is not None:
+            out[tok] = m
+    return out
+
+
 class EvaluationResult(_Base):
     marks_awarded: float
     max_marks: float | None = None
@@ -331,8 +347,10 @@ class EvaluationResult(_Base):
     missing_points: list[str] = Field(default_factory=list)
     feedback: str = ""
     confidence: float | None = None
+    part_marks: dict[str, float] = Field(default_factory=dict)
 
     _n = field_validator("marks_awarded", mode="before")(lambda cls, v: _awarded(v))
+    _pm = field_validator("part_marks", mode="before")(lambda cls, v: _part_marks(v))
     _mm = field_validator("max_marks", mode="before")(lambda cls, v: _num(v))
     _c = field_validator("confidence", mode="before")(lambda cls, v: _conf(v))
 

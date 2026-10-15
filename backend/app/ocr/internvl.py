@@ -2,9 +2,10 @@
 from __future__ import annotations
 import base64
 import logging
+import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Type, TypeVar
+from typing import Callable, Type, TypeVar
 import httpx
 from pydantic import BaseModel, ValidationError
 from ..config import AI_BAD_RESPONSE_MESSAGE, AI_UNAVAILABLE_MESSAGE, get_settings
@@ -26,6 +27,42 @@ class AIResponseError(Exception):
     def __init__(self, kind: str, detail: str, raw: str = ""):
         super().__init__(AI_BAD_RESPONSE_MESSAGE)
         self.kind, self.detail, self.raw = kind, detail, raw
+
+
+class Cancelled(Exception):
+    """The caller asked to stop (teacher pressed Cancel) while a model call was running."""
+
+
+StopCheck = Callable[[], bool]
+_POLL_SECONDS = 1.0
+
+
+def _post(url: str, payload: dict, timeout: float, should_stop: StopCheck | None) -> httpx.Response:
+    """POST that can be abandoned. The request runs on a worker thread while this thread polls `should_stop`;
+    on stop the client is closed, which drops the connection so Ollama stops generating for it."""
+    if should_stop is None:
+        return httpx.post(url, json=payload, timeout=timeout)
+    client = httpx.Client(timeout=timeout)
+    box: dict = {}
+
+    def work():
+        try:
+            box["r"] = client.post(url, json=payload)
+        except BaseException as e:  # noqa: BLE001 - handed back to the calling thread
+            box["e"] = e
+
+    t = threading.Thread(target=work, daemon=True, name="ollama-call")
+    t.start()
+    try:
+        while t.is_alive():
+            t.join(_POLL_SECONDS)
+            if t.is_alive() and should_stop():
+                raise Cancelled()
+    finally:
+        client.close()
+    if "e" in box:
+        raise box["e"]
+    return box["r"]
 
 
 @dataclass
@@ -84,7 +121,7 @@ class _Truncated(Exception):
 
 
 def _call_once(system: str, user: str, image_path: Path | None, temperature: float = 0.0,
-               num_predict: int | None = None, seed: int | None = None) -> str:
+               num_predict: int | None = None, seed: int | None = None, should_stop: StopCheck | None = None) -> str:
     s = get_settings()
     msg: dict = {"role": "user", "content": user}
     if image_path is not None:
@@ -101,7 +138,7 @@ def _call_once(system: str, user: str, image_path: Path | None, temperature: flo
         "messages": [{"role": "system", "content": system}, msg],
     }
     try:
-        r = httpx.post(f"{s.internvl_api_url}/api/chat", json=payload, timeout=s.internvl_timeout)
+        r = _post(f"{s.internvl_api_url}/api/chat", payload, s.internvl_timeout, should_stop)
     except (httpx.ConnectError, httpx.ConnectTimeout) as e:
         raise AIUnavailable(f"Cannot connect to Ollama: {e}") from e
     if r.status_code == 404:
@@ -122,11 +159,13 @@ _RETRY_HINT = ("\n\nIMPORTANT: your previous reply was not valid JSON for the re
                "Reply with ONLY the JSON object, all strings properly escaped, nothing before or after it.")
 
 
-def chat_structured(system: str, user: str, schema: Type[T], image_path: Path | None = None) -> AICall:
+def chat_structured(system: str, user: str, schema: Type[T], image_path: Path | None = None,
+                    should_stop: StopCheck | None = None) -> AICall:
     """Call the model, parse + validate against `schema`. Retries (max INTERNVL_MAX_RETRIES) on bad output/timeouts.
 
     Retries are not identical replays: at temperature 0 the same input yields the same broken output, so each
     retry varies the sampling slightly, and a truncated reply is retried with a larger output budget.
+    `should_stop` is polled during each call and between retries; when it returns True, Cancelled is raised.
     """
     s = get_settings()
     attempts = s.internvl_max_retries + 1
@@ -136,9 +175,12 @@ def chat_structured(system: str, user: str, schema: Type[T], image_path: Path | 
     partial: AICall | None = None   # best page salvaged by dropping malformed items, used only as a last resort
     for i in range(1, attempts + 1):
         temperature = 0.0 if i == 1 else 0.1 * (i - 1)
+        if i > 1 and should_stop is not None and should_stop():
+            raise Cancelled()
         try:
-            raw = _call_once(system, prompt, image_path, temperature, num_predict, seed=None if i == 1 else 1000 + i)
-        except AIUnavailable:
+            raw = _call_once(system, prompt, image_path, temperature, num_predict, seed=None if i == 1 else 1000 + i,
+                             should_stop=should_stop)
+        except (AIUnavailable, Cancelled):
             raise
         except _Truncated as e:
             raw = e.raw

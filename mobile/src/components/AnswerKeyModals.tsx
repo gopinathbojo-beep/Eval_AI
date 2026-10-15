@@ -316,7 +316,7 @@ export const EditAnswerKeyModal: React.FC<EditAnswerKeyModalProps> = ({
                   ]}
                   value={reason}
                   onChangeText={setReason}
-                  placeholder="e.g. Corrected OCR typo / aligned marks with scheme"
+                  placeholder="e.g. Corrected transcription typo / aligned marks with scheme"
                   placeholderTextColor={colors.mutedText}
                 />
               </View>

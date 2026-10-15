@@ -85,7 +85,7 @@ def test_doc_structure_parser_headings_and_section_marks():
 
 
 def test_student_answer_segmentation_bullets():
-    """Verify Q7 with content bullets 1) and 2) is grouped into a single Q7(a) answer."""
+    """Verify Q7 with content bullets 1) and 2) is grouped into a single answer to question 7."""
     page_res = StudentPageResult(
         page_number=1,
         answers=[
@@ -97,10 +97,10 @@ def test_student_answer_segmentation_bullets():
     p_info = {"page_number": 1, "ocr_width": 1000, "ocr_height": 1400, "width": 1000, "height": 1400}
     res = segment_student_answers([(p_info, page_res)])
 
-    # Should produce exactly ONE answer record for Q7(a)
+    # Should produce exactly ONE answer record, for question 7 (part (a) kept in its text)
     assert len(res) == 1
     a = res[0]
-    assert a.normalized_number == "7(a)"
+    assert a.normalized_number == "7" and a.answer_text.startswith("Q7(a)")
     assert "Two environmental benefits" in a.answer_text
     assert "1) They absorb carbon dioxide" in a.answer_text
     assert "2) They prevent soil erosion" in a.answer_text

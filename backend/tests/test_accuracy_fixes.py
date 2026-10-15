@@ -91,8 +91,9 @@ def test_repeated_label_on_next_page_is_one_answer_but_same_page_is_duplicate():
 
 def test_parts_and_points():
     res = _sheet([[A("Q7(a)", "benefits:"), A("1)", "co2"), A("2)", "soil"), A("(b)", "second"), A("c)", "third")]])
-    assert [r.normalized_number for r in res] == ["7(a)", "7(b)", "7(c)"]
-    assert "1) co2" in res[0].answer_text and "2) soil" in res[0].answer_text
+    # one answer for question 7, its parts and points inside it
+    assert [r.normalized_number for r in res] == ["7"]
+    assert all(s in res[0].answer_text for s in ("Q7(a) benefits:", "1) co2", "2) soil", "(b) second", "c) third"))
 
 
 def test_known_labels_split_points_from_out_of_order_questions():

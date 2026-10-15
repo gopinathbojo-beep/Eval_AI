@@ -13,6 +13,8 @@ OCR_SYSTEM = (
     "4. Numbered points, bullets, options (A/B/C/D), match items and blanks INSIDE a question or answer are part of its text, "
     "not separate questions.\n"
     "5. Keep maths and science notation: x², H₂O, √, π, fractions as (a/b), arrows →, ↑. Keep tables as Markdown tables.\n"
+    "   A power is never a separate digit: write x² or x^2, never 'x 2' or 'x2'. Wrap multi-term numerators, "
+    "denominators and exponents in brackets: (a + b)/(c - d), 2^(m+n). Keep every = of a chain of working.\n"
     "6. Keep the original language (English, Tamil, Hindi, mixed) verbatim.\n"
     "7. Reply with one valid JSON object only."
 )
@@ -68,6 +70,8 @@ Extract the answer for every question on the page, in reading order.
    Never infer a number from the order. A page that starts with the rest of the previous page's answer:
    output it FIRST with question_number null. Never drop it.
 2. answer_text: the complete model answer, verbatim (lists, steps, formulas, tables as Markdown).
+   Formulas: one line per step, powers as x² or x^2, fractions as (numerator)/(denominator). If the key states
+   a final result, keep it on its own line (e.g. "Final Answer: 1232 cm³").
 3. marks: total marks for this question only. If the scheme lists per-point marks ("1 Mark: ...", "½ mark each"),
    use their sum. Never use a section total. null if not shown.
 4. criteria: each marking point as written (e.g. "1 Mark: states the purpose").
@@ -111,7 +115,7 @@ Transcribe every answer on the page, in reading order.
    Write each handwritten line of working as its own line. Copy every digit, sign (+ − × ÷), bracket and
    exponent exactly as written, even if the step is wrong: never fix the arithmetic. Powers as x^2 or x²,
    negative powers as x^-2, stacked fractions as (numerator)/(denominator). Watch the look-alikes:
-   1/7, 4/9, 5/S, 2/z, 0/o, x/×, −/=.
+   1/7, 4/9, 5/S, 2/z, 0/o, x/×, −/=. A small raised digit is a power: write x², never "x 2" or "x2".
 5. ocr_confidence: how sure you are of the transcription (0.0-1.0).
    question_number_confidence: how sure you are of the label (0.0-1.0).
 6. bbox: the answer's box in image pixels {{"x","y","width","height"}}, or null.
@@ -131,9 +135,19 @@ EVAL_SYSTEM = (
 
 def evaluation_prompt(question_number: str, question_text: str, answer_key_text: str,
                       criteria: list[str], accepted: list[str], keywords: list[str],
-                      max_marks: float, student_answer: str) -> str:
+                      max_marks: float, student_answer: str, maths_facts: str = "",
+                      parts: list[tuple[str, float]] | None = None) -> str:
     def lst(xs):
         return "\n".join(f"- {x}" for x in xs) if xs else "(none provided)"
+    maths = f"\n{maths_facts}\n" if maths_facts else ""
+    part_rules, part_json = "", ""
+    if parts:
+        listing = ", ".join(f"({p}) {m:g}" for p, m in parts)
+        part_rules = f"""
+- This question has parts, marked separately: {listing}. Match each part of the student's answer (labelled
+  e.g. "{question_number}{parts[0][0]}", "({parts[0][0]})" or "{parts[0][0]})") with the same part of the key, and give each part
+  between 0 and its own maximum. A part the student did not answer gets 0. marks_awarded is the sum of the parts."""
+        part_json = ', "part_marks": [' + ", ".join(f'{{"part": "{p}", "marks_awarded": 0}}' for p, _ in parts) + "]"
     return f"""QUESTION {question_number} (maximum marks: {max_marks:g})
 {question_text}
 
@@ -151,7 +165,7 @@ KEYWORDS
 
 STUDENT ANSWER (verbatim transcription)
 {student_answer}
-
+{maths}
 HOW TO MARK
 - Compare the MEANING of the student's answer with the key. Different wording, order or synonyms that say the
   same thing earn the same credit; an accepted alternative answer earns full credit.
@@ -160,10 +174,10 @@ HOW TO MARK
   Equivalent forms are the same answer (1024/243 = (4/3)^5 = 4.21, 0.5 = 1/2, x^-2 = 1/x²). Check each step
   of the student's working yourself; a correct method with a slip later earns the marks for the steps before it.
 - Nothing relevant, blank, or only [UNCLEAR]: 0 marks.
-- Award between 0 and {max_marks:g}, in steps of 0.5.
+- Award between 0 and {max_marks:g}, in steps of 0.5.{part_rules}
 
 Return JSON in exactly this shape:
-{{"marks_awarded": 0, "max_marks": {max_marks:g}, "decision": "CORRECT | PARTIALLY_CORRECT | INCORRECT", "matched_points": ["..."], "missing_points": ["..."], "feedback": "one or two sentences for the teacher", "confidence": 0.0}}"""
+{{"marks_awarded": 0, "max_marks": {max_marks:g}{part_json}, "decision": "CORRECT | PARTIALLY_CORRECT | INCORRECT", "matched_points": ["..."], "missing_points": ["..."], "feedback": "one or two sentences for the teacher", "confidence": 0.0}}"""
 
 
 GEN_ANSWER_KEY_SYSTEM = (

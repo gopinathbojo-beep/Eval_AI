@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from typing import Any
-from .numbering import normalize_question_number
+from .numbering import extract_subquestion_token, normalize_question_number
 
 
 @dataclass
@@ -68,6 +68,34 @@ def parse_criteria_marks(criteria: list[str], text: str = "") -> float | None:
         return total
 
     return None
+
+
+def _bare_part(label: str | None) -> str | None:
+    """'(b)' -> 'b', 'c)' -> 'c', '(ii)' -> 'ii'; None for anything that can be a main question label ('I.', '2')."""
+    tok = extract_subquestion_token(label)
+    if not tok or not re.fullmatch(r"[a-h]|[ivx]{1,4}", tok):
+        return None
+    # An upper-case roman numeral alone ("II.") numbers main questions; a lower-case one is a part
+    return tok if re.fullmatch(r"[a-h]", tok) or tok in label else None
+
+
+_SCHEME_HEADER = re.compile(r"(?:^|\n)[^\S\n]*[•○\-\*]?[^\S\n]*Marking\s+Scheme[^\n]*", re.I)
+_SCHEME_LINE = re.compile(r"^\s*(?:[•○o\-\*–]\s*)?(\d+(?:\.\d+)?\s*marks?\s*[:\-][^\n]+)$", re.I)
+
+
+def criteria_from_text(text: str) -> list[str]:
+    """Marking points as printed under the last 'Marking Scheme' heading in `text` ('2 Marks: ...' lines)."""
+    heads = list(_SCHEME_HEADER.finditer(text or ""))
+    if not heads:
+        return []
+    out = []
+    for line in text[heads[-1].end():].split("\n"):
+        m = _SCHEME_LINE.match(line)
+        if m:
+            out.append(m.group(1).strip())
+        elif out and line.strip() and not line.strip().startswith(("(", "-", "•", "○")):
+            break  # the scheme ended and other text follows
+    return out
 
 
 def _label_pattern(norm_num: str) -> str | None:
@@ -136,6 +164,13 @@ def segment_answer_keys(page_results: list[tuple[dict, Any]]) -> list[SegmentedK
             conf = getattr(a, "confidence", None)
 
             norm = normalize_question_number(raw_lbl) if raw_lbl else None
+            # A bare part label "(b)" / "b)" / "(ii)" with no question number (often at the top of the next page)
+            # is the next part of the answer before it, never an answer of its own.
+            part = _bare_part(raw_lbl)
+            if part and grouped and text:
+                if not re.match(rf"^\s*\(?\s*{re.escape(part)}\s*[\)\.]", text, re.IGNORECASE):
+                    text = f"({part}) {text}"
+                raw_lbl = norm = None
             is_cont_label = bool(raw_lbl and re.search(r"\b(?:cont|continued|contd)\b", raw_lbl, re.IGNORECASE))
             is_same_q_new_page = bool(grouped and norm and norm == grouped[-1].normalized_number and page_num > grouped[-1].page_number)
             is_unnumbered = raw_lbl is None or raw_lbl.lower() in ("null", "none", "?", "unknown", "[unclear]", "")
@@ -181,6 +216,14 @@ def segment_answer_keys(page_results: list[tuple[dict, Any]]) -> list[SegmentedK
                 ocr_confidence=conf,
             )
             grouped.append(k)
+
+    # The marking scheme printed in a key's own text is the source of truth for its criteria: the model sometimes
+    # copies a neighbouring question's criteria into its list (Q10 given Q9's points, so 5 marks became 18).
+    for k in grouped:
+        printed = criteria_from_text(k.answer_text)
+        if printed:
+            k.criteria = printed
+            k.marks = parse_criteria_marks(printed, k.answer_text)
 
     # Recovery / alignment pass using full_text from document
     if full_text:

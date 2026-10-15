@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from ..config import get_settings
 from ..models import AnswerKey, Evaluation, ExamQuestion, StudentAnswer
 from .mapping import MAPPED, NEEDS_REVIEW, UNMAPPED, flag_duplicates, map_label
+from .numbering import is_sub_question, parent_number
 
 DUP_NOTE = "DUPLICATE_MAPPING: another answer also maps to this question"
 _RECOMPUTABLE = {"UNMAPPED", "NEEDS_REVIEW", "MAPPED"}
@@ -79,34 +80,49 @@ def apply_key_mapping(db: Session, exam_id: str, doc_id: str) -> None:
 
 
 def _merge_key_parts(db: Session, keys: list[AnswerKey], qmap: dict[str, ExamQuestion]) -> None:
-    """Key rows for different parts of one question ("9(a)", "9(b)" -> question 9) become a single key row,
-    since a question has exactly one answer key. Part answers, criteria and marks are combined in order."""
+    """Key rows for different parts of one question ("9(a)", "9(b)" -> question 9, or "Q5" holding the stem and
+    part (a) then "5(b)") become a single key row, since a question has exactly one answer key. Part answers,
+    criteria and marks are combined in order, each part keeping its label so it is marked against its own part."""
     groups: dict[str, list[AnswerKey]] = {}
     for k in keys:
         q = qmap.get(k.exam_question_id)
-        if q and k.normalized_number and k.normalized_number != q.normalized_number:
+        if q and q.normalized_number and not is_sub_question(q.normalized_number) and k.normalized_number \
+                and parent_number(k.normalized_number) == q.normalized_number:
             groups.setdefault(q.id, []).append(k)
     for qid, parts in groups.items():
-        if len(parts) < 2 or len({k.normalized_number for k in parts}) != len(parts):
-            continue  # a single part, or repeated labels: leave for the teacher (duplicate check flags them)
-        head = parts[0]
         whole = qmap[qid].normalized_number
+        if len(parts) < 2 or len({k.normalized_number for k in parts}) != len(parts) \
+                or not any(is_sub_question(k.normalized_number) for k in parts):
+            continue  # a single row, or repeated labels: leave for the teacher (duplicate check flags them)
+        head = parts[0]
 
         def label(k: AnswerKey) -> str:
-            return k.normalized_number[len(whole):]  # "9(b)" -> "(b)"
+            return k.normalized_number[len(whole):]  # "9(b)" -> "(b)", "9" -> ""
 
         head.answer_text = "\n".join(f"{label(k)} {k.answer_text.strip()}".strip() for k in parts)
         head.raw_ocr_text = "\n".join(f"{label(k)} {(k.raw_ocr_text or '').strip()}".strip() for k in parts)
-        head.criteria = [f"{label(k)} {c}" for k in parts for c in (k.criteria or [])]
+        head.criteria = [f"{label(k)} {c}".strip() for k in parts for c in (k.criteria or [])]
         head.accepted_answers = [a for k in parts for a in (k.accepted_answers or [])]
         head.keywords = list(dict.fromkeys(w for k in parts for w in (k.keywords or [])))
-        marks = [k.marks for k in parts]
-        head.marks = sum(marks) if all(m is not None for m in marks) else None
-        head.normalized_number = qmap[qid].normalized_number
-        head.mapping_note = f"Parts {', '.join(label(k) for k in parts)} combined into one answer"
+        head.marks = _combined_marks([k.marks for k in parts], is_sub_question(head.normalized_number),
+                                     qmap[qid].max_marks)
+        head.normalized_number = whole
+        head.mapping_note = f"Parts {', '.join(label(k) or whole for k in parts)} combined into one answer"
         for k in parts[1:]:
             db.delete(k)
             k.is_active = False
+
+
+def _combined_marks(marks: list[float | None], head_is_part: bool, q_max: float | None) -> float | None:
+    """Marks of a key combined from its parts: the sum of the part marks. A first row labelled with the whole
+    number ("Q5") may carry the question's total instead of part (a)'s marks; when adding it would go past the
+    question's maximum, its own figure is that total."""
+    if any(m is None for m in marks):
+        return None
+    total = sum(marks)
+    if not head_is_part and q_max is not None and total > q_max + 1e-9 and abs(marks[0] - q_max) < 1e-9:
+        return marks[0]
+    return total
 
 
 def _correct_extracted_marks(k: AnswerKey, q: ExamQuestion | None) -> None:

@@ -230,7 +230,7 @@ export const SettingsScreen: React.FC<{ navigation?: any }> = ({ navigation }) =
         <Text style={[styles.cardDesc, { color: colors.textSecondary }]}>
           • Original handwritten answer sheet images: Retained on disk for 24 hours, then automatically purged per policy.
           {"\n"}• Question papers and official answer keys: Stored permanently as master examination records.
-          {"\n"}• OCR transcripts, AI scores, teacher overrides, marks, and audit logs: Stored securely in the local SQLite database.
+          {"\n"}• Answer transcripts, AI scores, teacher overrides, marks, and audit logs: Stored securely in the local SQLite database.
         </Text>
       </Card>
 

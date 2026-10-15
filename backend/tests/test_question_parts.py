@@ -62,9 +62,9 @@ def test_main_numbering_is_not_mistaken_for_parts():
         [("1", 2), ("2", 2), ("3", 3)]
     assert parse(page(1, [("1.", "Define x.", 2), ("2.", "Solve:", None), ("1.", "a", 1), ("2.", "b", 1),
                           ("3.", "Prove y.", 3)])) == [("1", 2), ("2", 2), ("3", 3)]
-    # separately printed 3(a), 3(b) with no question 3 heading stay as their own questions
+    # separately printed 3(a), 3(b) with no question 3 heading are still one question 3, worth its parts' marks
     assert parse(page(1, [("Q1", "Define x.", 2), ("3 (a)", "Describe.", 3), ("3-b", "Draw.", 5)])) == \
-        [("1", 2), ("3(a)", 3), ("3(b)", 5)]
+        [("1", 2), ("3", 8)]
 
 
 def test_page_with_one_garbled_item_keeps_the_rest():
@@ -117,3 +117,33 @@ def test_stem_that_repeats_its_parts_is_not_counted_twice():
     st = parse_question_paper_structure([page(1, [("Q9", f"Wave Motion: {a} {b}", None), ("(a)", a, 2), ("(b)", b, 3)])])
     assert [(q.display_number, q.max_marks) for q in st.questions] == [("9", 5)]
     assert st.questions[0].question_text.count("Calculate the depth") == 1
+
+
+def test_first_part_labelled_as_the_part_opens_the_question():
+    """The model labels a question by its first part ("Q5(a).") with the stem above "(a)": still one question 5."""
+    assert parse(page(1, [
+        ("Q4.", "Factorise 16x^4 - 81y^4", 2),
+        ("Q5(a).", "Mensuration:\nThe canal is a trapezium 12 m and 8 m wide, 4 m deep.\n(a) Find its area. (1.5 marks)", 1.5),
+        ("Q5(b).", "(b) The canal is 250 m long: find the volume. (1.5 marks)", 1.5),
+        ("Q6(a).", "Depreciation:\nEquipment worth Rs. 1,25,000 depreciates 8% then 10%.\n(a) Find its value.", 3),
+    ]), page(2, [
+        (None, "(b) Find the total drop in value.", None),
+        ("Q7.", "Expand (a+b)^2.", 3),
+    ])) == [("4", 2), ("5", 3), ("6", 3), ("7", 3)]
+
+
+def test_whole_key_then_part_key_become_one_key():
+    """Key "Q5" (stem + part a) then "5(b)": one key for question 5. A first row carrying the question's total
+    is not added to the part again."""
+    from app.services.mapping_service import _combined_marks
+    q = SimpleNamespace(id="q5", normalized_number="5", max_marks=3.0)
+    head = SimpleNamespace(id="k1", exam_question_id="q5", normalized_number="5", answer_text="(a) 40 m2",
+                           raw_ocr_text="", criteria=[], accepted_answers=[], keywords=[], marks=1.5, is_active=True)
+    part = SimpleNamespace(id="k2", exam_question_id="q5", normalized_number="5(b)", answer_text="10000 m3",
+                           raw_ocr_text="", criteria=[], accepted_answers=[], keywords=[], marks=1.5, is_active=True)
+    deleted = []
+    _merge_key_parts(SimpleNamespace(delete=deleted.append), [head, part], {"q5": q})
+    assert head.marks == 3 and head.normalized_number == "5" and deleted == [part]
+    assert head.answer_text == "(a) 40 m2\n(b) 10000 m3"
+    assert _combined_marks([3.0, 1.5], head_is_part=False, q_max=3.0) == 3.0
+    assert _combined_marks([1.5, 1.5], head_is_part=True, q_max=3.0) == 3.0

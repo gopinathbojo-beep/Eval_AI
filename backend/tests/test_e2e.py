@@ -62,22 +62,24 @@ def test_full_workflow(client, auth):
     assert qp["status"] == "READY"
     qs = j(c.get(f"/api/exams/{eid}/questions", headers=h), 200)
     nums = [q["display_number"] for q in qs["questions"]]
-    assert nums == ["1", "2", "3(a)", "3(b)"]
+    assert nums == ["1", "2", "3"]                                  # "3 (a)" and "3-b" are parts of question 3
     assert all(q["normalized_number"] == q["display_number"] for q in qs["questions"])
-    assert [q["max_marks"] for q in qs["questions"]] == [2, 5, 3, 5]
+    assert [q["max_marks"] for q in qs["questions"]] == [2, 5, 8]   # 3 + 5 from its parts
+    assert "(a) Describe photosynthesis" in qs["questions"][2]["question_text"]
+    assert "(b) Draw a labelled leaf" in qs["questions"][2]["question_text"]
     assert qs["questions"][0]["has_crop"]
     assert j(c.get(f"/api/exams/{eid}", headers=h))["status"] == "QUESTIONS_EXTRACTED"
 
     # verify requires explicit acceptance
     r = c.post(f"/api/exams/{eid}/questions/verify", headers=h)
-    assert r.status_code == 400 and len(r.json()["issues"]) == 4
+    assert r.status_code == 400 and len(r.json()["issues"]) == 3
     # edit: bad number rejected, marks edit audited
     q1 = qs["questions"][0]
     assert c.patch(f"/api/exam-questions/{q1['id']}", json={"display_number": "banana"}, headers=h).status_code == 400
     j(c.patch(f"/api/exam-questions/{q1['id']}", json={"max_marks": 2.0}, headers=h), 200)
     j(c.post(f"/api/exams/{eid}/questions/accept-valid", headers=h), 200)
     v = j(c.post(f"/api/exams/{eid}/questions/verify", headers=h), 200)
-    assert v["verified"] == 4 and v["marks_warning"] is None
+    assert v["verified"] == 3 and v["marks_warning"] is None
     assert j(c.get(f"/api/exams/{eid}", headers=h))["status"] == "QUESTIONS_VERIFIED"
     # locked after verification
     assert c.patch(f"/api/exam-questions/{q1['id']}", json={"max_marks": 9}, headers=h).status_code == 409
@@ -87,21 +89,23 @@ def test_full_workflow(client, auth):
     # --- answer key: labels "Q1", "2", "3 (a)", "3b" must map deterministically; Q2 marks disagree (4 vs 5)
     j(c.post(f"/api/exams/{eid}/answer-key", headers=h, files={"file": ("key.png", make_png(), "image/png")}), 202)
     ks = j(c.get(f"/api/exams/{eid}/answer-keys", headers=h), 200)
-    assert len(ks["keys"]) == 4 and not ks["missing_question_ids"]
+    assert len(ks["keys"]) == 3 and not ks["missing_question_ids"]
     by_label = {k["raw_question_number"]: k for k in ks["keys"]}
     assert by_label["Q1"]["exam_question_id"] == qid["1"]
     assert by_label["2"]["exam_question_id"] == qid["2"]
-    assert by_label["3 (a)"]["exam_question_id"] == qid["3(a)"]
-    assert by_label["3b"]["exam_question_id"] == qid["3(b)"]
+    # the key's parts (a) and (b) become one key for question 3, each part labelled, marks 3 + 5
+    k3 = by_label["3 (a)"]
+    assert k3["exam_question_id"] == qid["3"] and k3["marks"] == 8 and not k3["mark_mismatch"]
+    assert "(a) Plants make glucose" in k3["answer_text"] and "(b) Labelled diagram" in k3["answer_text"]
     assert by_label["2"]["mark_mismatch"] is True
     r = c.post(f"/api/exams/{eid}/answer-keys/verify", headers=h)
     assert r.status_code == 400 and any("MARK MISMATCH" in i["reason"] for i in r.json()["issues"])
     j(c.patch(f"/api/answer-keys/{by_label['2']['id']}", json={"mismatch_resolution": "keep_question_marks"}, headers=h), 200)
-    assert j(c.post(f"/api/exams/{eid}/answer-keys/verify", headers=h), 200)["verified"] == 4
+    assert j(c.post(f"/api/exams/{eid}/answer-keys/verify", headers=h), 200)["verified"] == 3
     assert j(c.get(f"/api/exams/{eid}", headers=h))["status"] == "ANSWER_KEY_VERIFIED"
     # question's marks never silently changed
     qs2 = j(c.get(f"/api/exams/{eid}/questions", headers=h))
-    assert [q["max_marks"] for q in qs2["questions"]] == [2, 5, 3, 5]
+    assert [q["max_marks"] for q in qs2["questions"]] == [2, 5, 8]
 
     # --- student answer sheet
     BEHAVIOUR["sheet"] = "main"
@@ -115,23 +119,22 @@ def test_full_workflow(client, auth):
     st = {a["raw_question_number"]: a for a in d["answers"]}
     assert st["Q1"]["status"] == "MAPPED" and st["Q1"]["exam_question_id"] == qid["1"]
     assert st["Q2"]["exam_question_id"] == qid["2"]
-    assert st["3(b)"]["exam_question_id"] == qid["3(b)"]
-    assert st["3"]["status"] == "NEEDS_REVIEW" and st["3"]["exam_question_id"] is None          # never guessed
-    assert set(st["3"]["mapping_candidates"]) == {qid["3(a)"], qid["3(b)"]}
+    # "3" then "3(b)": one answer for question 3 with part (b) inside it
+    assert "3(b)" not in st and st["3"]["status"] == "MAPPED" and st["3"]["exam_question_id"] == qid["3"]
+    assert "3(b) OVERSHOOT leaf drawing" in st["3"]["answer_text"]
     assert st[None]["status"] == "UNMAPPED"
     assert d["evaluation"]["status"] == "MAPPING_REVIEW"
-    assert d["summary"]["needs_review"] == 1 and d["summary"]["unmapped"] == 1 and d["summary"]["missing"] == 0
-    assert d["summary"]["suggested"] == 1 and d["summary"]["mapped"] + d["summary"]["suggested"] + d["summary"]["missing"] == 4
+    assert d["summary"]["needs_review"] == 0 and d["summary"]["unmapped"] == 1 and d["summary"]["missing"] == 0
+    assert d["summary"]["mapped"] == 3
     assert j(c.get(f"/api/exams/{eid}", headers=h))["status"] == "READY_FOR_EVALUATION"
 
     # evaluation + finalize are refused with structured reasons
     r = c.post(f"/api/evaluations/{evid}/run", headers=h)
-    assert r.status_code == 400 and r.json()["code"] == "MAPPING_INCOMPLETE" and len(r.json()["issues"]) == 2
+    assert r.status_code == 400 and r.json()["code"] == "MAPPING_INCOMPLETE" and len(r.json()["issues"]) == 1
     r = c.post(f"/api/evaluations/{evid}/finalize", headers=h)
     assert r.status_code == 400 and r.json()["code"] == "EVALUATION_NOT_READY" and r.json()["issues"]
 
-    # teacher resolves mapping: 3 -> 3(a); stray text ignored
-    j(c.patch(f"/api/evaluations/{evid}/mapping/{st['3']['id']}", json={"exam_question_id": qid["3(a)"]}, headers=h), 200)
+    # teacher ignores the stray text
     j(c.patch(f"/api/evaluations/{evid}/mapping/{st[None]['id']}", json={"ignore": True}, headers=h), 200)
     d = j(c.get(f"/api/evaluations/{evid}", headers=h))
     assert d["summary"]["missing"] == 0 and d["evaluation"]["status"] == "OCR_REVIEW"
@@ -142,23 +145,24 @@ def test_full_workflow(client, auth):
     it = {i["exam_question_id"]: i for i in d["items"]}
     assert d["evaluation"]["run_status"] == "DONE"
     assert it[qid["1"]]["ai_marks"] == 2 and it[qid["2"]]["ai_marks"] == 0
-    assert it[qid["3(b)"]]["status"] == "EVALUATION_ERROR" and it[qid["3(b)"]]["ai_marks"] is None   # AI said 8 of 5
-    assert "exceeds" in it[qid["3(b)"]]["error"]
+    assert it[qid["3"]]["status"] == "EVALUATION_ERROR" and it[qid["3"]]["ai_marks"] is None   # AI said 11 of 8
+    assert "exceeds" in it[qid["3"]]["error"]
     # finalize still blocked; issue names the question
     r = c.post(f"/api/evaluations/{evid}/finalize", headers=h)
-    assert r.status_code == 400 and any(i["question"] == "3(b)" for i in r.json()["issues"])
+    assert r.status_code == 400 and any(i["question"] == "3" for i in r.json()["issues"])
     # approving an errored item without marks is refused
-    r = c.patch(f"/api/evaluations/{evid}/items/{it[qid['3(b)']]['id']}", json={"approve": True}, headers=h)
+    r = c.patch(f"/api/evaluations/{evid}/items/{it[qid['3']]['id']}", json={"approve": True}, headers=h)
     assert r.status_code == 400
     # teacher fixes the OCR text -> evaluation of just that question re-runs
-    a3b = st["3(b)"]["id"]
-    j(c.patch(f"/api/evaluations/{evid}/mapping/{a3b}", json={"answer_text": "Leaf diagram with labels", "reason": "OCR typo"}, headers=h), 200)
+    a3b = st["3"]["id"]
+    fixed = "Photosynthesis makes food\n3(b) Leaf diagram with labels"
+    j(c.patch(f"/api/evaluations/{evid}/mapping/{a3b}", json={"answer_text": fixed, "reason": "OCR typo"}, headers=h), 200)
     d = j(c.get(f"/api/evaluations/{evid}", headers=h))
     it = {i["exam_question_id"]: i for i in d["items"]}
-    assert it[qid["3(b)"]]["status"] == "EVALUATED" and it[qid["3(b)"]]["ai_marks"] == 5
+    assert it[qid["3"]]["status"] == "EVALUATED" and it[qid["3"]]["ai_marks"] == 8
     ans3b = next(a for a in d["answers"] if a["id"] == a3b)
     assert "OVERSHOOT" in ans3b["raw_ocr_text"]                       # raw OCR never overwritten
-    assert ans3b["answer_text"] == "Leaf diagram with labels" and ans3b["edited"]
+    assert ans3b["answer_text"] == fixed and ans3b["edited"]
     # override requires a reason, and the AI mark is preserved
     q2item = it[qid["2"]]
     assert c.patch(f"/api/evaluations/{evid}/items/{q2item['id']}", json={"final_marks": 2}, headers=h).status_code == 400
@@ -173,13 +177,13 @@ def test_full_workflow(client, auth):
     assert d["evaluation"]["status"] == "FINALIZABLE" and d["issues"] == []
     fin = j(c.post(f"/api/evaluations/{evid}/finalize", headers=h), 200)
     assert fin["status"] == "FINALIZED"
-    assert (fin["total_marks"], fin["maximum_marks"], fin["percentage"]) == (2 + 1 + 3 + 5, 15, 73.33)
+    assert (fin["total_marks"], fin["maximum_marks"], fin["percentage"]) == (2 + 1 + 8, 15, 73.33)
     # frozen afterwards
     assert c.patch(f"/api/evaluations/{evid}/mapping/{a3b}", json={"answer_text": "z"}, headers=h).status_code == 409
 
     res = j(c.get(f"/api/evaluations/{evid}/result", headers=h), 200)
     assert res["finalized"] and [(q["question"], q["final_marks"], q["max_marks"]) for q in res["questions"]] == \
-        [("1", 2, 2), ("2", 1, 5), ("3(a)", 3, 3), ("3(b)", 5, 5)]
+        [("1", 2, 2), ("2", 1, 5), ("3", 8, 8)]
     assert res["questions"][1]["ai_marks"] == 0 and res["questions"][1]["official_answer"]
     # audit trail
     logs = j(c.get(f"/api/exams/{eid}/audit-logs", headers=h), 200)

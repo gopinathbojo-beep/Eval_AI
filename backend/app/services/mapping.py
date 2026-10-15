@@ -91,9 +91,9 @@ def map_label(
                 NEEDS_REVIEW,
                 None,
                 norm,
-                f"Exact label match but OCR confidence {ocr_confidence:.2f} is low",
+                f"Exact label match but reading confidence {ocr_confidence:.2f} is low",
                 [exact[0].id],
-                _details(exact, round(ocr_confidence, 2), "exact label match, low OCR confidence"),
+                _details(exact, round(ocr_confidence, 2), "exact label match, low reading confidence"),
             )
         return MappingResult(MAPPED, exact[0].id, norm)
     if len(exact) > 1:
@@ -126,7 +126,7 @@ def map_label(
             # The exam keeps question 3 as one question with its parts inside, so "3(a)" is part of it
             if ocr_confidence is not None and ocr_confidence < min_confidence:
                 return MappingResult(NEEDS_REVIEW, None, norm,
-                                     f"Part of question {parent} but OCR confidence {ocr_confidence:.2f} is low",
+                                     f"Part of question {parent} but reading confidence {ocr_confidence:.2f} is low",
                                      [whole[0].id], _details(whole, round(ocr_confidence, 2), f"part of question {parent}"))
             return MappingResult(MAPPED, whole[0].id, norm, f"Part of question {parent}")
         related = [
@@ -174,5 +174,8 @@ def flag_duplicates(rows: list, id_attr: str = "exam_question_id", allow_parts: 
 
 
 def _distinct_parts(rows: list) -> bool:
+    """Different parts of one question, possibly after one block for the question itself ("1" that opened with
+    part (a), then "1(b)" written later on the sheet)."""
     nums = [getattr(r, "normalized_number", None) for r in rows]
-    return all(n and is_sub_question(n) for n in nums) and len(set(nums)) == len(nums)
+    whole = [n for n in nums if not (n and is_sub_question(n))]
+    return all(nums) and len(whole) <= 1 and len(set(nums)) == len(nums)

@@ -281,7 +281,7 @@ def run(ev_id: str, bg: BackgroundTasks, db: Session = Depends(get_db), t: Teach
                    "reason": "Student answer is unmapped" if a.status == "UNMAPPED" else (a.mapping_note or "Needs mapping review")}
                   for a in unresolved]
         if doc.status == "NEEDS_ATTENTION":
-            issues.append({"question": "Answer sheet", "reason": "Some pages failed OCR. Retry them first."})
+            issues.append({"question": "Answer sheet", "reason": "Some pages could not be read. Retry them first."})
         raise err(400, "MAPPING_INCOMPLETE", f"{len(issues)} issue(s) must be resolved before evaluation can run.", issues)
     ev.run_status, ev.run_progress = "RUNNING", 0
     db.commit()

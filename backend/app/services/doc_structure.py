@@ -596,6 +596,18 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
                 else:
                     display_num = norm
 
+            # A question that opens with a part label ("Q5(a)", "3a", "3 (a)"): the question is 5 and "(a)" its first
+            # part, so "5(b)" that follows merges into it. One question per printed number, parts kept inside.
+            opened_part = None
+            first_part = re.fullmatch(r"\d+\(([a-z]|[ivx]{1,4})\)", norm or "")
+            if first_part and parent_number(norm) not in used:
+                opened_part = first_part.group(1)
+                norm = display_num = parent_number(norm)
+                if marks is not None and not _ANY_INLINE_MARKS.search(text):
+                    text = f"{text} ({marks:g} mark{'s' if marks != 1 else ''})"
+                if not re.search(rf"(?:^|\s)\(?\s*{re.escape(opened_part)}\s*\)\s", text, re.IGNORECASE):
+                    text = f"({opened_part}) {text}"
+
             # Inherit section marks or extract inline marks if not explicitly found
             assigned_marks = marks
             if assigned_marks is None:
@@ -628,7 +640,7 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
             if not full_text.strip():
                 reasons.append("Empty question text")
             if q.confidence is not None and q.confidence < 0.6:
-                reasons.append("Low OCR confidence")
+                reasons.append("Low reading confidence")
 
             sq = StructuredQuestion(
                 raw_question_number=raw_label,
@@ -645,6 +657,8 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
                 verification_status="NEEDS_REVIEW" if reasons else "UNVERIFIED",
                 review_reason="; ".join(reasons) or None,
             )
+            if opened_part:
+                sq.has_parts, sq.last_part, sq.part_style = True, opened_part, ")"
             doc_struct.questions.append(sq)
 
     for sq in doc_struct.questions:

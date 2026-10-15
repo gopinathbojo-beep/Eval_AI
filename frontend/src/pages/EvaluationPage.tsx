@@ -11,7 +11,7 @@ import { DocProgress } from "../components/DocPanel";
 import { BUSY_DOC } from "../utils/format";
 
 type Tab = "mapping" | "marks";
-const FILTERS = ["All", "Mapped", "Suggested", "Needs review", "Unmapped", "Missing", "OCR error"] as const;
+const FILTERS = ["All", "Mapped", "Suggested", "Needs review", "Unmapped", "Missing", "Read error"] as const;
 
 export default function EvaluationPage() {
   const { id } = useParams();
@@ -63,7 +63,7 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
       case "Suggested": return a.status === "NEEDS_REVIEW" && a.mapping_candidates.length > 0;
       case "Unmapped": return a.status === "UNMAPPED";
       case "Needs review": return a.status === "NEEDS_REVIEW";
-      case "Missing": case "OCR error": return false;
+      case "Missing": case "Read error": return false;
       default: return true;
     }
   });
@@ -82,7 +82,7 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
         <Stat label="Suggested" value={d.summary.suggested ?? 0} tone={d.summary.suggested ? "pen" : undefined} />
         <Stat label="Needs review" value={d.summary.needs_review} tone={d.summary.needs_review ? "mark" : undefined} />
         <Stat label="Missing" value={d.summary.missing} tone={d.summary.missing ? "mark" : undefined} />
-        <Stat label="OCR errors" value={ocrErrors.length} tone={ocrErrors.length ? "mark" : undefined} />
+        <Stat label="Read errors" value={ocrErrors.length} tone={ocrErrors.length ? "mark" : undefined} />
       </div>
       <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Filter answers">
         {FILTERS.map((f) => <button key={f} role="tab" aria-selected={filter === f} onClick={() => setFilter(f)} className={`rounded-full px-3 py-1 text-sm ${filter === f ? "bg-pen text-surface" : "bg-sunken hover:bg-line"}`}>{f}</button>)}
@@ -94,8 +94,8 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
         </Card>
         <div className="h-[calc(100vh-20rem)] min-h-[26rem] space-y-3 overflow-y-auto pr-1">
           {filter === "Missing" && (missing.length ? missing.map((q) => <Card key={q.id} className="border-warn/50 p-4"><p className="font-semibold">Question {q.display_number}: no answer detected</p><p className="doc-text mt-1 line-clamp-2 text-sm text-mute">{q.question_text}</p></Card>) : <Empty title="No missing answers" />)}
-          {filter === "OCR error" && (ocrErrors.length ? ocrErrors.map((p) => <Card key={p.page_number} className="border-mark/50 p-4"><p className="font-semibold">Page {p.page_number}: {label(p.ocr_status)}</p><p className="text-sm text-mute">{p.ocr_error}</p></Card>) : <Empty title="No OCR errors" />)}
-          {!["Missing", "OCR error"].includes(filter) && (rows.length === 0 ? <Empty title="Nothing here" /> : rows.map((a) => {
+          {filter === "Read error" && (ocrErrors.length ? ocrErrors.map((p) => <Card key={p.page_number} className="border-mark/50 p-4"><p className="font-semibold">Page {p.page_number}: {label(p.ocr_status)}</p><p className="text-sm text-mute">{p.ocr_error}</p></Card>) : <Empty title="No read errors" />)}
+          {!["Missing", "Read error"].includes(filter) && (rows.length === 0 ? <Empty title="Nothing here" /> : rows.map((a) => {
             const q = a.exam_question_id ? qmap.get(a.exam_question_id) : undefined;
             const topCandId = a.mapping_candidates?.[0];
             const topCand = topCandId ? qmap.get(topCandId) : undefined;
@@ -117,7 +117,7 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
                   {a.mapping_note && needs && <p className="mt-1 text-sm font-medium text-mark">{a.mapping_note}</p>}
                   {topDetail && a.status === "NEEDS_REVIEW" && <p className="mt-0.5 text-xs text-mute">Why Q{topCand?.display_number}: {topDetail.reason}</p>}
                   <p className="doc-text mt-2 line-clamp-4 text-[15px]">{a.answer_text || <em className="text-mute">(empty)</em>}</p>
-                  {a.edited && <p className="mt-1 text-xs text-mute">Edited by you. Original OCR text is kept.</p>}
+                  {a.edited && <p className="mt-1 text-xs text-mute">Edited by you. Original transcribed text is kept.</p>}
                 </button>
                 {sel === a.id && a.has_crop && <div className="mt-3 rounded border border-line bg-sunken p-2"><p className="mb-1 text-xs text-mute">What the model read (approximate crop)</p><AuthImage path={`/crops/student-answer/${a.id}`} alt="Crop of detected answer" className="max-h-48" /></div>}
                 {!locked && (
@@ -129,7 +129,7 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
                         </Button>
                       )}
                       <Button small onClick={() => setDlg(a)}>Change mapping</Button>
-                      <Button small onClick={() => setDlg(a)}>Edit OCR</Button>
+                      <Button small onClick={() => setDlg(a)}>Edit text</Button>
                       <Button small onClick={() => setSplitAns(a)}>Split</Button>
                       <Button small onClick={() => setMergeAns(a)}>Merge</Button>
                       <Button small variant="ghost" busy={busy === a.id + "i"} onClick={() => act(a, { ignore: true }, "i")}>Ignore</Button></>)}
@@ -174,7 +174,7 @@ function MapDlg({ a, d, onClose, onDone }: { a: StudentAnswer; d: EvaluationDeta
             {(id) => <Select id={id} value={qid} onChange={(e) => setQid(e.target.value)}><option value="">Not mapped</option>
               {[...d.questions].sort((x, y) => Number(hint.has(y.id)) - Number(hint.has(x.id)) || x.position - y.position).map((q: EvalQuestion) =>
                 <option key={q.id} value={q.id}>{hint.has(q.id) ? "★ " : ""}Q{q.display_number} — {q.question_text.slice(0, 60)}</option>)}</Select>}</Field>
-          <Field label="Answer text (OCR)">{(id) => <Textarea id={id} rows={7} className="font-doc" value={text} onChange={(e) => setText(e.target.value)} />}</Field>
+          <Field label="Answer text (transcribed)">{(id) => <Textarea id={id} rows={7} className="font-doc" value={text} onChange={(e) => setText(e.target.value)} />}</Field>
           <Field label="Reason (optional)">{(id) => <Input id={id} value={reason} onChange={(e) => setReason(e.target.value)} />}</Field>
           <ErrorPanel error={err} />
         </div>

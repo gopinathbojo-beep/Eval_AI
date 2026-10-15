@@ -189,7 +189,7 @@ function EditDlg({ q, examId, onClose, onDone }: { q?: Question; examId?: string
           <Field label="Section">{(id) => <Input id={id} value={section} onChange={(e) => setSection(e.target.value)} />}</Field>
         </div>
         <Field label="Question text">{(id) => <Textarea id={id} rows={8} className="font-doc" value={text} onChange={(e) => setText(e.target.value)} />}</Field>
-        {q && q.raw_ocr_text && q.raw_ocr_text !== text && <p className="text-xs text-mute">Original OCR text is kept separately and is never overwritten.</p>}
+        {q && q.raw_ocr_text && q.raw_ocr_text !== text && <p className="text-xs text-mute">Original transcribed text is kept separately and is never overwritten.</p>}
         {q && <Field label="Reason for change (optional)">{(id) => <Input id={id} value={reason} onChange={(e) => setReason(e.target.value)} />}</Field>}
         <ErrorPanel error={err} />
       </div>

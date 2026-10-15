@@ -75,3 +75,18 @@ def test_bare_number_labels_with_answer_below():
     assert _nums(out) == ["1", "2", "3"]
     assert "25" in out[-2].answer_text            # a bare result inside an answer is not a question label
     assert out[-1].answer_text == "The heart pumps blood."
+
+
+def test_label_outside_the_exam_on_a_part_continues_the_answer():
+    """"11" over "c) 5R Principles" in a 10 question exam is a misread mark on part (c) of question 10."""
+    out = _sheet([[A("10", "a) Plastics are light"), A("11", "c) 5R Principles\nReduce -> Reuse")]])
+    assert _nums(out) == ["10"] and "c) 5R Principles" in out[0].answer_text
+
+
+def test_sub_parts_written_by_the_student_stay_in_one_answer():
+    """"1", "1a", "1b", "1c" is one answer to question 1; starting straight at "1a" is too."""
+    out = _sheet([[A("1", "stem"), A("1a", "part a"), A("1b", "part b"), A("1c)", "part c"), A("2", "two")]])
+    assert _nums(out) == ["1", "2"]
+    assert all(s in out[0].answer_text for s in ("1a part a", "1b part b", "1c) part c"))
+    out = _sheet([[A("1a", "part a"), A("1b", "part b"), A("2", "two")]])
+    assert _nums(out) == ["1", "2"] and out[0].answer_text.startswith("1a part a")

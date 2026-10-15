@@ -43,14 +43,14 @@ def _digit_alternatives(norm: str) -> list[tuple[str, float, str]]:
         return []
     out: dict[str, tuple[float, str]] = {}
     for alt in _DIGIT_CONFUSIONS.get(main, []):
-        out[alt] = (0.70, f"OCR digit misread: '{main}' is commonly misread for '{alt}'")
+        out[alt] = (0.70, f"Digit misread: '{main}' is commonly misread for '{alt}'")
     if len(main) > 1:  # a hook/stray stroke read as an extra 1 or 7: 17 -> 1, 72 -> 2 (but never 10 -> 1)
         for i in range(len(main)):
             if main[i] not in "17":
                 continue
             alt = main[:i] + main[i + 1:]
             if alt and alt.lstrip("0") == alt:
-                out.setdefault(alt, (0.60, f"OCR may have read an extra digit: '{main}' -> '{alt}'"))
+                out.setdefault(alt, (0.60, f"An extra digit may have been read: '{main}' -> '{alt}'"))
     for i, d in enumerate(main):  # one look-alike digit: 7 -> 1, 9 -> 4
         for r in _LOOKALIKE.get(d, ""):
             alt = main[:i] + r + main[i + 1:]

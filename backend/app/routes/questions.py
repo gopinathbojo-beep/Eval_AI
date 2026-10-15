@@ -253,7 +253,7 @@ def verify_questions(exam_id: str, body: VerifyIn | None = None, db: Session = D
     qs = db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all()
     issues = []
     if doc is None or doc.status != "READY":
-        issues.append({"question": "Question paper", "reason": "Some pages failed OCR. Retry them before verifying."})
+        issues.append({"question": "Question paper", "reason": "Some pages could not be read. Retry them before verifying."})
     if not qs:
         issues.append({"question": "Question paper", "reason": "No questions have been extracted."})
     for q in qs:

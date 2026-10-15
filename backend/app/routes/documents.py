@@ -16,7 +16,8 @@ from ..services.pipeline import KINDS, process_document
 from ..services.state import set_state
 
 router = APIRouter(prefix="/api")
-BUSY = {"UPLOADED", "RENDERING", "OCR_PROCESSING", "EXTRACTING"}
+BUSY = {"UPLOADED", "RENDERING", "OCR_PROCESSING", "EXTRACTING", "CANCELLING"}
+CANCELLABLE = ("UPLOADED", "RENDERING", "OCR_PROCESSING")
 EXT = {
     "question-paper": {"pdf", "png", "jpg", "jpeg", "docx"},
     "answer-key": {"pdf", "docx", "png", "jpg", "jpeg"},
@@ -237,7 +238,8 @@ def delete_answer_sheet(ev_id: str, db: Session = Depends(get_db), t: Teacher = 
     ev = get_evaluation(db, t, ev_id)
     if ev.status == "FINALIZED":
         raise err(409, "EVALUATION_FINALIZED", "A finalized evaluation cannot be deleted.")
-    if db.query(AnswerSheetDocument).filter_by(id=ev.answer_sheet_id, status="OCR_PROCESSING").first():
+    if db.query(AnswerSheetDocument).filter(AnswerSheetDocument.id == ev.answer_sheet_id,
+                                            AnswerSheetDocument.status.in_(BUSY)).first():
         raise err(409, "PROCESSING_IN_PROGRESS", "Wait for processing to finish before deleting.")
     audit(db, exam_id=ev.exam_id, teacher_id=t.id, entity_type="evaluation", entity_id=ev.id,
           action="answer_sheet_deleted", old={"student": ev.student.name, "status": ev.status})
@@ -294,7 +296,7 @@ def page_ocr_diagnostic(kind: str, doc_id: str, page: int, db: Session = Depends
             d = json.loads(abs_path(p["ocr_file"]).read_text(encoding="utf-8"))
             return {"page_number": page, "status": d.get("status"), "error": d.get("error"),
                     "raw": (d.get("raw") or "")[:20000]}
-    raise err(404, "NOT_FOUND", "No OCR output stored for this page.")
+    raise err(404, "NOT_FOUND", "No transcription stored for this page.")
 
 
 @router.post("/documents/{kind}/{doc_id}/reprocess", status_code=202)
@@ -314,12 +316,36 @@ def reprocess(kind: str, doc_id: str, bg: BackgroundTasks, db: Session = Depends
         ev = db.query(Evaluation).filter_by(answer_sheet_id=doc.id).first()
         if ev is None or ev.status == "FINALIZED" or db.query(EvaluationItem).filter_by(evaluation_id=ev.id).first():
             raise err(409, "EVALUATION_LOCKED", "Evaluation has started for this answer sheet. Delete it and upload again.")
-    only_failed = bool(doc.pages) and all("ocr_status" in p for p in doc.pages)
+    # A cancelled run keeps its rendered pages and the pages it already read, so continue from there.
+    only_failed = bool(doc.pages) and (doc.status == "CANCELLED" or all("ocr_status" in p for p in doc.pages))
     if kind == "question-paper" and exam.status == "QUESTIONS_EXTRACTED":
         set_state(exam, "QUESTION_PAPER_UPLOADED")
     doc.status, doc.stage = "UPLOADED", "Queued"
     db.commit()
     bg.add_task(process_document, kind, doc.id, only_failed)
+    return doc_view(doc, kind)
+
+
+@router.post("/documents/{kind}/{doc_id}/cancel")
+def cancel_processing(kind: str, doc_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    """Ask the pipeline to stop. It aborts the page being read and marks the document CANCELLED; pages already
+    read are kept, and the reprocess endpoint continues from there."""
+    doc = _doc(db, t, kind, doc_id)
+    model = type(doc)
+    # Conditional UPDATE: the pipeline moves to EXTRACTING the same way, so exactly one of the two wins.
+    n = (db.query(model).filter(model.id == doc.id, model.status.in_(CANCELLABLE))
+         .update({"status": "CANCELLING", "stage": "Stopping…"}, synchronize_session=False))
+    db.commit()
+    db.refresh(doc)
+    if n == 0:
+        if doc.status in ("CANCELLING", "CANCELLED"):
+            return doc_view(doc, kind)
+        if doc.status == "EXTRACTING":
+            raise err(409, "ALMOST_DONE", "All pages are read and results are being saved, so this can no longer be cancelled.")
+        raise err(409, "NOT_PROCESSING", "This document is not being processed.")
+    audit(db, exam_id=doc.exam_id, teacher_id=t.id, entity_type=kind.replace("-", "_"), entity_id=doc.id,
+          action="processing_cancelled")
+    db.commit()
     return doc_view(doc, kind)
 
 
