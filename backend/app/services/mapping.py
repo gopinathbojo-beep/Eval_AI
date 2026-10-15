@@ -117,8 +117,6 @@ def map_label(
             if q.normalized_number == parent or (parent_number(q.normalized_number) == parent and q.normalized_number.startswith(norm))
         ]
         if related:
-            if len(related) == 1 and related[0].normalized_number == parent:
-                return MappingResult(MAPPED, related[0].id, parent)
             return MappingResult(
                 NEEDS_REVIEW,
                 None,
@@ -131,15 +129,6 @@ def map_label(
     rec_cands = find_recovery_candidates(raw_label, answer_text, q_list, answer_position, total_answers)
     if rec_cands:
         top = rec_cands[0]
-        if top.score >= 0.85:
-            return MappingResult(
-                MAPPED,
-                top.question_id,
-                top.normalized_number,
-                f"Auto-mapped from '{norm}': suggested Q{top.normalized_number} ({top.reason})",
-                [c.question_id for c in rec_cands],
-                [{"id": c.question_id, "num": c.normalized_number, "score": c.score, "reason": c.reason} for c in rec_cands],
-            )
         return MappingResult(
             NEEDS_REVIEW,
             None,

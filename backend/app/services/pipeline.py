@@ -291,7 +291,8 @@ def _build_questions(db: Session, doc, exam: Exam, wd: Path, results) -> None:
 def _build_answer_key(db: Session, doc, exam: Exam, wd: Path, results) -> None:
     db.query(AnswerKey).filter_by(document_id=doc.id).delete()
     pages_by_num = {p["page_number"]: p for p, _ in results}
-    keys = segment_answer_keys(results)
+    canonical_qs = db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all()
+    keys = segment_answer_keys(results, canonical_questions=canonical_qs)
     n = 0
     for k in keys:
         n += 1

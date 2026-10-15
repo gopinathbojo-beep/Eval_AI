@@ -104,9 +104,11 @@ def test_download_security_and_isolation(client, auth):
 
     # Other teacher isolation
     db = SessionLocal()
-    other_teacher = Teacher(name="Mr Sharma", email="sharma@school.org", password_hash=hash_password("pw123"))
-    db.add(other_teacher)
-    db.commit()
+    other_teacher = db.query(Teacher).filter_by(email="sharma@school.org").first()
+    if not other_teacher:
+        other_teacher = Teacher(name="Mr Sharma", email="sharma@school.org", password_hash=hash_password("pw123"))
+        db.add(other_teacher)
+        db.commit()
     db.close()
 
     other_login = c.post("/api/auth/login", json={"email": "sharma@school.org", "password": "pw123"}).json()

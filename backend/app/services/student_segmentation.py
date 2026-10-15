@@ -338,9 +338,7 @@ def segment_student_answers(
                         curr_confs.append(conf)
                     continue
 
-            # If the exam does not define separate sub-questions for parent p,
-            # and this item belongs to the same parent p:
-            if p and not exam_has_subq and (is_sub_question(norm) or norm == p):
+            if canonical_questions and p and not exam_has_subq and is_sub_question(norm):
                 if curr_norm_num and parent_number(curr_norm_num) == p:
                     curr_text_parts.append(text)
                     if bb and curr_page == page_num:
@@ -373,27 +371,6 @@ def segment_student_answers(
 
     flush_current()
 
-    # Consolidate multiple non-adjacent or fragmented segments for the same question number
-    consolidated: list[SegmentedAnswer] = []
-    seen_norm: dict[str, SegmentedAnswer] = {}
-    for g in grouped:
-        if g.normalized_number and g.normalized_number in seen_norm:
-            prior = seen_norm[g.normalized_number]
-            prior.answer_text = f"{prior.answer_text}\n\n{g.answer_text}".strip()
-            prior.raw_ocr_text = f"{prior.raw_ocr_text}\n\n{g.raw_ocr_text}".strip()
-            if g.bbox:
-                prior.bbox = _merge_bboxes(prior.bbox, g.bbox)
-        else:
-            if g.normalized_number:
-                seen_norm[g.normalized_number] = g
-            consolidated.append(g)
-
-    # Sort according to exam sequence
-    consolidated.sort(key=lambda x: (
-        int(x.normalized_number) if x.normalized_number and x.normalized_number.isdigit() else 999,
-        x.page_number
-    ))
-
-    for i, g in enumerate(consolidated, 1):
+    for i, g in enumerate(grouped, 1):
         g.position = i
-    return consolidated
+    return grouped

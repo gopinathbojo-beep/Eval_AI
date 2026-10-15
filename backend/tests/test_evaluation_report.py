@@ -277,13 +277,15 @@ def test_download_evaluation_report_auth_and_isolation(client, auth):
     # Another teacher trying to access Teacher A's evaluation
     db = SessionLocal()
     try:
-        other_teacher = Teacher(
-            name="Other Teacher",
-            email="other@school.org",
-            password_hash=hash_password("password123"),
-        )
-        db.add(other_teacher)
-        db.commit()
+        other_teacher = db.query(Teacher).filter_by(email="other@school.org").first()
+        if not other_teacher:
+            other_teacher = Teacher(
+                name="Other Teacher",
+                email="other@school.org",
+                password_hash=hash_password("password123"),
+            )
+            db.add(other_teacher)
+            db.commit()
     finally:
         db.close()
 

@@ -159,7 +159,7 @@ def test_answer_key_split_and_merge_api(client, auth):
     from app.models import AnswerKey, Exam, ExamQuestion, SchoolClass, Subject, Teacher
     db = SessionLocal()
     try:
-        t = db.query(Teacher).first()
+        t = db.query(Teacher).filter_by(email="rao@school.org").first() or db.query(Teacher).first()
         cls = SchoolClass(teacher_id=t.id, name="Class SplitKey")
         sub = Subject(teacher_id=t.id, name="Subject SplitKey")
         db.add_all([cls, sub])
@@ -222,7 +222,7 @@ def test_student_answer_split_merge_and_suggestion_api(client, auth):
     from app.models import AnswerSheetDocument, Evaluation, Exam, ExamQuestion, SchoolClass, Student, StudentAnswer, Subject, Teacher
     db = SessionLocal()
     try:
-        t = db.query(Teacher).first()
+        t = db.query(Teacher).filter_by(email="rao@school.org").first() or db.query(Teacher).first()
         cls = SchoolClass(teacher_id=t.id, name="Class EvalSplit")
         sub = Subject(teacher_id=t.id, name="Subject EvalSplit")
         db.add_all([cls, sub])
@@ -331,5 +331,23 @@ def test_doc_structure_preserves_short_and_unnumbered_questions():
     assert "Newton" in doc.questions[1].question_text
     assert doc.questions[1].max_marks == 2.0
     assert doc.questions[1].verification_status == "NEEDS_REVIEW"
+
+
+def test_doc_structure_question_continuation_unnumbered():
+    """Verify unnumbered blocks continuing an abrupt or dangling sentence are merged properly."""
+    page_res = QuestionPageResult(
+        page_number=1,
+        questions=[
+            QuestionItem(raw_question_number="1", question_text="A particle moves along a straight line with constant speed and", marks=None),
+            QuestionItem(raw_question_number=None, question_text="experiences zero net external force.", marks=None),
+        ]
+    )
+    p_info = {"page_number": 1, "ocr_width": 1000, "ocr_height": 1400, "width": 1000, "height": 1400}
+    doc = parse_question_paper_structure([(p_info, page_res)])
+
+    assert len(doc.questions) == 1
+    assert doc.questions[0].display_number == "1"
+    assert "constant speed and experiences zero net external force." in doc.questions[0].question_text
+
 
 

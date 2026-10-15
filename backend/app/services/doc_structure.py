@@ -101,7 +101,11 @@ def is_instruction(text: str) -> bool:
     s = text.strip()
     if not s:
         return False
-    return any(p.search(s) for p in _INSTRUCTION_PATTERNS)
+    if any(p.search(s) for p in _INSTRUCTION_PATTERNS):
+        return True
+    if any(p.search(s) for p in _MARKS_RULE_PATTERNS) and "?" not in s and len(s) < 120:
+        return True
+    return False
 
 
 def extract_section_marks_rule(text: str) -> float | None:
@@ -165,6 +169,7 @@ def _is_question_continuation(
     text: str,
     last_q: StructuredQuestion | None,
     page_num: int,
+    marks: float | None = None,
 ) -> bool:
     if not last_q:
         return False
@@ -204,9 +209,11 @@ def _is_question_continuation(
     # If it has subquestions starting at (a), it's a new multi-part question
     if re.search(r"^\s*\(a\)\s+", text, re.MULTILINE):
         return False
-    # If it contains its own question marks and is a complete standalone question while last_q is already complete
-    last_clean = last_q.question_text.rstrip()
-    if "?" in text and last_clean.endswith(("?", ".", "!")):
+    # If this block has its own marks, it is a new question
+    if marks is not None and marks > 0:
+        return False
+    # If the text starts with a capitalized imperative question verb, it's a new question
+    if re.match(r"^\s*(?:Define|Explain|State|Calculate|What|Why|How|Arrange|Find|Describe|Name|Differentiate|Evaluate|Factorise|Expand|Simplify)\b", text):
         return False
 
     # 5. Unnumbered block continuation signals
@@ -220,9 +227,10 @@ def _is_question_continuation(
             return True
 
         # Previous question text ended abruptly without sentence terminator
+        last_clean = (last_q.question_text or "").rstrip()
         if last_clean and not last_clean.endswith(("?", ".", ":", "!", '"', "”", ")")):
             return True
-        if re.search(r"\b(?:and|or|to|of|in|with|that|which|is|are|the|a|an)\s*$", last_clean, re.IGNORECASE):
+        if last_clean and re.search(r"\b(?:and|or|to|of|in|with|that|which|is|are|the|a|an)\s*$", last_clean, re.IGNORECASE):
             return True
 
     return False
@@ -338,6 +346,10 @@ def _consolidate_subquestions(questions: list[StructuredQuestion]) -> list[Struc
             elif "SECTION C" in sec.upper():
                 rule_mark = 5.0
 
+        if rule_mark is None:
+            consolidated.extend(sub_qs)
+            continue
+
         sub_marks = [sq.max_marks for sq in sub_qs if sq.max_marks is not None]
         if rule_mark is not None:
             parent_marks = rule_mark
@@ -362,6 +374,33 @@ def _consolidate_subquestions(questions: list[StructuredQuestion]) -> list[Struc
         )
         consolidated.append(new_q)
     return consolidated
+
+
+def split_swallowed_qp_blocks(
+    raw_label: str | None,
+    text: str,
+) -> list[tuple[str | None, str]]:
+    """Split a block if it contains multiple embedded questions (e.g. Q9 and Q10 in one section block)."""
+    pat = re.compile(r"(?:^|\n+)\s*(?:Q(?:uestion)?\.?\s*([0-9]{1,2}))[\.\:\s\-]+", re.I)
+    boundaries = []
+    for m in pat.finditer(text):
+        boundaries.append((m.start(), f"Q{m.group(1)}", m.end()))
+    if not boundaries:
+        return [(raw_label, text)]
+    if len(boundaries) == 1 and not (raw_label and is_heading_or_title(raw_label)):
+        return [(raw_label, text)]
+
+    res: list[tuple[str | None, str]] = []
+    first_start = boundaries[0][0]
+    intro = text[:first_start].strip()
+    if intro or (raw_label and is_heading_or_title(raw_label)):
+        res.append((raw_label if (raw_label and is_heading_or_title(raw_label)) else None, intro))
+    for i in range(len(boundaries)):
+        b_start, b_lbl, b_end = boundaries[i]
+        next_start = boundaries[i + 1][0] if i + 1 < len(boundaries) else len(text)
+        chunk = text[b_end:next_start].strip()
+        res.append((b_lbl, chunk))
+    return res
 
 
 def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> DocumentStructure:
@@ -390,11 +429,16 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
                     "rule": rule,
                 })
 
+        expanded_items: list[tuple[str | None, str, float | None, Any]] = []
         for q in questions_raw:
-            text = (q.question_text or "").strip()
-            raw_label = (q.raw_question_number or "").strip() or None
-            marks = q.marks
+            q_text = (q.question_text or "").strip()
+            q_lbl = (q.raw_question_number or "").strip() or None
+            splits = split_swallowed_qp_blocks(q_lbl, q_text)
+            for s_lbl, s_txt in splits:
+                s_marks = q.marks if len(splits) == 1 else None
+                expanded_items.append((s_lbl, s_txt, s_marks, q))
 
+        for raw_label, text, marks, q in expanded_items:
             # If raw_label is missing or empty, attempt to extract label from start of question text
             if raw_label is None or raw_label.lower() in ("null", "none", "?", "unknown", ""):
                 extracted_lbl, rest_text = _extract_label_from_text_prefix(text)
@@ -409,12 +453,13 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
 
             # Check if this block is a section heading
             if (raw_label is None and is_heading_or_title(text)) or (raw_label and is_heading_or_title(raw_label)):
-                current_section = text if len(text) < 80 else (raw_label or text[:80])
-                if current_section not in doc_struct.sections:
+                current_section = (raw_label or text or "") if is_heading_or_title(raw_label or "") else (text if len(text) < 80 else (raw_label or text[:80]))
+                if current_section and current_section not in doc_struct.sections:
                     doc_struct.sections.append(current_section)
-                rule = extract_section_marks_rule(text)
+                rule = extract_section_marks_rule(text) or extract_section_marks_rule(raw_label or "")
                 section_marks_rule = rule if rule is not None else marks
-                continue
+                if not text or is_heading_or_title(text) or is_instruction(text) or is_heading_or_title(raw_label or ""):
+                    continue
 
             # Check if this block is a section instruction
             if raw_label is None and is_instruction(text):
@@ -438,7 +483,7 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
                 continue
 
             # Check if this block continues the previous question (cross-page continuation e.g. Q4 or Q6 table)
-            if _is_question_continuation(raw_label, text, last_q, page_num):
+            if _is_question_continuation(raw_label, text, last_q, page_num, marks):
                 sep = "\n\n" if is_table_block(text) else " " if (last_q.question_text and not last_q.question_text.endswith(("\n", ".", "?", ":", ";", "!"))) else "\n"
                 last_q.question_text = f"{last_q.question_text}{sep}{text}".strip()
                 last_q.page_end = max(last_q.page_end, page_num)
@@ -606,6 +651,9 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
                 reasons.append("Empty question text")
             if q.confidence is not None and q.confidence < 0.6:
                 reasons.append("Low OCR confidence")
+
+            if is_heading_or_title(display_num) or is_heading_or_title(raw_label or ""):
+                continue
 
             sq = StructuredQuestion(
                 raw_question_number=raw_label,
