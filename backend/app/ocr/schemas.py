@@ -177,17 +177,21 @@ class StudentAnswerItem(_Base):
             self.question_number = self.normalized_question_label or self.raw_question_label or self.question_id
         if not self.raw_question_label:
             self.raw_question_label = self.question_number
-        if not self.answer_text and self.content_blocks:
+        if self.content_blocks:
             texts = []
             for b in self.content_blocks:
                 if isinstance(b, dict):
-                    t = b.get("text") or b.get("raw_text") or ""
+                    t = (b.get("text") or b.get("raw_text") or "").strip()
                     if t:
                         texts.append(t)
-                elif isinstance(b, str) and b:
-                    texts.append(b)
-            if texts:
+                elif isinstance(b, str) and b.strip():
+                    texts.append(b.strip())
+            if not self.answer_text and texts:
                 self.answer_text = "\n".join(texts)
+            elif self.answer_text and texts:
+                missing = [t for t in texts if t not in self.answer_text]
+                if missing:
+                    self.answer_text = f"{self.answer_text}\n" + "\n".join(missing)
         if self.ocr_confidence is None:
             self.ocr_confidence = self.mapping_confidence
         return self

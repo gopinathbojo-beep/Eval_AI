@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 
 _PREFIX = re.compile(
-    r"^\s*(?:(?:section|part|unit|group|sec)\s+[a-z0-9ivx]+\s*[\-\:\–\—]?\s*)?(?:question|ques|qn|q\.?\s*no\.?|q|answer|ans|no\.?|வினா)\s*[\.\:\-]?\s*(?=\d|\(|\b[ivx]+\b)",
+    r"^\s*(?:(?:section|part|unit|group|sec)\s+[a-z0-9ivx]+\s*[\-\:\–\—]?\s*)?(?:question|ques|qn|q\.?\s*no\.?|q|answer|ans|no\.?|வினா)\s*[\.\:\-\>\→]?\s*(?=\d|\(|\b[ivx]+\b)",
     re.IGNORECASE,
 )
 _ROMAN = re.compile(r"^(?:i{1,3}|iv|v|vi{1,3}|ix|x)$", re.IGNORECASE)
@@ -40,11 +40,11 @@ def normalize_question_number(raw: str | int | None) -> str | None:
         number = str(int(pm.group(1)))
         rest = pm.group(2).strip()
     else:
-        # Standard leading number: 1, 1., 1), 1:
+        # Standard leading number: 1, 1., 1), 1:, 1>, 1->
         m = re.match(r"^(\d{1,3})(.*)$", s)
         if not m:
             # Standalone Roman numeral question: I, II, III, IV...
-            rm = re.match(r"^([ivxIVX]{1,5})[\.\:\)]?\s*(.*)$", s)
+            rm = re.match(r"^([ivxIVX]{1,5})[\.\:\)\>\→]?\s*(.*)$", s)
             if rm and _ROMAN.match(rm.group(1)):
                 number = str(_ROMAN_VALS[rm.group(1).lower()])
                 rest = rm.group(2).strip()
@@ -62,9 +62,9 @@ def normalize_question_number(raw: str | int | None) -> str | None:
             if tok:
                 rest = f"({tok}){dm.group(2)}"
             else:
-                rest = re.sub(r"^\.[\.\:\)]?\s*", "", rest)
+                rest = re.sub(r"^\.[\.\:\)\>\→]?\s*", "", rest)
         else:
-            rest = re.sub(r"^\.[\.\:\)]?\s*", "", rest)
+            rest = re.sub(r"^\.[\.\:\)\>\→]?\s*", "", rest)
     elif rest.startswith("/") and not rest.startswith("//"):
         sm = re.match(r"^/\s*(\d{1,2}|[a-zA-Z]{1,4})(.*)$", rest)
         if sm:
@@ -72,16 +72,16 @@ def normalize_question_number(raw: str | int | None) -> str | None:
             if tok:
                 rest = f"({tok}){sm.group(2)}"
             else:
-                rest = re.sub(r"^/[\.\:\)]?\s*", "", rest)
+                rest = re.sub(r"^/[\.\:\)\>\→]?\s*", "", rest)
         else:
-            rest = re.sub(r"^/[\.\:\)]?\s*", "", rest)
+            rest = re.sub(r"^/[\.\:\)\>\→]?\s*", "", rest)
     elif not rest.startswith("("):
-        rest = re.sub(r"^[\.\:\)]\s*", "", rest)
+        rest = re.sub(r"^[\.\:\)\>\→\}\]]\s*", "", rest)
 
-    rest = re.sub(r"^[\-–—\.]\s*", "", rest)
-    rest = rest.rstrip(" .:")
+    rest = re.sub(r"^[\-–—\.\>\→]\s*", "", rest)
+    rest = rest.rstrip(" .:>-→")
     parts: list[str] = []
-    # optional single bare token directly after number: "3a", "3 a", "3-a"
+    # optional single bare token directly after number: "3a", "3 a", "3-a", "3(a)"
     bm = re.match(r"^([a-zA-Z]{1,4})(?=\(|$)", rest)
     if bm:
         tok = _clean_token(bm.group(1))
@@ -111,7 +111,7 @@ def is_sub_question(normalized: str) -> bool:
 
 
 def extract_subquestion_token(raw: str | None) -> str | None:
-    """Extracts a bare subquestion token (e.g. '(b)' -> 'b', '(ii)' -> 'ii') if raw is purely a subquestion label."""
+    """Extracts a bare subquestion token (e.g. '(b)' -> 'b', 'b>' -> 'b', '(ii)' -> 'ii') if raw is purely a subquestion label."""
     if raw is None:
         return None
     s = str(raw).strip()
@@ -123,8 +123,8 @@ def extract_subquestion_token(raw: str | None) -> str | None:
     pm = re.match(r"^\(\s*([a-zA-Z]{1,4}|[ivxIVX]{1,5})\s*\)$", s)
     if pm:
         return _clean_token(pm.group(1))
-    # Subquestion with dot or paren: a), b., i)
-    sm = re.match(r"^([a-zA-Z]{1,4}|[ivxIVX]{1,5})[\.\)\:]$", s)
+    # Subquestion with dot, paren, colon or angle bracket: a), b., i), a>, b>
+    sm = re.match(r"^([a-zA-Z]{1,4}|[ivxIVX]{1,5})[\.\)\:\>\→]$", s)
     if sm:
         return _clean_token(sm.group(1))
     return None

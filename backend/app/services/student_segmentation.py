@@ -13,7 +13,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 from .numbering import normalize_question_number, is_sub_question, parent_number
-from .ocr_recovery import find_recovery_candidates, _tokenize
+from .ocr_recovery import find_recovery_candidates, _tokenize, _extract_distinct_numbers
 
 
 @dataclass
@@ -28,9 +28,9 @@ class SegmentedAnswer:
     position: int = 0
 
 
-# Sub-part markers: e.g. "(a)", "(b)", "a)", "b)", "(i)", "(ii)"
+# Sub-part markers: e.g. "(a)", "(b)", "a)", "b)", "(i)", "(ii)", "a>", "b>"
 _SUBPART_PATTERN = re.compile(
-    r"^\s*\(?\s*([a-zA-Z]|[ivxIVX]{1,4})\s*\)?\s*[\:\.\)]?\s*$",
+    r"^\s*\(?\s*([a-zA-Z]|[ivxIVX]{1,4})\s*\)?\s*[\:\.\)\>\→]?\s*$",
 )
 
 
@@ -133,16 +133,24 @@ def _split_swallowed_answers(
                 continue
 
             for line in q_txt.splitlines()[:3]:
-                clean_l = re.sub(r"^[A-Za-z\s&]+:\s*", "", line)
+                clean_l = re.sub(r"^[^:]*:\s*", "", line)
                 clean_l = re.sub(r"^\([a-z0-9]+\)\s*", "", clean_l)
                 phrases = re.findall(r"\b[A-Za-z]{4,}(?:\s+[A-Za-z]{3,}){1,3}\b", clean_l)
                 for ph in phrases[:2]:
-                    if len(ph) >= 9 and ph.lower() not in ("short answer", "long answer", "following questions", "following chemical"):
+                    ph_lower = ph.lower()
+                    if (
+                        len(ph) >= 9
+                        and ph_lower not in (
+                            "short answer", "long answer", "following questions", "following chemical",
+                            "compound interest", "surface area", "total volume", "cross section",
+                            "algebraic expression", "quadratic expression", "depreciation formula"
+                        )
+                    ):
                         topic_patterns.append((rf"(?:\n\n+|\n)\s*(?:[a-zA-Z0-9\(\)\.\-:\s]{{0,10}})?\b{re.escape(ph)}\b", str(q_num)))
 
-    # 1. Embedded question labels: e.g. \n\nQ5, \n\nQ.5, \n\nQuestion 5, or bare \n\n3), \n\n4), \n\n6)
+    # 1. Embedded question labels: e.g. \n\nQ5, \n\nQ.5, \n\nQuestion 5, or bare \n\n3), \n\n4), \n\n6>, \n\n9>
     num_pat = re.compile(
-        r"(?:\n+)\s*(?:(?:Q(?:uestion)?\.?\s*([0-9]{1,2}))|([0-9]{1,2})\s*[\)\.\-:])(?:\s+|(?:[a-zA-Z]))",
+        r"(?:\n+)\s*(?:(?:Q(?:uestion)?\.?\s*([0-9]{1,2}))|([0-9]{1,2})\s*[\)\.\-:\>\→])(?:\s+|(?:[a-zA-Z]))",
         re.IGNORECASE
     )
     for m in num_pat.finditer(text):
@@ -175,6 +183,9 @@ def _split_swallowed_answers(
 
     # 2. Topic/story patterns matching exam questions
     for pat_str, target_num in topic_patterns:
+        # Never jump backwards or match the ongoing question via topic phrase
+        if curr_p_num is not None and target_num.isdigit() and int(target_num) <= curr_p_num:
+            continue
         try:
             for m in re.finditer(pat_str, text, re.IGNORECASE):
                 if m and m.start() > 20:
@@ -251,6 +262,17 @@ def segment_student_answers(
         expanded_items: list[tuple[str | None, str, dict | None, float | None]] = []
         for a in answers_raw:
             a_text = (a.answer_text or "").strip()
+            # If content_blocks contains distinct text blocks, concatenate them
+            if getattr(a, "content_blocks", None):
+                cb_texts = []
+                for cb in a.content_blocks:
+                    if isinstance(cb, dict):
+                        t = (cb.get("text") or cb.get("raw_text") or "").strip()
+                        if t and t not in a_text:
+                            cb_texts.append(t)
+                if cb_texts:
+                    a_text = f"{a_text}\n" + "\n".join(cb_texts)
+                    a_text = a_text.strip()
             a_lbl = (a.question_number or "").strip() or None
             a_bb = a.bbox.model_dump() if getattr(a, "bbox", None) else None
             a_conf = getattr(a, "ocr_confidence", None)
@@ -297,10 +319,16 @@ def segment_student_answers(
                 exact_match = [q for q in canonical_questions if q.normalized_number == parent_number(norm)]
                 q_tok = _tokenize(exact_match[0].question_text) if exact_match else set()
                 ans_tok = _tokenize(text)
-                if len(ans_tok & q_tok) == 0:
-                    rec = find_recovery_candidates(raw_lbl, text, canonical_questions)
-                    if rec and rec[0].score >= 0.65:
-                        norm = rec[0].normalized_number
+                exact_overlap = len(ans_tok & q_tok)
+                exact_nums = _extract_distinct_numbers(exact_match[0].question_text) if exact_match else set()
+                ans_nums = _extract_distinct_numbers(text)
+                exact_has_content = (exact_overlap > 0) or bool(exact_nums and ans_nums and (exact_nums & ans_nums))
+                rec = find_recovery_candidates(raw_lbl, text, canonical_questions)
+                if rec and rec[0].normalized_number != norm and not exact_has_content:
+                    top = rec[0]
+                    exact_ratio = exact_overlap / max(1, len(q_tok)) if q_tok else 0
+                    if (exact_overlap == 0 and top.score >= 0.65) or (top.score >= 0.75 and top.score > exact_ratio + 0.15):
+                        norm = top.normalized_number
                         raw_lbl = f"Q{norm}"
 
             p = parent_number(norm) if norm else None

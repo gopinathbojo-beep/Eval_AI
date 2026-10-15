@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterable, Protocol
 from .numbering import normalize_question_number, parent_number
-from .ocr_recovery import find_recovery_candidates, _tokenize
+from .ocr_recovery import find_recovery_candidates, _tokenize, _extract_distinct_numbers
 
 MAPPED = "MAPPED"
 SUGGESTED = "SUGGESTED"
@@ -64,12 +64,14 @@ def map_label(
 
     exact = [q for q in qs if q.normalized_number == norm]
     if len(exact) == 1:
-        # Check for content contradiction if answer_text has strong keywords
-        if answer_text and len(_tokenize(answer_text)) >= 4:
+        # Check for content contradiction if answer_text has strong keywords or distinct constants
+        if answer_text and (len(_tokenize(answer_text)) >= 2 or len(_extract_distinct_numbers(answer_text)) >= 2):
             q_tokens = _tokenize(getattr(exact[0], "question_text", None))
             ans_tokens = _tokenize(answer_text)
-            exact_overlap = len(ans_tokens & q_tokens)
-            if exact_overlap == 0:
+            q_nums = _extract_distinct_numbers(getattr(exact[0], "question_text", None))
+            ans_nums = _extract_distinct_numbers(answer_text)
+            exact_has_content = bool(ans_tokens & q_tokens) or bool(ans_nums & q_nums)
+            if not exact_has_content:
                 rec_cands = find_recovery_candidates(raw_label, answer_text, q_list, answer_position, total_answers)
                 if rec_cands and rec_cands[0].question_id != exact[0].id and rec_cands[0].score >= 0.70:
                     top = rec_cands[0]
@@ -129,11 +131,13 @@ def map_label(
     rec_cands = find_recovery_candidates(raw_label, answer_text, q_list, answer_position, total_answers)
     if rec_cands:
         top = rec_cands[0]
+        target_qid = top.question_id if top.score >= 0.70 else None
+        target_norm = top.normalized_number if top.score >= 0.70 else norm
         return MappingResult(
             NEEDS_REVIEW,
-            None,
-            norm,
-            f"No exact question for '{norm}'. Suggestion: Q{top.normalized_number} ({top.reason})",
+            target_qid,
+            target_norm,
+            f"Candidate for '{norm}': Q{top.normalized_number} ({top.reason})",
             [c.question_id for c in rec_cands],
             [{"id": c.question_id, "num": c.normalized_number, "score": c.score, "reason": c.reason} for c in rec_cands],
         )

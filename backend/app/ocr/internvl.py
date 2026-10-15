@@ -65,7 +65,7 @@ def _call_once(system: str, user: str, image_path: Path | None) -> str:
         "model": s.internvl_model,
         "stream": False,
         "format": "json",
-        "options": {"temperature": 0, "num_ctx": s.internvl_num_ctx, "num_predict": s.internvl_num_predict},
+        "options": {"temperature": 0, "repeat_penalty": 1.15, "num_ctx": s.internvl_num_ctx, "num_predict": s.internvl_num_predict},
         "messages": [{"role": "system", "content": system}, msg],
     }
     try:
@@ -95,7 +95,11 @@ def chat_structured(system: str, user: str, schema: Type[T], image_path: Path | 
             continue
         try:
             obj = extract_json_object(raw)
-            return AICall(schema.model_validate(obj), raw, i)
+            parsed = schema.model_validate(obj)
+            # If answers were expected from an answer sheet image but 0 were parsed while raw mentions questions
+            if hasattr(parsed, "answers") and len(parsed.answers) == 0 and ("question" in raw.lower() or "answer" in raw.lower()):
+                raise ParseError("0 answers parsed from model output containing question text")
+            return AICall(parsed, raw, i)
         except ParseError as e:
             last_err, kind = f"JSON parse failed: {e}", "FAILED_PARSE"
         except ValidationError as e:

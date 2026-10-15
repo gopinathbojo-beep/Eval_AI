@@ -66,6 +66,53 @@ def _normalize_extracted_obj(obj: dict) -> dict:
     return obj
 
 
+def _try_repair_json(text: str) -> dict | None:
+    # Fix mismatched quotes on keys like 'page_number': or "page_number':
+    cleaned = re.sub(r'["\']([a-zA-Z0-9_]+)["\']\s*:', r'"\1":', text)
+    # Strip runaway repeated closing brackets: e.g. }}]}}]}}]...
+    cleaned = re.sub(r"(?:[\]\}]\s*){3,}$", "", cleaned).strip()
+    for closing in ["", "}", "]}", "]}}"]:
+        try:
+            cand = cleaned + closing
+            obj = json.loads(cand)
+            if isinstance(obj, dict) and ("answers" in obj or "questions" in obj or "page_number" in obj):
+                return obj
+        except Exception:
+            pass
+    return None
+
+
+def _extract_partial_items(text: str) -> dict | None:
+    pat = re.compile(r'\{\s*(?:"answer_id"|"question_number"|"raw_question_label")', re.IGNORECASE)
+    starts = [m.start() for m in pat.finditer(text)]
+    if not starts:
+        return None
+    answers = []
+    for i, start_idx in enumerate(starts):
+        end_idx = starts[i + 1] if i + 1 < len(starts) else len(text)
+        block = text[start_idx:end_idx]
+        qn_m = re.search(r'"question_number"\s*:\s*"([^"]+)"', block)
+        raw_lbl_m = re.search(r'"raw_question_label"\s*:\s*"([^"]+)"', block)
+        ans_txt_m = re.search(r'"answer_text"\s*:\s*"((?:[^"\\]|\\.)*)"', block, re.DOTALL)
+        if (qn_m or raw_lbl_m) and ans_txt_m:
+            ans_text = ""
+            if ans_txt_m:
+                try:
+                    ans_text = json.loads(f'"{ans_txt_m.group(1)}"')
+                except Exception:
+                    ans_text = ans_txt_m.group(1).replace('\\"', '"').replace('\\n', "\n")
+            lbl = raw_lbl_m.group(1) if raw_lbl_m else (qn_m.group(1) if qn_m else None)
+            answers.append({
+                "question_number": qn_m.group(1) if qn_m else lbl,
+                "raw_question_label": lbl,
+                "answer_text": ans_text,
+                "ocr_confidence": 0.95,
+            })
+    if answers:
+        return {"answers": answers}
+    return None
+
+
 def extract_json_object(raw: str) -> dict:
     if raw is None:
         raise ParseError("Empty model response")
@@ -93,7 +140,12 @@ def extract_json_object(raw: str) -> dict:
         except json.JSONDecodeError:
             continue
 
-    # 3) first balanced object embedded in prose (largest wins, to skip tiny stray {} )
+    # 3) try repairing broken JSON (unclosed brackets, mismatched quotes, runaway brackets)
+    repaired = _try_repair_json(text)
+    if repaired:
+        return _normalize_extracted_obj(repaired)
+
+    # 4) first balanced object embedded in prose (largest wins, to skip tiny stray {} )
     best: dict | None = None
     best_len = -1
     for cand in _balanced_candidates(text):
@@ -103,6 +155,18 @@ def extract_json_object(raw: str) -> dict:
             continue
         if isinstance(obj, dict) and len(cand) > best_len:
             best, best_len = obj, len(cand)
+
+    # If best is an actual document container (has questions/answers)
+    if best is not None:
+        if "answers" in best or "questions" in best or ("answers" not in text and "questions" not in text):
+            return _normalize_extracted_obj(best)
+
+    # 5) Partial item regex recovery if answers list was present in text
+    partial = _extract_partial_items(text)
+    if partial:
+        return _normalize_extracted_obj(partial)
+
     if best is not None:
         return _normalize_extracted_obj(best)
+
     raise ParseError("No complete JSON object found in model response")

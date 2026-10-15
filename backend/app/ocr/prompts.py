@@ -153,8 +153,13 @@ IMAGE -> VISUAL READING -> HANDWRITING OCR -> STRUCTURE -> ANSWER GROUPING -> QU
 ==================================================
 4. HANDWRITTEN QUESTION NUMBER RECOGNITION
 ==================================================
-Question numbers may be poorly handwritten (e.g. Q1 misread as Q17 due to top hook).
-Do NOT immediately assume false numbers. Store raw_ocr_label / raw_question_label = "Q17", analyze visual shape, sequence, position, and answer content.
+Question numbers are written in various student conventions:
+- Numbers with angle bracket: '1>', '2>', '3>', '7>', '9>', '10>', 'a>', 'b>', 'c>'
+- Numbers with parenthesis or dot: '1)', '2.', '3:', 'Q1', 'Q.2'
+- Subquestion labels: '(a)', 'a>', '(b)', 'b>'
+Always preserve raw_question_label exactly as written (e.g. '1>', '9>', 'a>').
+Question numbers may also be poorly handwritten (e.g. Q1 misread as Q17 due to top hook).
+Do NOT immediately assume false numbers. Store raw_ocr_label / raw_question_label = "1>", analyze visual shape, sequence, position, and answer content.
 If visual evidence strongly indicates Q1:
 normalized_question_label = "Q1", question_id = "q1", resolution_method = "handwriting_visual_correction".
 Never erase raw OCR output.
@@ -257,7 +262,7 @@ Return ONLY valid JSON in exactly this structure (include a separate entry in "a
     {{
       "answer_id": "ans_001",
       "question_number": "Q1",
-      "raw_question_label": "1)",
+      "raw_question_label": "1>",
       "normalized_question_label": "Q1",
       "question_id": "q1",
       "mapping_status": "MAPPED",
@@ -265,17 +270,14 @@ Return ONLY valid JSON in exactly this structure (include a separate entry in "a
       "ocr_confidence": 0.95,
       "grouping_confidence": 0.98,
       "mapping_confidence": 0.96,
-      "answer_text": "...",
-      "content_blocks": [
-        {{"type": "TEXT", "text": "..."}}
-      ],
+      "answer_text": "Complete transcribed handwritten text for this question...",
       "page_number": {page_number},
       "bbox": {{"x": 0, "y": 0, "width": 0, "height": 0}}
     }},
     {{
       "answer_id": "ans_002",
       "question_number": "Q2",
-      "raw_question_label": "2)",
+      "raw_question_label": "2>",
       "normalized_question_label": "Q2",
       "question_id": "q2",
       "mapping_status": "MAPPED",
@@ -283,28 +285,7 @@ Return ONLY valid JSON in exactly this structure (include a separate entry in "a
       "ocr_confidence": 0.95,
       "grouping_confidence": 0.98,
       "mapping_confidence": 0.96,
-      "answer_text": "...",
-      "content_blocks": [
-        {{"type": "TEXT", "text": "..."}}
-      ],
-      "page_number": {page_number},
-      "bbox": {{"x": 0, "y": 0, "width": 0, "height": 0}}
-    }},
-    {{
-      "answer_id": "ans_003",
-      "question_number": "Q3",
-      "raw_question_label": "3)",
-      "normalized_question_label": "Q3",
-      "question_id": "q3",
-      "mapping_status": "MAPPED",
-      "question_number_confidence": 0.95,
-      "ocr_confidence": 0.95,
-      "grouping_confidence": 0.98,
-      "mapping_confidence": 0.96,
-      "answer_text": "...",
-      "content_blocks": [
-        {{"type": "TEXT", "text": "..."}}
-      ],
+      "answer_text": "Complete transcribed handwritten text for this question...",
       "page_number": {page_number},
       "bbox": {{"x": 0, "y": 0, "width": 0, "height": 0}}
     }}
