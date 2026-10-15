@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterable, Protocol
 from .numbering import is_sub_question, normalize_question_number, parent_number
-from .ocr_recovery import find_recovery_candidates
+from .ocr_recovery import find_recovery_candidates, _tokenize
 
 MAPPED = "MAPPED"
 SUGGESTED = "SUGGESTED"
@@ -69,6 +69,23 @@ def map_label(
 
     exact = [q for q in qs if q.normalized_number == norm]
     if len(exact) == 1:
+        # Check for content contradiction if answer_text has strong keywords
+        if answer_text and len(_tokenize(answer_text)) >= 4:
+            q_tokens = _tokenize(getattr(exact[0], "question_text", None))
+            ans_tokens = _tokenize(answer_text)
+            exact_overlap = len(ans_tokens & q_tokens)
+            if exact_overlap == 0:
+                rec_cands = find_recovery_candidates(raw_label, answer_text, q_list, answer_position, total_answers)
+                if rec_cands and rec_cands[0].question_id != exact[0].id and rec_cands[0].score >= 0.70:
+                    top = rec_cands[0]
+                    return MappingResult(
+                        NEEDS_REVIEW,
+                        top.question_id,
+                        top.normalized_number,
+                        f"Student wrote '{norm}' but content matches Q{top.normalized_number} ({top.reason})",
+                        [top.question_id, exact[0].id],
+                        [{"id": top.question_id, "num": top.normalized_number, "score": top.score, "reason": top.reason}],
+                    )
         if ocr_confidence is not None and ocr_confidence < min_confidence:
             return MappingResult(
                 NEEDS_REVIEW,

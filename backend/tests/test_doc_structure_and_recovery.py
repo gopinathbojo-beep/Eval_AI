@@ -333,3 +333,21 @@ def test_doc_structure_preserves_short_and_unnumbered_questions():
     assert doc.questions[1].verification_status == "NEEDS_REVIEW"
 
 
+def test_doc_structure_question_continuation_unnumbered():
+    """Verify unnumbered blocks continuing an abrupt or dangling sentence are merged properly."""
+    page_res = QuestionPageResult(
+        page_number=1,
+        questions=[
+            QuestionItem(raw_question_number="1", question_text="A particle moves along a straight line with constant speed and", marks=None),
+            QuestionItem(raw_question_number=None, question_text="experiences zero net external force.", marks=None),
+        ]
+    )
+    p_info = {"page_number": 1, "ocr_width": 1000, "ocr_height": 1400, "width": 1000, "height": 1400}
+    doc = parse_question_paper_structure([(p_info, page_res)])
+
+    assert len(doc.questions) == 1
+    assert doc.questions[0].display_number == "1"
+    assert "constant speed and experiences zero net external force." in doc.questions[0].question_text
+
+
+

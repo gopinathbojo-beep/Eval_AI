@@ -1,13 +1,4 @@
-     modified:   mobile/src/screens/evaluations/EvaluationDetailScreen.tsx
-        modified:   mobile/src/screens/exams/ExamWorkspaceScreen.tsx
-        modified:   mobile/src/screens/exams/VerifyExamScreen.tsx
-        modified:   mobile/src/types/index.ts
-
-Untracked files:
-  (use "git add <file>..." to include in what will be committed)
-        backend/tests/test_handwritten_segmentation.py
-        backend/tests/test_mapping_and_marks.py
-        backend/tests/test_question_parts.py"""Regression tests for question/answer/mark mapping, mark validation and pipeline robustness."""
+"""Regression tests for question/answer/mark mapping, mark validation and pipeline robustness."""
 from types import SimpleNamespace
 
 import pytest
