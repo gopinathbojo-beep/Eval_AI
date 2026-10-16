@@ -236,7 +236,10 @@ def evaluate_item(db: Session, ev: Evaluation, q: ExamQuestion, item: Evaluation
 
     elif resolved.status == STUDENT_ANSWER_NOT_ATTEMPTED:
         item.status = "MISSING"
-        item.error = "Question was not attempted by student."
+        item.final_marks = 0.0
+        item.not_attempted_confirmed = True
+        item.ai_feedback = "Question was not attempted by student."
+        item.error = None
         db.commit()
         return
 
@@ -327,7 +330,16 @@ def finalize_issues(db: Session, ev: Evaluation) -> list[dict]:
             if not getattr(it, "not_attempted_confirmed", False):
                 res = resolve_student_answer(db, ev, q)
                 if res.status == STUDENT_ANSWER_NOT_ATTEMPTED:
-                    add(q.display_number, "No student answer found. Map an answer or confirm it was not attempted")
+                    has_unresolved = any(
+                        a.status in ("UNMAPPED", "NEEDS_REVIEW")
+                        for a in db.query(StudentAnswer).filter_by(evaluation_id=ev.id).all()
+                    )
+                    if not has_unresolved:
+                        it.not_attempted_confirmed = True
+                        if it.final_marks is None:
+                            it.final_marks = 0.0
+                    else:
+                        add(q.display_number, "No student answer found. Map an answer or confirm it was not attempted")
                 elif res.status == STUDENT_ANSWER_MAPPING_REVIEW:
                     add(q.display_number, f"Student answer detected but mapping needs review: {res.reason}")
                 elif res.status == STUDENT_ANSWER_UNMAPPED:

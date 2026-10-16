@@ -105,3 +105,87 @@ def test_case9_duplicate_mapping_detected():
         exam_question_id: str | None
     rows = [A("q3"), A("q3"), A("q4"), A(None)]
     assert flag_duplicates(rows) == {"q3"}
+
+
+def test_physics_topic_comma_formats():
+    """Verify that student handwritten headers copying topics with commas/colons normalize correctly."""
+    assert n("Q1, force & pressure :") == "1"
+    assert n("Q2, Sound wave Terminology :") == "2"
+    assert n("Q3, Friction Types :") == "3"
+    assert n("Q4, Chemical Effects of Electric current.") == "4"
+    assert n("Q5, optics & Reflection :") == "5"
+    assert n("Q6, Electrostatics & Natural phenomena :") == "6"
+    assert n("Q7, Acoustics & noise pollution :") == "7"
+
+    # Verify they map directly to canonical exam questions
+    qs = exam("1", "2", "3", "4", "5", "6", "7", "8", "9", "10")
+    for raw, exp_num in [
+        ("Q1, force & pressure :", "1"),
+        ("Q2, Sound wave Terminology :", "2"),
+        ("Q3, Friction Types :", "3"),
+        ("Q4, Chemical Effects of Electric current.", "4"),
+        ("Q5, optics & Reflection :", "5"),
+        ("Q6, Electrostatics & Natural phenomena :", "6"),
+        ("Q7, Acoustics & noise pollution :", "7"),
+    ]:
+        res = map_label(raw, qs)
+        assert res.status == MAPPED
+        assert res.question_id == f"id-{exp_num}"
+
+
+def test_maths_angle_bracket_formats_and_skipped_questions():
+    """Verify angle bracket format '1>', '6>', '10>' and non-consecutive / skipped questions."""
+    assert n("1>") == "1"
+    assert n("2>") == "2"
+    assert n("3>") == "3"
+    assert n("4>") == "4"
+    assert n("6>") == "6"
+    assert n("7>") == "7"
+    assert n("9>") == "9"
+    assert n("10>") == "10"
+
+    # Student answered 1, 2, 3, 4, 6, 7, 9, 10 (skipping 5 and 8)
+    qs = exam("1", "2", "3", "4", "5", "6", "7", "8", "9", "10")
+    attempted = ["1>", "2>", "3>", "4>", "6>", "7>", "9>", "10>"]
+    for raw in attempted:
+        res = map_label(raw, qs)
+        assert res.status == MAPPED
+        assert res.question_id == f"id-{n(raw)}"
+
+
+def test_subquestion_tokens_with_commas_and_brackets():
+    from app.services.numbering import extract_subquestion_token
+    assert extract_subquestion_token("a,") == "a"
+    assert extract_subquestion_token("b,") == "b"
+    assert extract_subquestion_token("c,") == "c"
+    assert extract_subquestion_token("a>") == "a"
+    assert extract_subquestion_token("b>") == "b"
+    assert extract_subquestion_token("c>") == "c"
+    assert extract_subquestion_token("a)") == "a"
+    assert extract_subquestion_token("(b)") == "b"
+    assert extract_subquestion_token("10") is None
+
+
+def test_extract_label_from_text_prefix():
+    from app.services.numbering import extract_label_from_text_prefix
+    lbl, rest = extract_label_from_text_prefix("Q1, force & pressure :\nThe pressure exerted...")
+    assert lbl == "1"
+    assert "force & pressure" in rest
+
+    lbl, rest = extract_label_from_text_prefix("1> [ (2/3)^-2 ... ]")
+    assert lbl == "1"
+    assert rest == "[ (2/3)^-2 ... ]"
+
+    lbl, rest = extract_label_from_text_prefix("6> Given: principle = 1,25,000")
+    assert lbl == "6"
+    assert "Given: principle" in rest
+
+    lbl, rest = extract_label_from_text_prefix("10> Principal = Rs 80,000")
+    assert lbl == "10"
+    assert "Principal" in rest
+
+    # Genuine continuation line has no question prefix
+    lbl, rest = extract_label_from_text_prefix("For coating iron with copper:\nElectrolyte : copper sulphate...")
+    assert lbl is None
+    assert "For coating iron" in rest
+

@@ -71,10 +71,25 @@ def map_label(
             q_nums = _extract_distinct_numbers(getattr(exact[0], "question_text", None))
             ans_nums = _extract_distinct_numbers(answer_text)
             exact_has_content = bool(ans_tokens & q_tokens) or bool(ans_nums & q_nums)
-            if not exact_has_content:
-                rec_cands = find_recovery_candidates(raw_label, answer_text, q_list, answer_position, total_answers)
-                if rec_cands and rec_cands[0].question_id != exact[0].id and rec_cands[0].score >= 0.70:
-                    top = rec_cands[0]
+
+            rec_cands = find_recovery_candidates(raw_label, answer_text, q_list, answer_position, total_answers)
+            if rec_cands and rec_cands[0].question_id != exact[0].id:
+                top = rec_cands[0]
+                top_q = next((q for q in q_list if q.id == top.question_id), None)
+                top_nums = _extract_distinct_numbers(getattr(top_q, "question_text", None)) if top_q else set()
+                generic_consts = {"100", "0", "1", "2", "3"}
+                top_dist_nums = (ans_nums & top_nums) - q_nums - generic_consts
+                exact_dist_nums = (ans_nums & q_nums) - top_nums - generic_consts
+
+                should_suggest_alt = False
+                if not exact_has_content and top.score >= 0.70:
+                    should_suggest_alt = True
+                elif top_dist_nums and not exact_dist_nums and top.score >= 0.85:
+                    should_suggest_alt = True
+                elif top.score >= 0.95 and not exact_dist_nums:
+                    should_suggest_alt = True
+
+                if should_suggest_alt:
                     return MappingResult(
                         NEEDS_REVIEW,
                         top.question_id,
@@ -83,6 +98,7 @@ def map_label(
                         [top.question_id, exact[0].id],
                         [{"id": top.question_id, "num": top.normalized_number, "score": top.score, "reason": top.reason}],
                     )
+
         if ocr_confidence is not None and ocr_confidence < min_confidence:
             return MappingResult(
                 NEEDS_REVIEW,

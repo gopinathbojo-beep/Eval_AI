@@ -56,8 +56,9 @@ export interface StudentAnswer {
   id: string; raw_question_number: string | null; normalized_number: string | null; exam_question_id: string | null;
   raw_ocr_text: string; answer_text: string; page_number: number | null; bbox: BBox | null; has_crop: boolean;
   ocr_confidence: number | null; status: string; mapping_note: string | null; mapping_candidates: string[];
-  edited: boolean;
+  mapping_confirmed: boolean; edited: boolean;
 }
+
 export interface EvalItem {
   id: string; exam_question_id: string; status: string; ai_marks: number | null; ai_decision: string | null;
   matched_points: string[]; missing_points: string[]; ai_feedback: string | null; ai_confidence: number | null;

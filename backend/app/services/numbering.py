@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 
 _PREFIX = re.compile(
-    r"^\s*(?:(?:section|part|unit|group|sec)\s+[a-z0-9ivx]+\s*[\-\:\–\—]?\s*)?(?:question|ques|qn|q\.?\s*no\.?|q|answer|ans|no\.?|வினா)\s*[\.\:\-\>\→]?\s*(?=\d|\(|\b[ivx]+\b)",
+    r"^\s*(?:(?:section|part|unit|group|sec)\s+[a-z0-9ivx]+\s*[\-\:\–\—]?\s*)?(?:question|ques|qn|q\.?\s*no\.?|q|answer|ans|no\.?|வினா)\s*[\.\:\-\>\→\,]?\s*(?=\d|\(|\b[ivx]+\b)",
     re.IGNORECASE,
 )
 _ROMAN = re.compile(r"^(?:i{1,3}|iv|v|vi{1,3}|ix|x)$", re.IGNORECASE)
@@ -31,28 +31,47 @@ def normalize_question_number(raw: str | int | None) -> str | None:
     s = str(raw).strip()
     if s.lower() in _NULLISH:
         return None
+
+    had_prefix = bool(_PREFIX.search(s))
     s = _PREFIX.sub("", s).strip()
     s = s.replace("（", "(").replace("）", ")").replace("[", "(").replace("]", ")")
+    s = re.sub(r"^[\,\:\-\>\→\.]\s*", "", s)
 
     # Parenthesized main number: (1), (2), (1)(a), (1) a
     pm = re.match(r"^\(\s*(\d{1,3})\s*\)(.*)$", s)
     if pm:
         number = str(int(pm.group(1)))
         rest = pm.group(2).strip()
+        had_delim = True
     else:
-        # Standard leading number: 1, 1., 1), 1:, 1>, 1->
-        m = re.match(r"^(\d{1,3})(.*)$", s)
-        if not m:
-            # Standalone Roman numeral question: I, II, III, IV...
-            rm = re.match(r"^([ivxIVX]{1,5})[\.\:\)\>\→]?\s*(.*)$", s)
-            if rm and _ROMAN.match(rm.group(1)):
-                number = str(_ROMAN_VALS[rm.group(1).lower()])
-                rest = rm.group(2).strip()
-            else:
-                return None
+        # Check if leading number has a delimiter like 1., 1), 1:, 1>, 1,, 1-, or just 1
+        m_delim = re.match(r"^(\d{1,3})\s*([\.\:\)\>\→\}\]\,\-–—])\s*(.*)$", s)
+        if m_delim:
+            number = str(int(m_delim.group(1)))
+            had_delim = True
+            delim = m_delim.group(2)
+            rest = m_delim.group(3).strip()
+            # If delimiter was dot and rest starts with subpart: 1.1 or 1.a
+            if delim == "." and rest:
+                dm = re.match(r"^(\d{1,2}|[a-zA-Z]{1,4})(.*)$", rest)
+                if dm:
+                    tok = _clean_token(dm.group(1))
+                    if tok:
+                        rest = f"({tok}){dm.group(2)}"
         else:
-            number = str(int(m.group(1)))
-            rest = m.group(2).strip()
+            m = re.match(r"^(\d{1,3})(.*)$", s)
+            if not m:
+                rm = re.match(r"^([ivxIVX]{1,5})[\.\:\)\>\→\,]?\s*(.*)$", s)
+                if rm and _ROMAN.match(rm.group(1)):
+                    number = str(_ROMAN_VALS[rm.group(1).lower()])
+                    rest = rm.group(2).strip()
+                    had_delim = True
+                else:
+                    return None
+            else:
+                number = str(int(m.group(1)))
+                rest = m.group(2).strip()
+                had_delim = False
 
     # Dotted subnumber: 1.1 -> 1(1), 1.a -> 1(a)
     if rest.startswith(".") and not rest.startswith(".."):
@@ -62,9 +81,9 @@ def normalize_question_number(raw: str | int | None) -> str | None:
             if tok:
                 rest = f"({tok}){dm.group(2)}"
             else:
-                rest = re.sub(r"^\.[\.\:\)\>\→]?\s*", "", rest)
+                rest = re.sub(r"^\.[\.\:\)\>\→\,\s]*", "", rest)
         else:
-            rest = re.sub(r"^\.[\.\:\)\>\→]?\s*", "", rest)
+            rest = re.sub(r"^\.[\.\:\)\>\→\,\s]*", "", rest)
     elif rest.startswith("/") and not rest.startswith("//"):
         sm = re.match(r"^/\s*(\d{1,2}|[a-zA-Z]{1,4})(.*)$", rest)
         if sm:
@@ -72,32 +91,39 @@ def normalize_question_number(raw: str | int | None) -> str | None:
             if tok:
                 rest = f"({tok}){sm.group(2)}"
             else:
-                rest = re.sub(r"^/[\.\:\)\>\→]?\s*", "", rest)
+                rest = re.sub(r"^/[\.\:\)\>\→\,\s]*", "", rest)
         else:
-            rest = re.sub(r"^/[\.\:\)\>\→]?\s*", "", rest)
+            rest = re.sub(r"^/[\.\:\)\>\→\,\s]*", "", rest)
     elif not rest.startswith("("):
-        rest = re.sub(r"^[\.\:\)\>\→\}\]]\s*", "", rest)
+        rest = re.sub(r"^[\.\:\)\>\→\}\]\,\-–—]\s*", "", rest)
 
-    rest = re.sub(r"^[\-–—\.\>\→]\s*", "", rest)
-    rest = rest.rstrip(" .:>-→")
+    rest = rest.rstrip(" .:>-→,")
     parts: list[str] = []
     # optional single bare token directly after number: "3a", "3 a", "3-a", "3(a)"
-    bm = re.match(r"^([a-zA-Z]{1,4})(?=\(|$)", rest)
-    if bm:
+    bm = re.match(r"^([a-zA-Z]{1,3})(?=\(|$|[\s\,\.\:\-\>\→])", rest)
+    if bm and len(bm.group(1)) <= 2:
         tok = _clean_token(bm.group(1))
-        if tok is None:
-            return None
-        parts.append(tok)
-        rest = rest[bm.end():]
-    while rest:
+        if tok is not None:
+            parts.append(tok)
+            rest = rest[bm.end():].lstrip(" .:>-→,")
+
+    while rest.startswith("("):
         pm = re.match(r"^\(\s*([a-zA-Z0-9]{1,4})\s*\)\s*", rest)
         if not pm:
-            return None  # leftover junk -> refuse to guess
+            break
         tok = _clean_token(pm.group(1))
         if tok is None:
-            return None
+            break
         parts.append(tok)
-        rest = rest[pm.end():]
+        rest = rest[pm.end():].lstrip(" .:>-→,")
+
+    if rest:
+        # If there was a delimiter (like comma, colon, dot, angle bracket) or explicit Q prefix,
+        # rest is treated as title text and ignored.
+        # But if there was NO delimiter and NO prefix (like '3 explain'), return None to prevent false matches.
+        if not (had_delim or had_prefix):
+            return None
+
     return number + "".join(f"({p})" for p in parts)
 
 
@@ -123,8 +149,41 @@ def extract_subquestion_token(raw: str | None) -> str | None:
     pm = re.match(r"^\(\s*([a-zA-Z]{1,4}|[ivxIVX]{1,5})\s*\)$", s)
     if pm:
         return _clean_token(pm.group(1))
-    # Subquestion with dot, paren, colon or angle bracket: a), b., i), a>, b>
-    sm = re.match(r"^([a-zA-Z]{1,4}|[ivxIVX]{1,5})[\.\)\:\>\→]$", s)
+    # Subquestion with dot, paren, colon, comma, dash, or angle bracket: a), b., i), a>, b>, a,, b,
+    sm = re.match(r"^([a-zA-Z]{1,4}|[ivxIVX]{1,5})[\.\)\:\>\→\,\-–—]$", s)
     if sm:
         return _clean_token(sm.group(1))
+    # Compound question with subquestion e.g. 10(a), Q10(a), 1(b)
+    cm = re.search(r"\(\s*([a-zA-Z]{1,4}|[ivxIVX]{1,5})\s*\)", s)
+    if cm:
+        return _clean_token(cm.group(1))
     return None
+
+
+def extract_label_from_text_prefix(text: str) -> tuple[str | None, str]:
+    """Check if question or answer text begins with an explicit question label like '01.', '1.', 'Q1:', 'Q1,', '1>', '01/02', etc."""
+    s = text.strip()
+    # Pattern 1: Q1, Q.1, Question 1, Qn 1, etc. with :, ., comma, >, or whitespace
+    m_q = re.match(r"^\s*(?:(?:Q(?:uestion)?|Qn|Ques)\.?\s*([0-9]+[a-zA-Z\(\)]*))[\.\:\)\s\-\/\,\>\→]+(.*)", s, re.IGNORECASE | re.DOTALL)
+    if m_q:
+        lbl = m_q.group(1).strip()
+        rest = m_q.group(2).strip()
+        return lbl, (rest if rest else s)
+
+    # Pattern 2: Parenthesized number e.g. (1), (2), (1)(a)
+    m_paren = re.match(r"^\s*\(\s*([0-9]{1,3}(?:[a-zA-Z]|\([a-zA-Z0-9]+\))?)\s*\)[\.\:\s\-\/\,\>\→]*(.*)", s, re.DOTALL)
+    if m_paren:
+        lbl = m_paren.group(1).strip()
+        rest = m_paren.group(2).strip()
+        return lbl, (rest if rest else s)
+
+    # Pattern 3: Number followed by separator: e.g. '01.', '1)', '1 -', '01/02', '1.a', '3(a)', '1>', '1,'
+    m_num = re.match(r"^\s*([0-9]{1,3}(?:[\.\-\/][0-9]{1,3}|\([a-zA-Z0-9]+\)|[a-zA-Z])?)[\.\:\)\s\-\/\,\>\→]+(.*)", s, re.DOTALL)
+    if m_num:
+        lbl = m_num.group(1).strip()
+        rest = m_num.group(2).strip()
+        if len(lbl) <= 6 and not (len(lbl) == 4 and lbl.startswith("20")):
+            return lbl, (rest if rest else s)
+
+    return None, s
+

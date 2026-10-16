@@ -83,7 +83,7 @@ def extract_criteria_from_block(text: str) -> tuple[str, list[str]]:
 
 def split_key_text(raw_lbl: str | None, text: str) -> list[tuple[str | None, str]]:
     """Split an answer block if it swallowed subsequent question keys (e.g. Q8 inside Q7, or Q9 cont inside Q10)."""
-    pat = re.compile(r"(?:\n+)\s*(?:Q(?:uestion)?\.?\s*([0-9]{1,2}))[\.\:\s\-]+", re.I)
+    pat = re.compile(r"(?:\n+)\s*(?:Q(?:uestion)?\.?\s*([0-9]{1,2}))[\.\:\s\-\,]+", re.I)
     boundaries = []
     for m in pat.finditer(text):
         if m.start() > 15:
@@ -111,14 +111,20 @@ def split_key_text(raw_lbl: str | None, text: str) -> list[tuple[str | None, str
 
 def extract_from_full_pdf_text(full_text: str, norm_num: str) -> tuple[str | None, list[str]]:
     """Extract answer text and criteria for a specific question number from full document text."""
-    pat = re.compile(rf"(?:^|\n)\s*(?:Q(?:uestion)?\.?\s*{norm_num}|{norm_num}\.)\b[^\n]*\n(.*)", re.DOTALL | re.I)
+    pat = re.compile(
+        rf"(?:^|\n)\s*(?![o•\-\*]?\s*\d+(?:\.\d+)?\s*marks?[:\s])(?:Q(?:uestion)?\.?\s*{norm_num}|{norm_num}\.(?!\d|\s*marks?\b))\b[^\n]*\n(.*)",
+        re.DOTALL | re.I
+    )
     m = pat.search(full_text)
     if not m:
         return None, []
 
     rest = m.group(1)
     curr_n = int(norm_num) if norm_num.isdigit() else None
-    next_pat = re.compile(r"(?:^|\n)\s*(?:Q(?:uestion)?\.?\s*(\d+)|(\d+)\.)\b", re.I)
+    next_pat = re.compile(
+        r"(?:^|\n)\s*(?![o•\-\*]?\s*\d+(?:\.\d+)?\s*marks?[:\s])(?:Q(?:uestion)?\.?\s*(\d+)|(\d+)\.(?!\d|\s*marks?\b))\b",
+        re.I
+    )
 
     next_idx = None
     for nm in next_pat.finditer(rest):
@@ -185,30 +191,54 @@ def segment_answer_keys(
                 is_bare_subpart = bool(
                     grouped
                     and s_lbl
-                    and re.match(r"^\s*\(?\s*([a-zA-Z]|[ivxIVX]{1,4})\s*\)?\s*[\:\.\)]?\s*$", s_lbl)
+                    and re.match(r"^\s*\(?\s*([a-zA-Z]|[ivxIVX]{1,4})\s*\)?\s*[\:\.\)\>\→\,\-–—]?\s*$", s_lbl)
                     and not (canonical_questions and any(str(getattr(q, "display_number", "")) == s_lbl for q in canonical_questions))
                 )
+                # Check if s_lbl is a numbered calculation step (e.g. '1.', '2.') or duplicate question appearing on a later page
+                is_numbered_step = False
+                if s_lbl and grouped:
+                    m_step = re.match(r"^\s*([0-9]{1,2})\.?\s*$", s_lbl)
+                    if m_step:
+                        step_val = int(m_step.group(1))
+                        max_seen = max(
+                            [int(k.normalized_number) for k in grouped if k.normalized_number and k.normalized_number.isdigit()] or [0]
+                        )
+                        already_seen = any(k.normalized_number == str(step_val) for k in grouped)
+                        if (max_seen >= 3 and step_val <= 3 and page_num > 1) or (already_seen and page_num > 1):
+                            is_numbered_step = True
+
                 clean_txt, crit_from_block = extract_criteria_from_block(s_txt)
                 crit_list = crit_from_block if crit_from_block else list(a.criteria or [])
 
-                # Check if this is an unnumbered continuation block, explicit continuation, bare subpart, or same question on next page
-                if is_unnumbered or is_cont_label or is_same_q_new_page or is_bare_subpart:
+                # Check if this is an unnumbered continuation block, explicit continuation, bare subpart, same question on next page, or numbered substep
+                if is_unnumbered or is_cont_label or is_same_q_new_page or is_bare_subpart or is_numbered_step:
                     if grouped and s_txt:
-                        last = grouped[-1]
-                        sep = "\n\n" if "\n" in clean_txt else " "
-                        last.answer_text = f"{last.answer_text}{sep}{clean_txt}".strip()
-                        if crit_list:
-                            last.criteria.extend(crit_list)
-                        if getattr(a, "accepted_answers", None):
-                            last.accepted_answers.extend(a.accepted_answers)
-                        if getattr(a, "keywords", None):
-                            last.keywords.extend(a.keywords)
+                        target = grouped[-1]
+                        if is_numbered_step:
+                            prev_page_qs = [k for k in grouped if k.page_number < page_num]
+                            if prev_page_qs:
+                                for candidate in reversed(prev_page_qs):
+                                    c_text = candidate.answer_text.rstrip()
+                                    if c_text.endswith(":") or any(w in c_text.lower() for w in ("sonar", "oscillation", "depth", "wave", "calculate", "find")):
+                                        target = candidate
+                                        break
+                                else:
+                                    target = prev_page_qs[-1]
 
-                        c_marks = parse_criteria_marks(last.criteria, last.answer_text)
+                        sep = "\n\n" if "\n" in clean_txt else " "
+                        target.answer_text = f"{target.answer_text}{sep}{clean_txt}".strip()
+                        if crit_list:
+                            target.criteria.extend(crit_list)
+                        if getattr(a, "accepted_answers", None):
+                            target.accepted_answers.extend(a.accepted_answers)
+                        if getattr(a, "keywords", None):
+                            target.keywords.extend(a.keywords)
+
+                        c_marks = parse_criteria_marks(target.criteria, target.answer_text)
                         if c_marks is not None:
-                            last.marks = c_marks
-                        elif getattr(a, "marks", None) is not None and last.marks is None:
-                            last.marks = a.marks
+                            target.marks = c_marks
+                        elif getattr(a, "marks", None) is not None and target.marks is None:
+                            target.marks = a.marks
                         continue
                     elif not s_txt:
                         continue
@@ -266,6 +296,26 @@ def segment_answer_keys(
             c_marks = parse_criteria_marks(k.criteria, k.answer_text)
             if c_marks is not None:
                 k.marks = c_marks
+
+    # Deduplicate by normalized_number if multiple keys share the same norm
+    deduped: list[SegmentedKey] = []
+    seen_map: dict[str, SegmentedKey] = {}
+    for k in grouped:
+        if k.normalized_number and k.normalized_number in seen_map:
+            existing = seen_map[k.normalized_number]
+            if k.answer_text and k.answer_text not in existing.answer_text:
+                sep = "\n\n" if "\n" in k.answer_text else " "
+                existing.answer_text = f"{existing.answer_text}{sep}{k.answer_text}".strip()
+            for crit in k.criteria:
+                if crit not in existing.criteria:
+                    existing.criteria.append(crit)
+            if k.marks is not None and (existing.marks is None or k.marks > existing.marks):
+                existing.marks = k.marks
+        else:
+            if k.normalized_number:
+                seen_map[k.normalized_number] = k
+            deduped.append(k)
+    grouped = deduped
 
     # Sort grouped by question sequence
     grouped.sort(

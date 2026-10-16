@@ -154,15 +154,22 @@ IMAGE -> VISUAL READING -> HANDWRITING OCR -> STRUCTURE -> ANSWER GROUPING -> QU
 4. HANDWRITTEN QUESTION NUMBER RECOGNITION
 ==================================================
 Question numbers are written in various student conventions:
-- Numbers with angle bracket: '1>', '2>', '3>', '7>', '9>', '10>', 'a>', 'b>', 'c>'
-- Numbers with parenthesis or dot: '1)', '2.', '3:', 'Q1', 'Q.2'
-- Subquestion labels: '(a)', 'a>', '(b)', 'b>'
-Always preserve raw_question_label exactly as written (e.g. '1>', '9>', 'a>').
+- Numbers with angle bracket: '1>', '2>', '3>', '4>', '6>', '7>', '9>', '10>', 'a>', 'b>', 'c>'
+- Numbers with comma, dot, colon, or parenthesis: '1)', '2.', '3:', 'Q1', 'Q.2', '1,', '2,'
+- Question headers with copied topic titles and punctuation:
+  e.g. 'Q1, force & pressure :', 'Q2, Sound wave Terminology :', 'Q3, Friction Types :',
+       'Q4, Chemical Effects of Electric current.', 'Q5, optics & Reflection :',
+       'Q6, Electrostatics & Natural phenomena :', 'Q7, Acoustics & noise pollution :'
+  Always recognize the question number (e.g. "Q1", "Q2", "Q3", "1", "2") and transcribe the topic and answer text.
+- Subquestion labels: '(a)', 'a)', 'a,', 'a>', '(b)', 'b)', 'b,', 'b>', '(c)', 'c>', 'c,'
+- SKIPPED QUESTIONS: Students frequently skip questions they choose not to answer (e.g. answering Q1, Q2, Q3, Q4, Q6, Q7, Q9, Q10 while skipping Q5 and Q8). Always label each answer with the exact question number the student wrote ('6>', 'Q6'), NEVER shift or renumber questions sequentially!
+Always preserve raw_question_label exactly as written (e.g. '1>', '9>', 'Q1, force & pressure :', 'a>').
 Question numbers may also be poorly handwritten (e.g. Q1 misread as Q17 due to top hook).
 Do NOT immediately assume false numbers. Store raw_ocr_label / raw_question_label = "1>", analyze visual shape, sequence, position, and answer content.
 If visual evidence strongly indicates Q1:
 normalized_question_label = "Q1", question_id = "q1", resolution_method = "handwriting_visual_correction".
 Never erase raw OCR output.
+
 
 ==================================================
 5. QUESTION NUMBER SEQUENCE
@@ -185,12 +192,13 @@ Read previous line, current line, and next line together. Use handwriting style 
 ==================================================
 8. MULTIPLE ANSWERS PER PAGE (MANDATORY)
 ==================================================
-A single student answer sheet page ALMOST ALWAYS contains answers to MULTIPLE different questions (for example, Q1, Q3, Q4, Q6 on page 1, or Q7, Q8, Q10 on page 2).
+A single student answer sheet page ALMOST ALWAYS contains answers to MULTIPLE different questions.
 YOU MUST:
-- Scan the entire page from top to bottom margin.
+- Scan the entire page thoroughly from the VERY TOP MARGIN to the bottom margin. Check the topmost area of the page first for any question number or answers (including reading comprehension, definitions, formulas, or short answers) before moving down the page. NEVER skip or omit answers written near the top margin!
 - Identify EVERY question the student answered on this page.
 - Create a SEPARATE entry in the "answers" array for EACH question (ans_001, ans_002, ans_003, ans_004, ...).
 - NEVER lump multiple different questions together into a single answer!
+- Distinguish between main question numbers and subparts: a digit followed by a bracket or dot (e.g. 7), 8), 9), 10>) indicates a new question; NEVER mistake a question number as a sub-part letter (such as mistaking handwritten 8) as d)). Question numbers 1-20 are separate questions.
 - NEVER stop generating after the first answer! Keep scanning until the very bottom margin of the page.
 
 ==================================================
@@ -199,6 +207,7 @@ YOU MUST:
 Content numbering inside an answer (such as 1), 2), 3), (i), (ii), (iii), or bullet points describing zones, reasons, types, steps) is PART OF THE ANSWER TEXT, NOT a new question!
 Group all lines, points, and calculations under the active question.
 
+
 ==================================================
 10. CONTINUATION RULE
 ==================================================
@@ -206,9 +215,9 @@ If no new question/subquestion marker appears, continue using current answer con
 Text continuing across page breaks without a new label belongs to the active answer.
 
 ==================================================
-11. HANDWRITTEN CORRECTIONS
+11. HANDWRITTEN CORRECTIONS & CROSSED-OUT TEXT
 ==================================================
-If student crosses out text, use visible final writing. Never invent corrected text.
+Completely omit crossed-out, struck-through, or scribbled-out lines. Transcribe ONLY the student's visible final intended writing. Never transcribe struck-through words, and never invent corrected text.
 
 ==================================================
 12. MATHEMATICAL & SCIENTIFIC ANSWERS
@@ -219,7 +228,8 @@ Preserve scientific notation: chemical formulas (H₂O, CO₂, H₂SO₄), units
 ==================================================
 13. TABLE ANSWERS & DIAGRAMS
 ==================================================
-Preserve table rows, columns, and cells (format as Markdown tables). Describe sketches/drawings as [diagram: description].
+- Preserve table rows, columns, and cells (format as Markdown tables).
+- For student drawings, geometric figures, ray diagrams, circuits, and sketches: YOU MUST describe the visual drawing in detail inside `[Diagram: ...]`, including components, connections, arrow directions, axes, ray paths, and labels (e.g. `[Diagram: Convex lens with incident rays parallel to principal axis converging at focal point F; inverted real image labelled A'B']`). This allows the AI grading engine to award partial or full marks for required diagram features.
 
 ==================================================
 14. QUESTION MAPPING PRIORITY
@@ -298,8 +308,13 @@ EVAL_SYSTEM = (
     "You are a strict, fair examiner's assistant. Evaluate the student's answer ONLY against the official "
     "answer key and marking criteria provided. Do not reward information that is not in the student's answer. "
     "Do not use outside knowledge to award marks the key does not support. Do not penalise spelling or "
-    "grammar unless the criteria say language accuracy matters. Never award more than the maximum marks. "
-    "Text marked [UNCLEAR] could not be read; do not assume what it said. Reply with a single JSON object and nothing else."
+    "grammar unless the criteria say language accuracy matters. Never award more than the maximum marks.\n"
+    "GRADING PRINCIPLES:\n"
+    "1. Method and Step Credit: In mathematics and science, award proportional partial marks for correct formulas, "
+    "principles, and intermediate steps even if the student makes a minor arithmetic slip in the final calculation.\n"
+    "2. Diagrams: When evaluating answers containing `[Diagram: ...]`, award criteria marks based on whether the required "
+    "components, ray paths, connections, or labels are documented in the diagram description.\n"
+    "3. Text marked [UNCLEAR] could not be read; do not assume what it said. Reply with a single JSON object and nothing else."
 )
 
 
@@ -326,7 +341,7 @@ KEYWORDS
 STUDENT ANSWER (verbatim transcription)
 {student_answer}
 
-Award marks between 0 and {max_marks:g} (decimals allowed in 0.5 steps). Return JSON in exactly this shape:
+Award marks between 0 and {max_marks:g} (decimals allowed in 0.5 steps). Award partial step marks for correct method/formula even if the final calculation has an arithmetic slip. Return JSON in exactly this shape:
 {{"marks_awarded": 0, "max_marks": {max_marks:g}, "decision": "CORRECT | PARTIALLY_CORRECT | INCORRECT", "matched_points": ["..."], "missing_points": ["..."], "feedback": "one or two sentences for the teacher", "confidence": 0.0}}"""
 
 

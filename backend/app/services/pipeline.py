@@ -106,10 +106,14 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
         out = wd / "ocr" / f"page-{p['page_number']:03d}.json"
         prompt_kwargs = {}
         if kind == "answer-sheet":
-            canonical_qs = [
-                f"Q{q.display_number}: {q.question_text[:80]}"
-                for q in db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all()
-            ]
+            canonical_qs = []
+            for q in db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all():
+                q_text = (q.question_text or "").strip()
+                clean_lines = [line.strip() for line in q_text.splitlines() if line.strip()]
+                compact_text = " | ".join(clean_lines[:6])
+                if len(compact_text) > 300:
+                    compact_text = compact_text[:297] + "..."
+                canonical_qs.append(f"Q{q.display_number}: {compact_text}")
             if canonical_qs:
                 prompt_kwargs["canonical_questions"] = canonical_qs
         prompt_str = prompt_fn(p["page_number"], p["ocr_width"], p["ocr_height"], **prompt_kwargs)
@@ -289,6 +293,7 @@ def _build_questions(db: Session, doc, exam: Exam, wd: Path, results) -> None:
 
 
 def _build_answer_key(db: Session, doc, exam: Exam, wd: Path, results) -> None:
+    db.query(AnswerKey).filter(AnswerKey.exam_id == exam.id, AnswerKey.document_id != doc.id).update({AnswerKey.is_active: False})
     db.query(AnswerKey).filter_by(document_id=doc.id).delete()
     pages_by_num = {p["page_number"]: p for p, _ in results}
     canonical_qs = db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all()

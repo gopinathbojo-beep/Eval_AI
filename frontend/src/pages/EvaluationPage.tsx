@@ -73,6 +73,19 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
   };
   const selected = d.answers.find((a) => a.id === sel);
 
+  const unconfirmed = d.answers.filter((a) => a.status === "MAPPED" && a.exam_question_id && !a.mapping_confirmed);
+  const confirmAll = async () => {
+    setBusy("all:c"); setErr(null);
+    try {
+      await api(`/evaluations/${d.evaluation.id}/confirm-all-mappings`, { method: "POST" });
+      await reload();
+    } catch (e) {
+      setErr(e);
+    } finally {
+      setBusy(null);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-6">
@@ -83,8 +96,15 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
         <Stat label="Missing" value={d.summary.missing} tone={d.summary.missing ? "mark" : undefined} />
         <Stat label="OCR errors" value={ocrErrors.length} tone={ocrErrors.length ? "mark" : undefined} />
       </div>
-      <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Filter answers">
-        {FILTERS.map((f) => <button key={f} role="tab" aria-selected={filter === f} onClick={() => setFilter(f)} className={`rounded-full px-3 py-1 text-sm ${filter === f ? "bg-pen text-surface" : "bg-sunken hover:bg-line"}`}>{f}</button>)}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Filter answers">
+          {FILTERS.map((f) => <button key={f} role="tab" aria-selected={filter === f} onClick={() => setFilter(f)} className={`rounded-full px-3 py-1 text-sm ${filter === f ? "bg-pen text-surface" : "bg-sunken hover:bg-line"}`}>{f}</button>)}
+        </div>
+        {!locked && unconfirmed.length > 0 && (
+          <Button small variant="primary" busy={busy === "all:c"} onClick={confirmAll}>
+            Approve All Mappings ({unconfirmed.length})
+          </Button>
+        )}
       </div>
       <ErrorPanel error={err} />
       <div className="grid gap-4 lg:grid-cols-2">

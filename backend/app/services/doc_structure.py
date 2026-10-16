@@ -13,7 +13,13 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from typing import Any
-from .numbering import normalize_question_number, is_sub_question, parent_number, extract_subquestion_token
+from .numbering import (
+    normalize_question_number,
+    is_sub_question,
+    parent_number,
+    extract_subquestion_token,
+    extract_label_from_text_prefix,
+)
 
 # Common patterns for section headings and titles
 _HEADING_PATTERNS = [
@@ -104,6 +110,18 @@ def is_instruction(text: str) -> bool:
     if any(p.search(s) for p in _INSTRUCTION_PATTERNS):
         return True
     if any(p.search(s) for p in _MARKS_RULE_PATTERNS) and "?" not in s and len(s) < 120:
+        return True
+    return False
+
+
+def is_document_header(text: str) -> bool:
+    """Detect if text block is exam metadata/title/header (e.g. 'CBSE CHEMISTRY QUESTION PAPER\\nTime: 1 hr\\nMax Marks: 30')."""
+    s = text.strip()
+    if not s or "?" in s:
+        return False
+    has_title_kw = bool(re.search(r"\b(?:QUESTION\s+PAPER|EXAMINATION|TEST\s+PAPER|PERIODIC\s+TEST|ANNUAL\s+EXAM|MID[\s\-]+TERM)\b", s, re.IGNORECASE))
+    has_meta_kw = bool(re.search(r"\b(?:Time\s+Allowed|Maximum\s+Marks|Max\.?\s+Marks|Total\s+Marks|Duration\s*:)\b", s, re.IGNORECASE))
+    if (has_title_kw or has_meta_kw) and not re.search(r"\b(?:Calculate|Explain|Differentiate|Define|Prove|Find|Solve|Draw|Write\s+balanced)\b", s, re.IGNORECASE):
         return True
     return False
 
@@ -251,32 +269,8 @@ def _is_option_or_blank_item(raw_num: str | None, text: str) -> bool:
     return False
 
 
-def _extract_label_from_text_prefix(text: str) -> tuple[str | None, str]:
-    """Check if question text begins with an explicit question label like '01.', '1.', 'Q1:', '01/02', etc."""
-    s = text.strip()
-    # Pattern 1: Q1, Q.1, Question 1, Qn 1, etc.
-    m_q = re.match(r"^\s*(?:(?:Q(?:uestion)?|Qn|Ques)\.?\s*([0-9]+[a-zA-Z\(\)]*))[\.\:\)\s\-\/]+(.*)", s, re.IGNORECASE | re.DOTALL)
-    if m_q:
-        lbl = m_q.group(1).strip()
-        rest = m_q.group(2).strip()
-        return lbl, (rest if rest else s)
-
-    # Pattern 2: Parenthesized number e.g. (1), (2), (1)(a)
-    m_paren = re.match(r"^\s*\(\s*([0-9]{1,3}(?:[a-zA-Z]|\([a-zA-Z0-9]+\))?)\s*\)[\.\:\s\-\/]*(.*)", s, re.DOTALL)
-    if m_paren:
-        lbl = m_paren.group(1).strip()
-        rest = m_paren.group(2).strip()
-        return lbl, (rest if rest else s)
-
-    # Pattern 3: Number followed by separator: e.g. '01.', '1)', '1 -', '01/02', '1.a', '3(a)'
-    m_num = re.match(r"^\s*([0-9]{1,3}(?:[\.\-\/][0-9]{1,3}|\([a-zA-Z0-9]+\)|[a-zA-Z])?)[\.\:\)\s\-\/]+(.*)", s, re.DOTALL)
-    if m_num:
-        lbl = m_num.group(1).strip()
-        rest = m_num.group(2).strip()
-        if len(lbl) <= 6 and not (len(lbl) == 4 and lbl.startswith("20")):
-            return lbl, (rest if rest else s)
-
-    return None, s
+# Centralized helper imported from .numbering
+_extract_label_from_text_prefix = extract_label_from_text_prefix
 
 
 def _is_pure_topic_title(raw_label: str | None, text: str) -> bool:
@@ -332,7 +326,14 @@ def _consolidate_subquestions(questions: list[StructuredQuestion]) -> list[Struc
             st = sq.question_text.strip()
             sub_tok = extract_subquestion_token(sq.raw_question_number or sq.display_number or "")
             if sub_tok and not st.startswith(f"({sub_tok})"):
-                st = f"({sub_tok}) {st}"
+                if "\n" in st:
+                    top_line, rest_lines = st.split("\n", 1)
+                    if top_line.strip().endswith(":") and not rest_lines.strip().startswith(f"({sub_tok})"):
+                        st = f"{top_line.strip()}\n({sub_tok}) {rest_lines.strip()}"
+                    else:
+                        st = f"({sub_tok}) {st}"
+                else:
+                    st = f"({sub_tok}) {st}"
             merged_texts.append(st)
         combined_text = "\n".join(merged_texts)
 
@@ -380,27 +381,36 @@ def split_swallowed_qp_blocks(
     raw_label: str | None,
     text: str,
 ) -> list[tuple[str | None, str]]:
-    """Split a block if it contains multiple embedded questions (e.g. Q9 and Q10 in one section block)."""
-    pat = re.compile(r"(?:^|\n+)\s*(?:Q(?:uestion)?\.?\s*([0-9]{1,2}))[\.\:\s\-]+", re.I)
+    """Split a block if it contains multiple embedded questions or a header/section combined with a question."""
+    pat = re.compile(r"(?:^|\n+)\s*(?:Q(?:uestion)?\.?\s*([0-9]{1,2}))[\.\:\s\-\,]+", re.I)
     boundaries = []
     for m in pat.finditer(text):
         boundaries.append((m.start(), f"Q{m.group(1)}", m.end()))
     if not boundaries:
         return [(raw_label, text)]
-    if len(boundaries) == 1 and not (raw_label and is_heading_or_title(raw_label)):
+
+    first_start = boundaries[0][0]
+    intro = text[:first_start].strip()
+    is_sec_lbl = bool(raw_label and is_heading_or_title(raw_label))
+
+    # If raw_label is None/empty and block starts with an explicit question label without preamble, return that question label!
+    if len(boundaries) == 1 and first_start <= 5 and not intro:
+        return [(boundaries[0][1], text[boundaries[0][2]:].strip())]
+
+    # If only 1 boundary and it's near the start with no heading/preamble, no split needed
+    if len(boundaries) == 1 and not is_sec_lbl and first_start <= 10:
         return [(raw_label, text)]
 
     res: list[tuple[str | None, str]] = []
-    first_start = boundaries[0][0]
-    intro = text[:first_start].strip()
-    if intro or (raw_label and is_heading_or_title(raw_label)):
-        res.append((raw_label if (raw_label and is_heading_or_title(raw_label)) else None, intro))
+    if intro or is_sec_lbl:
+        res.append((raw_label if is_sec_lbl else None, intro))
     for i in range(len(boundaries)):
         b_start, b_lbl, b_end = boundaries[i]
         next_start = boundaries[i + 1][0] if i + 1 < len(boundaries) else len(text)
         chunk = text[b_end:next_start].strip()
         res.append((b_lbl, chunk))
     return res
+
 
 
 def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> DocumentStructure:
@@ -439,6 +449,23 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
                 expanded_items.append((s_lbl, s_txt, s_marks, q))
 
         for raw_label, text, marks, q in expanded_items:
+            # Check if block is document header / metadata
+            if (raw_label is None or raw_label.lower() in ("null", "none", "?", "unknown", "")) and is_document_header(text):
+                header_max = extract_exam_total_marks(text)
+                if header_max and not doc_struct.exam_max_marks:
+                    doc_struct.exam_max_marks = header_max
+                doc_struct.instructions.append(text)
+                m_sec_in_hdr = re.search(r"(SECTION\s+[A-Z0-9IVX]+(?:\s*[:\-]\s*[^\n]+)?)", text, re.IGNORECASE)
+                if m_sec_in_hdr:
+                    sec_hdr = m_sec_in_hdr.group(1).strip()
+                    if sec_hdr not in doc_struct.sections:
+                        doc_struct.sections.append(sec_hdr)
+                    current_section = sec_hdr
+                    rule = extract_section_marks_rule(text[m_sec_in_hdr.start():])
+                    if rule is not None:
+                        section_marks_rule = rule
+                continue
+
             # If raw_label is missing or empty, attempt to extract label from start of question text
             if raw_label is None or raw_label.lower() in ("null", "none", "?", "unknown", ""):
                 extracted_lbl, rest_text = _extract_label_from_text_prefix(text)
@@ -615,6 +642,55 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
                     if sub_tok and doc_struct.questions:
                         last_q = doc_struct.questions[-1]
                         parent = parent_number(last_q.normalized_number or last_q.display_number or "1")
+
+                        # Check if parent already has seen this sub_tok or sub_tok sequence reset
+                        existing_subtokens = set()
+                        for sq in doc_struct.questions:
+                            if parent_number(sq.normalized_number or sq.display_number or "") == parent:
+                                st = extract_subquestion_token(sq.raw_question_number or sq.normalized_number or "")
+                                if st:
+                                    existing_subtokens.add(st.lower())
+
+                        parent_has_subtok = (sub_tok.lower() in existing_subtokens) or bool(
+                            re.search(rf"(?:^|\n)\s*\({re.escape(sub_tok)}\)", last_q.question_text, re.IGNORECASE)
+                        )
+                        last_sub = extract_subquestion_token(last_q.raw_question_number or last_q.normalized_number or "")
+                        sub_decreased = bool(last_sub and sub_tok.lower() <= last_sub.lower())
+
+                        if parent_has_subtok or sub_decreased:
+                            detected_num = None
+                            detected_title = None
+                            if page_text:
+                                prev_snippet = (last_q.question_text or "")[-30:].strip()
+                                curr_snippet = text[:30].strip()
+                                p_idx = page_text.find(prev_snippet) if prev_snippet else -1
+                                c_idx = page_text.find(curr_snippet) if curr_snippet else -1
+                                start_search = (p_idx + len(prev_snippet)) if p_idx != -1 else 0
+                                if c_idx != -1 and c_idx >= start_search:
+                                    intermediate = page_text[start_search:c_idx]
+                                    m_q = re.search(r"(?:Q(?:uestion)?\.?\s*([0-9]{1,3})|[0-9]{1,3}\.)\s*[:\-.]?\s*([^\n]*)", intermediate, re.IGNORECASE)
+                                    if m_q:
+                                        detected_num = m_q.group(1).strip()
+                                        detected_title = m_q.group(2).strip()
+
+                                if not detected_num:
+                                    curr_parent_int = int(parent) if parent.isdigit() else 0
+                                    for m_q in re.finditer(r"(?:^|\n)\s*(?:Q(?:uestion)?\.?\s*([0-9]{1,3})|([0-9]{1,3})\.)\s*[:\-.]?\s*([^\n]*)", page_text, re.IGNORECASE):
+                                        q_cand = m_q.group(1) or m_q.group(2)
+                                        if q_cand and q_cand.isdigit() and int(q_cand) > curr_parent_int:
+                                            detected_num = q_cand.strip()
+                                            detected_title = m_q.group(3).strip()
+                                            break
+
+                            if detected_num:
+                                parent = detected_num
+                            elif parent.isdigit():
+                                parent = str(int(parent) + 1)
+
+                            if detected_title:
+                                full_text = f"{detected_title}\n{full_text}"
+                            raw_label = f"Q{parent}({sub_tok})"
+
                         norm = f"{parent}({sub_tok})"
                         display_num = norm
                     else:

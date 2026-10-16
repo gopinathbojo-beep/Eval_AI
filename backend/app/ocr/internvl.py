@@ -56,18 +56,19 @@ def check_model() -> dict:
     return {"available": True, "model": s.internvl_model, "url": s.internvl_api_url}
 
 
-def _call_once(system: str, user: str, image_path: Path | None) -> str:
+def _call_once(system: str, user: str, image_path: Path | None, format: str | None = "json") -> str:
     s = get_settings()
     msg: dict = {"role": "user", "content": user}
     if image_path is not None:
         msg["images"] = [base64.b64encode(Path(image_path).read_bytes()).decode()]
-    payload = {
+    payload: dict = {
         "model": s.internvl_model,
         "stream": False,
-        "format": "json",
         "options": {"temperature": 0, "repeat_penalty": 1.15, "num_ctx": s.internvl_num_ctx, "num_predict": s.internvl_num_predict},
         "messages": [{"role": "system", "content": system}, msg],
     }
+    if format:
+        payload["format"] = format
     try:
         r = httpx.post(f"{s.internvl_api_url}/api/chat", json=payload, timeout=s.internvl_timeout)
     except (httpx.ConnectError, httpx.ConnectTimeout) as e:
@@ -79,14 +80,112 @@ def _call_once(system: str, user: str, image_path: Path | None) -> str:
     return (body.get("message") or {}).get("content", "") or ""
 
 
+def enhance_contrast(image_path: Path) -> Path:
+    """Enhance image contrast using OpenCV CLAHE on the L channel for faint handwriting or low-contrast scans."""
+    try:
+        import cv2
+        img = cv2.imread(str(image_path))
+        if img is None:
+            return image_path
+        lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+        l, a, b = cv2.split(lab)
+        clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+        cl = clahe.apply(l)
+        enhanced_lab = cv2.merge((cl, a, b))
+        enhanced_bgr = cv2.cvtColor(enhanced_lab, cv2.COLOR_LAB2BGR)
+        enhanced_path = image_path.parent / f"{image_path.stem}_clahe{image_path.suffix}"
+        cv2.imwrite(str(enhanced_path), enhanced_bgr)
+        return enhanced_path
+    except Exception as e:
+        log.warning("Image contrast enhancement failed: %s", e)
+        return image_path
+
+
+def fallback_parse_plain_text(raw_text: str, schema: Type[T]) -> T | None:
+    """Attempt deterministic extraction from unstructured Markdown/plain text when structured JSON fails."""
+    import re
+    from .schemas import (
+        AnswerKeyItem,
+        AnswerKeyPageResult,
+        QuestionItem,
+        QuestionPageResult,
+        StudentAnswerItem,
+        StudentPageResult,
+    )
+
+    if not raw_text or not raw_text.strip():
+        return None
+
+    # Matches Question 1, Q1, 1), 1>, 1., a), a>
+    delim_pat = re.compile(
+        r"(?:^|\n+)[#*\s]*(?:(?:Q(?:uestion)?\.?\s*([0-9]{1,2}[a-zA-Z]?|[a-zA-Z]))|([0-9]{1,2}\s*[)>:\.]|[0-9]{1,2},|[a-zA-Z]\s*[)>:\.]|[a-zA-Z],))",
+        re.IGNORECASE,
+    )
+    matches = list(delim_pat.finditer(raw_text))
+    if not matches:
+        return None
+
+    chunks: list[tuple[str, str]] = []
+    for i, m in enumerate(matches):
+        lbl = m.group(1) or m.group(2) or ""
+        lbl = lbl.strip().rstrip(")>:., ")
+        start = m.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(raw_text)
+        content = raw_text[start:end].strip()
+        if content:
+            chunks.append((lbl, content))
+
+    if not chunks:
+        return None
+
+    try:
+        if issubclass(schema, StudentPageResult):
+            items = [
+                StudentAnswerItem(
+                    question_number=f"Q{lbl}" if lbl.isdigit() else lbl,
+                    raw_question_label=lbl,
+                    answer_text=content,
+                    mapping_status="MAPPED" if lbl else "UNMAPPED",
+                    ocr_confidence=0.85,
+                )
+                for lbl, content in chunks
+            ]
+            return schema.model_validate({"answers": items})
+
+        elif issubclass(schema, QuestionPageResult):
+            items = [
+                QuestionItem(
+                    raw_question_number=f"Q{lbl}" if lbl.isdigit() else lbl,
+                    question_text=content,
+                    confidence=0.85,
+                )
+                for lbl, content in chunks
+            ]
+            return schema.model_validate({"questions": items})
+
+        elif issubclass(schema, AnswerKeyPageResult):
+            items = [
+                AnswerKeyItem(
+                    question_number=f"Q{lbl}" if lbl.isdigit() else lbl,
+                    answer_text=content,
+                )
+                for lbl, content in chunks
+            ]
+            return schema.model_validate({"answers": items})
+    except Exception as e:
+        log.warning("Fallback plain text parsing validation error: %s", e)
+        return None
+    return None
+
+
 def chat_structured(system: str, user: str, schema: Type[T], image_path: Path | None = None) -> AICall:
-    """Call the model, parse + validate against `schema`. Retries (max INTERNVL_MAX_RETRIES) on bad output/timeouts."""
+    """Call the model, parse + validate against `schema`. Retries with CLAHE and 2-stage fallback on parse failures."""
     s = get_settings()
     attempts = s.internvl_max_retries + 1
     raw, last_err, kind = "", "", "AI_ERROR"
     for i in range(1, attempts + 1):
         try:
-            raw = _call_once(system, user, image_path)
+            raw = _call_once(system, user, image_path, format="json")
         except AIUnavailable:
             raise
         except (httpx.TimeoutException, httpx.HTTPError) as e:
@@ -105,4 +204,28 @@ def chat_structured(system: str, user: str, schema: Type[T], image_path: Path | 
         except ValidationError as e:
             last_err, kind = f"Schema validation failed: {e.errors()[:3]}", "FAILED_PARSE"
         log.warning("InternVL attempt %d/%d invalid output: %s | raw[:300]=%r", i, attempts, last_err, raw[:300])
+
+    # 2-Stage Automatic Fallback: CLAHE contrast enhancement & plain text transcription
+    if image_path is not None:
+        try:
+            log.info("Initiating 2-stage fallback: CLAHE contrast enhancement for %s", image_path)
+            enhanced_img = enhance_contrast(Path(image_path))
+            try:
+                raw_clahe = _call_once(system, user, enhanced_img, format="json")
+                obj_clahe = extract_json_object(raw_clahe)
+                parsed_clahe = schema.model_validate(obj_clahe)
+                return AICall(parsed_clahe, raw_clahe, attempts + 1)
+            except Exception:
+                pass
+
+            # Fallback to plain text transcription if JSON grammar constraint causes failures
+            plain_user = user + "\n\nCRITICAL: Transcribe all visible questions and answers in Markdown with labels (e.g. Q1, Q2, 1>, 2>)."
+            raw_plain = _call_once(system, plain_user, enhanced_img, format=None)
+            fallback_parsed = fallback_parse_plain_text(raw_plain, schema)
+            if fallback_parsed is not None:
+                log.info("Successfully recovered page structure using plain text fallback.")
+                return AICall(fallback_parsed, raw_plain, attempts + 2)
+        except Exception as e:
+            log.warning("2-stage fallback failed: %s", e)
+
     raise AIResponseError(kind, last_err, raw)

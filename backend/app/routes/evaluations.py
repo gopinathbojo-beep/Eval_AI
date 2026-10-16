@@ -184,7 +184,25 @@ def patch_mapping(ev_id: str, answer_id: str, body: MappingPatch, bg: Background
     return {**answer_view(a), "evaluation_status": ev.status, "reevaluating": bool(rerun and ev.run_status == "RUNNING")}
 
 
+@router.post("/evaluations/{ev_id}/confirm-all-mappings")
+def confirm_all_mappings(ev_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    ev = get_evaluation(db, t, ev_id)
+    _not_finalized(ev)
+    answers = db.query(StudentAnswer).filter_by(evaluation_id=ev.id).all()
+    count = 0
+    for a in answers:
+        if a.status == "MAPPED" and a.exam_question_id and not a.mapping_confirmed:
+            a.mapping_confirmed = True
+            count += 1
+            audit(db, exam_id=ev.exam_id, teacher_id=t.id, entity_type="student_answer", entity_id=a.id,
+                  action="student_answer_mapping_confirmed_batch", reason="Batch confirmed by teacher")
+    db.commit()
+    refresh_evaluation_status(db, ev)
+    return {"confirmed": count, "evaluation_status": ev.status}
+
+
 class SplitAnswerIn(BaseModel):
+
     at_char: int = Field(gt=0)
     new_label: str
 
@@ -359,15 +377,24 @@ def patch_item(ev_id: str, item_id: str, body: ItemPatch, db: Session = Depends(
 
 @router.post("/evaluations/{ev_id}/items/approve-all")
 def approve_all(ev_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
-    """Approve every cleanly evaluated item. Missing / errored items are never auto-approved."""
+    """Approve every cleanly evaluated item and confirm genuine unattempted items."""
     ev = get_evaluation(db, t, ev_id)
     _not_finalized(ev)
+    all_answers = db.query(StudentAnswer).filter_by(evaluation_id=ev.id).all()
+    mapping_complete = not any(a.status in ("UNMAPPED", "NEEDS_REVIEW") for a in all_answers)
     n = 0
-    for it in db.query(EvaluationItem).filter_by(evaluation_id=ev.id, status="EVALUATED"):
-        it.status = "APPROVED"
-        n += 1
-        if it.student_answer_id and (a := db.get(StudentAnswer, it.student_answer_id)):
-            a.status = "APPROVED"
+    for it in db.query(EvaluationItem).filter_by(evaluation_id=ev.id):
+        if it.status == "EVALUATED":
+            it.status = "APPROVED"
+            n += 1
+            if it.student_answer_id and (a := db.get(StudentAnswer, it.student_answer_id)):
+                a.status = "APPROVED"
+        elif it.status == "MISSING" and (it.not_attempted_confirmed or mapping_complete):
+            it.not_attempted_confirmed = True
+            if it.final_marks is None:
+                it.final_marks = 0.0
+            it.status = "APPROVED"
+            n += 1
     audit(db, exam_id=ev.exam_id, teacher_id=t.id, entity_type="evaluation", entity_id=ev.id, action="items_bulk_approved", new=n)
     db.commit()
     refresh_evaluation_status(db, ev)
@@ -396,6 +423,14 @@ def rerun_item(ev_id: str, item_id: str, bg: BackgroundTasks, db: Session = Depe
 def finalize_evaluation(ev_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     ev = get_evaluation(db, t, ev_id)
     _not_finalized(ev)
+    all_answers = db.query(StudentAnswer).filter_by(evaluation_id=ev.id).all()
+    if not any(a.status in ("UNMAPPED", "NEEDS_REVIEW") for a in all_answers):
+        for it in db.query(EvaluationItem).filter_by(evaluation_id=ev.id, status="MISSING").all():
+            if not it.not_attempted_confirmed:
+                it.not_attempted_confirmed = True
+                if it.final_marks is None:
+                    it.final_marks = 0.0
+        db.commit()
     refresh_evaluation_status(db, ev)
     issues = finalize_issues(db, ev)
     if issues or ev.run_status == "RUNNING":

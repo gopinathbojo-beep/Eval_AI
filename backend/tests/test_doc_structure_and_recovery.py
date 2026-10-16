@@ -1,5 +1,7 @@
 """Tests for ADEM's Document Structure Parser, Segmentation, and OCR Recovery."""
 import pytest
+from dataclasses import dataclass
+from typing import Any
 from app.ocr.schemas import QuestionPageResult, QuestionItem, StudentPageResult, StudentAnswerItem, AnswerKeyPageResult, AnswerKeyItem
 from app.services.doc_structure import (
     parse_question_paper_structure,
@@ -348,6 +350,387 @@ def test_doc_structure_question_continuation_unnumbered():
     assert len(doc.questions) == 1
     assert doc.questions[0].display_number == "1"
     assert "constant speed and experiences zero net external force." in doc.questions[0].question_text
+
+
+def test_duplicate_and_distinct_constant_redirection_q6_to_q10():
+    """Verify an answer mislabelled as Q6 is redirected to Q10 when it contains Q10 constants and Q6 was already answered."""
+    exam_qs = [
+        DummyQuestion("id-6", "6", pos=6, text="Business equipment Rs. 1,25,000 depreciates at R1 = 8% first year and R2 = 10% second year."),
+        DummyQuestion("id-10", "10", pos=10, text="Principal P = Rs. 80,000 invested for t = 1.5 years at annual rate R = 10% compounded annually and half-yearly."),
+    ]
+    page_res = StudentPageResult(
+        page_number=2,
+        answers=[
+            StudentAnswerItem(
+                question_number="Q6",
+                answer_text="Given: principal = 1,25,000\nFirst year = 8%, Second year = 10%\nA = P(1 - R1/100)(1 - R2/100)",
+            ),
+        ]
+    )
+    page_res_p4 = StudentPageResult(
+        page_number=4,
+        answers=[
+            StudentAnswerItem(
+                question_number="Q6",
+                answer_text="Principal = Rs 80,000\nTime = 1.5 years\nRate of Interest = 10% per annum\nA1 = P(1 + R/100)",
+            ),
+        ]
+    )
+    p_info_2 = {"page_number": 2, "ocr_width": 1000, "ocr_height": 1400, "width": 1000, "height": 1400}
+    p_info_4 = {"page_number": 4, "ocr_width": 1000, "ocr_height": 1400, "width": 1000, "height": 1400}
+    res = segment_student_answers([(p_info_2, page_res), (p_info_4, page_res_p4)], canonical_questions=exam_qs)
+
+    assert len(res) == 2
+    assert res[0].normalized_number == "6"
+    assert "1,25,000" in res[0].answer_text
+    assert res[1].normalized_number == "10"
+    assert "80,000" in res[1].answer_text
+
+
+def test_misread_digit_confusion_q8_to_q9_with_continuation():
+    """Verify an answer mislabelled as Q8 is redirected to Q9 based on unique constants (15m, hemisphere), and continuation merges cleanly."""
+    exam_qs = [
+        DummyQuestion("id-8", "8", pos=8, text="Hollow pipe with outer radius R = 8 cm, inner radius r = 6 cm, height h = 14 cm, volume of metal."),
+        DummyQuestion("id-9", "9", pos=9, text="Composite storage silo cylindrical tank connected to hemispherical top, r = 7 m, h = 15 m, painting rate Rs. 45 per m2."),
+    ]
+    page_res = StudentPageResult(
+        page_number=3,
+        answers=[
+            StudentAnswerItem(
+                question_number="8>",
+                answer_text="Given: r = 7m, h = 15m, pi = 22/7\nCylinder volume + Hemisphere volume\nTotal Surface Area = 968m2",
+            ),
+            StudentAnswerItem(
+                question_number="9>",
+                answer_text="Rate = Rs 45 per m2\nCost = 968 x 45 = 44370",
+            ),
+        ]
+    )
+    p_info = {"page_number": 3, "ocr_width": 1000, "ocr_height": 1400, "width": 1000, "height": 1400}
+    res = segment_student_answers([(p_info, page_res)], canonical_questions=exam_qs)
+
+    assert len(res) == 1
+    assert res[0].normalized_number == "9"
+    assert "Hemisphere volume" in res[0].answer_text
+    assert "Rate = Rs 45 per m2" in res[0].answer_text
+
+
+def test_swallowed_subpart_split_q7_and_q8():
+    """Verify that when a sub-part question (Q7 with a, b, c) swallows the next question (Q8)
+
+    because the vision model misread handwritten '8)' as 'd)', the dynamic phrase extractor
+    and boundary splitter cleanly divide them into distinct Q7 and Q8 answers.
+    """
+    exam_qs = [
+        DummyQuestion(
+            "id-7", "7", pos=7,
+            text='Reading Comprehension:\n\nRead the short passage and answer the questions:\n\n"Trees are essential for maintaining life on Earth. They absorb harmful gases like carbon dioxide and release oxygen. Trees also prevent soil erosion."\n\n(a) Mention two environmental benefits of trees.\n(b) What is the consequence of cutting down trees indiscriminately?\n(c) Find a word that means "absolutely necessary".'
+        ),
+        DummyQuestion(
+            "id-8", "8", pos=8,
+            text="Literature:\n\nWhy did Jody want to bring the fawn home in This is Jody's Fawn? How did he persuade his father?"
+        ),
+    ]
+
+    swallowed_text = (
+        "7)\n"
+        "(a) Two environmental benefits of trees are:\n"
+        "1) They absorb carbon dioxide and release oxygen.\n"
+        "2) They prevent soil erosion.\n"
+        "(b) Cutting down trees indiscriminately causes environmental imbalance.\n"
+        "c) The word meaning 'absolutely necessary' is essential.\n\n"
+        "d) This is Jody's fawn\n"
+        "Jody wanted to bring the fawn home because his mother had been killed after providing her milk to save Jody's father, "
+        "Penny Baxter, from a snakebite. Jody felt that the young fawn would be helpless without its mother. "
+        "He persuaded his father by explaining that it was their responsibility to care for the fawn since they had taken away its mother."
+    )
+
+    page_res = StudentPageResult(
+        page_number=2,
+        answers=[
+            StudentAnswerItem(
+                question_number="7)",
+                raw_question_label="7)",
+                answer_text=swallowed_text,
+            ),
+        ]
+    )
+    p_info = {"page_number": 2, "ocr_width": 1000, "ocr_height": 1400, "width": 1000, "height": 1400}
+    res = segment_student_answers([(p_info, page_res)], canonical_questions=exam_qs)
+
+    assert len(res) == 2, f"Expected 2 answers, got {len(res)}"
+    assert res[0].normalized_number == "7"
+    assert "Two environmental benefits of trees" in res[0].answer_text
+    assert "essential" in res[0].answer_text
+    assert "Jody" not in res[0].answer_text
+
+    assert res[1].normalized_number == "8"
+    assert "This is Jody's fawn" in res[1].answer_text
+    assert "Penny Baxter" in res[1].answer_text
+
+
+def test_doc_structure_subquestions_restart_creates_q10():
+    """Verify that when subquestions restart with (a) after (c), they form Question 10 instead of being merged into Q9."""
+    p1_res = QuestionPageResult(
+        page_number=1,
+        questions=[
+            QuestionItem(
+                raw_question_number="Q9",
+                question_text="Corrosion & Chemical Properties:\n(a) What is rusting of iron? Write the chemical equation for the rusting process. (2 marks)",
+                marks=5.0,
+            ),
+        ]
+    )
+    p2_res = QuestionPageResult(
+        page_number=2,
+        questions=[
+            QuestionItem(
+                raw_question_number="(b)",
+                question_text="Explain why copper vessels develop a greenish coating when exposed to moist air over time.",
+                marks=2.0,
+            ),
+            QuestionItem(
+                raw_question_number="(c)",
+                question_text="List two methods used to prevent the corrosion of metals.",
+                marks=1.0,
+            ),
+            QuestionItem(
+                raw_question_number="(a)",
+                question_text="Why are plastics widely used in daily life despite their harmful impact on the environment?",
+                marks=2.0,
+            ),
+            QuestionItem(
+                raw_question_number="(b)",
+                question_text="Differentiate between biodegradable and non-biodegradable substances with suitable examples.",
+                marks=2.0,
+            ),
+            QuestionItem(
+                raw_question_number="(c)",
+                question_text="State the '5R Principle' recommended for reducing the environmental hazards caused by plastic waste.",
+                marks=1.0,
+            ),
+        ]
+    )
+    p1_info = {"page_number": 1, "page_text": "SECTION C: LONG ANSWER (2 questions x 5 marks = 10 Marks)\nQ9. Corrosion & Chemical Properties:\n(a) What is rusting of iron?"}
+    p2_info = {"page_number": 2, "page_text": "(b) Explain why copper vessels...\n(c) List two methods...\nQ10. Polymerization & Environmental Impact:\n(a) Why are plastics widely used...\n(b) Differentiate between...\n(c) State the '5R Principle'..."}
+
+    doc = parse_question_paper_structure([(p1_info, p1_res), (p2_info, p2_res)])
+
+    assert len(doc.questions) == 2, f"Expected 2 questions (Q9, Q10), got {len(doc.questions)}"
+    q9 = doc.questions[0]
+    q10 = doc.questions[1]
+
+    assert q9.normalized_number == "9"
+    assert "What is rusting of iron" in q9.question_text
+    assert "Explain why copper vessels" in q9.question_text
+    assert "List two methods" in q9.question_text
+    assert "plastics" not in q9.question_text
+
+    assert q10.normalized_number == "10"
+    assert "Polymerization & Environmental Impact" in q10.question_text
+    assert "Why are plastics widely used" in q10.question_text
+    assert "biodegradable" in q10.question_text
+    assert "5R Principle" in q10.question_text
+
+
+def test_answer_key_numbered_step_not_duplicate_q1():
+    """Verify that a calculation step labeled '1.' on page 4 does not produce a duplicate Question 1 answer key."""
+    exam_qs = [
+        DummyQuestion("q1", "1", pos=1, text="Force & Pressure: Define atmospheric pressure"),
+        DummyQuestion("q9", "9", pos=9, text="Wave Motion: Calculate depth and frequency"),
+        DummyQuestion("q10", "10", pos=10, text="Human Eye: Describe eye anatomy"),
+    ]
+    p1_res = AnswerKeyPageResult(
+        page_number=1,
+        answers=[
+            AnswerKeyItem(
+                question_number="Q1",
+                answer_text="Atmospheric Pressure: The force per unit area exerted on a surface by the weight of air.",
+                marks=2.0,
+                criteria=["1 Mark: definition", "1 Mark: SI unit"],
+            )
+        ]
+    )
+    p3_res = AnswerKeyPageResult(
+        page_number=3,
+        answers=[
+            AnswerKeyItem(
+                question_number="Q9",
+                answer_text="Sonar Seabed Depth Computation: d = 1800 meters.\nOscillation Parameters:",
+                marks=2.0,
+            )
+        ]
+    )
+    p4_res = AnswerKeyPageResult(
+        page_number=4,
+        answers=[
+            AnswerKeyItem(
+                question_number="Q10",
+                answer_text="Eye Components: Cornea & Lens, Iris & Pupil, Retina & Optic Nerve.",
+                marks=5.0,
+                criteria=["3 Marks: eye components", "2 Marks: vision defects"],
+            ),
+            AnswerKeyItem(
+                question_number="1",
+                answer_text="Frequency: f = 1200 / 15 = 80 Hz.\nTime Period: T = 1 / 80 = 0.0125 s.",
+                marks=3.0,
+                criteria=["2 Marks: echo depth", "1.5 Marks: frequency", "1.5 Marks: time period"],
+            ),
+        ]
+    )
+
+    page_results = [
+        ({"page_number": 1, "page_text": "Q1. Atmospheric Pressure"}, p1_res),
+        ({"page_number": 3, "page_text": "Q9. Wave Motion\nAnswer:\nSonar Seabed Depth Computation"}, p3_res),
+        ({"page_number": 4, "page_text": "1. Frequency: 80 Hz\n2. Time Period: 0.0125 s\nQ10. Eye Components"}, p4_res),
+    ]
+
+    keys = segment_answer_keys(page_results, canonical_questions=exam_qs)
+
+    norm_nums = [k.normalized_number for k in keys]
+    assert norm_nums.count("1") == 1, f"Expected exactly one Q1 answer key, got: {norm_nums}"
+    assert "9" in norm_nums
+    assert "10" in norm_nums
+
+    q9_key = next(k for k in keys if k.normalized_number == "9")
+    assert "Frequency" in q9_key.answer_text
+    assert q9_key.marks == 5.0
+
+
+def test_physics_student_answers_with_cross_page_continuations():
+    """Verify 4-page Physics student answer sheet with 'Q1, topic :' format and cross-page continuations."""
+    from app.services.student_segmentation import segment_student_answers
+
+    @dataclass
+    class DummyOCRBlock:
+        question_number: str | None
+        answer_text: str
+        bbox: Any = None
+        ocr_confidence: float = 0.95
+
+    @dataclass
+    class DummyPage:
+        answers: list[DummyOCRBlock]
+
+    @dataclass
+    class DummyCanonicalQ:
+        id: str
+        display_number: str
+        normalized_number: str
+        question_text: str
+
+    canonical = [
+        DummyCanonicalQ(f"q{i}", f"Q{i}", str(i), f"Question {i} topic") for i in range(1, 11)
+    ]
+
+    p1 = DummyPage([
+        DummyOCRBlock("Q1, force & pressure :", "a) define atmospheric pressure... SI unit: Pascal(Pa)\nb, Explain why sharp cutting edge tools exert higher pressure"),
+        DummyOCRBlock("Q2, Sound wave Terminology :", "a, Amplitude and its relationship... b, Frequency and its SI unit..."),
+    ])
+    p2 = DummyPage([
+        DummyOCRBlock("Q3, Friction Types :", "Increasing order: Rolling friction < sliding < static\nInterlocking: ...\nLubricants: ..."),
+        DummyOCRBlock("Q4, Chemical Effects of Electric current.", "Electroplating: The process... Electrodes: Conducting plates..."),
+    ])
+    p3 = DummyPage([
+        DummyOCRBlock(None, "For coating iron with copper:\nElectrolyte : copper sulphate (CuSO4) solution.\ncathode : iron object\nAnode : copper plate"),
+        DummyOCRBlock("Q5, optics & Reflection :", "a, state the two fundamental laws of reflection...\nb, If a ray of light strikes a plane mirror..."),
+        DummyOCRBlock("Q6, Electrostatics & Natural phenomena :", "a, Differentiate btw a conductor and an insulator based on free electron mobility."),
+    ])
+    p4 = DummyPage([
+        DummyOCRBlock(None, "conductor | insulator\nfree electrons can move easily | Electrons cannot move freely.\nExample: copper | Example: Rubber\nb, Explain the working mechanism of an electroscope..."),
+        DummyOCRBlock("Q7, Acoustics & noise pollution :", "a, difference btw audible & infrasonic... 20 Hz to 20,000 Hz"),
+    ])
+
+    physics_pages = [
+        ({"page_number": 1}, p1),
+        ({"page_number": 2}, p2),
+        ({"page_number": 3}, p3),
+        ({"page_number": 4}, p4),
+    ]
+
+    answers = segment_student_answers(physics_pages, canonical)
+    norm_nums = [a.normalized_number for a in answers]
+    assert norm_nums == ["1", "2", "3", "4", "5", "6", "7"], f"Unexpected segmented numbers: {norm_nums}"
+
+    # Q4 continued across page 2 and page 3
+    q4 = next(a for a in answers if a.normalized_number == "4")
+    assert "copper sulphate" in q4.answer_text
+    assert "Electroplating" in q4.answer_text
+
+    # Q6 continued across page 3 and page 4
+    q6 = next(a for a in answers if a.normalized_number == "6")
+    assert "conductor | insulator" in q6.answer_text
+    assert "Differentiate" in q6.answer_text
+
+
+def test_maths_student_answers_with_skipped_questions():
+    """Verify 4-page Mathematics student answer sheet with angle-bracket format and non-consecutive questions."""
+    from app.services.student_segmentation import segment_student_answers
+
+    @dataclass
+    class DummyOCRBlock:
+        question_number: str | None
+        answer_text: str
+        bbox: Any = None
+        ocr_confidence: float = 0.95
+
+    @dataclass
+    class DummyPage:
+        answers: list[DummyOCRBlock]
+
+    @dataclass
+    class DummyCanonicalQ:
+        id: str
+        display_number: str
+        normalized_number: str
+        question_text: str
+
+    canonical = [
+        DummyCanonicalQ("q1", "Q1", "1", "Exponents & Powers ((2/3)^-2 * (3/4)^-3) / (8/9)^-2"),
+        DummyCanonicalQ("q2", "Q2", "2", "Algebraic Identities x + 1/x = 6"),
+        DummyCanonicalQ("q3", "Q3", "3", "Direct & Inverse Variations 12 workers, 20 days, 8 hours/day"),
+        DummyCanonicalQ("q4", "Q4", "4", "Factorisation 16x^4 - 81y^4"),
+        DummyCanonicalQ("q5", "Q5", "5", "Mensuration Trapezium a=12m, b=8m, h=4m, length=250m"),
+        DummyCanonicalQ("q6", "Q6", "6", "Comparing Quantities Principal Rs 1,25,000, Rate 8%, 10% depreciation"),
+        DummyCanonicalQ("q7", "Q7", "7", "Algebraic Expansion [(3x+4y)^2 - (3x-4y)^2] + (3x-4y)(3x+4y)"),
+        DummyCanonicalQ("q8", "Q8", "8", "Solid Geometry Hollow Cylinder R=8cm, r=6cm, h=14cm"),
+        DummyCanonicalQ("q9", "Q9", "9", "Multi-Shape Mensuration radius 7m, cylinder height 15m, cost Rs 45/m2"),
+        DummyCanonicalQ("q10", "Q10", "10", "Advanced Financial Mathematics Compound Interest Rs 80,000, 10% p.a., 1.5 years"),
+    ]
+
+    m_p1 = DummyPage([
+        DummyOCRBlock("1>", "[ (2/3)^-2 x (3/4)^-3 ] ÷ (8/9)^-2 = 1024/243"),
+        DummyOCRBlock("2>", "given: x + 1/x = 6 ... x^2 + 1/x^2 = 34"),
+    ])
+    m_p2 = DummyPage([
+        DummyOCRBlock("3>", "given: workers = 12, Days = 20... x = 20 days"),
+        DummyOCRBlock("4>", "given 16x^4 - 81y^4 = (2x - 3y)(2x + 3y)(4x^2 + 9y^2)"),
+        DummyOCRBlock("6>", "Given: principle = 1,25,000, first year = 8%, second year = 10%"),
+    ])
+    m_p3 = DummyPage([
+        DummyOCRBlock("7>", "given: (3x+4y)^2 - (3x-4y)^2 + (3x-4y)(3x+4y) = 9x^2 + 48xy - 16y^2"),
+        DummyOCRBlock("9>", "r = 7m, h = 15m\na> V = pi r^2 h + 2/3 pi r^3 = 3028.67 m^3\nb> Total Surface Area: 968 m^2\nc> Rate = Rs 45 per m2 -> Cost = 44370"),
+    ])
+    m_p4 = DummyPage([
+        DummyOCRBlock("10>", "Principal = Rs 80,000, Time = 1.5 years\na> A1 = 92,400, CI1 = 12,400"),
+    ])
+
+    maths_pages = [
+        ({"page_number": 1}, m_p1),
+        ({"page_number": 2}, m_p2),
+        ({"page_number": 3}, m_p3),
+        ({"page_number": 4}, m_p4),
+    ]
+
+    answers = segment_student_answers(maths_pages, canonical)
+    norm_nums = [a.normalized_number for a in answers]
+    assert norm_nums == ["1", "2", "3", "4", "6", "7", "9", "10"], f"Unexpected segmented numbers: {norm_nums}"
+
+    # Confirm Q9 includes all subparts a>, b>, c>
+    q9 = next(a for a in answers if a.normalized_number == "9")
+    assert "3028.67" in q9.answer_text
+    assert "968" in q9.answer_text
+    assert "44370" in q9.answer_text
 
 
 

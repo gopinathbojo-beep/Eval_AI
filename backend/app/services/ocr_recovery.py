@@ -40,12 +40,21 @@ _DIGIT_CONFUSIONS: dict[str, list[str]] = {
 }
 
 _STOP_WORDS = {
+    # English prepositions, pronouns, conjunctions, auxiliaries
     "the", "and", "for", "with", "that", "this", "from", "are", "was", "were",
     "will", "have", "has", "had", "they", "them", "what", "which", "when", "where",
     "how", "why", "who", "whom", "each", "other", "into", "onto", "then", "than",
+    "of", "in", "on", "at", "by", "to", "or", "is", "as", "an", "be", "if", "not",
+    "its", "it", "so", "up", "out", "no", "do", "does", "did", "can", "could", "would",
+    "should", "may", "might", "must", "per", "we", "he", "she", "you", "your", "my",
+    "our", "all", "any", "both", "such", "same", "also", "there", "here", "their",
+    "about", "after", "before", "between", "under", "over", "above", "below",
     # LaTeX formatting commands (should not be scored as question content keywords)
     "left", "right", "frac", "times", "div", "cdot", "text", "quad", "begin", "end",
-    "sqrt", "circ", "over", "display", "style", "prime", "approx",
+    "sqrt", "circ", "display", "style", "prime", "approx", "sum", "int", "prod",
+    # Generic question boilerplate words
+    "given", "find", "calculate", "using", "use", "formula", "value", "following",
+    "marks", "mark", "ans", "answer", "total", "solve", "evaluate", "express", "show",
 }
 
 _SUPERSCRIPT_TRANS = str.maketrans("⁰¹²³⁴⁵⁶⁷⁸⁹", "0123456789")
@@ -58,26 +67,37 @@ def _normalize_word(w: str) -> str:
     return w.rstrip("s")
 
 
+def _clean_math_text(text: str | None) -> str:
+    if not text:
+        return ""
+    cleaned = text.translate(_SUPERSCRIPT_TRANS)
+    # Remove commas inside numbers (e.g. 1,25,000 -> 125000, 80,000 -> 80000)
+    cleaned = re.sub(r"(?<=\d),(?=\d)", "", cleaned)
+    # Separate units from numbers: e.g. 15m -> 15 m, 7cm -> 7 cm, Rs.80000 -> Rs. 80000
+    cleaned = re.sub(r"(?<=\d)([a-zA-Z]+)", r" \1", cleaned)
+    cleaned = re.sub(r"([a-zA-Z]+)(?=\d)", r"\1 ", cleaned)
+    return cleaned
+
+
 def _tokenize(text: str | None) -> set[str]:
     if not text:
         return set()
-    cleaned_text = text.translate(_SUPERSCRIPT_TRANS)
-    words = re.findall(r"\b[0-9]*[a-zA-Z]+[0-9]*\b", cleaned_text.lower())
+    cleaned = _clean_math_text(text)
+    words = re.findall(r"\b[a-zA-Z]+[0-9]*\b", cleaned.lower())
     return {_normalize_word(w) for w in words if len(w) >= 2 and w not in _STOP_WORDS}
 
 
 def _extract_distinct_numbers(text: str | None) -> set[str]:
     if not text:
         return set()
-    cleaned_text = text.translate(_SUPERSCRIPT_TRANS)
-    # Distinct numeric constants with 2+ digits or specific values (handles 16x, 14cm, etc.)
-    raw_nums = re.findall(r"(?<![a-zA-Z])\d+(?:[\.,]\d+)?", cleaned_text)
-    cleaned = set()
+    cleaned = _clean_math_text(text)
+    raw_nums = re.findall(r"(?<![a-zA-Z0-9_])\d+(?:\.\d+)?", cleaned)
+    cleaned_nums = set()
     for n in raw_nums:
-        c = n.replace(",", "")
-        if len(c) >= 2 or (c.isdigit() and int(c) >= 4):
-            cleaned.add(c)
-    return cleaned
+        c = n.rstrip(".")
+        if len(c) >= 2 or (c.isdigit() and int(c) >= 4) or "." in c:
+            cleaned_nums.add(c)
+    return cleaned_nums
 
 
 def find_recovery_candidates(
@@ -94,19 +114,17 @@ def find_recovery_candidates(
     ans_nums = _extract_distinct_numbers(answer_text)
 
     q_by_norm = {q.normalized_number: q for q in questions if getattr(q, "normalized_number", None)}
-    q_by_pos = {getattr(q, "position", i + 1): q for i, q in enumerate(questions)}
 
-    # 1. Handwritten digit confusion recovery (e.g. 17 -> 1, 27 -> 2, 8 <-> 9)
-    # Only evaluate digit confusion if norm is not in this exam OR exact question has no content match
     exact_q = q_by_norm.get(norm)
-    exact_has_content = False
-    if exact_q:
-        exact_toks = _tokenize(getattr(exact_q, "question_text", None))
-        exact_nums = _extract_distinct_numbers(getattr(exact_q, "question_text", None))
-        if len(ans_tokens & exact_toks) >= 2 or (ans_nums & exact_nums):
-            exact_has_content = True
+    exact_toks = _tokenize(getattr(exact_q, "question_text", None)) if exact_q else set()
+    exact_nums = _extract_distinct_numbers(getattr(exact_q, "question_text", None)) if exact_q else set()
+    exact_shared_toks = ans_tokens & exact_toks
+    exact_shared_nums = ans_nums & exact_nums
 
-    if norm and norm in _DIGIT_CONFUSIONS and not exact_has_content:
+    generic_consts = {"100", "0", "1", "2", "3"}
+
+    # 1. Handwritten digit confusion recovery (e.g. 17 -> 1, 27 -> 2, 8 <-> 9, 6 <-> 10)
+    if norm and norm in _DIGIT_CONFUSIONS:
         alternatives = _DIGIT_CONFUSIONS[norm]
         for alt in alternatives:
             if alt in q_by_norm:
@@ -120,10 +138,16 @@ def find_recovery_candidates(
                 q_nums = _extract_distinct_numbers(getattr(target_q, "question_text", None))
                 shared_nums = ans_nums & q_nums
 
-                # If norm is an existing question in the exam, digit confusion MUST have supporting evidence
-                # (keyword overlap or shared numbers) to avoid hijacking valid answers into false duplicates
-                if norm in q_by_norm and not (len(common) >= 1 or shared_nums):
-                    continue
+                if exact_q:
+                    alt_dist_nums = (shared_nums - exact_nums) - generic_consts
+                    exact_dist_nums = (exact_shared_nums - q_nums) - generic_consts
+                    alt_dist_toks = common - exact_toks
+                    # If exact question has distinct constant matches and alt has none, skip alt
+                    if exact_dist_nums and not alt_dist_nums:
+                        continue
+                    # Alt must have positive evidence
+                    if not (alt_dist_nums or alt_dist_toks or len(common) >= 2 or (shared_nums and len(common) >= 1)):
+                        continue
 
                 score = 0.70
                 reasons = [f"OCR digit misread: '{norm}' is commonly misread for '{alt}'"]
@@ -139,8 +163,16 @@ def find_recovery_candidates(
                     reasons.append(f"content keyword overlap ({', '.join(list(common)[:3])})")
 
                 if shared_nums:
-                    score += 0.12
+                    score += 0.10
                     reasons.append(f"shared exam constants ({', '.join(list(shared_nums)[:3])})")
+
+                if exact_q:
+                    if alt_dist_nums:
+                        score += 0.10
+                        reasons.append(f"unique constants for Q{alt} ({', '.join(list(alt_dist_nums)[:3])})")
+                    if alt_dist_toks:
+                        score += 0.08
+                        reasons.append(f"unique keywords for Q{alt} ({', '.join(list(alt_dist_toks)[:3])})")
 
                 candidates.append(
                     RecoveryCandidate(
@@ -152,7 +184,7 @@ def find_recovery_candidates(
                 )
 
     # 2. Content similarity candidate if there is strong text overlap and answer text is substantial
-    if ans_tokens and len(ans_tokens) >= 3:
+    if ans_tokens and len(ans_tokens) >= 2:
         for q in questions:
             qid = q.id
             if any(c.question_id == qid for c in candidates):
@@ -185,3 +217,4 @@ def find_recovery_candidates(
     # Sort descending by score
     candidates.sort(key=lambda c: c.score, reverse=True)
     return candidates
+

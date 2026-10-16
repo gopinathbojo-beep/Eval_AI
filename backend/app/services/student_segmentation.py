@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from typing import Any
-from .numbering import normalize_question_number, is_sub_question, parent_number
+from .numbering import normalize_question_number, is_sub_question, parent_number, extract_label_from_text_prefix
 from .ocr_recovery import find_recovery_candidates, _tokenize, _extract_distinct_numbers
 
 
@@ -28,9 +28,9 @@ class SegmentedAnswer:
     position: int = 0
 
 
-# Sub-part markers: e.g. "(a)", "(b)", "a)", "b)", "(i)", "(ii)", "a>", "b>"
+# Sub-part markers: e.g. "(a)", "(b)", "a)", "b)", "(i)", "(ii)", "a>", "b>", "a,", "b,"
 _SUBPART_PATTERN = re.compile(
-    r"^\s*\(?\s*([a-zA-Z]|[ivxIVX]{1,4})\s*\)?\s*[\:\.\)\>\→]?\s*$",
+    r"^\s*\(?\s*([a-zA-Z]|[ivxIVX]{1,4})\s*\)?\s*[\:\.\)\>\→\,\-–—]?\s*$",
 )
 
 
@@ -116,14 +116,14 @@ def _split_swallowed_answers(
             elif curr_p_num == 27:
                 curr_p_num = 2
 
-    topic_patterns: list[tuple[str, str]] = [
-        (r"(?:\n\n+|\n)\s*(?:The\s+Tsunami|The\s+Earth'?s\s+wife|Igneous|Ignesious)", "5"),
-        (r"(?:\n\n+|\n)\s*(?:This\s+is\s+(?:Sody|Jody|Jodi)'?s?\s+(?:fan|fawn)|(?:Sody|Jody)\s+wanted\s+to\s+bring)", "8"),
-        (r"(?:\n\n+|\n)\s*(?:Writing\s+Skills|Notice\s+Writing|NOTICE\b)", "9"),
-        (r"(?:\n\n+|\n)\s*(?:Dear\s+Jim|Imagine\s+you\s+are\s+Connie)", "10"),
-    ]
+    topic_patterns: list[tuple[str, str]] = []
 
     if canonical_questions:
+        _GENERIC_STOP = {
+            "answer", "questions", "following", "marks", "mark", "short", "passage",
+            "read", "write", "given", "below", "section", "part", "convert", "directed",
+            "mention", "find", "identify", "explain", "describe", "sentence", "sentences"
+        }
         for q in canonical_questions:
             q_num = getattr(q, "display_number", None) or getattr(q, "normalized_number", None)
             if q_num:
@@ -132,25 +132,32 @@ def _split_swallowed_answers(
             if not q_num or not q_txt:
                 continue
 
-            for line in q_txt.splitlines()[:3]:
-                clean_l = re.sub(r"^[^:]*:\s*", "", line)
-                clean_l = re.sub(r"^\([a-z0-9]+\)\s*", "", clean_l)
-                phrases = re.findall(r"\b[A-Za-z]{4,}(?:\s+[A-Za-z]{3,}){1,3}\b", clean_l)
-                for ph in phrases[:2]:
-                    ph_lower = ph.lower()
-                    if (
-                        len(ph) >= 9
-                        and ph_lower not in (
-                            "short answer", "long answer", "following questions", "following chemical",
-                            "compound interest", "surface area", "total volume", "cross section",
-                            "algebraic expression", "quadratic expression", "depreciation formula"
-                        )
-                    ):
-                        topic_patterns.append((rf"(?:\n\n+|\n)\s*(?:[a-zA-Z0-9\(\)\.\-:\s]{{0,10}})?\b{re.escape(ph)}\b", str(q_num)))
+            # 1. Quoted terms/phrases in question
+            for m_q in re.finditer(r'["\'\u201c\u2018\u00ab\u201d\u2019\u00bb\ufffd]([^\n"\'\u201c\u2018\u201d\u2019\ufffd]{4,45})["\'\u201c\u2018\u201d\u2019\u00bb\ufffd]', q_txt):
+                clean_q = m_q.group(1).strip()
+                if len(clean_q) >= 4 and not any(w in clean_q.lower() for w in ["unclear", "blank"]):
+                    topic_patterns.append((rf"(?:\n\n+|\n)\s*(?:[a-zA-Z0-9\(\)\.\-:\>\→]{{0,8}}\s*)?\b{re.escape(clean_q)}\b", str(q_num)))
 
-    # 1. Embedded question labels: e.g. \n\nQ5, \n\nQ.5, \n\nQuestion 5, or bare \n\n3), \n\n4), \n\n6>, \n\n9>
+            # 2. Title-cased phrases / named entities (e.g. story titles, poem names)
+            title_matches = re.findall(r"\b[A-Z][a-zA-Z]*(?:'s)?(?:\s+(?:and|the|in|of|is|to|a|an|for|on|from)\s+|\s+)[A-Z][a-zA-Z]*(?:'s)?(?:\s+[A-Za-z][a-zA-Z]*(?:'s)?){0,4}\b", q_txt)
+            for tp in title_matches:
+                tp_clean = tp.strip()
+                if len(tp_clean) >= 6 and not any(w in tp_clean.lower() for w in ["reading comprehension", "writing skills", "creative writing", "question paper"]):
+                    topic_patterns.append((rf"(?:\n\n+|\n)\s*(?:[a-zA-Z0-9\(\)\.\-:\>\→]{{0,8}}\s*)?\b{re.escape(tp_clean)}\b", str(q_num)))
+
+            # 3. Leading content phrases from lines
+            for line in q_txt.splitlines()[:6]:
+                line_clean = re.sub(r"^(?:[A-Za-z\s]+:|\([a-z0-9]+\))\s*", "", line).strip()
+                words = [w for w in re.split(r"[^a-zA-Z0-9\']+", line_clean) if w]
+                for i in range(len(words) - 1):
+                    chunk = " ".join(words[i:i+3])
+                    words_in_chunk = [w.lower() for w in words[i:i+3]]
+                    if len(chunk) >= 10 and not any(sw in words_in_chunk for sw in _GENERIC_STOP):
+                        topic_patterns.append((rf"(?:\n\n+|\n)\s*(?:[a-zA-Z0-9\(\)\.\-:\>\→]{{0,8}}\s*)?\b{re.escape(chunk)}\b", str(q_num)))
+
+    # 1. Embedded question labels: e.g. \n\nQ5, \n\nQ.5, \n\nQuestion 5, \n\nQ2,, or bare \n\n3), \n\n4), \n\n6>, \n\n9>
     num_pat = re.compile(
-        r"(?:\n+)\s*(?:(?:Q(?:uestion)?\.?\s*([0-9]{1,2}))|([0-9]{1,2})\s*[\)\.\-:\>\→])(?:\s+|(?:[a-zA-Z]))",
+        r"(?:\n+)\s*(?:(?:Q(?:uestion)?\.?\s*([0-9]{1,2})\s*[\,\.\:\)\>\→\-\–\—]?)|([0-9]{1,2})\s*[\)\.\-:\>\→\,])(?:\s+|(?:[a-zA-Z]))",
         re.IGNORECASE
     )
     for m in num_pat.finditer(text):
@@ -226,9 +233,10 @@ def segment_student_answers(
     curr_page: int = 1
     curr_bbox: dict | None = None
     curr_confs: list[float] = []
+    curr_was_redirected: bool = False
 
     def flush_current():
-        nonlocal curr_raw_label, curr_norm_num, curr_text_parts, curr_page, curr_bbox, curr_confs
+        nonlocal curr_raw_label, curr_norm_num, curr_text_parts, curr_page, curr_bbox, curr_confs, curr_was_redirected
         if not curr_text_parts and not curr_raw_label:
             return
         full_text = "\n".join(curr_text_parts).strip()
@@ -253,6 +261,7 @@ def segment_student_answers(
         curr_text_parts = []
         curr_bbox = None
         curr_confs = []
+        curr_was_redirected = False
 
     for page_info, page_res in page_results:
         page_num = page_info["page_number"]
@@ -291,15 +300,30 @@ def segment_student_answers(
                     curr_confs.append(conf)
                 continue
 
+            # If raw_lbl is missing or empty, attempt to extract label from start of answer text (e.g. "1>", "Q1,")
+            if raw_lbl is None or raw_lbl.lower() in ("null", "none", "?", "unknown", "[unclear]", ""):
+                extracted_lbl, rest_text = extract_label_from_text_prefix(text)
+                if extracted_lbl:
+                    raw_lbl = extracted_lbl
+                    text = rest_text
+
             # Case: Label is null/empty or 'none'/'unclear'
             if raw_lbl is None or raw_lbl.lower() in ("null", "none", "?", "unknown", "[unclear]"):
                 # Top-of-page continuation across pages
-                if page_num > 1 and not curr_text_parts and grouped:
+                if page_num > curr_page and curr_text_parts:
+                    curr_text_parts.append(text)
+                    if bb and curr_page == page_num:
+                        curr_bbox = _merge_bboxes(curr_bbox, bb)
+                    if conf is not None:
+                        curr_confs.append(conf)
+                    continue
+                elif page_num > 1 and not curr_text_parts and grouped:
                     last = grouped[-1]
                     last.answer_text = f"{last.answer_text}\n{text}".strip()
                     last.raw_ocr_text = f"{last.raw_ocr_text}\n{text}".strip()
                     continue
                 else:
+
                     # Unnumbered independent block -> create unmapped record
                     flush_current()
                     curr_raw_label = None
@@ -314,22 +338,41 @@ def segment_student_answers(
                     continue
 
             # Check if content strongly matches a different canonical question (redirecting misread labels)
+            is_redirected = False
             norm = normalize_question_number(raw_lbl)
-            if norm and canonical_questions and text and len(_tokenize(text)) >= 3:
+            if norm and canonical_questions and text and len(_tokenize(text)) >= 2:
                 exact_match = [q for q in canonical_questions if q.normalized_number == parent_number(norm)]
-                q_tok = _tokenize(exact_match[0].question_text) if exact_match else set()
-                ans_tok = _tokenize(text)
-                exact_overlap = len(ans_tok & q_tok)
-                exact_nums = _extract_distinct_numbers(exact_match[0].question_text) if exact_match else set()
-                ans_nums = _extract_distinct_numbers(text)
-                exact_has_content = (exact_overlap > 0) or bool(exact_nums and ans_nums and (exact_nums & ans_nums))
                 rec = find_recovery_candidates(raw_lbl, text, canonical_questions)
-                if rec and rec[0].normalized_number != norm and not exact_has_content:
+                if rec and rec[0].normalized_number != norm:
                     top = rec[0]
-                    exact_ratio = exact_overlap / max(1, len(q_tok)) if q_tok else 0
-                    if (exact_overlap == 0 and top.score >= 0.65) or (top.score >= 0.75 and top.score > exact_ratio + 0.15):
+                    # Check if norm was already mapped in an earlier answer
+                    already_mapped = any(
+                        g.normalized_number and parent_number(g.normalized_number) == parent_number(norm)
+                        for g in grouped
+                    )
+                    top_q = next((q for q in canonical_questions if q.normalized_number == top.normalized_number), None)
+                    top_nums = _extract_distinct_numbers(getattr(top_q, "question_text", None)) if top_q else set()
+                    exact_nums = _extract_distinct_numbers(getattr(exact_match[0], "question_text", None)) if exact_match else set()
+                    ans_nums = _extract_distinct_numbers(text)
+
+                    generic_consts = {"100", "0", "1", "2", "3"}
+                    top_dist_nums = (ans_nums & top_nums) - exact_nums - generic_consts
+                    exact_dist_nums = (ans_nums & exact_nums) - top_nums - generic_consts
+
+                    should_redirect = False
+                    if not exact_match and top.score >= 0.70:
+                        should_redirect = True
+                    elif already_mapped and top.score >= 0.85:
+                        should_redirect = True
+                    elif top_dist_nums and not exact_dist_nums and top.score >= 0.85:
+                        should_redirect = True
+                    elif top.score >= 0.95 and not exact_dist_nums:
+                        should_redirect = True
+
+                    if should_redirect:
                         norm = top.normalized_number
                         raw_lbl = f"Q{norm}"
+                        is_redirected = True
 
             p = parent_number(norm) if norm else None
             exam_has_subq = any(
@@ -366,7 +409,7 @@ def segment_student_answers(
                         curr_confs.append(conf)
                     continue
 
-            if canonical_questions and p and not exam_has_subq:
+            if canonical_questions and p and not exam_has_subq and is_sub_question(norm):
                 if curr_norm_num and parent_number(curr_norm_num) == p:
                     curr_text_parts.append(text)
                     if bb and curr_page == page_num:
@@ -386,8 +429,9 @@ def segment_student_answers(
                         curr_confs.append(conf)
                     continue
 
-            # If current block has the exact same normalized number as ongoing question, merge as continuation
-            if curr_norm_num and norm == curr_norm_num:
+            # If current block has the exact same normalized number as ongoing question across pages, with explicit continuation, or continuing a redirected answer
+            is_explicit_cont = bool(raw_lbl and re.search(r"\b(?:cont|continued|contd)\b", raw_lbl, re.IGNORECASE))
+            if curr_norm_num and norm == curr_norm_num and (page_num > curr_page or is_explicit_cont or curr_was_redirected):
                 curr_text_parts.append(text)
                 if bb and curr_page == page_num:
                     curr_bbox = _merge_bboxes(curr_bbox, bb)
@@ -399,6 +443,7 @@ def segment_student_answers(
             flush_current()
             curr_raw_label = raw_lbl
             curr_norm_num = norm
+            curr_was_redirected = is_redirected
             curr_page = page_num
             if text:
                 curr_text_parts.append(text)

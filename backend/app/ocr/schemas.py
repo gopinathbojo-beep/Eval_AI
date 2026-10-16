@@ -37,6 +37,14 @@ def _str(v: Any) -> str | None:
     return str(v)
 
 
+def _text(v: Any) -> str:
+    if v is None:
+        return ""
+    if isinstance(v, (list, tuple)):
+        return "\n".join(str(x) for x in v if x is not None)
+    return str(v)
+
+
 class _Base(BaseModel):
     model_config = {"extra": "ignore"}
 
@@ -53,6 +61,7 @@ class QuestionItem(_Base):
     _n = field_validator("marks", mode="before")(lambda cls, v: _num(v))
     _c = field_validator("confidence", mode="before")(lambda cls, v: _conf(v))
     _q = field_validator("raw_question_number", mode="before")(lambda cls, v: _str(v))
+    _t = field_validator("question_text", mode="before")(lambda cls, v: _text(v))
 
     @field_validator("bbox", mode="before")
     @classmethod
@@ -85,6 +94,7 @@ class AnswerKeyItem(_Base):
     _n = field_validator("marks", mode="before")(lambda cls, v: _num(v))
     _c = field_validator("confidence", mode="before")(lambda cls, v: _conf(v))
     _q = field_validator("question_number", mode="before")(lambda cls, v: _str(v))
+    _t = field_validator("answer_text", mode="before")(lambda cls, v: _text(v))
 
     @field_validator("criteria", "accepted_answers", "keywords", mode="before")
     @classmethod
@@ -124,6 +134,7 @@ class GeneratedAnswerItem(_Base):
 
     _m = field_validator("marks", mode="before")(lambda cls, v: _num(v))
     _q = field_validator("question_number", "exam_question_id", mode="before")(lambda cls, v: _str(v))
+    _t = field_validator("answer_text", mode="before")(lambda cls, v: _text(v))
 
     @field_validator("criteria", "accepted_answers", "keywords", mode="before")
     @classmethod
@@ -158,6 +169,7 @@ class StudentAnswerItem(_Base):
 
     _c = field_validator("ocr_confidence", "question_number_confidence", "grouping_confidence", "mapping_confidence", mode="before")(lambda cls, v: _conf(v))
     _q = field_validator("question_number", "raw_question_label", "normalized_question_label", "question_id", "answer_id", "mapping_status", mode="before")(lambda cls, v: _str(v))
+    _t = field_validator("answer_text", mode="before")(lambda cls, v: _text(v))
 
     @field_validator("bbox", mode="before")
     @classmethod
