@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from typing import Any
-from .numbering import normalize_question_number
+from .numbering import normalize_question_number, parent_number
 
 
 @dataclass
@@ -166,6 +166,13 @@ def segment_answer_keys(
     grouped: list[SegmentedKey] = []
     full_text = ""
 
+    canonical_norms: set[str] = set()
+    if canonical_questions:
+        for q in canonical_questions:
+            qn = str(getattr(q, "display_number", None) or getattr(q, "normalized_number", None) or "").strip()
+            if qn:
+                canonical_norms.add(qn)
+
     # Aggregate digital text across pages if available
     for page_info, _ in page_results:
         pt = page_info.get("page_text") or ""
@@ -185,6 +192,59 @@ def segment_answer_keys(
             splits = split_key_text(raw_lbl, text)
             for s_lbl, s_txt in splits:
                 norm = normalize_question_number(s_lbl) if s_lbl else None
+                clean_txt, crit_from_block = extract_criteria_from_block(s_txt)
+                crit_list = crit_from_block if crit_from_block else list(a.criteria or [])
+                calc_m = parse_criteria_marks(crit_list, s_txt)
+                init_marks = calc_m if calc_m is not None else a.marks
+
+                # Check if this is a subpart (e.g. Q8(a), 8(b), 9(a)) belonging to a parent question (8, 9)
+                # where the canonical exam only defines the parent question
+                parent = parent_number(norm) if norm else None
+                is_subpart_of_parent = bool(
+                    norm
+                    and parent
+                    and parent != norm
+                    and canonical_norms
+                    and parent in canonical_norms
+                    and norm not in canonical_norms
+                )
+                if is_subpart_of_parent:
+                    parent_k = next((k for k in reversed(grouped) if k.normalized_number == parent), None)
+                    if parent_k:
+                        if clean_txt and clean_txt not in parent_k.answer_text:
+                            sep = "\n\n" if "\n" in clean_txt else " "
+                            parent_k.answer_text = f"{parent_k.answer_text}{sep}{clean_txt}".strip()
+                        if crit_list:
+                            for c in crit_list:
+                                if c not in parent_k.criteria:
+                                    parent_k.criteria.append(c)
+                        if getattr(a, "accepted_answers", None):
+                            parent_k.accepted_answers.extend(a.accepted_answers)
+                        if getattr(a, "keywords", None):
+                            parent_k.keywords.extend(a.keywords)
+                        sub_m = calc_m if calc_m is not None else a.marks
+                        if sub_m is not None:
+                            parent_k.marks = (parent_k.marks or 0.0) + sub_m
+                        c_marks = parse_criteria_marks(parent_k.criteria, parent_k.answer_text)
+                        if c_marks is not None:
+                            parent_k.marks = c_marks
+                        continue
+                    else:
+                        k = SegmentedKey(
+                            raw_question_number=f"Q{parent}",
+                            normalized_number=parent,
+                            answer_text=clean_txt,
+                            marks=init_marks,
+                            criteria=crit_list,
+                            accepted_answers=list(a.accepted_answers or []),
+                            keywords=list(a.keywords or []),
+                            page_number=page_num,
+                            bbox=bb,
+                            ocr_confidence=conf,
+                        )
+                        grouped.append(k)
+                        continue
+
                 is_cont_label = bool(s_lbl and re.search(r"\b(?:cont|continued|contd)\b", s_lbl, re.IGNORECASE))
                 is_same_q_new_page = bool(grouped and norm and norm == grouped[-1].normalized_number and page_num > grouped[-1].page_number)
                 is_unnumbered = s_lbl is None or s_lbl.lower() in ("null", "none", "?", "unknown", "[unclear]", "")
@@ -206,9 +266,6 @@ def segment_answer_keys(
                         already_seen = any(k.normalized_number == str(step_val) for k in grouped)
                         if (max_seen >= 3 and step_val <= 3 and page_num > 1) or (already_seen and page_num > 1):
                             is_numbered_step = True
-
-                clean_txt, crit_from_block = extract_criteria_from_block(s_txt)
-                crit_list = crit_from_block if crit_from_block else list(a.criteria or [])
 
                 # Check if this is an unnumbered continuation block, explicit continuation, bare subpart, same question on next page, or numbered substep
                 if is_unnumbered or is_cont_label or is_same_q_new_page or is_bare_subpart or is_numbered_step:
@@ -243,9 +300,6 @@ def segment_answer_keys(
                     elif not s_txt:
                         continue
 
-                calc_m = parse_criteria_marks(crit_list, s_txt)
-                init_marks = calc_m if calc_m is not None else a.marks
-
                 k = SegmentedKey(
                     raw_question_number=s_lbl,
                     normalized_number=norm,
@@ -272,6 +326,8 @@ def segment_answer_keys(
                     rec_ans, rec_crit = extract_from_full_pdf_text(full_text, q_norm)
                     if rec_ans:
                         c_marks = parse_criteria_marks(rec_crit, rec_ans) or getattr(q, "max_marks", None)
+                        # Clean up any leftover subparts of q_norm
+                        grouped = [k for k in grouped if not (k.normalized_number and k.normalized_number != q_norm and parent_number(k.normalized_number) == q_norm)]
                         grouped.append(
                             SegmentedKey(
                                 raw_question_number=f"Q{q_norm}",
@@ -297,10 +353,27 @@ def segment_answer_keys(
             if c_marks is not None:
                 k.marks = c_marks
 
-    # Deduplicate by normalized_number if multiple keys share the same norm
+    # Deduplicate and consolidate subparts by normalized_number
     deduped: list[SegmentedKey] = []
     seen_map: dict[str, SegmentedKey] = {}
     for k in grouped:
+        p = parent_number(k.normalized_number) if k.normalized_number else None
+        if p and p != k.normalized_number and canonical_norms and p in canonical_norms and k.normalized_number not in canonical_norms:
+            if p in seen_map:
+                existing = seen_map[p]
+                if k.answer_text and k.answer_text not in existing.answer_text:
+                    sep = "\n\n" if "\n" in k.answer_text else " "
+                    existing.answer_text = f"{existing.answer_text}{sep}{k.answer_text}".strip()
+                for crit in k.criteria:
+                    if crit not in existing.criteria:
+                        existing.criteria.append(crit)
+                if k.marks is not None and existing.marks is not None:
+                    existing.marks = max(existing.marks, k.marks)
+                continue
+            else:
+                k.raw_question_number = f"Q{p}"
+                k.normalized_number = p
+
         if k.normalized_number and k.normalized_number in seen_map:
             existing = seen_map[k.normalized_number]
             if k.answer_text and k.answer_text not in existing.answer_text:

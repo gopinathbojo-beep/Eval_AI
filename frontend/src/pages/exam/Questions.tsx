@@ -3,7 +3,7 @@ import { api, downloadFile } from "../../api/client";
 import { useApi } from "../../hooks/useApi";
 import type { Question, QuestionsResponse } from "../../types";
 import { fmt, pct } from "../../utils/format";
-import { Badge, Button, Card, Confirm, Empty, ErrorPanel, Field, Input, Loading, Modal, Select, StatusBadge, Textarea } from "../../components/ui";
+import { Badge, Button, Card, Confirm, Empty, ErrorPanel, Field, Input, Loading, MathTextarea, MathView, Modal, Select, StatusBadge } from "../../components/ui";
 import { PageViewer } from "../../components/PageViewer";
 import { AuthImage } from "../../components/AuthImage";
 import { ExtractionDiagnosticsModal } from "../../components/ExtractionDiagnosticsModal";
@@ -23,11 +23,14 @@ export default function Questions() {
   const [downloading, setDownloading] = useState(false);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [referenceTarget, setReferenceTarget] = useState<Question | null>(null);
+  const [activeTab, setActiveTab] = useState<"both" | "scan" | "questions">("both");
+
   const after = async () => { await Promise.all([reload(), reloadExam()]); };
   const run = async (key: string, fn: () => Promise<unknown>) => {
     setBusy(key); setActionErr(null);
     try { await fn(); await after(); } catch (e) { setActionErr(e); } finally { setBusy(null); }
   };
+
   const download = async () => {
     if (!doc) return;
     setDownloading(true);
@@ -40,36 +43,128 @@ export default function Questions() {
       setDownloading(false);
     }
   };
+
   if (loading) return <Loading />;
   if (error || !data) return <ErrorPanel error={error} />;
   const doc = exam.question_paper;
   const qs = data.questions;
   const verified = exam.status !== "QUESTION_PAPER_UPLOADED" && exam.status !== "QUESTIONS_EXTRACTED";
-  if (!qs.length && !verified) return <Empty title="No questions extracted yet" hint="Upload the question paper first, or add questions by hand." action={<Button onClick={() => setDlg({ kind: "add" })}>Add a question</Button>} />;
-  const counts = { ok: qs.filter((q) => q.verification_status === "VERIFIED").length, review: qs.filter((q) => q.verification_status === "NEEDS_REVIEW").length };
+
+  if (!qs.length && !verified) {
+    return (
+      <Empty
+        title="No questions extracted yet"
+        hint="Upload the question paper first, or add questions manually."
+        action={<Button variant="primary" onClick={() => setDlg({ kind: "add" })}>Add Question</Button>}
+      />
+    );
+  }
+
+  const counts = {
+    ok: qs.filter((q) => q.verification_status === "VERIFIED").length,
+    review: qs.filter((q) => q.verification_status === "NEEDS_REVIEW").length,
+  };
   const selected = qs.find((q) => q.id === sel);
 
   return (
     <div className="space-y-4">
-      <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-surface p-3">
-        <p className="text-sm"><b>{counts.ok}</b> of {qs.length} accepted · <span className={counts.review ? "font-medium text-mark" : ""}>{counts.review} need review</span> · marks add up to <b>{fmt(data.sum_of_marks)}</b> of {fmt(data.exam_total_marks)}</p>
+      {/* Sticky Verification Action Bar */}
+      <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-surface/95 p-3.5 shadow-soft backdrop-blur">
+        <div className="flex flex-wrap items-center gap-3 text-xs sm:text-sm">
+          <div className="inline-flex items-center gap-1.5 font-medium text-ink">
+            <span className="flex h-2 w-2 rounded-full bg-ok" />
+            <b>{counts.ok}</b> of {qs.length} accepted
+          </div>
+          {counts.review > 0 && (
+            <div className="inline-flex items-center gap-1.5 font-semibold text-mark">
+              <span className="flex h-2 w-2 rounded-full bg-mark" />
+              {counts.review} need review
+            </div>
+          )}
+          <span className="text-mute">·</span>
+          <span className="text-mute">
+            Marks sum: <b className="text-ink">{fmt(data.sum_of_marks)}</b> / {fmt(data.exam_total_marks)}
+          </span>
+        </div>
+
         <div className="flex flex-wrap items-center gap-2">
-          <Button variant="soft" onClick={() => setShowDiagnostics(true)}>📊 Diagnostics & Accuracy</Button>
+          {/* Responsive View Switcher on smaller screens */}
+          <div className="flex rounded-lg border border-line bg-sunken p-0.5 text-xs lg:hidden">
+            <button
+              type="button"
+              onClick={() => setActiveTab("scan")}
+              className={`rounded-md px-2.5 py-1 font-medium ${activeTab === "scan" ? "bg-surface font-semibold text-pen shadow-xs" : "text-mute"}`}
+            >
+              Scan
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("both")}
+              className={`rounded-md px-2.5 py-1 font-medium ${activeTab === "both" ? "bg-surface font-semibold text-pen shadow-xs" : "text-mute"}`}
+            >
+              Both
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("questions")}
+              className={`rounded-md px-2.5 py-1 font-medium ${activeTab === "questions" ? "bg-surface font-semibold text-pen shadow-xs" : "text-mute"}`}
+            >
+              Questions
+            </button>
+          </div>
+
+          <Button small variant="soft" onClick={() => setShowDiagnostics(true)}>
+            Diagnostics
+          </Button>
+
           {!data.locked && (
             <>
-              <Button onClick={() => setDlg({ kind: "add" })}>Add question</Button>
-              <Button busy={busy === "bulk"} onClick={() => run("bulk", () => api(`/exams/${exam.id}/questions/accept-valid`, { method: "POST" }))}>Accept all complete questions</Button>
-              <Button variant="primary" busy={busy === "verify"} onClick={() => run("verify", () => api(`/exams/${exam.id}/questions/verify`, { method: "POST" }))}>Verify questions</Button>
+              <Button small onClick={() => setDlg({ kind: "add" })}>
+                Add Question
+              </Button>
+              <Button
+                small
+                busy={busy === "bulk"}
+                onClick={() => run("bulk", () => api(`/exams/${exam.id}/questions/accept-valid`, { method: "POST" }))}
+              >
+                Accept All Complete
+              </Button>
+              <Button
+                small
+                variant="primary"
+                busy={busy === "verify"}
+                onClick={() => run("verify", () => api(`/exams/${exam.id}/questions/verify`, { method: "POST" }))}
+              >
+                Verify Questions
+              </Button>
             </>
           )}
+          {data.locked && <StatusBadge status="VERIFIED" />}
         </div>
       </div>
-      {data.marks_warning && <div className="rounded-lg border border-warn/40 bg-warn-soft p-3 text-sm">{data.marks_warning} This is only a warning, since some papers let students choose which questions to answer.</div>}
-      <ErrorPanel error={actionErr} />
-      {data.locked && <div className="rounded-lg border border-ok/40 bg-ok-soft p-3 text-sm">Questions are verified and locked.</div>}
 
-      <div className="grid gap-4 lg:grid-cols-2" style={{ minHeight: "60vh" }}>
-        <Card className="h-[calc(100vh-15rem)] min-h-[28rem] overflow-hidden">
+      {data.marks_warning && (
+        <div className="rounded-xl border border-warn/40 bg-warn-soft p-3 text-xs sm:text-sm text-ink flex items-start gap-2.5">
+          <span className="text-warn font-bold">⚠</span>
+          <span>{data.marks_warning} Note: some question papers allow optional choices.</span>
+        </div>
+      )}
+      <ErrorPanel error={actionErr} />
+      {data.locked && (
+        <div className="rounded-xl border border-ok/40 bg-ok-soft p-3 text-xs sm:text-sm text-ok font-medium flex items-center gap-2">
+          <span>✓</span>
+          <span>Questions are verified and locked for this exam.</span>
+        </div>
+      )}
+
+      {/* Two-panel Question Review Workspace */}
+      <div className="grid gap-4 lg:grid-cols-2" style={{ minHeight: "65vh" }}>
+        {/* Left Panel: Scan Viewer */}
+        <Card
+          className={`h-[calc(100vh-16rem)] min-h-[30rem] overflow-hidden shadow-soft ${
+            activeTab === "questions" ? "hidden lg:block" : "block"
+          }`}
+        >
           {doc && data.document_id ? (
             <PageViewer
               kind="question-paper"
@@ -86,41 +181,129 @@ export default function Questions() {
                   onClick={download}
                   title="Download original uploaded question paper as PDF"
                 >
-                  Download PDF
+                  <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                  </svg>
+                  <span>Download PDF</span>
                 </Button>
               }
             />
           ) : (
-            <p className="p-4 text-sm text-mute">No document page to show (questions were added by hand).</p>
+            <div className="flex h-full items-center justify-center p-6 text-sm text-mute">
+              No document scan to show (questions were entered manually).
+            </div>
           )}
         </Card>
-        <div className="h-[calc(100vh-15rem)] min-h-[28rem] space-y-3 overflow-y-auto pr-1">
-          {qs.map((q) => (
-            <Card key={q.id} className={`p-4 ${sel === q.id ? "ring-2 ring-pen" : ""} ${q.verification_status === "NEEDS_REVIEW" ? "border-mark/50" : ""}`}>
-              <button className="block w-full text-left" onClick={() => { setSel(q.id); if (q.page_start) setPage(q.page_start); }}>
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-lg font-semibold">Question {q.display_number}</span>
-                  <div className="flex items-center gap-2"><Badge tone="mute">{fmt(q.max_marks)} marks</Badge><Badge tone="mute">conf. {pct(q.ocr_confidence)}</Badge><StatusBadge status={q.verification_status} /></div>
-                </div>
-                {q.review_reason && <p className="mt-1 text-sm font-medium text-mark">{q.review_reason}</p>}
-                <p className="doc-text mt-2 line-clamp-5 text-[15px]">{q.question_text || <em className="text-mute">(empty)</em>}</p>
-              </button>
-              {sel === q.id && q.has_crop && <div className="mt-3 rounded border border-line bg-sunken p-2"><p className="mb-1 text-xs text-mute">What the model read (approximate crop)</p><AuthImage path={`/crops/question/${q.id}`} alt={`Crop of question ${q.display_number}`} className="max-h-48" /></div>}
-              <div className="mt-3 flex flex-wrap gap-1.5">
-                {!data.locked && (
-                  <>
-                    <Button small variant="primary" disabled={q.verification_status === "VERIFIED"} busy={busy === q.id} onClick={() => run(q.id, () => api(`/exam-questions/${q.id}`, { method: "PATCH", json: { verification_status: "VERIFIED" } }))}>Accept</Button>
-                    <Button small onClick={() => setDlg({ kind: "edit", q })}>Edit</Button>
-                    <Button small onClick={() => setDlg({ kind: "split", q })}>Split</Button>
-                    <Button small onClick={() => setDlg({ kind: "merge", q })}>Merge</Button>
-                    <Button small onClick={() => setDlg({ kind: "review", q })}>Mark as review</Button>
-                    <Button small variant="ghost" onClick={() => setDlg({ kind: "delete", q })}>Delete</Button>
-                  </>
+
+        {/* Right Panel: Question Cards List */}
+        <div
+          className={`h-[calc(100vh-16rem)] min-h-[30rem] space-y-3 overflow-y-auto pr-1 ${
+            activeTab === "scan" ? "hidden lg:block" : "block"
+          }`}
+        >
+          {qs.map((q) => {
+            const isSelected = sel === q.id;
+            return (
+              <Card
+                key={q.id}
+                className={`p-4 transition-all shadow-soft ${
+                  isSelected ? "border-pen ring-2 ring-pen/20" : "hover:border-line"
+                } ${q.verification_status === "NEEDS_REVIEW" ? "border-mark/50 bg-mark-soft/10" : ""}`}
+              >
+                <button
+                  type="button"
+                  className="block w-full text-left cursor-pointer"
+                  onClick={() => {
+                    setSel(q.id);
+                    if (q.page_start) setPage(q.page_start);
+                  }}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-base font-bold text-ink">
+                      Question {q.display_number}
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      <Badge tone="pen">{fmt(q.max_marks)} marks</Badge>
+                      <Badge tone="mute">conf. {pct(q.ocr_confidence)}</Badge>
+                      <StatusBadge status={q.verification_status} />
+                    </div>
+                  </div>
+                  {q.review_reason && (
+                    <p className="mt-1.5 text-xs font-semibold text-mark">
+                      ⚠️ {q.review_reason}
+                    </p>
+                  )}
+                  <div className="doc-text mt-2.5 line-clamp-4 text-sm text-ink/90">
+                    {q.question_text ? <MathView text={q.question_text} /> : <em className="text-mute">(empty)</em>}
+                  </div>
+                </button>
+
+                {/* Show OCR image crop if selected and available */}
+                {isSelected && q.has_crop && (
+                  <div className="mt-3 rounded-lg border border-line bg-sunken p-2.5">
+                    <p className="mb-1 text-xs font-medium text-mute">What the OCR detected (source crop)</p>
+                    <AuthImage
+                      path={`/crops/question/${q.id}`}
+                      alt={`Crop of question ${q.display_number}`}
+                      className="max-h-48 rounded border border-line/60 bg-surface object-contain"
+                    />
+                  </div>
                 )}
-                <Button small variant="soft" onClick={() => setReferenceTarget(q)} title="Add to verified local reference collection">Save as Reference</Button>
-              </div>
-            </Card>
-          ))}
+
+                {/* Action Controls */}
+                <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-line/50 pt-2.5">
+                  {!data.locked && (
+                    <>
+                      <Button
+                        small
+                        variant="primary"
+                        disabled={q.verification_status === "VERIFIED"}
+                        busy={busy === q.id}
+                        onClick={() =>
+                          run(q.id, () =>
+                            api(`/exam-questions/${q.id}`, {
+                              method: "PATCH",
+                              json: { verification_status: "VERIFIED" },
+                            })
+                          )
+                        }
+                      >
+                        Accept
+                      </Button>
+                      <Button small onClick={() => setDlg({ kind: "edit", q })}>
+                        Edit
+                      </Button>
+                      <Button small onClick={() => setDlg({ kind: "split", q })}>
+                        Split
+                      </Button>
+                      <Button small onClick={() => setDlg({ kind: "merge", q })}>
+                        Merge
+                      </Button>
+                      <Button small onClick={() => setDlg({ kind: "review", q })}>
+                        Flag Review
+                      </Button>
+                      <Button
+                        small
+                        variant="ghost"
+                        className="text-mark hover:bg-mark-soft hover:text-mark"
+                        onClick={() => setDlg({ kind: "delete", q })}
+                      >
+                        Delete
+                      </Button>
+                    </>
+                  )}
+                  <Button
+                    small
+                    variant="soft"
+                    onClick={() => setReferenceTarget(q)}
+                    title="Add to verified local reference collection"
+                  >
+                    Save as Reference
+                  </Button>
+                </div>
+              </Card>
+            );
+          })}
         </div>
       </div>
 
@@ -129,8 +312,19 @@ export default function Questions() {
       {dlg?.kind === "split" && dlg.q && <SplitDlg q={dlg.q} onClose={() => setDlg(null)} onDone={after} />}
       {dlg?.kind === "merge" && dlg.q && <MergeDlg q={dlg.q} all={qs} onClose={() => setDlg(null)} onDone={after} />}
       {dlg?.kind === "review" && dlg.q && <ReviewDlg q={dlg.q} onClose={() => setDlg(null)} onDone={after} />}
-      {dlg?.kind === "delete" && dlg.q && <Confirm title={`Delete question ${dlg.q.display_number}`} danger confirmLabel="Delete" body={<p>This removes the question from the exam. The deletion is recorded in the audit log.</p>}
-        onConfirm={async () => { await api(`/exam-questions/${dlg.q!.id}`, { method: "DELETE" }); await after(); }} onClose={() => setDlg(null)} />}
+      {dlg?.kind === "delete" && dlg.q && (
+        <Confirm
+          title={`Delete question ${dlg.q.display_number}?`}
+          danger
+          confirmLabel="Delete Question"
+          body={<p className="text-sm text-ink">This removes the question from the exam. The change is recorded in the audit trail.</p>}
+          onConfirm={async () => {
+            await api(`/exam-questions/${dlg.q!.id}`, { method: "DELETE" });
+            await after();
+          }}
+          onClose={() => setDlg(null)}
+        />
+      )}
 
       {showDiagnostics && <ExtractionDiagnosticsModal onClose={() => setShowDiagnostics(false)} />}
       {referenceTarget && (
@@ -157,7 +351,18 @@ export default function Questions() {
 function useSubmit(onDone: () => Promise<void>, onClose: () => void) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<unknown>(null);
-  const go = async (fn: () => Promise<unknown>) => { setBusy(true); setErr(null); try { await fn(); await onDone(); onClose(); } catch (e) { setErr(e); setBusy(false); } };
+  const go = async (fn: () => Promise<unknown>) => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await fn();
+      await onDone();
+      onClose();
+    } catch (e) {
+      setErr(e);
+      setBusy(false);
+    }
+  };
   return { busy, err, go };
 }
 
@@ -168,20 +373,69 @@ function EditDlg({ q, examId, onClose, onDone }: { q?: Question; examId?: string
   const [section, setSection] = useState(q?.section ?? "");
   const [reason, setReason] = useState("");
   const { busy, err, go } = useSubmit(onDone, onClose);
-  const save = () => go(() => q
-    ? api(`/exam-questions/${q.id}`, { method: "PATCH", json: { display_number: num, question_text: text, max_marks: marks ? Number(marks) : undefined, section: section || undefined, reason: reason || undefined } })
-    : api(`/exams/${examId}/questions`, { method: "POST", json: { display_number: num, question_text: text, max_marks: marks ? Number(marks) : null, section: section || null } }));
+  const save = () =>
+    go(() =>
+      q
+        ? api(`/exam-questions/${q.id}`, {
+            method: "PATCH",
+            json: {
+              display_number: num,
+              question_text: text,
+              max_marks: marks ? Number(marks) : undefined,
+              section: section || undefined,
+              reason: reason || undefined,
+            },
+          })
+        : api(`/exams/${examId}/questions`, {
+            method: "POST",
+            json: {
+              display_number: num,
+              question_text: text,
+              max_marks: marks ? Number(marks) : null,
+              section: section || null,
+            },
+          })
+    );
+
   return (
-    <Modal title={q ? `Edit question ${q.display_number}` : "Add question"} wide onClose={onClose} footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" busy={busy} onClick={save}>Save</Button></>}>
+    <Modal
+      title={q ? `Edit Question ${q.display_number}` : "Add Question"}
+      wide
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button variant="primary" busy={busy} onClick={save}>
+            Save Question
+          </Button>
+        </>
+      }
+    >
       <div className="space-y-4">
         <div className="grid gap-4 sm:grid-cols-3">
-          <Field label="Question number" hint="For example 1, 3(a), 4(i)">{(id) => <Input id={id} value={num} onChange={(e) => setNum(e.target.value)} />}</Field>
-          <Field label="Maximum marks">{(id) => <Input id={id} type="number" min={0.5} step={0.5} value={marks} onChange={(e) => setMarks(e.target.value)} />}</Field>
-          <Field label="Section">{(id) => <Input id={id} value={section} onChange={(e) => setSection(e.target.value)} />}</Field>
+          <Field label="Question Number" hint="e.g. 1, 3(a), 4(i)">
+            {(id) => <Input id={id} value={num} onChange={(e) => setNum(e.target.value)} />}
+          </Field>
+          <Field label="Maximum Marks">
+            {(id) => <Input id={id} type="number" min={0.5} step={0.5} value={marks} onChange={(e) => setMarks(e.target.value)} />}
+          </Field>
+          <Field label="Section (optional)">
+            {(id) => <Input id={id} value={section} onChange={(e) => setSection(e.target.value)} placeholder="e.g. Section A" />}
+          </Field>
         </div>
-        <Field label="Question text">{(id) => <Textarea id={id} rows={8} className="font-doc" value={text} onChange={(e) => setText(e.target.value)} />}</Field>
-        {q && q.raw_ocr_text && q.raw_ocr_text !== text && <p className="text-xs text-mute">Original OCR text is kept separately and is never overwritten.</p>}
-        {q && <Field label="Reason for change (optional)">{(id) => <Input id={id} value={reason} onChange={(e) => setReason(e.target.value)} />}</Field>}
+        <Field label="Question Text (Supports Math LaTeX)">
+          {(id) => <MathTextarea id={id} rows={8} value={text} onChange={setText} />}
+        </Field>
+        {q && q.raw_ocr_text && q.raw_ocr_text !== text && (
+          <p className="text-xs text-mute">
+            Original OCR text is stored securely and never overwritten.
+          </p>
+        )}
+        {q && (
+          <Field label="Reason for Change (audit trail)">
+            {(id) => <Input id={id} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Fixed OCR typo in question stem" />}
+          </Field>
+        )}
         <ErrorPanel error={err} />
       </div>
     </Modal>
@@ -194,17 +448,54 @@ function SplitDlg({ q, onClose, onDone }: { q: Question; onClose: () => void; on
   const [num, setNum] = useState("");
   const [marks, setMarks] = useState("");
   const { busy, err, go } = useSubmit(onDone, onClose);
+
   return (
-    <Modal title={`Split question ${q.display_number}`} wide onClose={onClose} footer={<><Button onClick={onClose}>Cancel</Button>
-      <Button variant="primary" busy={busy} disabled={pos <= 0 || !num} onClick={() => go(() => api(`/exam-questions/${q.id}/split`, { method: "POST", json: { at_char: pos, new_number: num, new_marks: marks ? Number(marks) : null } }))}>Split here</Button></>}>
+    <Modal
+      title={`Split Question ${q.display_number}`}
+      wide
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button
+            variant="primary"
+            busy={busy}
+            disabled={pos <= 0 || !num}
+            onClick={() =>
+              go(() =>
+                api(`/exam-questions/${q.id}/split`, {
+                  method: "POST",
+                  json: { at_char: pos, new_number: num, new_marks: marks ? Number(marks) : null },
+                })
+              )
+            }
+          >
+            Split Here
+          </Button>
+        </>
+      }
+    >
       <div className="space-y-4">
-        <p className="text-sm text-mute">Click in the text where the new question begins.</p>
-        <textarea ref={ref} readOnly rows={8} value={q.question_text} className="doc-text w-full rounded-md border border-line bg-surface p-3 font-doc text-sm"
-          onClick={(e) => setPos(e.currentTarget.selectionStart)} onKeyUp={(e) => setPos(e.currentTarget.selectionStart)} />
-        <p className="text-sm">Split position: <b>{pos}</b> characters</p>
+        <p className="text-xs text-mute">Click anywhere in the text below where the new question begins.</p>
+        <textarea
+          ref={ref}
+          readOnly
+          rows={8}
+          value={q.question_text}
+          className="doc-text w-full rounded-lg border border-line bg-surface p-3 font-doc text-sm focus:outline-none"
+          onClick={(e) => setPos(e.currentTarget.selectionStart)}
+          onKeyUp={(e) => setPos(e.currentTarget.selectionStart)}
+        />
+        <p className="text-xs font-medium text-ink">
+          Split Position: <span className="font-mono font-bold text-pen">{pos}</span> characters
+        </p>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Number for the new question">{(id) => <Input id={id} value={num} onChange={(e) => setNum(e.target.value)} />}</Field>
-          <Field label="Marks for the new question">{(id) => <Input id={id} type="number" min={0.5} step={0.5} value={marks} onChange={(e) => setMarks(e.target.value)} />}</Field>
+          <Field label="Number for New Question">
+            {(id) => <Input id={id} placeholder="e.g. 2 or 1(b)" value={num} onChange={(e) => setNum(e.target.value)} />}
+          </Field>
+          <Field label="Marks for New Question">
+            {(id) => <Input id={id} type="number" min={0.5} step={0.5} value={marks} onChange={(e) => setMarks(e.target.value)} />}
+          </Field>
         </div>
         <ErrorPanel error={err} />
       </div>
@@ -215,13 +506,47 @@ function SplitDlg({ q, onClose, onDone }: { q: Question; onClose: () => void; on
 function MergeDlg({ q, all, onClose, onDone }: { q: Question; all: Question[]; onClose: () => void; onDone: () => Promise<void> }) {
   const [other, setOther] = useState("");
   const { busy, err, go } = useSubmit(onDone, onClose);
+
   return (
-    <Modal title={`Merge into question ${q.display_number}`} onClose={onClose} footer={<><Button onClick={onClose}>Cancel</Button>
-      <Button variant="primary" busy={busy} disabled={!other} onClick={() => go(() => api(`/exam-questions/${q.id}/merge`, { method: "POST", json: { other_id: other } }))}>Merge</Button></>}>
+    <Modal
+      title={`Merge into Question ${q.display_number}`}
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button
+            variant="primary"
+            busy={busy}
+            disabled={!other}
+            onClick={() =>
+              go(() =>
+                api(`/exam-questions/${q.id}/merge`, { method: "POST", json: { other_id: other } })
+              )
+            }
+          >
+            Merge Questions
+          </Button>
+        </>
+      }
+    >
       <div className="space-y-4">
-        <p className="text-sm text-mute">The chosen question's text is added to the end of this one, then it is removed. Use this when a question continued onto the next page.</p>
-        <Field label="Question to absorb">{(id) => <Select id={id} value={other} onChange={(e) => setOther(e.target.value)}><option value="">Choose</option>
-          {all.filter((x) => x.id !== q.id).map((x) => <option key={x.id} value={x.id}>{x.display_number} — {x.question_text.slice(0, 60)}</option>)}</Select>}</Field>
+        <p className="text-xs text-mute">
+          The selected question text will be appended to Question {q.display_number}, and the second entry will be removed.
+        </p>
+        <Field label="Question to Absorb">
+          {(id) => (
+            <Select id={id} value={other} onChange={(e) => setOther(e.target.value)}>
+              <option value="">Choose question...</option>
+              {all
+                .filter((x) => x.id !== q.id)
+                .map((x) => (
+                  <option key={x.id} value={x.id}>
+                    Q{x.display_number} — {x.question_text.slice(0, 50)}...
+                  </option>
+                ))}
+            </Select>
+          )}
+        </Field>
         <ErrorPanel error={err} />
       </div>
     </Modal>
@@ -231,10 +556,37 @@ function MergeDlg({ q, all, onClose, onDone }: { q: Question; all: Question[]; o
 function ReviewDlg({ q, onClose, onDone }: { q: Question; onClose: () => void; onDone: () => Promise<void> }) {
   const [reason, setReason] = useState("");
   const { busy, err, go } = useSubmit(onDone, onClose);
+
   return (
-    <Modal title={`Flag question ${q.display_number} for review`} onClose={onClose} footer={<><Button onClick={onClose}>Cancel</Button>
-      <Button variant="primary" busy={busy} onClick={() => go(() => api(`/exam-questions/${q.id}`, { method: "PATCH", json: { verification_status: "NEEDS_REVIEW", reason: reason || "Flagged by teacher" } }))}>Flag</Button></>}>
-      <div className="space-y-4"><Field label="What looks wrong?">{(id) => <Input id={id} value={reason} onChange={(e) => setReason(e.target.value)} />}</Field><ErrorPanel error={err} /></div>
+    <Modal
+      title={`Flag Question ${q.display_number} for Review`}
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button
+            variant="primary"
+            busy={busy}
+            onClick={() =>
+              go(() =>
+                api(`/exam-questions/${q.id}`, {
+                  method: "PATCH",
+                  json: { verification_status: "NEEDS_REVIEW", reason: reason || "Flagged by teacher" },
+                })
+              )
+            }
+          >
+            Flag for Review
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <Field label="Reason / What needs attention?">
+          {(id) => <Input id={id} placeholder="e.g. Incomplete question stem on page 2" value={reason} onChange={(e) => setReason(e.target.value)} />}
+        </Field>
+        <ErrorPanel error={err} />
+      </div>
     </Modal>
   );
 }

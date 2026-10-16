@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "ADEM",
-    "slug": "adem-mobile",
+    "name": "Eval AI",
+    "slug": "eval-ai-mobile",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -11,7 +11,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#071B2B",
+        "backgroundColor": "#0F264A",
         "foregroundImage": "./assets/android-icon-foreground.png",
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
@@ -27,7 +27,7 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "ADEM requires camera access to scan question papers, answer keys, and student handwritten answer sheets."
+          "cameraPermission": "Eval AI requires camera access to scan question papers, answer keys, and student handwritten answer sheets."
         }
       ]
     ]

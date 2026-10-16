@@ -1,7 +1,7 @@
 import React from "react";
 import { View, Text, StyleSheet } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../theme/ThemeContext";
 
 interface LogoProps {
@@ -10,11 +10,11 @@ interface LogoProps {
 }
 
 export const Logo: React.FC<LogoProps> = ({ size = "medium", showSubtitle = true }) => {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
 
-  const iconSize = size === "small" ? 22 : size === "medium" ? 34 : 48;
-  const containerSize = size === "small" ? 36 : size === "medium" ? 52 : 72;
-  const fontSize = size === "small" ? 18 : size === "medium" ? 26 : 34;
+  const iconSize = size === "small" ? 20 : size === "medium" ? 30 : 42;
+  const containerSize = size === "small" ? 36 : size === "medium" ? 52 : 68;
+  const fontSize = size === "small" ? 18 : size === "medium" ? 24 : 32;
 
   return (
     <View style={styles.wrapper}>
@@ -25,16 +25,22 @@ export const Logo: React.FC<LogoProps> = ({ size = "medium", showSubtitle = true
           end={{ x: 1, y: 1 }}
           style={[
             styles.iconContainer,
-            { width: containerSize, height: containerSize, borderRadius: containerSize * 0.28 },
+            {
+              width: containerSize,
+              height: containerSize,
+              borderRadius: containerSize * 0.28,
+              shadowColor: colors.primary,
+              shadowOpacity: isDark ? 0.4 : 0.2,
+            },
           ]}
         >
-          <MaterialCommunityIcons name="file-document-edit" size={iconSize} color="#FFFFFF" />
+          <Ionicons name="school" size={iconSize} color="#FFFFFF" />
         </LinearGradient>
         <View style={styles.textContainer}>
-          <Text style={[styles.title, { color: colors.text, fontSize }]}>ADEM</Text>
+          <Text style={[styles.title, { color: colors.text, fontSize }]}>Eval AI</Text>
           {showSubtitle && (
             <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-              Smart Evaluation. Brighter Future.
+              Academic Evaluation Platform
             </Text>
           )}
         </View>
@@ -54,22 +60,20 @@ const styles = StyleSheet.create({
   iconContainer: {
     justifyContent: "center",
     alignItems: "center",
-    shadowColor: "#079FBD",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.35,
-    shadowRadius: 8,
-    elevation: 6,
+    shadowOffset: { width: 0, height: 3 },
+    shadowRadius: 6,
+    elevation: 4,
   },
   textContainer: {
     marginLeft: 12,
   },
   title: {
     fontWeight: "800",
-    letterSpacing: 1.5,
+    letterSpacing: 0.8,
   },
   subtitle: {
     fontSize: 11,
-    fontWeight: "500",
+    fontWeight: "600",
     letterSpacing: 0.3,
     marginTop: 1,
   },

@@ -322,8 +322,14 @@ def _consolidate_subquestions(questions: list[StructuredQuestion]) -> list[Struc
             continue
         first_q = sub_qs[0]
         merged_texts = []
+        seen_texts = set()
         for sq in sub_qs:
             st = sq.question_text.strip()
+            st_clean = re.sub(r"\s+", " ", st.lower())
+            if st_clean in seen_texts:
+                continue
+            seen_texts.add(st_clean)
+
             sub_tok = extract_subquestion_token(sq.raw_question_number or sq.display_number or "")
             if sub_tok and not st.startswith(f"({sub_tok})"):
                 if "\n" in st:
@@ -334,7 +340,15 @@ def _consolidate_subquestions(questions: list[StructuredQuestion]) -> list[Struc
                         st = f"({sub_tok}) {st}"
                 else:
                     st = f"({sub_tok}) {st}"
+
+            if any(st in prev or (len(st) > 20 and st[:50] in prev) for prev in merged_texts):
+                continue
+
             merged_texts.append(st)
+
+        if not merged_texts:
+            merged_texts = [sub_qs[0].question_text.strip()]
+
         combined_text = "\n".join(merged_texts)
 
         sec = first_q.section or ""
@@ -347,17 +361,13 @@ def _consolidate_subquestions(questions: list[StructuredQuestion]) -> list[Struc
             elif "SECTION C" in sec.upper():
                 rule_mark = 5.0
 
-        if rule_mark is None:
-            consolidated.extend(sub_qs)
-            continue
-
         sub_marks = [sq.max_marks for sq in sub_qs if sq.max_marks is not None]
         if rule_mark is not None:
             parent_marks = rule_mark
         elif sub_marks:
-            parent_marks = sum(sub_marks)
+            parent_marks = sum(sub_marks) if len(merged_texts) > 1 else max(sub_marks)
         else:
-            parent_marks = None
+            parent_marks = first_q.max_marks
 
         new_q = StructuredQuestion(
             raw_question_number=f"Q{p_num}",
@@ -408,7 +418,21 @@ def split_swallowed_qp_blocks(
         b_start, b_lbl, b_end = boundaries[i]
         next_start = boundaries[i + 1][0] if i + 1 < len(boundaries) else len(text)
         chunk = text[b_end:next_start].strip()
-        res.append((b_lbl, chunk))
+        m_sec = re.search(
+            r"(?:\n+)\s*((?:SECTION|PART|UNIT|GROUP)\s+[A-Z0-9IVX]+(?:\s*[:\-]\s*[^\n]+)?(?:\n+.*)?)$",
+            chunk,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if m_sec:
+            q_part = chunk[:m_sec.start()].strip()
+            sec_part = m_sec.group(1).strip()
+            res.append((b_lbl, q_part))
+            sec_lines = [l.strip() for l in sec_part.splitlines() if l.strip()]
+            res.append((None, sec_lines[0]))
+            if len(sec_lines) > 1:
+                res.append((None, "\n".join(sec_lines[1:])))
+        else:
+            res.append((b_lbl, chunk))
     return res
 
 
@@ -439,11 +463,32 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
                     "rule": rule,
                 })
 
+        explicit_parents = {
+            parent_number(normalize_question_number(q.raw_question_number))
+            for q in questions_raw
+            if q.raw_question_number and normalize_question_number(q.raw_question_number)
+        }
+
         expanded_items: list[tuple[str | None, str, float | None, Any]] = []
         for q in questions_raw:
             q_text = (q.question_text or "").strip()
             q_lbl = (q.raw_question_number or "").strip() or None
             splits = split_swallowed_qp_blocks(q_lbl, q_text)
+
+            # Check if this unnumbered block is a redundant full-page transcription dump
+            if (q_lbl is None or str(q_lbl).lower() in ("null", "none", "?", "unknown", "")) and len(explicit_parents) >= 2 and len(splits) > 1:
+                split_parents = {
+                    parent_number(normalize_question_number(s_lbl))
+                    for s_lbl, _ in splits
+                    if s_lbl and normalize_question_number(s_lbl)
+                }
+                overlap = split_parents & explicit_parents
+                if len(overlap) >= 2 and len(overlap) >= len(split_parents) * 0.5:
+                    intro_item = splits[0] if (splits[0][0] is None or is_heading_or_title(splits[0][0] or "")) else None
+                    if intro_item and intro_item[1].strip():
+                        expanded_items.append((intro_item[0], intro_item[1], None, q))
+                    continue
+
             for s_lbl, s_txt in splits:
                 s_marks = q.marks if len(splits) == 1 else None
                 expanded_items.append((s_lbl, s_txt, s_marks, q))
@@ -586,6 +631,18 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
                 rule = extract_section_marks_rule(current_section) or extract_section_marks_rule(text[:100])
                 if rule is not None:
                     section_marks_rule = rule
+
+            # Check if question text has a trailing section heading (e.g. Question 8 swallowed Section C)
+            pending_trailing_sec = None
+            if raw_label is not None:
+                m_trailing_sec = re.search(
+                    r"(?:\n+)\s*((?:SECTION|PART|UNIT|GROUP)\s+[A-Z0-9IVX]+(?:\s*[:\-]\s*[^\n]+)?(?:\n+.*)?)$",
+                    text,
+                    re.IGNORECASE | re.DOTALL,
+                )
+                if m_trailing_sec:
+                    pending_trailing_sec = m_trailing_sec.group(1).strip()
+                    text = text[:m_trailing_sec.start()].strip()
 
             # Check if text indicates Section C (Writing Skills / Creative Writing / Long Answer)
             if current_section and "SECTION B" in current_section.upper():
@@ -747,6 +804,18 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
                 review_reason="; ".join(reasons) or None,
             )
             doc_struct.questions.append(sq)
+
+            if pending_trailing_sec:
+                sec_lines = [l.strip() for l in pending_trailing_sec.splitlines() if l.strip()]
+                sec_hdr = sec_lines[0]
+                if sec_hdr not in doc_struct.sections:
+                    doc_struct.sections.append(sec_hdr)
+                current_section = sec_hdr
+                rule = extract_section_marks_rule(pending_trailing_sec)
+                if rule is not None:
+                    section_marks_rule = rule
+                if len(sec_lines) > 1:
+                    doc_struct.instructions.append("\n".join(sec_lines[1:]))
 
     doc_struct.questions = _consolidate_subquestions(doc_struct.questions)
     return doc_struct

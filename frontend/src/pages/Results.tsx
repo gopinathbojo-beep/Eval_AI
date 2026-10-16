@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { downloadFile } from "../api/client";
 import { FilteredEmptyState, TablePagination, TableToolbar } from "../components/TableToolbar";
-import { Badge, Button, Card, Empty, ErrorPanel, Loading, PageHeader, PenScore, StatusBadge } from "../components/ui";
+import { Badge, Button, Card, Empty, ErrorPanel, Loading, MathView, PageHeader, PenScore, StatusBadge } from "../components/ui";
 import { useApi } from "../hooks/useApi";
 import { useTableState } from "../hooks/useTableState";
 import type { Evaluation, ResultResponse } from "../types";
@@ -10,41 +10,55 @@ import { date, fmt } from "../utils/format";
 
 export function EvaluationsList() {
   const { data, loading, error } = useApi<Evaluation[]>("/evaluations");
+
   return (
-    <>
-      <PageHeader title="Evaluations" />
+    <div className="space-y-4">
+      <PageHeader
+        title="Evaluations Queue"
+        sub="Monitor student answer sheet evaluations across all active examinations."
+      />
       <ErrorPanel error={error} />
       {loading ? (
         <Loading />
       ) : !data?.length ? (
-        <Empty title="No answer sheets yet" hint="Open an exam and upload answer sheets." />
+        <Empty title="No answer sheets uploaded" hint="Open an exam and upload student answer sheets to begin evaluation." />
       ) : (
-        <Card className="divide-y divide-line">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {data.map((e) => (
             <Link
               key={e.id}
               to={e.status === "FINALIZED" ? `/results/${e.id}` : `/evaluations/${e.id}`}
-              className="flex flex-wrap items-center justify-between gap-2 p-4 hover:bg-sunken"
+              className="group block rounded-xl border border-line bg-surface p-4 shadow-soft transition-all hover:border-pen/40 hover:shadow-card"
             >
-              <div>
-                <p className="font-medium">
-                  {e.student.name} <span className="text-mute">({e.student.roll_number})</span>
-                </p>
-                <p className="text-xs text-mute">{e.exam_name}</p>
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <p className="font-semibold text-ink group-hover:text-pen transition-colors">
+                    {e.student.name}
+                  </p>
+                  <p className="font-mono text-xs text-mute">Roll: {e.student.roll_number}</p>
+                </div>
+                <StatusBadge status={e.status} />
               </div>
-              <StatusBadge status={e.status} />
+              <p className="mt-2 text-xs font-medium text-mute line-clamp-1">{e.exam_name}</p>
+              <div className="mt-3 flex items-center justify-between border-t border-line/60 pt-2.5 text-xs">
+                <span className="text-mute font-medium">
+                  {e.status === "FINALIZED" ? "Evaluation Finalized" : "Evaluation in Progress"}
+                </span>
+                <span className="inline-flex items-center gap-1 font-semibold text-pen group-hover:translate-x-0.5 transition-transform">
+                  {e.status === "FINALIZED" ? "View Results &rarr;" : "Review &rarr;"}
+                </span>
+              </div>
             </Link>
           ))}
-        </Card>
+        </div>
       )}
-    </>
+    </div>
   );
 }
 
 export function ResultsList() {
   const { data, loading, error } = useApi<Evaluation[]>("/results");
 
-  // Filter dropdown options derived from actual database data
   const classOptions = useMemo(() => {
     if (!data) return [];
     const map = new Map<string, string>();
@@ -132,13 +146,16 @@ export function ResultsList() {
   ];
 
   return (
-    <>
-      <PageHeader title="Results" />
+    <div className="space-y-4">
+      <PageHeader
+        title="Finalized Examination Results"
+        sub="Search, filter, and export finalized student performance reports."
+      />
       <ErrorPanel error={error} />
       {loading ? (
         <Loading />
       ) : !data?.length ? (
-        <Empty title="No finalized results yet" hint="Results appear here once a teacher finalizes an evaluation." />
+        <Empty title="No finalized results yet" hint="Results appear here once evaluations are finalized by teachers." />
       ) : (
         <>
           <TableToolbar
@@ -165,40 +182,50 @@ export function ResultsList() {
               onClearFilters={table.clearFilters}
             />
           ) : (
-            <Card className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="border-b border-line text-left text-mute">
+            <Card className="overflow-x-auto shadow-soft">
+              <table className="w-full text-left text-sm">
+                <thead className="border-b border-line bg-surface text-xs font-semibold uppercase tracking-wider text-mute">
                   <tr>
-                    {["Student", "Exam", "Class", "Subject", "Marks", "Percentage", "Finalized", "Actions"].map((h) => (
-                      <th key={h} className="px-4 py-2 font-medium">
-                        {h}
-                      </th>
-                    ))}
+                    <th className="px-4 py-3">Student</th>
+                    <th className="px-4 py-3">Exam Name</th>
+                    <th className="px-4 py-3">Class</th>
+                    <th className="px-4 py-3">Subject</th>
+                    <th className="px-4 py-3">Total Marks</th>
+                    <th className="px-4 py-3">Score %</th>
+                    <th className="px-4 py-3">Finalized Date</th>
+                    <th className="px-4 py-3 text-right">Report</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-line">
+                <tbody className="divide-y divide-line text-sm">
                   {table.paginatedData.map((e) => (
-                    <tr key={e.id} className="hover:bg-sunken">
-                      <td className="px-4 py-2">
-                        <Link className="font-medium text-pen hover:underline" to={`/results/${e.id}`}>
+                    <tr key={e.id} className="hover:bg-sunken/40">
+                      <td className="px-4 py-3">
+                        <Link className="font-semibold text-pen hover:underline block" to={`/results/${e.id}`}>
                           {e.student.name}
-                        </Link>{" "}
-                        <span className="text-mute">({e.student.roll_number})</span>
+                        </Link>
+                        <span className="font-mono text-xs text-mute">Roll: {e.student.roll_number}</span>
                       </td>
-                      <td className="px-4 py-2">{e.exam_name}</td>
-                      <td className="px-4 py-2 text-mute">{e.class_name || e.student.class_name || "–"}</td>
-                      <td className="px-4 py-2 text-mute">{e.subject_name || "–"}</td>
-                      <td className="px-4 py-2">
+                      <td className="px-4 py-3 font-medium text-ink">{e.exam_name}</td>
+                      <td className="px-4 py-3 text-mute">{e.class_name || e.student.class_name || "–"}</td>
+                      <td className="px-4 py-3 text-mute">{e.subject_name || "–"}</td>
+                      <td className="px-4 py-3 font-mono font-medium text-ink">
                         {fmt(e.total_marks)} / {fmt(e.maximum_marks)}
                       </td>
-                      <td className="px-4 py-2">{e.percentage}%</td>
-                      <td className="px-4 py-2 text-mute">{date(e.finalized_at)}</td>
-                      <td className="px-4 py-2">
+                      <td className="px-4 py-3 font-mono font-semibold text-ink">
+                        <span className="rounded bg-ok-soft/70 px-2 py-0.5 text-xs text-ok">
+                          {e.percentage}%
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 font-mono text-xs text-mute">{date(e.finalized_at)}</td>
+                      <td className="px-4 py-3 text-right whitespace-nowrap">
                         <Link
                           to={`/results/${e.id}`}
-                          className="inline-flex items-center gap-1 text-xs font-medium text-pen hover:underline"
+                          className="inline-flex items-center gap-1 text-xs font-semibold text-pen hover:underline"
                         >
-                          View &amp; Report &rarr;
+                          <span>View Report</span>
+                          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
                         </Link>
                       </td>
                     </tr>
@@ -218,7 +245,7 @@ export function ResultsList() {
           )}
         </>
       )}
-    </>
+    </div>
   );
 }
 
@@ -236,7 +263,7 @@ export function ResultPage() {
       const studentName = (data.evaluation.student.name || "Student").replace(/[^a-zA-Z0-9_-]/g, "_");
       const rollNumber = (data.evaluation.student.roll_number || "").replace(/[^a-zA-Z0-9_-]/g, "_");
       const examName = (data.exam.name || "Exam").replace(/[^a-zA-Z0-9_-]/g, "_");
-      const fallbackFilename = `ADEM_Report_${studentName}_${rollNumber}_${examName}.pdf`;
+      const fallbackFilename = `EvalAI_Report_${studentName}_${rollNumber}_${examName}.pdf`;
       await downloadFile(`/evaluations/${id}/report.pdf`, fallbackFilename);
     } catch (err: any) {
       setDownloadError(err?.message || "Failed to download evaluation report.");
@@ -250,12 +277,12 @@ export function ResultPage() {
   const s = data.evaluation.student;
 
   return (
-    <>
+    <div className="space-y-5">
       <PageHeader
         title={`${s.name} (${s.roll_number})`}
         sub={`${data.exam.name} · ${data.exam.subject} · ${data.exam.class}`}
         actions={
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2.5">
             {data.finalized ? (
               <>
                 <StatusBadge status="FINALIZED" />
@@ -263,6 +290,7 @@ export function ResultPage() {
                   variant="primary"
                   busy={downloading}
                   onClick={handleDownloadReport}
+                  className="shadow-xs"
                   title="Download official PDF evaluation report"
                 >
                   <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -273,85 +301,152 @@ export function ResultPage() {
                       d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
                     />
                   </svg>
-                  <span>Download Report</span>
+                  <span>Download Report (PDF)</span>
                 </Button>
               </>
             ) : (
-              <Link to={`/evaluations/${id}`} className="text-sm text-pen hover:underline">
-                Not final yet. Continue evaluating
+              <Link to={`/evaluations/${id}`}>
+                <Button variant="primary">
+                  <span>Continue Evaluation</span>
+                  <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                  </svg>
+                </Button>
               </Link>
             )}
           </div>
         }
       />
+
       {downloadError && (
-        <div className="mb-4 rounded-md border border-mark/20 bg-mark-soft p-3 text-sm text-mark">
+        <div className="rounded-xl border border-mark/20 bg-mark-soft p-3.5 text-sm text-mark">
           {downloadError}
         </div>
       )}
-      <Card className="mb-5 flex flex-wrap items-center gap-6 p-5">
-        <PenScore got={data.total_marks} max={data.maximum_marks} />
-        <div>
-          <p className="text-sm text-mute">Percentage</p>
-          <p className="text-2xl font-semibold">{data.percentage}%</p>
+
+      {/* Performance Summary Banner */}
+      <Card className="flex flex-wrap items-center justify-between gap-6 p-6 shadow-soft bg-gradient-to-r from-surface via-surface to-pen-soft/20 border-pen/20">
+        <div className="flex items-center gap-5">
+          <PenScore got={data.total_marks} max={data.maximum_marks} />
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-mute">Total Marks Secured</p>
+            <p className="text-2xl font-bold text-ink">
+              {fmt(data.total_marks)} <span className="text-sm font-normal text-mute">/ {fmt(data.maximum_marks)}</span>
+            </p>
+          </div>
         </div>
-        {!data.finalized && <Badge tone="warn">Provisional</Badge>}
+
+        <div className="flex items-center gap-6">
+          <div className="text-right">
+            <p className="text-xs font-semibold uppercase tracking-wider text-mute">Overall Percentage</p>
+            <p className="text-2xl font-extrabold text-pen">{data.percentage}%</p>
+          </div>
+          <div>
+            {data.finalized ? (
+              <Badge tone="ok">Verified &amp; Finalized</Badge>
+            ) : (
+              <Badge tone="warn">Provisional</Badge>
+            )}
+          </div>
+        </div>
       </Card>
-      <Card className="mb-5 overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="border-b border-line text-left text-mute">
+
+      {/* Question Performance Table Overview */}
+      <Card className="overflow-x-auto shadow-soft">
+        <div className="border-b border-line px-4 py-3">
+          <h3 className="text-sm font-semibold text-ink">Marks Breakdown by Question</h3>
+        </div>
+        <table className="w-full text-left text-sm">
+          <thead className="border-b border-line bg-surface text-xs font-semibold uppercase tracking-wider text-mute">
             <tr>
-              <th className="px-4 py-2 font-medium">Question</th>
-              <th className="px-4 py-2 font-medium">Marks</th>
+              <th className="px-4 py-2.5">Question</th>
+              <th className="px-4 py-2.5">Marks Awarded</th>
+              <th className="px-4 py-2.5">Max Marks</th>
+              <th className="px-4 py-2.5">Evaluation Status</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-line">
+          <tbody className="divide-y divide-line text-sm">
             {data.questions.map((q) => (
-              <tr key={q.question_id}>
-                <td className="px-4 py-2">Q{q.question}</td>
-                <td className="px-4 py-2">
-                  {fmt(q.final_marks)}/{fmt(q.max_marks)}
+              <tr key={q.question_id} className="hover:bg-sunken/40">
+                <td className="px-4 py-2.5 font-bold text-ink">Question {q.question}</td>
+                <td className="px-4 py-2.5 font-mono font-bold text-pen">{fmt(q.final_marks)}</td>
+                <td className="px-4 py-2.5 font-mono text-mute">{fmt(q.max_marks)}</td>
+                <td className="px-4 py-2.5">
+                  {q.teacher_overridden ? (
+                    <Badge tone="warn">Teacher Adjusted ({fmt(q.ai_marks)} &rarr; {fmt(q.final_marks)})</Badge>
+                  ) : (
+                    <Badge tone="ok">AI Evaluated</Badge>
+                  )}
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
       </Card>
-      <div className="space-y-3">
+
+      {/* Detailed Question Review Cards */}
+      <div className="space-y-4">
+        <h3 className="text-sm font-semibold text-ink px-1">Detailed Question-by-Question Evaluation</h3>
         {data.questions.map((q) => (
-          <Card key={q.question_id} className="p-4">
-            <div className="flex flex-wrap items-start justify-between gap-3">
+          <Card key={q.question_id} className="p-5 shadow-soft space-y-3.5">
+            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line pb-3">
               <div className="min-w-0 flex-1">
-                <p className="font-semibold">Question {q.question}</p>
-                <p className="doc-text mt-1 text-sm text-mute">{q.question_text}</p>
+                <div className="flex items-center gap-2">
+                  <span className="text-base font-bold text-ink">Question {q.question}</span>
+                  <Badge tone="pen">{fmt(q.max_marks)} Marks</Badge>
+                  {q.teacher_overridden && (
+                    <Badge tone="warn">Teacher Override</Badge>
+                  )}
+                </div>
+                <div className="doc-text mt-1.5 text-sm text-ink/80">
+                  <MathView text={q.question_text} />
+                </div>
               </div>
-              <div className="text-right">
+              <div className="text-right flex-shrink-0">
                 <PenScore got={q.final_marks} max={q.max_marks} />
                 {q.teacher_overridden && (
-                  <p className="mt-1 text-xs text-warn">
-                    Teacher changed AI mark {fmt(q.ai_marks)} → {fmt(q.final_marks)}
+                  <p className="mt-1 font-mono text-[11px] text-warn font-medium">
+                    Adjusted from {fmt(q.ai_marks)}
                   </p>
                 )}
               </div>
             </div>
-            <div className="mt-3 grid gap-3 md:grid-cols-2">
-              <div>
-                <p className="mb-1 text-xs font-medium text-mute">Student answer</p>
-                <p className="doc-text rounded bg-sunken p-2 text-sm">{q.student_answer ?? <em className="text-mute">No answer</em>}</p>
+
+            {/* Answer Comparison Cards */}
+            <div className="grid gap-3.5 md:grid-cols-2">
+              <div className="rounded-xl border border-line bg-sunken/50 p-3.5">
+                <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-mute">
+                  Student's Written Answer
+                </p>
+                <div className="doc-text rounded-lg bg-surface border border-line/60 p-3 text-sm text-ink">
+                  {q.student_answer ? (
+                    <MathView text={q.student_answer} />
+                  ) : (
+                    <em className="text-mute">No answer written or detected</em>
+                  )}
+                </div>
               </div>
-              <div>
-                <p className="mb-1 text-xs font-medium text-mute">Official answer</p>
-                <p className="doc-text rounded bg-sunken p-2 text-sm">{q.official_answer ?? "–"}</p>
+
+              <div className="rounded-xl border border-line bg-pen-soft/20 p-3.5">
+                <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-pen">
+                  Official Model Answer
+                </p>
+                <div className="doc-text rounded-lg bg-surface border border-pen/20 p-3 text-sm text-ink">
+                  <MathView text={q.official_answer} />
+                </div>
               </div>
             </div>
+
+            {/* AI Feedback */}
             {q.feedback && (
-              <p className="mt-2 text-sm">
-                <span className="font-medium">Feedback:</span> {q.feedback}
-              </p>
+              <div className="rounded-lg bg-sunken p-3 text-xs sm:text-sm text-ink border border-line/60">
+                <span className="font-semibold text-pen">Evaluator Assessment: </span>
+                <span className="text-ink/90">{q.feedback}</span>
+              </div>
             )}
           </Card>
         ))}
       </div>
-    </>
+    </div>
   );
 }

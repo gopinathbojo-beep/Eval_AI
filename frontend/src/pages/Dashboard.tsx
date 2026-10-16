@@ -3,9 +3,31 @@ import { Link } from "react-router-dom";
 import { useApi } from "../hooks/useApi";
 import { downloadFile } from "../api/client";
 import type { Dashboard as D } from "../types";
-import { Button, Card, Empty, ErrorPanel, Loading, PageHeader, Stat, StatusBadge } from "../components/ui";
+import {
+  Button,
+  Card,
+  Empty,
+  ErrorPanel,
+  Loading,
+  Stat,
+  StatusBadge,
+} from "../components/ui";
+import {
+  IconClasses,
+  IconSubjects,
+  IconExam,
+  IconStudents,
+  IconClock,
+  IconCheckCircle,
+  IconDownload,
+  IconPlus,
+  IconChevronRight,
+  IconFileText,
+} from "../components/Icons";
+import { useAuth } from "../context/Auth";
 
 export default function Dashboard() {
+  const { teacher } = useAuth();
   const { data, error, loading } = useApi<D>("/dashboard");
   const [downloading, setDownloading] = useState(false);
 
@@ -20,45 +42,200 @@ export default function Dashboard() {
     }
   };
 
-  if (loading) return <Loading />;
+  if (loading) return <Loading text="Loading your dashboard overview..." />;
   if (error || !data) return <ErrorPanel error={error} />;
+
   return (
-    <>
-      <PageHeader
-        title="Dashboard"
-        actions={
+    <div className="space-y-6">
+      {/* Welcome & Overview Header */}
+      <div className="flex flex-col gap-4 rounded-2xl border border-line bg-gradient-to-r from-surface to-pen-soft/30 p-6 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+        <div className="space-y-1">
           <div className="flex items-center gap-2">
-            <Button variant="soft" busy={downloading} onClick={handleDownloadMarksheet}>
-              Download Marksheet (.xlsx)
+            <h1 className="text-2xl font-bold tracking-tight text-ink">
+              Welcome back{teacher?.name ? `, ${teacher.name}` : ""}
+            </h1>
+          </div>
+          <p className="text-sm text-mute">
+            Review ongoing answer sheet evaluations, monitor OCR pipeline status, and finalize academic scores.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <Button
+            variant="secondary"
+            busy={downloading}
+            onClick={handleDownloadMarksheet}
+            icon={<IconDownload size={16} />}
+          >
+            Export Marksheet (.xlsx)
+          </Button>
+          <Link to="/exams/new">
+            <Button variant="primary" icon={<IconPlus size={16} />}>
+              Create Exam
             </Button>
-            <Link to="/exams/new">
-              <Button variant="primary">Create exam</Button>
+          </Link>
+        </div>
+      </div>
+
+      {/* Operational Metrics Cards */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        <Stat
+          label="Classes"
+          value={data.total_classes}
+          icon={<IconClasses size={20} />}
+          hint="Assigned classes"
+        />
+        <Stat
+          label="Subjects"
+          value={data.total_subjects}
+          icon={<IconSubjects size={20} />}
+          hint="Active subjects"
+        />
+        <Stat
+          label="Total Exams"
+          value={data.total_exams}
+          icon={<IconExam size={20} />}
+          hint="Created assessments"
+        />
+        <Stat
+          label="Students"
+          value={data.total_students}
+          icon={<IconStudents size={20} />}
+          hint="Registered students"
+        />
+        <Stat
+          label="Pending Review"
+          value={data.pending_evaluations}
+          tone={data.pending_evaluations > 0 ? "warn" : "mute"}
+          icon={<IconClock size={20} />}
+          hint={data.pending_evaluations > 0 ? "Awaiting review" : "Up to date"}
+        />
+        <Stat
+          label="Completed"
+          value={data.completed_evaluations}
+          tone="ok"
+          icon={<IconCheckCircle size={20} />}
+          hint="Finalized evaluations"
+        />
+      </div>
+
+      {/* Recent Activity Sections */}
+      <div className="grid gap-6 lg:grid-cols-2">
+        {/* Recent Exams */}
+        <section className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <h2 className="text-base font-semibold text-ink">Recent Exams</h2>
+              <span className="rounded-full bg-sunken px-2 py-0.5 text-xs font-medium text-mute">
+                {data.recent_exams.length}
+              </span>
+            </div>
+            <Link
+              to="/exams"
+              className="flex items-center gap-1 text-xs font-medium text-pen hover:underline"
+            >
+              <span>View all</span>
+              <IconChevronRight size={14} />
             </Link>
           </div>
-        }
-      />
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
-        <Stat label="Classes" value={data.total_classes} /><Stat label="Subjects" value={data.total_subjects} />
-        <Stat label="Exams" value={data.total_exams} /><Stat label="Students" value={data.total_students} />
-        <Stat label="Pending evaluations" value={data.pending_evaluations} tone={data.pending_evaluations ? "mark" : undefined} />
-        <Stat label="Completed" value={data.completed_evaluations} />
-      </div>
-      <div className="mt-6 grid gap-6 lg:grid-cols-2">
-        <section><h2 className="mb-2 font-semibold">Recent exams</h2>
-          {data.recent_exams.length === 0 ? <Empty title="No exams yet" hint="Create an exam to upload its question paper." /> : (
-            <Card className="divide-y divide-line">{data.recent_exams.map((e) => (
-              <Link key={e.id} to={`/exams/${e.id}`} className="flex items-center justify-between p-3 hover:bg-sunken">
-                <div><p className="font-medium">{e.name}</p><p className="text-xs text-mute">{e.class_name} · {e.subject_name}</p></div><StatusBadge status={e.status} />
-              </Link>))}</Card>)}
+
+          {data.recent_exams.length === 0 ? (
+            <Empty
+              title="No exams created yet"
+              hint="Create your first exam to begin uploading question papers and answer keys."
+              icon={<IconExam size={24} />}
+              action={
+                <Link to="/exams/new">
+                  <Button variant="primary" small icon={<IconPlus size={14} />}>
+                    Create Exam
+                  </Button>
+                </Link>
+              }
+            />
+          ) : (
+            <Card className="divide-y divide-line overflow-hidden">
+              {data.recent_exams.map((e) => (
+                <Link
+                  key={e.id}
+                  to={`/exams/${e.id}`}
+                  className="flex items-center justify-between p-4 transition-ui hover:bg-sunken/60 group"
+                >
+                  <div className="min-w-0 flex-1 pr-4">
+                    <p className="truncate font-semibold text-sm text-ink group-hover:text-pen transition-colors">
+                      {e.name}
+                    </p>
+                    <div className="mt-1 flex items-center gap-2 text-xs text-mute">
+                      <span>{e.class_name}</span>
+                      <span>•</span>
+                      <span>{e.subject_name}</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3 shrink-0">
+                    <StatusBadge status={e.status} />
+                    <IconChevronRight size={16} className="text-mute/60 group-hover:text-pen transition-colors" />
+                  </div>
+                </Link>
+              ))}
+            </Card>
+          )}
         </section>
-        <section><h2 className="mb-2 font-semibold">Recent evaluations</h2>
-          {data.recent_evaluations.length === 0 ? <Empty title="No answer sheets yet" /> : (
-            <Card className="divide-y divide-line">{data.recent_evaluations.map((e) => (
-              <Link key={e.id} to={e.status === "FINALIZED" ? `/results/${e.id}` : `/evaluations/${e.id}`} className="flex items-center justify-between p-3 hover:bg-sunken">
-                <div><p className="font-medium">{e.student.name}</p><p className="text-xs text-mute">{e.exam_name}</p></div><StatusBadge status={e.status} />
-              </Link>))}</Card>)}
+
+        {/* Recent Evaluations */}
+        <section className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <h2 className="text-base font-semibold text-ink">Recent Evaluations</h2>
+              <span className="rounded-full bg-sunken px-2 py-0.5 text-xs font-medium text-mute">
+                {data.recent_evaluations.length}
+              </span>
+            </div>
+            <Link
+              to="/evaluations"
+              className="flex items-center gap-1 text-xs font-medium text-pen hover:underline"
+            >
+              <span>View all</span>
+              <IconChevronRight size={14} />
+            </Link>
+          </div>
+
+          {data.recent_evaluations.length === 0 ? (
+            <Empty
+              title="No answer sheets evaluated yet"
+              hint="Open an existing exam to upload student answer sheets for OCR processing."
+              icon={<IconFileText size={24} />}
+            />
+          ) : (
+            <Card className="divide-y divide-line overflow-hidden">
+              {data.recent_evaluations.map((e) => {
+                const targetLink =
+                  e.status === "FINALIZED" ? `/results/${e.id}` : `/evaluations/${e.id}`;
+                return (
+                  <Link
+                    key={e.id}
+                    to={targetLink}
+                    className="flex items-center justify-between p-4 transition-ui hover:bg-sunken/60 group"
+                  >
+                    <div className="min-w-0 flex-1 pr-4">
+                      <div className="flex items-center gap-2">
+                        <p className="truncate font-semibold text-sm text-ink group-hover:text-pen transition-colors">
+                          {e.student.name}
+                        </p>
+                        <span className="rounded bg-sunken px-1.5 py-0.2 text-[11px] font-mono text-mute">
+                          {e.student.roll_number}
+                        </span>
+                      </div>
+                      <p className="mt-1 truncate text-xs text-mute">{e.exam_name}</p>
+                    </div>
+                    <div className="flex items-center gap-3 shrink-0">
+                      <StatusBadge status={e.status} />
+                      <IconChevronRight size={16} className="text-mute/60 group-hover:text-pen transition-colors" />
+                    </div>
+                  </Link>
+                );
+              })}
+            </Card>
+          )}
         </section>
       </div>
-    </>
+    </div>
   );
 }

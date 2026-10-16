@@ -3,33 +3,115 @@
 @import "@fontsource/ibm-plex-sans/600.css";
 @import "@fontsource/source-serif-4/400.css";
 @import "@fontsource/source-serif-4/600.css";
+@import "katex/dist/katex.min.css";
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
-  --paper: 244 246 248; --surface: 255 255 255; --sunken: 235 239 243; --line: 214 221 228;
-  --ink: 27 39 51; --mute: 98 112 126; --pen: 36 74 115; --pen-soft: 226 235 245;
-  --mark: 194 59 46; --mark-soft: 251 233 230; --ok: 47 125 92; --ok-soft: 224 242 233;
-  --warn: 168 116 26; --warn-soft: 250 240 218;
+  /* Crisp, modern light SaaS palette */
+  --paper: 248 250 252;       /* Slate 50 #f8fafc */
+  --surface: 255 255 255;     /* Pure white */
+  --sunken: 241 245 249;      /* Slate 100 #f1f5f9 */
+  --line: 226 232 240;        /* Slate 200 #e2e8f0 */
+  --ink: 15 23 42;            /* Slate 900 #0f172a */
+  --mute: 100 116 139;        /* Slate 500 #64748b */
+  --pen: 24 68 126;           /* Sophisticated academic navy #18447e */
+  --pen-soft: 238 244 252;    /* Soft blue tint */
+  --mark: 225 29 72;          /* Rose 600 #e11d48 */
+  --mark-soft: 255 241 242;   /* Rose 50 */
+  --ok: 5 150 105;            /* Emerald 600 #059669 */
+  --ok-soft: 236 253 245;     /* Emerald 50 */
+  --warn: 217 119 6;          /* Amber 600 #d97706 */
+  --warn-soft: 254 243 199;   /* Amber 100 */
 }
-.dark {
-  --paper: 15 20 26; --surface: 23 30 38; --sunken: 31 40 50; --line: 48 60 73;
-  --ink: 228 233 238; --mute: 148 162 176; --pen: 128 175 226; --pen-soft: 28 45 66;
-  --mark: 240 120 106; --mark-soft: 64 29 27; --ok: 106 200 160; --ok-soft: 25 52 41;
-  --warn: 226 178 88; --warn-soft: 58 44 18;
-}
-html, body, #root { height: 100%; }
-body { @apply bg-paper text-ink font-sans antialiased; }
-:focus-visible { outline: 2px solid rgb(var(--pen)); outline-offset: 2px; }
-@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 
-/* The one distinctive element: marks written like a teacher's red pen. */
-.pen-score {
-  display: inline-flex; align-items: baseline; gap: 1px; padding: 5px 15px 6px;
-  border: 2px solid rgb(var(--mark)); border-radius: 50%; color: rgb(var(--mark));
-  font-family: "Source Serif 4", Georgia, serif; font-weight: 600; transform: rotate(-3deg);
-  line-height: 1.1; white-space: nowrap;
+.dark {
+  --paper: 11 15 25;          /* Deep dark slate */
+  --surface: 17 24 39;        /* Slate 900 #111827 */
+  --sunken: 30 41 59;         /* Slate 800 #1e293b */
+  --line: 51 65 85;           /* Slate 700 #334155 */
+  --ink: 241 245 249;         /* Slate 100 #f1f5f9 */
+  --mute: 148 163 184;       /* Slate 400 #94a3b8 */
+  --pen: 96 165 250;          /* Blue 400 #60a5fa */
+  --pen-soft: 30 58 102;      /* Deep navy blue */
+  --mark: 251 113 133;        /* Rose 400 */
+  --mark-soft: 76 17 28;
+  --ok: 52 211 153;           /* Emerald 400 */
+  --ok-soft: 16 57 40;
+  --warn: 251 191 36;         /* Amber 400 */
+  --warn-soft: 68 49 14;
 }
-.pen-score small { font-size: .7em; opacity: .85; }
-.doc-text { @apply font-doc whitespace-pre-wrap leading-relaxed; }
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  @apply bg-paper text-ink font-sans antialiased;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+:focus-visible {
+  outline: 2px solid rgb(var(--pen));
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Custom refined scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgb(var(--line));
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--mute) / 0.5);
+}
+
+/* Distinctive teacher red pen marks badge */
+.pen-score {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+  padding: 4px 14px;
+  border: 2px solid rgb(var(--mark));
+  border-radius: 9999px;
+  color: rgb(var(--mark));
+  font-family: "Source Serif 4", Georgia, serif;
+  font-weight: 600;
+  line-height: 1.1;
+  white-space: nowrap;
+  background-color: rgb(var(--mark-soft) / 0.6);
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+}
+.pen-score small {
+  font-size: 0.72em;
+  opacity: 0.85;
+}
+
+.doc-text {
+  @apply font-doc whitespace-pre-wrap leading-relaxed;
+}
+
+/* Soft transition utilities */
+.transition-ui {
+  transition-property: color, background-color, border-color, text-decoration-color, fill, stroke, opacity, box-shadow, transform;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms;
+}

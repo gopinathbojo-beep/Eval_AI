@@ -178,3 +178,50 @@ def test_answer_key_not_locked_in_questions_verified(client, auth):
     assert keys_data["locked"] is False
     assert len(keys_data["keys"]) == 0
 
+
+def test_cancel_document_ocr(client, auth):
+    c, h = client, auth
+    cls = c.post("/api/classes", json={"name": "Grade 9"}, headers=h).json()
+    sub = c.post("/api/subjects", json={"name": "Chemistry"}, headers=h).json()
+    exam = c.post("/api/exams", headers=h, json={
+        "name": "Chem Quiz", "class_id": cls["id"], "subject_id": sub["id"],
+        "exam_type": "Quiz", "total_marks": 20.0
+    }).json()
+    eid = exam["id"]
+
+    # Upload question paper
+    up_res = c.post(f"/api/exams/{eid}/question-paper", headers=h, files={"file": ("chem.pdf", make_pdf(2), "application/pdf")})
+    assert up_res.status_code == 202
+    doc_id = up_res.json()["id"]
+
+    # Cancel OCR processing
+    cancel_res = c.post(f"/api/documents/question-paper/{doc_id}/cancel", headers=h)
+    assert cancel_res.status_code == 200
+    assert cancel_res.json()["status"] == "CANCELLED"
+
+    # Verify doc status via GET
+    doc_status = c.get(f"/api/documents/question-paper/{doc_id}", headers=h).json()
+    assert doc_status["status"] == "CANCELLED"
+
+
+def test_delete_exam_cascades(client, auth):
+    c, h = client, auth
+    cls = c.post("/api/classes", json={"name": "Grade 11"}, headers=h).json()
+    sub = c.post("/api/subjects", json={"name": "Biology"}, headers=h).json()
+    exam = c.post("/api/exams", headers=h, json={
+        "name": "Bio Final", "class_id": cls["id"], "subject_id": sub["id"],
+        "exam_type": "Final", "total_marks": 50.0
+    }).json()
+    eid = exam["id"]
+
+    # Delete exam
+    del_res = c.delete(f"/api/exams/{eid}", headers=h)
+    assert del_res.status_code == 200
+    assert del_res.json()["ok"] is True
+
+    # Verify exam is gone
+    get_res = c.get(f"/api/exams/{eid}", headers=h)
+    assert get_res.status_code == 404
+
+
+

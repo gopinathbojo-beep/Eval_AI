@@ -317,10 +317,27 @@ def reprocess(kind: str, doc_id: str, bg: BackgroundTasks, db: Session = Depends
     only_failed = bool(doc.pages) and all("ocr_status" in p for p in doc.pages)
     if kind == "question-paper" and exam.status == "QUESTIONS_EXTRACTED":
         set_state(exam, "QUESTION_PAPER_UPLOADED")
+    from ..services.pipeline import _CANCEL_REQUESTED
+    _CANCEL_REQUESTED.discard(doc.id)
     doc.status, doc.stage = "UPLOADED", "Queued"
+    doc.error_message = None
     db.commit()
     bg.add_task(process_document, kind, doc.id, only_failed)
     return doc_view(doc, kind)
+
+
+@router.post("/documents/{kind}/{doc_id}/cancel")
+def cancel_processing(kind: str, doc_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    """Cancel ongoing OCR processing for a document."""
+    doc = _doc(db, t, kind, doc_id)
+    from ..services.pipeline import request_cancellation
+    request_cancellation(doc.id)
+    doc.status = "CANCELLED"
+    doc.stage = "Cancelled by user"
+    doc.error_message = "OCR processing was stopped by user."
+    db.commit()
+    return doc_view(doc, kind)
+
 
 
 @router.get("/crops/{entity}/{entity_id}")

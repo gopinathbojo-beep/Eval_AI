@@ -7,8 +7,9 @@ const TONES: Record<string, Tone> = {
   NEEDS_REVIEW: "mark", UNMAPPED: "mark", MISSING: "warn", EVALUATION_ERROR: "mark", AI_ERROR: "mark", FAILED: "mark",
   FAILED_PARSE: "mark", NEEDS_ATTENTION: "warn", MAPPING_REVIEW: "warn", OCR_REVIEW: "warn", REVIEW_REQUIRED: "warn",
   RENDERING: "pen", OCR_PROCESSING: "pen", EXTRACTING: "pen", EVALUATING: "pen", RUNNING: "pen", ERROR: "mark",
+  CANCELLED: "warn",
 };
-export const toneOf = (s: string): Tone => TONES[s] ?? "pen";
+export const toneOf = (s: string | null | undefined): Tone => (s ? TONES[s] ?? "pen" : "mute");
 export const label = (s: string | null | undefined) =>
   (s ?? "").toLowerCase().replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase())
     .replace(/\bai\b/gi, "AI").replace(/\bocr\b/gi, "OCR");

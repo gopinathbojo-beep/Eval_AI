@@ -139,7 +139,7 @@ export const ClassesScreen: React.FC<ClassesScreenProps> = ({ navigation }) => {
   const handleExportMarksheet = async () => {
     try {
       setExportingMarksheet(true);
-      await downloadAndShareFile("/reports/marksheet", "ADEM_Student_Marksheet.xlsx");
+      await downloadAndShareFile("/reports/marksheet", "Eval_AI_Student_Marksheet.xlsx");
     } catch (err: any) {
       Alert.alert("Error", err.message || "Failed to download marksheet.");
     } finally {

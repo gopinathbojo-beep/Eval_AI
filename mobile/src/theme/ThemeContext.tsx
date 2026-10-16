@@ -12,18 +12,18 @@ interface ThemeContextType {
   colors: ThemeColors;
 }
 
-const THEME_STORAGE_KEY = "adem_mobile_theme_mode";
+const THEME_STORAGE_KEY = "eval_ai_mobile_theme_mode";
 
 const ThemeContext = createContext<ThemeContextType>({
-  mode: "dark",
+  mode: "light",
   setMode: () => {},
-  isDark: true,
-  colors: darkColors,
+  isDark: false,
+  colors: lightColors,
 });
 
 export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const systemScheme = useColorScheme();
-  const [mode, setModeState] = useState<ThemeMode>("dark");
+  const [mode, setModeState] = useState<ThemeMode>("light");
 
   useEffect(() => {
     AsyncStorage.getItem(THEME_STORAGE_KEY).then((saved) => {

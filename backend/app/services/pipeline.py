@@ -51,6 +51,33 @@ def _progress(db: Session, doc, stage: str, cur: int | None = None, total: int |
     db.commit()
 
 
+_CANCEL_REQUESTED: set[str] = set()
+
+
+def request_cancellation(doc_id: str) -> None:
+    _CANCEL_REQUESTED.add(doc_id)
+
+
+def is_cancelled(doc_id: str, db: Session, doc) -> bool:
+    if doc_id in _CANCEL_REQUESTED:
+        return True
+    try:
+        db.refresh(doc)
+        if doc.status == "CANCELLED":
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _handle_cancel(db: Session, doc, doc_id: str) -> None:
+    _CANCEL_REQUESTED.discard(doc_id)
+    doc.status = "CANCELLED"
+    doc.stage = "Cancelled by user"
+    doc.error_message = "OCR processing was stopped by user."
+    db.commit()
+
+
 def process_document(kind: str, doc_id: str, only_failed: bool = False) -> None:
     db = SessionLocal()
     try:
@@ -60,7 +87,7 @@ def process_document(kind: str, doc_id: str, only_failed: bool = False) -> None:
         db.rollback()
         model_cls = KINDS[kind][0]
         doc = db.get(model_cls, doc_id)
-        if doc:
+        if doc and doc.status != "CANCELLED":
             doc.status, doc.error_message = "FAILED", "Processing failed unexpectedly. See the server log for details."
             db.commit()
     finally:
@@ -76,6 +103,10 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
     ext = original.suffix.lstrip(".").lower()
     doc.error_message = None
 
+    if is_cancelled(doc_id, db, doc):
+        _handle_cancel(db, doc, doc_id)
+        return
+
     if not (only_failed and doc.pages):
         _progress(db, doc, "Rendering pages", 0, 0, "RENDERING")
         try:
@@ -86,6 +117,10 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
             return
         doc.progress_total = len(doc.pages)
         db.commit()
+
+    if is_cancelled(doc_id, db, doc):
+        _handle_cancel(db, doc, doc_id)
+        return
 
     try:
         check_model()
@@ -99,6 +134,10 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
     total = len(doc.pages)
     _progress(db, doc, f"OCR: page 1 of {total}", 0, total, "OCR_PROCESSING")
     for i, p in enumerate(list(doc.pages)):
+        if is_cancelled(doc_id, db, doc):
+            _handle_cancel(db, doc, doc_id)
+            return
+
         if only_failed and p.get("ocr_status") == "OK":
             continue
         _progress(db, doc, f"OCR: processing page {p['page_number']} of {total}", i)
@@ -110,9 +149,9 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
             for q in db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all():
                 q_text = (q.question_text or "").strip()
                 clean_lines = [line.strip() for line in q_text.splitlines() if line.strip()]
-                compact_text = " | ".join(clean_lines[:6])
-                if len(compact_text) > 300:
-                    compact_text = compact_text[:297] + "..."
+                compact_text = " | ".join(clean_lines[:3])
+                if len(compact_text) > 160:
+                    compact_text = compact_text[:157] + "..."
                 canonical_qs.append(f"Q{q.display_number}: {compact_text}")
             if canonical_qs:
                 prompt_kwargs["canonical_questions"] = canonical_qs
@@ -133,7 +172,16 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
             out.write_text(json.dumps({"status": e.kind, "raw": e.raw, "parsed": None, "error": e.detail},
                                       ensure_ascii=False, indent=1), encoding="utf-8")
             _set_pages(db, doc, i, ocr_status=e.kind, ocr_error=AI_BAD_RESPONSE_MESSAGE, ocr_file=rel(out))
+
+        if is_cancelled(doc_id, db, doc):
+            _handle_cancel(db, doc, doc_id)
+            return
+
     doc.progress_current = total
+
+    if is_cancelled(doc_id, db, doc):
+        _handle_cancel(db, doc, doc_id)
+        return
 
     _progress(db, doc, "Extracting and validating", None, None, "EXTRACTING")
     results = _load_results(doc, schema)
@@ -201,8 +249,12 @@ def _bbox_and_crop(p: dict, bbox, wd: Path, name: str):
 
 
 def _build_questions(db: Session, doc, exam: Exam, wd: Path, results) -> None:
-    db.query(AnswerKey).filter_by(exam_id=exam.id).update({AnswerKey.exam_question_id: None})
-    db.query(ExamQuestion).filter_by(exam_id=exam.id).delete()
+    existing_q_ids = [q.id for q in db.query(ExamQuestion).filter_by(exam_id=exam.id).all()]
+    if existing_q_ids:
+        db.query(AnswerKey).filter_by(exam_id=exam.id).update({AnswerKey.exam_question_id: None})
+        db.query(StudentAnswer).filter(StudentAnswer.exam_question_id.in_(existing_q_ids)).update({StudentAnswer.exam_question_id: None}, synchronize_session=False)
+        db.query(Evaluation).filter(Evaluation.exam_question_id.in_(existing_q_ids)).update({Evaluation.exam_question_id: None}, synchronize_session=False)
+        db.query(ExamQuestion).filter_by(exam_id=exam.id).delete()
     struct = parse_question_paper_structure(results)
 
     # Safety Net: If 0 questions were parsed, check if OCR captured any non-empty text blocks

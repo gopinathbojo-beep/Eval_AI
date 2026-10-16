@@ -22,7 +22,7 @@ const Stack = createNativeStackNavigator();
 
 export const RootNavigator: React.FC = () => {
   const { isAuthenticated, loading } = useAuth();
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
 
   if (loading) {
     return (
@@ -46,10 +46,12 @@ export const RootNavigator: React.FC = () => {
           headerStyle: {
             backgroundColor: colors.surface,
           },
+          headerShadowVisible: false,
           headerTintColor: colors.primary,
           headerTitleStyle: {
             color: colors.text,
             fontWeight: "700",
+            fontSize: 17,
           },
           contentStyle: {
             backgroundColor: colors.background,
@@ -102,7 +104,7 @@ export const RootNavigator: React.FC = () => {
             <Stack.Screen
               name="Subjects"
               component={SubjectsScreen}
-              options={{ title: "Subjects & Modules" }}
+              options={{ title: "Curriculum Subjects" }}
             />
             <Stack.Screen
               name="Students"
@@ -112,7 +114,7 @@ export const RootNavigator: React.FC = () => {
             <Stack.Screen
               name="Settings"
               component={SettingsScreen}
-              options={{ title: "Settings & System Diagnostics" }}
+              options={{ title: "Settings & AI Diagnostics" }}
             />
           </>
         )}

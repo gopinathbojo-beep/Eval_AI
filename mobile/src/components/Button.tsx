@@ -15,7 +15,7 @@ import { useTheme } from "../theme/ThemeContext";
 interface ButtonProps {
   title?: string;
   onPress?: () => void;
-  variant?: "primary" | "gradient" | "secondary" | "danger" | "outline" | "ghost";
+  variant?: "primary" | "gradient" | "secondary" | "soft" | "danger" | "outline" | "ghost";
   size?: "small" | "medium" | "large";
   icon?: React.ReactNode;
   iconPosition?: "left" | "right";
@@ -39,23 +39,23 @@ export const Button: React.FC<ButtonProps> = ({
   style,
   textStyle,
 }) => {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
 
-  const getPadding = () => {
+  const getDimensions = () => {
     switch (size) {
       case "small":
-        return { paddingVertical: 6, paddingHorizontal: 12 };
+        return { minHeight: 36, paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8 };
       case "large":
-        return { paddingVertical: 14, paddingHorizontal: 22 };
+        return { minHeight: 52, paddingVertical: 14, paddingHorizontal: 22, borderRadius: 12 };
       default:
-        return { paddingVertical: 10, paddingHorizontal: 16 };
+        return { minHeight: 44, paddingVertical: 10, paddingHorizontal: 16, borderRadius: 10 };
     }
   };
 
   const getFontSize = () => {
     switch (size) {
       case "small":
-        return 13;
+        return 12.5;
       case "large":
         return 16;
       default:
@@ -64,13 +64,22 @@ export const Button: React.FC<ButtonProps> = ({
   };
 
   const isDisabled = disabled || loading;
+  const dims = getDimensions();
+
+  const getTextColor = () => {
+    if (variant === "secondary") return colors.text;
+    if (variant === "soft") return colors.primary;
+    if (variant === "outline") return colors.primary;
+    if (variant === "ghost") return colors.textSecondary;
+    return "#FFFFFF";
+  };
 
   const content = (
     <View style={styles.innerContent}>
       {loading ? (
         <ActivityIndicator
           size="small"
-          color={variant === "secondary" || variant === "outline" || variant === "ghost" ? colors.primary : "#FFFFFF"}
+          color={getTextColor()}
           style={title ? { marginRight: 8 } : undefined}
         />
       ) : (
@@ -82,16 +91,9 @@ export const Button: React.FC<ButtonProps> = ({
             styles.text,
             {
               fontSize: getFontSize(),
-              color:
-                variant === "secondary"
-                  ? colors.text
-                  : variant === "outline"
-                  ? colors.primary
-                  : variant === "ghost"
-                  ? colors.textSecondary
-                  : "#FFFFFF",
+              color: getTextColor(),
             },
-            isDisabled && { opacity: 0.7 },
+            isDisabled && { opacity: 0.65 },
             textStyle,
           ]}
         >
@@ -109,14 +111,23 @@ export const Button: React.FC<ButtonProps> = ({
       <TouchableOpacity
         onPress={onPress || (() => {})}
         disabled={isDisabled}
-        activeOpacity={0.85}
+        activeOpacity={0.82}
         style={[fullWidth && styles.fullWidth, style]}
       >
         <LinearGradient
           colors={[colors.gradientStart, colors.gradientEnd]}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 0 }}
-          style={[styles.baseButton, getPadding(), fullWidth && styles.fullWidth]}
+          style={[
+            styles.baseButton,
+            {
+              minHeight: dims.minHeight,
+              paddingVertical: dims.paddingVertical,
+              paddingHorizontal: dims.paddingHorizontal,
+              borderRadius: dims.borderRadius,
+            },
+            fullWidth && styles.fullWidth,
+          ]}
         >
           {content}
         </LinearGradient>
@@ -125,13 +136,15 @@ export const Button: React.FC<ButtonProps> = ({
   }
 
   const getBackgroundColor = () => {
-    if (isDisabled) return colors.surfaceElevated;
+    if (isDisabled) return isDark ? colors.surfaceElevated : "#E2E8F0";
     switch (variant) {
       case "primary":
-      case "gradient": // fallback when disabled
+      case "gradient":
         return colors.primary;
       case "secondary":
         return colors.surface;
+      case "soft":
+        return isDark ? "rgba(96, 165, 250, 0.14)" : "rgba(24, 68, 126, 0.08)";
       case "danger":
         return colors.error;
       case "outline":
@@ -142,23 +155,28 @@ export const Button: React.FC<ButtonProps> = ({
     }
   };
 
+  const getBorderColor = () => {
+    if (variant === "outline") return colors.primary;
+    if (variant === "secondary") return colors.border;
+    if (variant === "soft") return isDark ? "rgba(96, 165, 250, 0.25)" : "rgba(24, 68, 126, 0.15)";
+    return "transparent";
+  };
+
   return (
     <TouchableOpacity
       onPress={onPress}
       disabled={isDisabled}
-      activeOpacity={0.8}
+      activeOpacity={0.78}
       style={[
         styles.baseButton,
-        getPadding(),
         {
+          minHeight: dims.minHeight,
+          paddingVertical: dims.paddingVertical,
+          paddingHorizontal: dims.paddingHorizontal,
+          borderRadius: dims.borderRadius,
           backgroundColor: getBackgroundColor(),
-          borderColor:
-            variant === "outline"
-              ? colors.primary
-              : variant === "secondary"
-              ? colors.border
-              : "transparent",
-          borderWidth: variant === "outline" || variant === "secondary" ? 1 : 0,
+          borderColor: getBorderColor(),
+          borderWidth: variant === "outline" || variant === "secondary" || variant === "soft" ? 1 : 0,
         },
         fullWidth && styles.fullWidth,
         isDisabled && { opacity: 0.6 },
@@ -172,7 +190,6 @@ export const Button: React.FC<ButtonProps> = ({
 
 const styles = StyleSheet.create({
   baseButton: {
-    borderRadius: 10,
     alignItems: "center",
     justifyContent: "center",
     flexDirection: "row",
@@ -186,13 +203,13 @@ const styles = StyleSheet.create({
     width: "100%",
   },
   text: {
-    fontWeight: "600",
-    letterSpacing: 0.2,
+    fontWeight: "700",
+    letterSpacing: 0.15,
   },
   iconLeft: {
-    marginRight: 8,
+    marginRight: 7,
   },
   iconRight: {
-    marginLeft: 8,
+    marginLeft: 7,
   },
 });

@@ -25,7 +25,7 @@ interface DashboardScreenProps {
 
 export const DashboardScreen: React.FC<DashboardScreenProps> = ({ navigation }) => {
   const { teacher } = useAuth();
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
 
   const [data, setData] = useState<Dashboard | null>(null);
   const [aiStatus, setAiStatus] = useState<any>(null);
@@ -38,7 +38,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({ navigation }) 
       setError(null);
       const [res, aiRes] = await Promise.all([
         api<Dashboard>("/dashboard"),
-        api<any>("/system/ai-status").catch(() => ({ available: false, message: "AI Offline" })),
+        api<any>("/system/ai-status").catch(() => ({ available: false, message: "AI Service Offline" })),
       ]);
       setData(res);
       setAiStatus(aiRes);
@@ -62,16 +62,16 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({ navigation }) 
   if (loading && !refreshing) {
     return (
       <View style={[styles.container, { backgroundColor: colors.background }]}>
-        <Loading message="Loading ADEM dashboard..." />
+        <Loading message="Loading examination dashboard..." />
       </View>
     );
   }
 
   const statItems = [
     { label: "Classes", count: data?.total_classes ?? 0, icon: "school-outline", color: colors.primary, tab: "Classes" },
-    { label: "Subjects", count: data?.total_subjects ?? 0, icon: "book-outline", color: colors.brandGreen, tab: "Subjects" },
+    { label: "Subjects", count: data?.total_subjects ?? 0, icon: "book-outline", color: colors.secondary, tab: "Subjects" },
     { label: "Exams", count: data?.total_exams ?? 0, icon: "document-text-outline", color: colors.primary, tab: "ExamsTab" },
-    { label: "Students", count: data?.total_students ?? 0, icon: "people-outline", color: colors.brandGreen, tab: "Students" },
+    { label: "Students", count: data?.total_students ?? 0, icon: "people-outline", color: colors.secondary, tab: "Students" },
     { label: "Pending Evals", count: data?.pending_evaluations ?? 0, icon: "time-outline", color: colors.warning, tab: "EvaluationsTab" },
     { label: "Finalized", count: data?.completed_evaluations ?? 0, icon: "checkmark-done-circle-outline", color: colors.brandGreen, tab: "ResultsTab" },
   ];
@@ -102,13 +102,14 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({ navigation }) 
               {teacher?.name || "Teacher"}
             </Text>
             <Text style={[styles.schoolSubtitle, { color: colors.primary }]}>
-              ADEM • Smart Evaluation. Brighter Future.
+              Eval AI • Academic Evaluation Platform
             </Text>
           </View>
 
           <TouchableOpacity
             style={[styles.settingsIconBtn, { backgroundColor: colors.surface, borderColor: colors.border }]}
             onPress={() => navigation.navigate("Settings")}
+            accessibilityLabel="Open settings"
           >
             <Ionicons name="settings-outline" size={20} color={colors.text} />
           </TouchableOpacity>
@@ -120,12 +121,12 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({ navigation }) 
             styles.aiStatusBanner,
             {
               backgroundColor: aiStatus?.available ? colors.successSoft : colors.warningSoft,
-              borderColor: aiStatus?.available ? colors.success : colors.warning,
+              borderColor: aiStatus?.available ? "rgba(22, 163, 74, 0.3)" : "rgba(217, 119, 6, 0.3)",
             },
           ]}
         >
           <Ionicons
-            name={aiStatus?.available ? "cube" : "alert-circle"}
+            name={aiStatus?.available ? "checkmark-circle" : "alert-circle"}
             size={16}
             color={aiStatus?.available ? colors.success : colors.warning}
           />
@@ -136,8 +137,8 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({ navigation }) 
             ]}
           >
             {aiStatus?.available
-              ? "InternVL3.5 4B Ready (Ollama Native)"
-              : "AI Model Offline — Check Ollama blaifa/InternVL3_5:4B"}
+              ? "Local AI Model Connected (InternVL 4B)"
+              : "AI Model Offline — Check Local Service"}
           </Text>
         </View>
       </View>
@@ -147,14 +148,14 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({ navigation }) 
         <Button
           title="Create Exam"
           icon={<Ionicons name="add" size={18} color="#FFFFFF" />}
-          variant="gradient"
+          variant="primary"
           size="small"
           onPress={() => navigation.navigate("ExamCreate")}
           style={{ flex: 1 }}
         />
         {firstIncompleteExam && (
           <Button
-            title="Continue Setup"
+            title="Setup Paper"
             icon={<Ionicons name="arrow-forward-circle-outline" size={16} color={colors.text} />}
             variant="secondary"
             size="small"
@@ -163,7 +164,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({ navigation }) 
           />
         )}
         <Button
-          title="Review Evals"
+          title="Review Queue"
           icon={<Ionicons name="checkbox-outline" size={16} color={colors.text} />}
           variant="secondary"
           size="small"
@@ -173,7 +174,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({ navigation }) 
       </View>
 
       {/* Statistics Grid */}
-      <Text style={[styles.sectionTitle, { color: colors.text }]}>Overview</Text>
+      <Text style={[styles.sectionTitle, { color: colors.text }]}>Evaluation Overview</Text>
       <View style={styles.statsGrid}>
         {statItems.map((item, index) => (
           <TouchableOpacity
@@ -189,10 +190,10 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({ navigation }) 
                 <View
                   style={[
                     styles.iconBox,
-                    { backgroundColor: `${item.color}1A`, borderColor: `${item.color}40` },
+                    { backgroundColor: `${item.color}15`, borderColor: `${item.color}30` },
                   ]}
                 >
-                  <Ionicons name={item.icon as any} size={20} color={item.color} />
+                  <Ionicons name={item.icon as any} size={18} color={item.color} />
                 </View>
                 <Text style={[styles.statCount, { color: colors.text }]}>
                   {item.count}
@@ -210,14 +211,14 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({ navigation }) 
       <View style={styles.sectionHeader}>
         <Text style={[styles.sectionTitle, { color: colors.text }]}>Recent Examinations</Text>
         <TouchableOpacity onPress={() => navigation.navigate("ExamsTab")}>
-          <Text style={[styles.viewAllText, { color: colors.primary }]}>View All</Text>
+          <Text style={[styles.viewAllText, { color: colors.primary }]}>View All &rarr;</Text>
         </TouchableOpacity>
       </View>
 
       {(!data?.recent_exams || data.recent_exams.length === 0) ? (
         <Empty
-          title="No exams yet"
-          description="Create your first examination to upload papers and evaluate answer sheets."
+          title="No exams created yet"
+          description="Create your first examination to upload question papers and evaluate student answer sheets."
           actionTitle="Create Exam"
           onAction={() => navigation.navigate("ExamCreate")}
         />
@@ -225,26 +226,29 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({ navigation }) 
         data.recent_exams.map((exam: Exam) => (
           <TouchableOpacity
             key={exam.id}
-            activeOpacity={0.8}
+            activeOpacity={0.82}
             onPress={() => navigation.navigate("ExamWorkspace", { examId: exam.id })}
           >
             <Card style={styles.examCard}>
               <View style={styles.examCardHeader}>
-                <View style={{ flex: 1 }}>
+                <View style={{ flex: 1, paddingRight: 8 }}>
                   <Text style={[styles.examName, { color: colors.text }]}>
                     {exam.name}
                   </Text>
                   <Text style={[styles.examMeta, { color: colors.textSecondary }]}>
-                    {exam.class_name} • {exam.subject_name} ({exam.academic_year})
+                    {exam.class_name} • {exam.subject_name} ({exam.academic_year || "Current Year"})
                   </Text>
                 </View>
-                <StatusBadge status={exam.status} />
+                <StatusBadge status={exam.status} size="small" />
               </View>
               <View style={[styles.examFooter, { borderTopColor: colors.border }]}>
                 <Text style={[styles.examDetailText, { color: colors.textSecondary }]}>
-                  Total Marks: <Text style={{ color: colors.text, fontWeight: "600" }}>{exam.total_marks}</Text>
+                  Total Marks: <Text style={{ color: colors.text, fontWeight: "700" }}>{exam.total_marks}</Text>
                 </Text>
-                <Ionicons name="chevron-forward" size={16} color={colors.textSecondary} />
+                <View style={styles.cardArrowRow}>
+                  <Text style={[styles.openActionText, { color: colors.primary }]}>Workspace</Text>
+                  <Ionicons name="chevron-forward" size={15} color={colors.primary} />
+                </View>
               </View>
             </Card>
           </TouchableOpacity>
@@ -252,10 +256,10 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({ navigation }) 
       )}
 
       {/* Recent Evaluations Section */}
-      <View style={[styles.sectionHeader, { marginTop: 24 }]}>
+      <View style={[styles.sectionHeader, { marginTop: 20 }]}>
         <Text style={[styles.sectionTitle, { color: colors.text }]}>Recent Evaluations</Text>
         <TouchableOpacity onPress={() => navigation.navigate("ResultsTab")}>
-          <Text style={[styles.viewAllText, { color: colors.primary }]}>View All</Text>
+          <Text style={[styles.viewAllText, { color: colors.primary }]}>View All &rarr;</Text>
         </TouchableOpacity>
       </View>
 
@@ -268,12 +272,12 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({ navigation }) 
         data.recent_evaluations.map((ev: Evaluation) => (
           <TouchableOpacity
             key={ev.id}
-            activeOpacity={0.8}
+            activeOpacity={0.82}
             onPress={() => navigation.navigate("EvaluationDetail", { evaluationId: ev.id })}
           >
             <Card style={styles.evalCard}>
               <View style={styles.evalCardHeader}>
-                <View style={{ flex: 1 }}>
+                <View style={{ flex: 1, paddingRight: 8 }}>
                   <Text style={[styles.evalStudentName, { color: colors.text }]}>
                     {ev.student?.name || "Student"}
                   </Text>
@@ -288,7 +292,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({ navigation }) 
                 />
               </View>
               <View style={[styles.evalFooter, { borderTopColor: colors.border }]}>
-                <StatusBadge status={ev.status} />
+                <StatusBadge status={ev.status} size="small" />
                 {ev.percentage !== null && ev.percentage !== undefined && (
                   <Text style={[styles.percentageText, { color: colors.brandGreen }]}>
                     {ev.percentage.toFixed(1)}%
@@ -309,24 +313,26 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: 16,
-    paddingBottom: 40,
+    paddingBottom: 32,
   },
   header: {
     marginBottom: 16,
   },
   welcomeGreeting: {
     fontSize: 13,
-    fontWeight: "500",
+    fontWeight: "600",
     textTransform: "uppercase",
     letterSpacing: 0.5,
   },
   teacherName: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: "800",
     marginTop: 2,
+    letterSpacing: 0.2,
   },
   schoolSubtitle: {
-    fontSize: 13,
+    fontSize: 12,
+    fontWeight: "600",
     marginTop: 2,
   },
   quickActions: {
@@ -338,51 +344,54 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 12,
-    marginTop: 12,
+    marginBottom: 10,
   },
   sectionTitle: {
-    fontSize: 17,
-    fontWeight: "700",
-    marginBottom: 12,
+    fontSize: 15,
+    fontWeight: "800",
+    letterSpacing: 0.2,
+    marginBottom: 10,
   },
   viewAllText: {
     fontSize: 13,
-    fontWeight: "600",
+    fontWeight: "700",
   },
   statsGrid: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 10,
+    marginHorizontal: -4,
     marginBottom: 16,
   },
   statCardWrapper: {
-    width: "48%",
+    width: "33.33%",
+    paddingHorizontal: 4,
+    marginBottom: 8,
   },
   statCard: {
-    padding: 14,
+    padding: 12,
+    marginBottom: 0,
   },
   statHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 8,
+    marginBottom: 6,
   },
   iconBox: {
-    width: 36,
-    height: 36,
+    width: 32,
+    height: 32,
     borderRadius: 8,
     borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
   },
   statCount: {
-    fontSize: 22,
+    fontSize: 18,
     fontWeight: "800",
   },
   statLabel: {
-    fontSize: 12,
-    fontWeight: "500",
+    fontSize: 11,
+    fontWeight: "600",
   },
   examCard: {
     marginBottom: 10,
@@ -399,7 +408,7 @@ const styles = StyleSheet.create({
   },
   examMeta: {
     fontSize: 12,
-    marginTop: 4,
+    marginTop: 3,
   },
   examFooter: {
     flexDirection: "row",
@@ -411,6 +420,15 @@ const styles = StyleSheet.create({
   },
   examDetailText: {
     fontSize: 12,
+  },
+  cardArrowRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 2,
+  },
+  openActionText: {
+    fontSize: 12,
+    fontWeight: "600",
   },
   evalCard: {
     marginBottom: 10,
@@ -427,7 +445,7 @@ const styles = StyleSheet.create({
   },
   evalMeta: {
     fontSize: 12,
-    marginTop: 4,
+    marginTop: 3,
   },
   evalFooter: {
     flexDirection: "row",

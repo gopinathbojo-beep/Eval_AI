@@ -4,9 +4,10 @@ import { useTheme } from "../theme/ThemeContext";
 
 interface BadgeProps {
   label: string;
-  variant?: "default" | "success" | "warning" | "danger" | "teal" | "muted";
+  variant?: "default" | "success" | "warning" | "danger" | "teal" | "muted" | "navy";
   size?: "small" | "medium";
   style?: ViewStyle;
+  withDot?: boolean;
 }
 
 export const Badge: React.FC<BadgeProps> = ({
@@ -14,23 +15,55 @@ export const Badge: React.FC<BadgeProps> = ({
   variant = "default",
   size = "medium",
   style,
+  withDot = true,
 }) => {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
 
   const getColors = () => {
     switch (variant) {
       case "success":
-        return { bg: "rgba(81, 188, 117, 0.15)", text: colors.brandGreen, border: "rgba(81, 188, 117, 0.35)" };
+        return {
+          bg: isDark ? "rgba(34, 197, 94, 0.16)" : "rgba(22, 163, 74, 0.10)",
+          text: colors.brandGreen,
+          border: isDark ? "rgba(34, 197, 94, 0.3)" : "rgba(22, 163, 74, 0.22)",
+          dot: colors.brandGreen,
+        };
       case "warning":
-        return { bg: "rgba(240, 182, 90, 0.15)", text: colors.warning, border: "rgba(240, 182, 90, 0.35)" };
+        return {
+          bg: isDark ? "rgba(251, 191, 36, 0.16)" : "rgba(217, 119, 6, 0.10)",
+          text: colors.warning,
+          border: isDark ? "rgba(251, 191, 36, 0.3)" : "rgba(217, 119, 6, 0.22)",
+          dot: colors.warning,
+        };
       case "danger":
-        return { bg: "rgba(239, 100, 100, 0.15)", text: colors.error, border: "rgba(239, 100, 100, 0.35)" };
+        return {
+          bg: isDark ? "rgba(248, 113, 113, 0.16)" : "rgba(220, 38, 38, 0.10)",
+          text: colors.error,
+          border: isDark ? "rgba(248, 113, 113, 0.3)" : "rgba(220, 38, 38, 0.22)",
+          dot: colors.error,
+        };
+      case "navy":
       case "teal":
-        return { bg: "rgba(7, 159, 189, 0.15)", text: colors.primary, border: "rgba(7, 159, 189, 0.35)" };
+        return {
+          bg: isDark ? "rgba(96, 165, 250, 0.16)" : "rgba(24, 68, 126, 0.08)",
+          text: colors.primary,
+          border: isDark ? "rgba(96, 165, 250, 0.3)" : "rgba(24, 68, 126, 0.2)",
+          dot: colors.primary,
+        };
       case "muted":
-        return { bg: colors.surfaceElevated, text: colors.textSecondary, border: colors.border };
+        return {
+          bg: isDark ? colors.surfaceElevated : "#F1F5F9",
+          text: colors.textSecondary,
+          border: colors.border,
+          dot: colors.mutedText,
+        };
       default:
-        return { bg: colors.surfaceElevated, text: colors.text, border: colors.border };
+        return {
+          bg: isDark ? colors.surfaceElevated : "#F8FAFC",
+          text: colors.text,
+          border: colors.border,
+          dot: colors.primary,
+        };
     }
   };
 
@@ -43,18 +76,30 @@ export const Badge: React.FC<BadgeProps> = ({
         {
           backgroundColor: c.bg,
           borderColor: c.border,
-          paddingVertical: size === "small" ? 2 : 4,
-          paddingHorizontal: size === "small" ? 6 : 8,
+          paddingVertical: size === "small" ? 2.5 : 4,
+          paddingHorizontal: size === "small" ? 7 : 10,
         },
         style,
       ]}
     >
+      {withDot && (
+        <View
+          style={[
+            styles.dot,
+            {
+              backgroundColor: c.dot,
+              width: size === "small" ? 5 : 6,
+              height: size === "small" ? 5 : 6,
+            },
+          ]}
+        />
+      )}
       <Text
         style={[
           styles.text,
           {
             color: c.text,
-            fontSize: size === "small" ? 11 : 12,
+            fontSize: size === "small" ? 10.5 : 11.5,
           },
         ]}
       >
@@ -64,52 +109,77 @@ export const Badge: React.FC<BadgeProps> = ({
   );
 };
 
-export const StatusBadge: React.FC<{ status: string; style?: ViewStyle }> = ({ status, style }) => {
-  let variant: "default" | "success" | "warning" | "danger" | "teal" | "muted" = "default";
-  let label = status.replace(/_/g, " ");
+export const StatusBadge: React.FC<{
+  status?: string | null;
+  style?: ViewStyle;
+  size?: "small" | "medium";
+}> = ({ status = "DRAFT", style, size = "medium" }) => {
+  const rawStatus = (status || "").toUpperCase();
+  let variant: "default" | "success" | "warning" | "danger" | "teal" | "muted" | "navy" = "default";
+  let label = (status || "").replace(/_/g, " ");
 
-  switch (status) {
+  switch (rawStatus) {
     case "FINALIZED":
     case "COMPLETED":
     case "VERIFIED":
     case "SUCCESS":
+    case "READY":
+    case "APPROVED":
+    case "MAPPED":
       variant = "success";
       break;
     case "REVIEW_REQUIRED":
     case "NEEDS_REVIEW":
+    case "NEEDS_ATTENTION":
     case "EVALUATING":
     case "PENDING":
+    case "MAPPING_REVIEW":
+    case "OCR_REVIEW":
       variant = "warning";
       break;
     case "AI_ERROR":
     case "ERROR":
     case "FAILED":
+    case "FAILED_PARSE":
+    case "UNMAPPED":
       variant = "danger";
       break;
     case "READY_FOR_EVALUATION":
     case "RUNNING":
-      variant = "teal";
+    case "EXTRACTING":
+    case "RENDERING":
+    case "OCR_PROCESSING":
+      variant = "navy";
       break;
     case "DRAFT":
     case "UNVERIFIED":
+    case "UPLOADED":
+    case "IDLE":
+    case "IGNORED":
       variant = "muted";
       break;
     default:
-      variant = "teal";
+      variant = "navy";
   }
 
-  return <Badge label={label} variant={variant} style={style} />;
+  return <Badge label={label} variant={variant} size={size} style={style} />;
 };
 
 const styles = StyleSheet.create({
   badge: {
-    borderRadius: 6,
+    borderRadius: 20,
     borderWidth: 1,
     alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  dot: {
+    borderRadius: 3,
+    marginRight: 5,
   },
   text: {
-    fontWeight: "600",
+    fontWeight: "700",
     textTransform: "uppercase",
-    letterSpacing: 0.4,
+    letterSpacing: 0.3,
   },
 });

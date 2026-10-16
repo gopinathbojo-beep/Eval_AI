@@ -271,7 +271,7 @@ export const SettingsScreen: React.FC<{ navigation?: any }> = ({ navigation }) =
 
       {/* App Version Info */}
       <View style={{ alignItems: "center", marginVertical: 12 }}>
-        <Text style={{ fontSize: 13, fontWeight: "700", color: colors.text }}>ADEM Mobile v1.0.0</Text>
+        <Text style={{ fontSize: 13, fontWeight: "700", color: colors.text }}>Eval AI Mobile v1.0.0</Text>
         <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 2 }}>
           Smart Evaluation. Brighter Future.
         </Text>

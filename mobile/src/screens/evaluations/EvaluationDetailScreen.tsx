@@ -62,6 +62,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
     "All" | "Mapped" | "Suggested" | "Needs review" | "Unmapped" | "Missing" | "OCR error"
   >("All");
   const [activeSheetPage, setActiveSheetPage] = useState(1);
+  const [showDocViewer, setShowDocViewer] = useState(true);
 
   // Change Mapping Modal state
   const [mapModalVisible, setMapModalVisible] = useState(false);
@@ -1066,31 +1067,123 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
               ))}
             </ScrollView>
 
-            {/* Answer Sheet Page Quick Selector */}
+            {/* Answer Sheet Document Viewer (Section 10.B) */}
             {document?.pages && document.pages.length > 0 && (
               <View style={[styles.pageStripCard, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}>
+                {/* Header with Title and View Controls */}
                 <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between" }}>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                     <Ionicons name="document-text" size={16} color={colors.primary} />
                     <Text style={[styles.pageStripTitle, { color: colors.text }]}>
-                      Answer Sheet Page {activeSheetPage} of {document.pages.length}
+                      Answer Sheet • Page {activeSheetPage} of {document.pages.length}
                     </Text>
                   </View>
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
+                    <TouchableOpacity
+                      onPress={() => setShowDocViewer((prev) => !prev)}
+                      style={{ flexDirection: "row", alignItems: "center", gap: 4 }}
+                    >
+                      <Ionicons
+                        name={showDocViewer ? "chevron-up" : "chevron-down"}
+                        size={15}
+                        color={colors.primary}
+                      />
+                      <Text style={{ fontSize: 12, fontWeight: "600", color: colors.primary }}>
+                        {showDocViewer ? "Hide Preview" : "Show Preview"}
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => {
+                        const docId = data?.document?.id || "";
+                        setImageViewerPath(`/documents/answer-sheet/${docId}/pages/${activeSheetPage}/image`);
+                        setImageViewerTitle(`Answer Sheet • Page ${activeSheetPage} of ${document.pages.length}`);
+                        setImageViewerModal(true);
+                      }}
+                      style={{ flexDirection: "row", alignItems: "center", gap: 4 }}
+                    >
+                      <Ionicons name="scan-outline" size={14} color={colors.primary} />
+                      <Text style={{ fontSize: 12, fontWeight: "600", color: colors.primary }}>
+                        Fullscreen Zoom
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {/* Collapsible Document Page Viewer */}
+                {showDocViewer && (
+                  <View style={{ marginTop: 10 }}>
+                    <TouchableOpacity
+                      activeOpacity={0.9}
+                      onPress={() => {
+                        const docId = data?.document?.id || "";
+                        setImageViewerPath(`/documents/answer-sheet/${docId}/pages/${activeSheetPage}/image`);
+                        setImageViewerTitle(`Answer Sheet • Page ${activeSheetPage} of ${document.pages.length}`);
+                        setImageViewerModal(true);
+                      }}
+                      style={[
+                        styles.docViewerContainer,
+                        { borderColor: colors.border, backgroundColor: colors.surface },
+                      ]}
+                    >
+                      <AuthImage
+                        path={`/documents/answer-sheet/${data?.document?.id}/pages/${activeSheetPage}/image`}
+                        style={styles.docViewerImage}
+                        resizeMode="contain"
+                      />
+                      <View style={styles.docViewerZoomOverlay}>
+                        <Ionicons name="scan-outline" size={13} color="#FFFFFF" />
+                        <Text style={styles.docViewerZoomOverlayText}>Tap to Zoom Page</Text>
+                      </View>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {/* Consistent, Easy-to-Tap Previous / Next Page Controls (>=44px touch targets) */}
+                <View style={styles.docNavControlRow}>
                   <TouchableOpacity
-                    onPress={() => {
-                      const docId = data?.document?.id || "";
-                      setImageViewerPath(`/documents/answer-sheet/${docId}/pages/${activeSheetPage}/image`);
-                      setImageViewerTitle(`Answer Sheet • Page ${activeSheetPage}`);
-                      setImageViewerModal(true);
-                    }}
-                    style={{ flexDirection: "row", alignItems: "center", gap: 4 }}
+                    style={[
+                      styles.docNavButton,
+                      {
+                        borderColor: colors.border,
+                        backgroundColor: activeSheetPage <= 1 ? colors.surface : colors.surfaceElevated,
+                        opacity: activeSheetPage <= 1 ? 0.45 : 1,
+                      },
+                    ]}
+                    disabled={activeSheetPage <= 1}
+                    onPress={() => setActiveSheetPage((p) => Math.max(1, p - 1))}
                   >
-                    <Ionicons name="scan-outline" size={13} color={colors.primary} />
-                    <Text style={{ fontSize: 12, fontWeight: "600", color: colors.primary }}>
-                      View Full Page
+                    <Ionicons name="chevron-back" size={18} color={colors.primary} />
+                    <Text style={[styles.docNavButtonText, { color: colors.primary }]}>
+                      Previous Page
                     </Text>
                   </TouchableOpacity>
+
+                  <View style={styles.docNavPageBadge}>
+                    <Text style={[styles.docNavPageText, { color: colors.text }]}>
+                      Page {activeSheetPage} of {document.pages.length}
+                    </Text>
+                  </View>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.docNavButton,
+                      {
+                        borderColor: colors.border,
+                        backgroundColor: activeSheetPage >= document.pages.length ? colors.surface : colors.surfaceElevated,
+                        opacity: activeSheetPage >= document.pages.length ? 0.45 : 1,
+                      },
+                    ]}
+                    disabled={activeSheetPage >= document.pages.length}
+                    onPress={() => setActiveSheetPage((p) => Math.min(document.pages.length, p + 1))}
+                  >
+                    <Text style={[styles.docNavButtonText, { color: colors.primary }]}>
+                      Next Page
+                    </Text>
+                    <Ionicons name="chevron-forward" size={18} color={colors.primary} />
+                  </TouchableOpacity>
                 </View>
+
+                {/* Quick Thumbnail Page Jumper */}
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 8 }}>
                   <View style={{ flexDirection: "row", gap: 8 }}>
                     {document.pages.map((p) => (
@@ -1101,7 +1194,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
                           styles.pageThumbButton,
                           {
                             borderColor: activeSheetPage === p.page_number ? colors.primary : colors.border,
-                            backgroundColor: activeSheetPage === p.page_number ? "rgba(7, 159, 189, 0.15)" : colors.surface,
+                            backgroundColor: activeSheetPage === p.page_number ? "rgba(24, 68, 126, 0.12)" : colors.surface,
                           },
                         ]}
                       >
@@ -1111,7 +1204,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
                             { color: activeSheetPage === p.page_number ? colors.primary : colors.text },
                           ]}
                         >
-                          P{p.page_number}
+                          Page {p.page_number}
                         </Text>
                       </TouchableOpacity>
                     ))}
@@ -1124,7 +1217,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
             {mappingFilter === "Missing" ? (
               missingQuestions.length > 0 ? (
                 missingQuestions.map((q) => (
-                  <Card key={q.id} style={[styles.mappingCard, { borderColor: "rgba(240, 182, 90, 0.4)" }]}>
+                  <Card key={q.id} style={[styles.mappingCard, { borderColor: "rgba(217, 119, 6, 0.4)" }]}>
                     <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
                       <Text style={[styles.mappingCardTitle, { color: colors.text }]}>
                         Question Q{q.display_number}: No Answer Detected
@@ -1167,30 +1260,29 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
                     key={a.id}
                     style={[
                       styles.mappingCard,
-                      needs && { borderColor: "rgba(240, 182, 90, 0.5)" },
+                      needs && { borderColor: "rgba(217, 119, 6, 0.5)", borderWidth: 1.5 },
                       a.status === "IGNORED" && { opacity: 0.6 },
                     ]}
                   >
+                    {/* Header: Student Label & Status Badges */}
                     <View style={styles.mappingCardHeader}>
-                      <Text style={[styles.mappingCardTitle, { color: colors.text }]}>
-                        Student wrote “{a.raw_question_number ?? "no number"}”
-                      </Text>
-                      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
-                        {topCand && a.status === "NEEDS_REVIEW" && (
-                          <Badge label={`Suggested: Q${topCand.display_number}`} variant="teal" size="small" />
-                        )}
+                      <View style={{ flexDirection: "row", alignItems: "center", gap: 6, flex: 1, flexWrap: "wrap" }}>
+                        <Text style={[styles.mappingCardTitle, { color: colors.text }]}>
+                          Written “{a.raw_question_number ?? "no number"}”
+                        </Text>
                         <Badge label={`Page ${a.page_number || 1}`} variant="muted" size="small" />
                         {a.ocr_confidence !== null && (
-                          <Badge label={`${Math.round(a.ocr_confidence * 100)}%`} variant="muted" size="small" />
+                          <Badge label={`${Math.round(a.ocr_confidence * 100)}% OCR`} variant="muted" size="small" />
                         )}
-                        <StatusBadge status={a.status} />
                       </View>
+                      <StatusBadge status={a.status} />
                     </View>
 
+                    {/* Target Question Mapping Display */}
                     <View style={{ marginTop: 4 }}>
                       {q ? (
-                        <Text style={{ fontSize: 13, color: colors.text }}>
-                          Mapped to <Text style={{ fontWeight: "700" }}>Question {q.display_number}</Text> •{" "}
+                        <Text style={{ fontSize: 13, color: colors.text, lineHeight: 18 }}>
+                          Mapped to <Text style={{ fontWeight: "700", color: colors.primary }}>Question {q.display_number}</Text> •{" "}
                           <Text style={{ color: colors.textSecondary }}>{q.question_text.slice(0, 60)}</Text>
                         </Text>
                       ) : (
@@ -1200,8 +1292,9 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
                       )}
                     </View>
 
+                    {/* Mapping Issue Advisory Note */}
                     {a.mapping_note && needs && (
-                      <View style={[styles.mappingNoteBox, { backgroundColor: "rgba(240, 182, 90, 0.1)" }]}>
+                      <View style={[styles.mappingNoteBox, { backgroundColor: "rgba(217, 119, 6, 0.08)", borderColor: "rgba(217, 119, 6, 0.25)" }]}>
                         <Ionicons name="information-circle-outline" size={14} color={colors.warning} />
                         <Text style={[styles.mappingNoteText, { color: colors.warning }]}>
                           {a.mapping_note}
@@ -1209,16 +1302,18 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
                       </View>
                     )}
 
+                    {/* Student Extracted Answer Text */}
                     <Text style={[styles.mappingAnswerText, { color: colors.text }]} numberOfLines={4}>
                       {a.answer_text || "(empty response text)"}
                     </Text>
 
                     {a.edited && (
-                      <Text style={{ fontSize: 11, fontStyle: "italic", color: colors.brandGreen, marginTop: 2 }}>
+                      <Text style={{ fontSize: 11, fontStyle: "italic", color: colors.brandGreen, marginTop: 4 }}>
                         ✓ Edited by teacher. Original OCR preserved in audit.
                       </Text>
                     )}
 
+                    {/* Handwritten Source Image Crop Preview */}
                     {a.has_crop && (
                       <TouchableOpacity
                         onPress={() => handleViewCrop(a, q || null)}
@@ -1231,76 +1326,98 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
                       </TouchableOpacity>
                     )}
 
+                    {/* Reduced Clutter: Tiered Action Controls (Section 10) */}
                     {!isFinalized && (
-                      <View style={styles.mappingActionsRow}>
+                      <View style={{ marginTop: 12 }}>
                         {a.status === "IGNORED" ? (
                           <Button
-                            title="Restore"
-                            variant="secondary"
+                            title="Restore Answer"
+                            icon={<Ionicons name="refresh-outline" size={14} color="#FFFFFF" />}
+                            variant="primary"
                             size="small"
                             onPress={() => handleMappingAction(a, { restore: true }, "restore answer")}
                             loading={actionLoading}
                           />
                         ) : (
                           <>
-                            {topCand && a.status === "NEEDS_REVIEW" && (
+                            {/* Primary Workflow Actions Row */}
+                            <View style={styles.mappingPrimaryActionRow}>
+                              {topCand && a.status === "NEEDS_REVIEW" && (
+                                <Button
+                                  title={`Accept Q${topCand.display_number}`}
+                                  icon={<Ionicons name="checkmark-done" size={14} color="#FFFFFF" />}
+                                  variant="gradient"
+                                  size="small"
+                                  onPress={() => handleMappingAction(a, { accept_suggestion: true }, "accept suggestion")}
+                                  loading={actionLoading}
+                                  style={{ flex: 1.2 }}
+                                />
+                              )}
+                              {a.status === "MAPPED" && (
+                                <Button
+                                  title="Confirm"
+                                  icon={<Ionicons name="checkmark-circle-outline" size={14} color="#FFFFFF" />}
+                                  variant="primary"
+                                  size="small"
+                                  onPress={() => handleMappingAction(a, { confirm: true }, "confirm mapping")}
+                                  loading={actionLoading}
+                                  style={{ flex: 1 }}
+                                />
+                              )}
                               <Button
-                                title={`Accept Q${topCand.display_number}`}
-                                variant="gradient"
+                                title="Edit OCR"
+                                icon={<Ionicons name="pencil" size={13} color={colors.primary} />}
+                                variant="outline"
                                 size="small"
-                                onPress={() => handleMappingAction(a, { accept_suggestion: true }, "accept suggestion")}
-                                loading={actionLoading}
+                                onPress={() => handleOpenEditTranscription(a, q || null)}
+                                style={{ flex: 1 }}
                               />
-                            )}
-                            {a.status === "MAPPED" && (
                               <Button
-                                title="Confirm"
-                                variant="primary"
-                                size="small"
-                                onPress={() => handleMappingAction(a, { confirm: true }, "confirm mapping")}
-                                loading={actionLoading}
-                              />
-                            )}
-                            <Button
-                              title="Change Mapping"
-                              variant="outline"
-                              size="small"
-                              onPress={() => handleOpenChangeMapping(a)}
-                            />
-                            <Button
-                              title="Edit OCR"
-                              variant="outline"
-                              size="small"
-                              onPress={() => handleOpenEditTranscription(a, q || null)}
-                            />
-                            <Button
-                              title="Split"
-                              variant="secondary"
-                              size="small"
-                              onPress={() => handleOpenSplitAnswer(a)}
-                            />
-                            <Button
-                              title="Merge"
-                              variant="secondary"
-                              size="small"
-                              onPress={() => handleOpenMergeAnswer(a)}
-                            />
-                            {a.exam_question_id && (
-                              <Button
-                                title="Unmap"
+                                title="Change Q"
+                                icon={<Ionicons name="swap-horizontal" size={13} color={colors.text} />}
                                 variant="secondary"
                                 size="small"
-                                onPress={() => handleMappingAction(a, { unmap: true }, "unmap answer")}
-                                loading={actionLoading}
+                                onPress={() => handleOpenChangeMapping(a)}
+                                style={{ flex: 1 }}
                               />
-                            )}
-                            <Button
-                              title="Ignore"
-                              variant="secondary"
-                              size="small"
-                              onPress={() => handleMappingAction(a, { ignore: true }, "ignore answer")}
-                              loading={actionLoading}
-                            />
+                            </View>
+
+                            {/* Secondary Tool Actions Toolbar */}
+                            <View style={[styles.mappingSecToolbar, { borderColor: colors.border, backgroundColor: colors.surfaceElevated }]}>
+                              <TouchableOpacity
+                                style={styles.secToolChip}
+                                onPress={() => handleOpenSplitAnswer(a)}
+                              >
+                                <Ionicons name="cut-outline" size={13} color={colors.textSecondary} />
+                                <Text style={[styles.secToolChipText, { color: colors.textSecondary }]}>Split</Text>
+                              </TouchableOpacity>
+
+                              <TouchableOpacity
+                                style={styles.secToolChip}
+                                onPress={() => handleOpenMergeAnswer(a)}
+                              >
+                                <Ionicons name="git-merge-outline" size={13} color={colors.textSecondary} />
+                                <Text style={[styles.secToolChipText, { color: colors.textSecondary }]}>Merge</Text>
+                              </TouchableOpacity>
+
+                              {a.exam_question_id && (
+                                <TouchableOpacity
+                                  style={styles.secToolChip}
+                                  onPress={() => handleMappingAction(a, { unmap: true }, "unmap answer")}
+                                >
+                                  <Ionicons name="close-circle-outline" size={13} color={colors.textSecondary} />
+                                  <Text style={[styles.secToolChipText, { color: colors.textSecondary }]}>Unmap</Text>
+                                </TouchableOpacity>
+                              )}
+
+                              <TouchableOpacity
+                                style={[styles.secToolChip, { marginLeft: "auto" }]}
+                                onPress={() => handleMappingAction(a, { ignore: true }, "ignore answer")}
+                              >
+                                <Ionicons name="eye-off-outline" size={13} color={colors.error} />
+                                <Text style={[styles.secToolChipText, { color: colors.error }]}>Ignore</Text>
+                              </TouchableOpacity>
+                            </View>
                           </>
                         )}
                       </View>
@@ -1420,6 +1537,45 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
                 ))}
               </View>
             )}
+
+            {/* Provisional Marks Summary Card (Section 12) */}
+            <Card style={[styles.provisionalSummaryCard, { borderColor: colors.border, backgroundColor: colors.surfaceElevated }]}>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <View>
+                  <Text style={{ fontSize: 11, fontWeight: "700", color: colors.textSecondary, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                    Provisional Progress
+                  </Text>
+                  <Text style={{ fontSize: 20, fontWeight: "800", color: colors.primary, marginTop: 2 }}>
+                    {totalProvisionalMarks} <Text style={{ fontSize: 14, fontWeight: "600", color: colors.textSecondary }}>/ {totalMaxMarks} Marks</Text>
+                  </Text>
+                </View>
+                <View style={{ alignItems: "flex-end" }}>
+                  <Badge
+                    label={isFinalized ? "Finalized" : eligibleForApproval.length > 0 ? `${eligibleForApproval.length} to Approve` : "All Approved"}
+                    variant={isFinalized ? "success" : eligibleForApproval.length > 0 ? "warning" : "teal"}
+                  />
+                  {totalMaxMarks > 0 && (
+                    <Text style={{ fontSize: 13, fontWeight: "700", color: colors.brandGreen, marginTop: 4 }}>
+                      {((totalProvisionalMarks / totalMaxMarks) * 100).toFixed(1)}%
+                    </Text>
+                  )}
+                </View>
+              </View>
+              {totalMaxMarks > 0 && (
+                <View style={[styles.progressBarTrack, { backgroundColor: colors.border, height: 7, borderRadius: 4, marginVertical: 0 }]}>
+                  <View
+                    style={[
+                      styles.progressBarFill,
+                      {
+                        backgroundColor: colors.primary,
+                        width: `${Math.min(100, Math.round((totalProvisionalMarks / totalMaxMarks) * 100))}%`,
+                        borderRadius: 4,
+                      },
+                    ]}
+                  />
+                </View>
+              )}
+            </Card>
 
             {/* Question-Wise Evaluation Section Heading */}
             <Text style={[styles.sectionHeading, { color: colors.text }]}>
@@ -2162,6 +2318,72 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
             )}
           </ScrollView>
 
+          {/* Fullscreen Page Navigation when viewing document pages */}
+          {imageViewerPath?.includes("/pages/") && data?.document?.pages && data.document.pages.length > 1 && (
+            <View
+              style={{
+                flexDirection: "row",
+                justifyContent: "space-between",
+                alignItems: "center",
+                paddingHorizontal: 20,
+                paddingVertical: 12,
+                backgroundColor: "rgba(20, 25, 30, 0.95)",
+                borderTopWidth: 1,
+                borderColor: "rgba(255, 255, 255, 0.15)",
+              }}
+            >
+              <TouchableOpacity
+                disabled={activeSheetPage <= 1}
+                onPress={() => {
+                  const prevP = Math.max(1, activeSheetPage - 1);
+                  setActiveSheetPage(prevP);
+                  setImageViewerPath(`/documents/answer-sheet/${data.document?.id}/pages/${prevP}/image`);
+                  setImageViewerTitle(`Answer Sheet • Page ${prevP} of ${data.document?.pages?.length}`);
+                }}
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 6,
+                  paddingVertical: 10,
+                  paddingHorizontal: 16,
+                  borderRadius: 8,
+                  backgroundColor: "rgba(255, 255, 255, 0.15)",
+                  opacity: activeSheetPage <= 1 ? 0.4 : 1,
+                }}
+              >
+                <Ionicons name="chevron-back" size={16} color="#FFFFFF" />
+                <Text style={{ color: "#FFFFFF", fontSize: 13, fontWeight: "600" }}>Prev Page</Text>
+              </TouchableOpacity>
+
+              <Text style={{ color: "rgba(255, 255, 255, 0.85)", fontSize: 13, fontWeight: "700" }}>
+                Page {activeSheetPage} of {data.document.pages.length}
+              </Text>
+
+              <TouchableOpacity
+                disabled={activeSheetPage >= data.document.pages.length}
+                onPress={() => {
+                  const nextP = Math.min(data.document.pages.length, activeSheetPage + 1);
+                  setActiveSheetPage(nextP);
+                  setImageViewerPath(`/documents/answer-sheet/${data.document?.id}/pages/${nextP}/image`);
+                  setImageViewerTitle(`Answer Sheet • Page ${nextP} of ${data.document?.pages?.length}`);
+                }}
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 6,
+                  paddingVertical: 10,
+                  paddingHorizontal: 16,
+                  borderRadius: 8,
+                  backgroundColor: "rgba(255, 255, 255, 0.15)",
+                  opacity: activeSheetPage >= data.document.pages.length ? 0.4 : 1,
+                }}
+              >
+                <Text style={{ color: "#FFFFFF", fontSize: 13, fontWeight: "600" }}>Next Page</Text>
+                <Ionicons name="chevron-forward" size={16} color="#FFFFFF" />
+              </TouchableOpacity>
+            </View>
+          )}
+
           {/* Bottom Action Footer */}
           {!isFinalized && imageViewerAnswer && imageViewerQuestion && (
             <View
@@ -2686,5 +2908,96 @@ const styles = StyleSheet.create({
     marginTop: 4,
     marginBottom: 8,
     minHeight: 50,
+  },
+  docViewerContainer: {
+    borderRadius: 8,
+    borderWidth: 1,
+    overflow: "hidden",
+    position: "relative",
+    marginBottom: 8,
+  },
+  docViewerImage: {
+    width: "100%",
+    height: 220,
+  },
+  docViewerZoomOverlay: {
+    position: "absolute",
+    bottom: 8,
+    right: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "rgba(15, 23, 42, 0.75)",
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+  },
+  docViewerZoomOverlayText: {
+    color: "#FFFFFF",
+    fontSize: 11,
+    fontWeight: "600",
+  },
+  docNavControlRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 8,
+    gap: 8,
+  },
+  docNavButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    minHeight: 44,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: 4,
+    flex: 1,
+  },
+  docNavButtonText: {
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  docNavPageBadge: {
+    paddingHorizontal: 10,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  docNavPageText: {
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  mappingPrimaryActionRow: {
+    flexDirection: "row",
+    gap: 8,
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  mappingSecToolbar: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: 6,
+  },
+  secToolChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+  },
+  secToolChipText: {
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  provisionalSummaryCard: {
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    marginBottom: 14,
   },
 });

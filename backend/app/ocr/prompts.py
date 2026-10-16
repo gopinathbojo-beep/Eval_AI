@@ -7,7 +7,7 @@ OCR_SYSTEM = (
     "MODEL: Blaifa/InternVL3_5:4B. "
     "Your job is to accurately understand the supplied examination document image/PDF page and return structured information.\n\n"
     "CRITICAL PRINCIPLES:\n"
-    "1. Read the actual document visually. Never invent text, question numbers, subquestions, or answers.\n"
+    "1. Read the actual document visually. Never invent text, question numbers, subquestions, or answers. Never autocomplete or finish incomplete answers.\n"
     "2. Detect element types from surrounding visual context (QUESTION, SUBQUESTION, SECTION, HEADING, INSTRUCTION, "
     "PASSAGE, TABLE, FORMULA, EQUATION, LIST, OPTION, ANSWER, CONTINUATION). "
     "Do NOT classify headings, instructions, passages, tables, or continuation lines as questions unless explicitly printed as a question.\n"
@@ -23,7 +23,8 @@ OCR_SYSTEM = (
     "8. Notice Boxes & Formats: preserve notice borders and formatted text layout.\n"
     "9. Passages: comprehension passages, poems, and source texts belong to the question context, not as separate question entities.\n"
     "10. Languages: preserve original language (English, Tamil, Hindi, or bilingual/mixed text) verbatim.\n"
-    "11. Reply with a single valid JSON object and nothing else."
+    "11. Autocompletion Strictly Prohibited: When reading handwritten student answer sheets, NEVER autocomplete incomplete sentences or insert unwritten scientific explanations, reasons, or formulas (e.g. if the student writes 'no reaction occurs', transcribe ONLY that; do NOT append 'because copper is less reactive than zinc'). Transcribe ONLY visible ink strokes and stop exactly where the student stopped writing.\n"
+    "12. Reply with a single valid JSON object and nothing else."
 )
 
 
@@ -81,12 +82,13 @@ def student_answer_prompt(page_number: int, width: int, height: int, canonical_q
     canonical_section = ""
     if canonical_questions:
         q_lines = "\n".join(f"- {q}" for q in canonical_questions)
-        canonical_section = f"""CANONICAL_QUESTIONS:
+        canonical_section = f"""CANONICAL_QUESTIONS (FOR QUESTION NUMBER MAPPING ONLY):
 {q_lines}
-This is the ONLY authoritative question registry. Do not create questions that are not in this registry."""
+IMPORTANT: These questions are listed ONLY so you can identify question numbers and map question IDs.
+Under NO circumstances should the question text or outside knowledge be used to autocomplete, extend, or explain what the student wrote. Transcribe ONLY the ink strokes physically written by the student."""
     else:
-        canonical_section = """CANONICAL_QUESTIONS:
-(Compare against verified examination questions registry; extract handwritten question numbers verbatim without inventing questions)."""
+        canonical_section = """CANONICAL_QUESTIONS (FOR QUESTION NUMBER MAPPING ONLY):
+(Compare against verified examination questions registry; extract handwritten question numbers verbatim without inventing questions or completing answers)."""
 
     return f"""This image is page {page_number} of a student's handwritten answer sheet ({width}x{height} pixels).
 
@@ -128,6 +130,10 @@ NEVER assume OCR output is correct merely because it forms a grammatically valid
 NEVER split one student's answer into multiple answers unless a genuine new question/subquestion is detected.
 NEVER map an answer only because the OCR question number looks similar.
 NEVER silently correct handwriting.
+NEVER AUTOCOMPLETE INCOMPLETE ANSWERS: Students frequently write incomplete answers, forget explanations, or stop mid-sentence. You must STOP transcribing at the EXACT last visible handwritten pen stroke.
+NEVER APPEND UNWRITTEN REASONS, FORMULAS, OR EXPLANATIONS: If the student wrote "no reaction occurs", you MUST transcribe ONLY "no reaction occurs" and STOP. NEVER append "because copper is less reactive than zinc", even if the question asked for a reason!
+NEVER FINISH A STUDENT'S SENTENCE OR THOUGHT: Adding even a single unwritten word or clause is considered a critical hallucination and corrupts the grading evaluation.
+CANONICAL_QUESTIONS ARE STRICTLY FOR NUMBER IDENTIFICATION: The question text is provided ONLY so you know which question ID to map to. NEVER use the question text, prompt instructions, or domain knowledge to generate, complete, or elaborate what the student wrote.
 The image is the source of truth.
 
 ==================================================
@@ -183,6 +189,7 @@ Read actual handwriting character-by-character as accurately as possible.
 Do NOT transform unclear handwriting into grammatically fluent fabrications.
 When uncertain about a word, preserve uncertainty verbatim (e.g. "[unclear]" or "[UNCLEAR]").
 Never hallucinate missing words.
+VERBATIM STOPPING RULE (MANDATORY): Transcribe ONLY the visible ink strokes. If a student wrote half an answer or stopped mid-concept, transcribe ONLY the words that are physically on the page. Do NOT provide the rest of the answer, do NOT write the "because..." clause, and do NOT complete the explanation. The AI grading engine will evaluate what the student wrote, so adding unwritten text gives false marks to the student!
 
 ==================================================
 7. USE THE ENTIRE HANDWRITTEN REGION & STYLE
@@ -243,9 +250,9 @@ Priority order:
 6. Page continuity
 
 ==================================================
-15. IMPORTANT — NEVER USE OFFICIAL SOLUTIONS AS STUDENT OCR
+15. IMPORTANT — NEVER USE OFFICIAL SOLUTIONS OR QUESTION TEXT AS STUDENT OCR
 ==================================================
-Official solutions must NEVER be used to replace or fabricate what the student actually wrote. Student OCR and solution extraction are completely independent.
+Official solutions and question descriptions must NEVER be used to replace, autocomplete, or fabricate what the student actually wrote. Student OCR and solution extraction are completely independent. Even if a student answer is scientifically incomplete or factually incorrect, transcribe strictly what is written without completing sentences or adding unwritten scientific justifications.
 
 ==================================================
 16. CONFIDENCE & AUTOMATIC MAPPING POLICY
@@ -310,11 +317,15 @@ EVAL_SYSTEM = (
     "Do not use outside knowledge to award marks the key does not support. Do not penalise spelling or "
     "grammar unless the criteria say language accuracy matters. Never award more than the maximum marks.\n"
     "GRADING PRINCIPLES:\n"
-    "1. Method and Step Credit: In mathematics and science, award proportional partial marks for correct formulas, "
-    "principles, and intermediate steps even if the student makes a minor arithmetic slip in the final calculation.\n"
-    "2. Diagrams: When evaluating answers containing `[Diagram: ...]`, award criteria marks based on whether the required "
-    "components, ray paths, connections, or labels are documented in the diagram description.\n"
-    "3. Text marked [UNCLEAR] could not be read; do not assume what it said. Reply with a single JSON object and nothing else."
+    "1. Verifiable Calculations (NO Credit for Uncalculated Steps): In mathematics and numerical problems, NEVER award marks for final values or calculations that the student did NOT actually write. If a criterion awards marks for 'substituting and calculating A = Rs. 1,03,500', but the student only substituted into the formula and never calculated the value 1,03,500, award credit ONLY for the formula substitution (e.g. 0.5 - 1.0 mark) and NOT for the uncalculated numerical result. Mark uncalculated steps as missing.\n"
+    "2. Strict Truth in Matched vs Missing Points: Every point listed in 'matched_points' MUST be physically and accurately present in the student's text. If the student wrote '8xy' instead of '48xy', DO NOT list 'Correctly simplified to 48xy' in matched_points! Accurately report 'Obtained 8xy instead of 48xy' under missing_points or feedback, and deduct marks for the error.\n"
+    "3. Accurate Subpart Checking: Check the student answer carefully before listing an item as missing. If the student expanded '(3x - 4y)(3x + 4y)' into '9x^2 - 16y^2', DO NOT list that expansion as missing.\n"
+    "4. Method and Step Credit with Arithmetic Checking: In mathematics and science, award proportional partial marks for correct formulas and principles. However, verify that intermediate steps mathematically follow. If an intermediate step is mathematically invalid (e.g. writing [64/3 x 64/81] = 1024/243 where the intermediate step does not hold), deduct intermediate marks even if the final number is correct.\n"
+    "5. Multi-Part Questions: When a question or answer has multiple parts (e.g. (a), (b), (c) or 1), 2)), you must carefully inspect the student's text for EVERY part before concluding anything is missing. Never label a subpart as missing if the student wrote an answer for it.\n"
+    "6. Run-On Steps & Space Delimiters: In mathematics and science, students frequently write calculations continuously or separated by spaces on a single line (e.g., '... 36 = x^2 + 2 + 1/x^2 x^2 + 1/x^2 = 34'). Read the entire student answer string completely to the end before deciding whether a step or final answer is present.\n"
+    "7. Case and Punctuation Tolerance: Do not penalize capitalization differences (e.g., 'Book' instead of 'book') unless letter case is specifically being tested in the criteria.\n"
+    "8. Diagrams: When evaluating answers containing `[Diagram: ...]`, award criteria marks based on whether the required components, ray paths, connections, or labels are documented in the diagram description.\n"
+    "9. Text marked [UNCLEAR] could not be read; do not assume what it said. Reply with a single JSON object and nothing else."
 )
 
 
@@ -341,7 +352,12 @@ KEYWORDS
 STUDENT ANSWER (verbatim transcription)
 {student_answer}
 
-Award marks between 0 and {max_marks:g} (decimals allowed in 0.5 steps). Award partial step marks for correct method/formula even if the final calculation has an arithmetic slip. Return JSON in exactly this shape:
+Award marks between 0 and {max_marks:g} (decimals allowed in 0.5 steps). Check all subparts ((a), (b)) and read the full student answer to the end before marking anything missing.
+STRICT GRADING RULES:
+1. Do NOT award marks for calculations the student did not write. If student wrote only the formula and stopped without computing, award partial mark ONLY for formula substitution and mark the calculation missing.
+2. Every item in matched_points MUST be truthfully written by the student. If student wrote '8xy', do NOT claim student obtained '48xy'.
+3. Award proportional partial step marks for correct method/formula while penalizing intermediate arithmetic or algebraic errors.
+Return JSON in exactly this shape:
 {{"marks_awarded": 0, "max_marks": {max_marks:g}, "decision": "CORRECT | PARTIALLY_CORRECT | INCORRECT", "matched_points": ["..."], "missing_points": ["..."], "feedback": "one or two sentences for the teacher", "confidence": 0.0}}"""
 
 

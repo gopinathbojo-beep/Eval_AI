@@ -82,7 +82,7 @@ export const LoginScreen: React.FC = () => {
       clearTimeout(timeoutId);
 
       if (res.ok) {
-        setConnectionStatus("Connected successfully to ADEM backend!");
+        setConnectionStatus("Connected successfully to Eval AI backend!");
       } else {
         setConnectionStatus(`Connected, but server returned HTTP ${res.status}.`);
       }
@@ -171,7 +171,7 @@ export const LoginScreen: React.FC = () => {
           />
 
           <Button
-            title="Sign In to ADEM"
+            title="Sign In to Eval AI"
             onPress={handleLogin}
             variant="gradient"
             loading={loading}
@@ -285,7 +285,7 @@ export const LoginScreen: React.FC = () => {
 
         <View style={styles.footer}>
           <Text style={[styles.footerText, { color: colors.textSecondary }]}>
-            ADEM System • Powered by Ollama blaifa/InternVL3_5:4B
+            Eval AI System • Automated Examination Evaluation Platform
           </Text>
         </View>
       </ScrollView>

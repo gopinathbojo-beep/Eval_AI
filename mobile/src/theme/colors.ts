@@ -29,64 +29,64 @@ export interface ThemeColors {
   penScore: string;
 }
 
-export const darkColors: ThemeColors = {
-  primary: "#00A8E8",        // ADEM Blue
-  primaryDeep: "#071B2B",    // ADEM Navy
-  secondary: "#22C7F2",      // ADEM Cyan
-  brandGreen: "#25C878",     // ADEM Green
-  lightGreen: "#55D98B",     // ADEM Light Green
-  gradient: ["#00A8E8", "#25C878"],
-  gradientStart: "#00A8E8",
-  gradientEnd: "#25C878",
-  background: "#071B2B",     // ADEM Navy Background
-  surface: "#0B2638",        // ADEM Secondary Navy
-  surfaceElevated: "#11344D",
-  text: "#FFFFFF",
-  textSecondary: "#94A3B8",  // ADEM Muted Text
-  mutedText: "#66788A",
-  border: "#173E5B",
-  success: "#25C878",
-  successSoft: "rgba(37, 200, 120, 0.16)",
-  error: "#EF6262",          // ADEM Error
-  errorSoft: "rgba(239, 98, 98, 0.16)",
-  danger: "#EF6262",
-  warning: "#F5A623",        // ADEM Warning
-  warningSoft: "rgba(245, 166, 35, 0.16)",
-  card: "#0B2638",
-  tabBar: "#071B2B",
-  tabBarActive: "#00A8E8",
-  tabBarInactive: "#66788A",
-  inputBackground: "#092233",
-  penScore: "#EF6262",
-};
-
 export const lightColors: ThemeColors = {
-  primary: "#00A8E8",        // ADEM Blue
-  primaryDeep: "#071B2B",    // ADEM Navy
-  secondary: "#22C7F2",      // ADEM Cyan
-  brandGreen: "#25C878",     // ADEM Green
-  lightGreen: "#55D98B",     // ADEM Light Green
-  gradient: ["#00A8E8", "#22C7F2"],
-  gradientStart: "#00A8E8",
-  gradientEnd: "#22C7F2",
-  background: "#F7FAFC",     // ADEM Background
-  surface: "#FFFFFF",        // ADEM White
-  surfaceElevated: "#F4F9FC",// ADEM Light Blue
-  text: "#172B3A",           // ADEM Primary Text
-  textSecondary: "#66788A",  // ADEM Secondary Text
-  mutedText: "#94A3B8",      // ADEM Muted Text
-  border: "#E2EAF0",         // ADEM Border
-  success: "#25C878",
-  successSoft: "rgba(37, 200, 120, 0.12)",
-  error: "#EF6262",
-  errorSoft: "rgba(239, 98, 98, 0.12)",
-  danger: "#EF6262",
-  warning: "#F5A623",
-  warningSoft: "rgba(245, 166, 35, 0.12)",
+  primary: "#18447E",        // Academic Deep Navy
+  primaryDeep: "#0F294A",    // Deep Navy Shade
+  secondary: "#2B6CB0",      // Slate Blue
+  brandGreen: "#16A34A",     // Verified Emerald Green
+  lightGreen: "#22C55E",     // Light Green
+  gradient: ["#18447E", "#2B6CB0"],
+  gradientStart: "#18447E",
+  gradientEnd: "#2B6CB0",
+  background: "#F8FAFC",     // Neutral Academic Canvas
+  surface: "#FFFFFF",        // Pure Surface
+  surfaceElevated: "#F1F5F9",// Soft Slate Surface
+  text: "#0F172A",           // High-contrast Slate 900
+  textSecondary: "#475569",  // Readable Secondary Text
+  mutedText: "#94A3B8",      // Subtitle / Placeholder Muted
+  border: "#E2E8F0",         // Subtle Thin Border
+  success: "#16A34A",
+  successSoft: "rgba(22, 163, 74, 0.12)",
+  error: "#DC2626",          // Error / Mark Red
+  errorSoft: "rgba(220, 38, 38, 0.12)",
+  danger: "#DC2626",
+  warning: "#D97706",        // Amber Warning
+  warningSoft: "rgba(217, 119, 6, 0.12)",
   card: "#FFFFFF",
   tabBar: "#FFFFFF",
-  tabBarActive: "#00A8E8",
-  tabBarInactive: "#66788A",
-  inputBackground: "#F4F9FC",
-  penScore: "#C23B2E",
+  tabBarActive: "#18447E",
+  tabBarInactive: "#64748B",
+  inputBackground: "#F8FAFC",
+  penScore: "#C23B2E",       // Teacher Pen Red
+};
+
+export const darkColors: ThemeColors = {
+  primary: "#60A5FA",        // Light Academic Blue
+  primaryDeep: "#0F172A",
+  secondary: "#38BDF8",      // Sky Accent
+  brandGreen: "#22C55E",     // Emerald
+  lightGreen: "#4ADE80",
+  gradient: ["#1E3A8A", "#2563EB"],
+  gradientStart: "#1E3A8A",
+  gradientEnd: "#2563EB",
+  background: "#0B132B",     // Deep Slate Navy Background
+  surface: "#132238",        // Dark Card Surface
+  surfaceElevated: "#1C304A",// Elevated Dark Surface
+  text: "#F8FAFC",           // Light Crisp Text
+  textSecondary: "#94A3B8",  // Slate Muted
+  mutedText: "#64748B",
+  border: "#233852",
+  success: "#22C55E",
+  successSoft: "rgba(34, 197, 94, 0.16)",
+  error: "#F87171",
+  errorSoft: "rgba(248, 113, 113, 0.16)",
+  danger: "#F87171",
+  warning: "#FBBF24",
+  warningSoft: "rgba(251, 191, 36, 0.16)",
+  card: "#132238",
+  tabBar: "#0B132B",
+  tabBarActive: "#60A5FA",
+  tabBarInactive: "#64748B",
+  inputBackground: "#0E1B2E",
+  penScore: "#F87171",
 };

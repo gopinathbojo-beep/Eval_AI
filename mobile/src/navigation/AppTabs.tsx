@@ -1,5 +1,5 @@
 import React from "react";
-import { Platform } from "react-native";
+import { Platform, View, Text, StyleSheet } from "react-native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -14,10 +14,10 @@ import { ResultsListScreen } from "../screens/results/ResultsListScreen";
 const Tab = createBottomTabNavigator();
 
 export const AppTabs: React.FC = () => {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const insets = useSafeAreaInsets();
   const bottomInset = Math.max(insets.bottom, Platform.OS === "android" ? 8 : 6);
-  const tabHeight = 54 + bottomInset;
+  const tabHeight = 56 + bottomInset;
 
   return (
     <Tab.Navigator
@@ -26,12 +26,14 @@ export const AppTabs: React.FC = () => {
           backgroundColor: colors.surface,
           shadowColor: "transparent",
           elevation: 0,
+          borderBottomWidth: 1,
+          borderBottomColor: colors.border,
         },
         headerTitleStyle: {
           color: colors.text,
           fontWeight: "800",
           fontSize: 18,
-          letterSpacing: 0.5,
+          letterSpacing: 0.3,
         },
         tabBarStyle: {
           backgroundColor: colors.surface,
@@ -40,11 +42,22 @@ export const AppTabs: React.FC = () => {
           height: tabHeight,
           paddingBottom: bottomInset,
           paddingTop: 6,
+          ...Platform.select({
+            ios: {
+              shadowColor: "#000",
+              shadowOffset: { width: 0, height: -2 },
+              shadowOpacity: isDark ? 0.2 : 0.03,
+              shadowRadius: 4,
+            },
+            android: {
+              elevation: 4,
+            },
+          }),
         },
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.tabBarInactive,
         tabBarLabelStyle: {
-          fontSize: 10,
+          fontSize: 11,
           fontWeight: "600",
           marginTop: -2,
         },
@@ -57,10 +70,21 @@ export const AppTabs: React.FC = () => {
         name="Dashboard"
         component={DashboardScreen}
         options={{
-          headerTitle: "ADEM",
+          headerTitle: () => (
+            <View style={styles.headerTitleRow}>
+              <View style={[styles.headerCrest, { backgroundColor: colors.primary }]}>
+                <Ionicons name="school" size={14} color="#FFFFFF" />
+              </View>
+              <Text style={[styles.headerTitleText, { color: colors.text }]}>Eval AI</Text>
+            </View>
+          ),
           tabBarLabel: "Dashboard",
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="grid-outline" size={size - 2} color={color} />
+          tabBarIcon: ({ color, focused, size }) => (
+            <Ionicons
+              name={focused ? "grid" : "grid-outline"}
+              size={size - 2}
+              color={color}
+            />
           ),
         }}
       />
@@ -70,8 +94,12 @@ export const AppTabs: React.FC = () => {
         options={{
           title: "Examinations",
           tabBarLabel: "Exams",
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="document-text-outline" size={size - 2} color={color} />
+          tabBarIcon: ({ color, focused, size }) => (
+            <Ionicons
+              name={focused ? "document-text" : "document-text-outline"}
+              size={size - 2}
+              color={color}
+            />
           ),
         }}
       />
@@ -79,10 +107,14 @@ export const AppTabs: React.FC = () => {
         name="CreateExamTab"
         component={ExamCreateScreen}
         options={{
-          title: "Create Examination",
+          title: "New Examination",
           tabBarLabel: "Create",
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="add-circle-outline" size={size} color={color} />
+          tabBarIcon: ({ color, focused, size }) => (
+            <Ionicons
+              name={focused ? "add-circle" : "add-circle-outline"}
+              size={size + 1}
+              color={color}
+            />
           ),
         }}
       />
@@ -92,8 +124,12 @@ export const AppTabs: React.FC = () => {
         options={{
           title: "Evaluation Queue",
           tabBarLabel: "Evaluate",
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="checkbox-outline" size={size - 2} color={color} />
+          tabBarIcon: ({ color, focused, size }) => (
+            <Ionicons
+              name={focused ? "checkbox" : "checkbox-outline"}
+              size={size - 2}
+              color={color}
+            />
           ),
         }}
       />
@@ -101,13 +137,37 @@ export const AppTabs: React.FC = () => {
         name="ResultsTab"
         component={ResultsListScreen}
         options={{
-          title: "Results & Marksheets",
+          title: "Finalized Results",
           tabBarLabel: "Results",
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="ribbon-outline" size={size - 2} color={color} />
+          tabBarIcon: ({ color, focused, size }) => (
+            <Ionicons
+              name={focused ? "ribbon" : "ribbon-outline"}
+              size={size - 2}
+              color={color}
+            />
           ),
         }}
       />
     </Tab.Navigator>
   );
 };
+
+const styles = StyleSheet.create({
+  headerTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  headerCrest: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 8,
+  },
+  headerTitleText: {
+    fontSize: 18,
+    fontWeight: "800",
+    letterSpacing: 0.3,
+  },
+});

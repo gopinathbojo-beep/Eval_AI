@@ -733,4 +733,132 @@ def test_maths_student_answers_with_skipped_questions():
     assert "44370" in q9.answer_text
 
 
+def test_answer_key_subparts_consolidated_into_parent_question():
+    """Verify that when the answer key contains subparts (e.g. Q8(a), Q8(b), Q9(a))
+    but the question paper only defines parent questions (8, 9), the subparts are
+    cleanly consolidated into parent questions with combined text, criteria, and marks,
+    producing no orphan subpart rows.
+    """
+    canonical = [
+        DummyQuestion("q-8", "8", pos=8, text="Solid Geometry hollow cylinder pipe."),
+        DummyQuestion("q-9", "9", pos=9, text="Composite storage silo."),
+    ]
+    canonical[0].max_marks = 3.0
+    canonical[1].max_marks = 5.0
+
+    p_info = {"page_number": 5, "page_text": ""}
+    page_res = AnswerKeyPageResult(
+        page_number=5,
+        answers=[
+            AnswerKeyItem(
+                question_number="Q8(a)",
+                answer_text="Volume of Metal: V = 22/7 x 28 x 14 = 1232 cm3",
+                marks=2.0,
+                criteria=["Volume computation formula and exact value (1232 cm3)."],
+            ),
+            AnswerKeyItem(
+                question_number="Q8(b)",
+                answer_text="Total Surface Area (TSA): TSA = 704 + 528 + 176 = 1408 cm2",
+                marks=1.0,
+                criteria=["Total Surface Area calculation (1408 cm2)."],
+            ),
+            AnswerKeyItem(
+                question_number="Q9(a)",
+                answer_text="Total Volume: V = 2310 + 718.67 = 3028.67 m3",
+                marks=5.0,
+                criteria=["Individual volume computations and total volume."],
+            ),
+        ]
+    )
+
+    keys = segment_answer_keys([(p_info, page_res)], canonical_questions=canonical)
+    assert len(keys) == 2, f"Expected 2 parent keys, got {len(keys)}: {[k.normalized_number for k in keys]}"
+
+    k8 = next(k for k in keys if k.normalized_number == "8")
+    assert k8.raw_question_number == "Q8"
+    assert "1232 cm3" in k8.answer_text
+    assert "1408 cm2" in k8.answer_text
+    assert len(k8.criteria) == 2
+    assert k8.marks == 3.0
+
+    k9 = next(k for k in keys if k.normalized_number == "9")
+    assert k9.raw_question_number == "Q9"
+    assert "3028.67 m3" in k9.answer_text
+    assert k9.marks == 5.0
+
+
+def test_section_c_not_swallowed_in_q8():
+    """Verify Section C heading and instructions appearing between Q8 and Q9 are not included in Q8."""
+    raw_text = (
+        "SECTION B: MEDIUM ANSWER QUESTIONS & EQUATIONS\n"
+        "(4 questions x 3 marks = 12 Marks)\n"
+        "Q8. Flame & Combustion:\n"
+        "Draw a neat labeled diagram showing the three distinct zones of a candle flame. Identify which zone has the highest temperature and explain why.\n"
+        "SECTION C: LONG ANSWER & DETAILED QUESTIONS\n"
+        "(2 questions x 5 marks = 10 Marks)\n"
+        "Q9. Corrosion & Chemical Properties:\n"
+        "(a) What is rusting of iron? Write the chemical equation for the rusting process. (2 marks)"
+    )
+    page_res = QuestionPageResult(
+        page_number=1,
+        questions=[QuestionItem(raw_question_number=None, question_text=raw_text)],
+    )
+    p_info = {"page_number": 1, "ocr_width": 1000, "ocr_height": 1400, "width": 1000, "height": 1400}
+    doc = parse_question_paper_structure([(p_info, page_res)])
+
+    q8 = next(q for q in doc.questions if q.display_number == "8")
+    assert "SECTION C" not in q8.question_text
+    assert "10 Marks" not in q8.question_text
+    assert "Draw a neat labeled diagram" in q8.question_text
+    assert q8.max_marks == 3.0
+    assert "SECTION B" in (q8.section or "")
+
+    q9 = next(q for q in doc.questions if q.display_number in ("9", "9(a)"))
+    assert "SECTION C" in (q9.section or "")
+    assert q9.max_marks == 5.0
+
+
+def test_redundant_full_page_dump_deduplication():
+    """Verify unnumbered full-page raw dump does not duplicate questions when explicit questions exist."""
+    mega_text = (
+        "CLASS 8 CHEMISTRY\n"
+        "Time Allowed: 1 Hour\n"
+        "Maximum Marks: 30\n"
+        "SECTION B: MEDIUM ANSWER QUESTIONS\n"
+        "(4 questions x 3 marks = 12 Marks)\n"
+        "Q7. Metals reaction with acid\n"
+        "Q8. Flame & Combustion:\n"
+        "Draw a neat labeled diagram showing the three distinct zones of a candle flame.\n"
+        "SECTION C: LONG ANSWER & DETAILED QUESTIONS\n"
+        "(2 questions x 5 marks = 10 Marks)\n"
+        "Q9. Rusting of iron"
+    )
+    page_res = QuestionPageResult(
+        page_number=1,
+        questions=[
+            QuestionItem(raw_question_number=None, question_text=mega_text),
+            QuestionItem(raw_question_number="Q7", question_text="Metals reaction with acid", marks=3.0, section="SECTION B"),
+            QuestionItem(
+                raw_question_number="Q8",
+                question_text="Flame & Combustion:\nDraw a neat labeled diagram showing the three distinct zones of a candle flame.",
+                marks=3.0,
+                section="SECTION B",
+            ),
+            QuestionItem(raw_question_number="Q9", question_text="Rusting of iron", marks=5.0, section="SECTION C"),
+        ],
+    )
+    p_info = {"page_number": 1, "ocr_width": 1000, "ocr_height": 1400, "width": 1000, "height": 1400}
+    doc = parse_question_paper_structure([(p_info, page_res)])
+
+    nums = [q.display_number for q in doc.questions]
+    assert nums == ["7", "8", "9"]
+
+    q8 = next(q for q in doc.questions if q.display_number == "8")
+    assert q8.question_text.count("Flame & Combustion") == 1
+    assert "SECTION C" not in q8.question_text
+    assert q8.max_marks == 3.0
+
+
+
+
 

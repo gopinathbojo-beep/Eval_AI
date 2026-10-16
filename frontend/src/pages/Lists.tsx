@@ -4,6 +4,7 @@ import { FilteredEmptyState, TablePagination, TableToolbar } from "../components
 import {
   Button,
   Card,
+  Confirm,
   Empty,
   ErrorPanel,
   Field,
@@ -48,7 +49,7 @@ function SimpleForm({
       <form onSubmit={go} className="space-y-4">
         {children}
         <ErrorPanel error={err} />
-        <div className="flex justify-end gap-2">
+        <div className="flex justify-end gap-2 border-t border-line/60 pt-3">
           <Button type="button" onClick={onClose}>
             Cancel
           </Button>
@@ -65,26 +66,17 @@ export function Classes() {
   const { data, error, loading, reload } = useApi<ClassRow[]>("/classes");
   const [open, setOpen] = useState(false);
   const [editingClass, setEditingClass] = useState<ClassRow | null>(null);
+  const [deletingClass, setDeletingClass] = useState<ClassRow | null>(null);
   const [downloading, setDownloading] = useState(false);
 
   const handleDownloadMarksheet = async () => {
     try {
       setDownloading(true);
-      await downloadFile("/reports/marksheet", "ADEM_Student_Marksheet.xlsx");
+      await downloadFile("/reports/marksheet", "EvalAI_Student_Marksheet.xlsx");
     } catch (err: any) {
       alert(err.message || "Failed to download marksheet.");
     } finally {
       setDownloading(false);
-    }
-  };
-
-  const handleDeleteClass = async (c: ClassRow) => {
-    if (!window.confirm(`Are you sure you want to delete class "${c.name}"? This will also remove any exams and enrolled students associated with this class.`)) return;
-    try {
-      await api(`/classes/${c.id}`, { method: "DELETE" });
-      reload();
-    } catch (err: any) {
-      alert(err.message || "Failed to delete class.");
     }
   };
 
@@ -106,16 +98,23 @@ export function Classes() {
   ];
 
   return (
-    <>
+    <div className="space-y-4">
       <PageHeader
-        title="Classes"
+        title="Classes Roster"
+        sub="Manage class cohorts, student enrollment, and export complete marksheets."
         actions={
           <div className="flex items-center gap-2">
             <Button variant="soft" busy={downloading} onClick={handleDownloadMarksheet}>
-              Download Marksheet (.xlsx)
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              <span>Export Marksheet (.xlsx)</span>
             </Button>
-            <Button variant="primary" onClick={() => setOpen(true)}>
-              Add Class
+            <Button variant="primary" onClick={() => setOpen(true)} className="shadow-xs">
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              <span>Add Class</span>
             </Button>
           </div>
         }
@@ -124,7 +123,11 @@ export function Classes() {
       {loading ? (
         <Loading />
       ) : !data?.length ? (
-        <Empty title="No classes yet" hint="Add a class such as 10-A before creating exams." />
+        <Empty
+          title="No classes added yet"
+          hint="Create a class (such as 10-A or Grade 12-Science) before setting up exams."
+          action={<Button variant="primary" onClick={() => setOpen(true)}>Add Class</Button>}
+        />
       ) : (
         <>
           <TableToolbar
@@ -150,35 +153,38 @@ export function Classes() {
               onClearFilters={table.clearFilters}
             />
           ) : (
-            <Card className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="border-b border-line text-left text-mute">
+            <Card className="overflow-x-auto shadow-soft">
+              <table className="w-full text-left text-sm">
+                <thead className="border-b border-line bg-surface text-xs font-semibold uppercase tracking-wider text-mute">
                   <tr>
-                    <th className="px-4 py-2 font-medium">Class</th>
-                    <th className="px-4 py-2 font-medium">Students</th>
-                    <th className="px-4 py-2 font-medium text-right">Actions</th>
+                    <th className="px-4 py-3">Class Cohort</th>
+                    <th className="px-4 py-3">Enrolled Students</th>
+                    <th className="px-4 py-3 text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-line">
+                <tbody className="divide-y divide-line text-sm">
                   {table.paginatedData.map((c) => (
-                    <tr key={c.id} className="hover:bg-sunken">
-                      <td className="px-4 py-2 font-medium">{c.name}</td>
-                      <td className="px-4 py-2 text-mute">{c.student_count}</td>
-                      <td className="px-4 py-2 text-right space-x-3">
-                        <button
-                          type="button"
-                          className="text-xs text-primary hover:underline font-medium"
-                          onClick={() => setEditingClass(c)}
-                        >
-                          Edit
-                        </button>
-                        <button
-                          type="button"
-                          className="text-xs text-danger hover:underline font-medium"
-                          onClick={() => handleDeleteClass(c)}
-                        >
-                          Delete
-                        </button>
+                    <tr key={c.id} className="hover:bg-sunken/40">
+                      <td className="px-4 py-3 font-semibold text-ink">{c.name}</td>
+                      <td className="px-4 py-3 font-mono text-mute">{c.student_count ?? 0} students</td>
+                      <td className="px-4 py-3 text-right whitespace-nowrap">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <Button
+                            small
+                            variant="soft"
+                            onClick={() => setEditingClass(c)}
+                          >
+                            Edit
+                          </Button>
+                          <Button
+                            small
+                            variant="ghost"
+                            className="text-mark hover:bg-mark-soft hover:text-mark"
+                            onClick={() => setDeletingClass(c)}
+                          >
+                            Delete
+                          </Button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -205,7 +211,30 @@ export function Classes() {
           close={() => setEditingClass(null)}
         />
       )}
-    </>
+      {deletingClass && (
+        <Confirm
+          title={`Delete class "${deletingClass.name}"?`}
+          danger
+          confirmLabel="Delete Class"
+          body={
+            <div className="space-y-2 text-sm text-ink">
+              <p>
+                Are you sure you want to delete class <b>{deletingClass.name}</b>?
+              </p>
+              <p className="text-xs text-mute">
+                This will also remove any exams and enrolled students associated with this class.
+              </p>
+            </div>
+          }
+          onConfirm={async () => {
+            await api(`/classes/${deletingClass.id}`, { method: "DELETE" });
+            await reload();
+            setDeletingClass(null);
+          }}
+          onClose={() => setDeletingClass(null)}
+        />
+      )}
+    </div>
   );
 }
 
@@ -213,14 +242,14 @@ function ClassForm({ done, close }: { done: () => void; close: () => void }) {
   const [name, setName] = useState("");
   return (
     <SimpleForm
-      title="Add class"
+      title="Add New Class"
       onClose={close}
       onSubmit={async () => {
         await api("/classes", { method: "POST", json: { name } });
         done();
       }}
     >
-      <Field label="Class name">
+      <Field label="Class Name" hint="e.g. 10-A, 11-B, or Grade 12-Science">
         {(id) => (
           <Input
             id={id}
@@ -246,14 +275,13 @@ function EditClassForm({ cls, done, close }: { cls: ClassRow; done: () => void; 
         done();
       }}
     >
-      <Field label="Class name">
+      <Field label="Class Name">
         {(id) => (
           <Input
             id={id}
             required
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="10-A"
           />
         )}
       </Field>
@@ -265,16 +293,7 @@ export function Subjects() {
   const { data, error, loading, reload } = useApi<Subject[]>("/subjects");
   const [open, setOpen] = useState(false);
   const [editingSubject, setEditingSubject] = useState<Subject | null>(null);
-
-  const handleDeleteSubject = async (s: Subject) => {
-    if (!window.confirm(`Are you sure you want to delete subject "${s.name}"? This will also remove any exams associated with this subject.`)) return;
-    try {
-      await api(`/subjects/${s.id}`, { method: "DELETE" });
-      reload();
-    } catch (err: any) {
-      alert(err.message || "Failed to delete subject.");
-    }
-  };
+  const [deletingSubject, setDeletingSubject] = useState<Subject | null>(null);
 
   const table = useTableState<Subject>({
     data,
@@ -295,12 +314,16 @@ export function Subjects() {
   ];
 
   return (
-    <>
+    <div className="space-y-4">
       <PageHeader
-        title="Subjects"
+        title="Subjects Directory"
+        sub="Manage curriculum subjects and subject codes for question papers and evaluation."
         actions={
-          <Button variant="primary" onClick={() => setOpen(true)}>
-            Add Subject
+          <Button variant="primary" onClick={() => setOpen(true)} className="shadow-xs">
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+            <span>Add Subject</span>
           </Button>
         }
       />
@@ -308,7 +331,11 @@ export function Subjects() {
       {loading ? (
         <Loading />
       ) : !data?.length ? (
-        <Empty title="No subjects yet" hint="Add the subjects you set exams for." />
+        <Empty
+          title="No subjects added yet"
+          hint="Add the subjects you conduct examinations for (e.g. Physics, Chemistry, Mathematics)."
+          action={<Button variant="primary" onClick={() => setOpen(true)}>Add Subject</Button>}
+        />
       ) : (
         <>
           <TableToolbar
@@ -334,35 +361,38 @@ export function Subjects() {
               onClearFilters={table.clearFilters}
             />
           ) : (
-            <Card className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="border-b border-line text-left text-mute">
+            <Card className="overflow-x-auto shadow-soft">
+              <table className="w-full text-left text-sm">
+                <thead className="border-b border-line bg-surface text-xs font-semibold uppercase tracking-wider text-mute">
                   <tr>
-                    <th className="px-4 py-2 font-medium">Subject</th>
-                    <th className="px-4 py-2 font-medium">Code</th>
-                    <th className="px-4 py-2 font-medium text-right">Actions</th>
+                    <th className="px-4 py-3">Subject Name</th>
+                    <th className="px-4 py-3">Subject Code</th>
+                    <th className="px-4 py-3 text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-line">
+                <tbody className="divide-y divide-line text-sm">
                   {table.paginatedData.map((s) => (
-                    <tr key={s.id} className="hover:bg-sunken">
-                      <td className="px-4 py-2 font-medium">{s.name}</td>
-                      <td className="px-4 py-2 text-mute">{s.code ?? "–"}</td>
-                      <td className="px-4 py-2 text-right space-x-3">
-                        <button
-                          type="button"
-                          className="text-xs text-primary hover:underline font-medium"
-                          onClick={() => setEditingSubject(s)}
-                        >
-                          Edit
-                        </button>
-                        <button
-                          type="button"
-                          className="text-xs text-danger hover:underline font-medium"
-                          onClick={() => handleDeleteSubject(s)}
-                        >
-                          Delete
-                        </button>
+                    <tr key={s.id} className="hover:bg-sunken/40">
+                      <td className="px-4 py-3 font-semibold text-ink">{s.name}</td>
+                      <td className="px-4 py-3 font-mono text-mute">{s.code ?? "–"}</td>
+                      <td className="px-4 py-3 text-right whitespace-nowrap">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <Button
+                            small
+                            variant="soft"
+                            onClick={() => setEditingSubject(s)}
+                          >
+                            Edit
+                          </Button>
+                          <Button
+                            small
+                            variant="ghost"
+                            className="text-mark hover:bg-mark-soft hover:text-mark"
+                            onClick={() => setDeletingSubject(s)}
+                          >
+                            Delete
+                          </Button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -389,7 +419,30 @@ export function Subjects() {
           close={() => setEditingSubject(null)}
         />
       )}
-    </>
+      {deletingSubject && (
+        <Confirm
+          title={`Delete subject "${deletingSubject.name}"?`}
+          danger
+          confirmLabel="Delete Subject"
+          body={
+            <div className="space-y-2 text-sm text-ink">
+              <p>
+                Are you sure you want to delete subject <b>{deletingSubject.name}</b>?
+              </p>
+              <p className="text-xs text-mute">
+                This will also remove any examinations associated with this subject.
+              </p>
+            </div>
+          }
+          onConfirm={async () => {
+            await api(`/subjects/${deletingSubject.id}`, { method: "DELETE" });
+            await reload();
+            setDeletingSubject(null);
+          }}
+          onClose={() => setDeletingSubject(null)}
+        />
+      )}
+    </div>
   );
 }
 
@@ -398,18 +451,18 @@ function SubjectForm({ done, close }: { done: () => void; close: () => void }) {
   const [code, setCode] = useState("");
   return (
     <SimpleForm
-      title="Add subject"
+      title="Add New Subject"
       onClose={close}
       onSubmit={async () => {
         await api("/subjects", { method: "POST", json: { name, code: code || null } });
         done();
       }}
     >
-      <Field label="Subject name">
-        {(id) => <Input id={id} required value={name} onChange={(e) => setName(e.target.value)} />}
+      <Field label="Subject Name">
+        {(id) => <Input id={id} required placeholder="e.g. Physics" value={name} onChange={(e) => setName(e.target.value)} />}
       </Field>
-      <Field label="Code (optional)">
-        {(id) => <Input id={id} value={code} onChange={(e) => setCode(e.target.value)} />}
+      <Field label="Subject Code (optional)">
+        {(id) => <Input id={id} placeholder="e.g. PHY101" value={code} onChange={(e) => setCode(e.target.value)} />}
       </Field>
     </SimpleForm>
   );
@@ -427,7 +480,7 @@ function EditSubjectForm({ subject, done, close }: { subject: Subject; done: () 
         done();
       }}
     >
-      <Field label="Subject name">
+      <Field label="Subject Name">
         {(id) => <Input id={id} required value={name} onChange={(e) => setName(e.target.value)} />}
       </Field>
       <Field label="Code (optional)">
@@ -441,16 +494,7 @@ export function Students() {
   const { data, error, loading, reload } = useApi<Student[]>("/students");
   const [open, setOpen] = useState(false);
   const [editingStudent, setEditingStudent] = useState<Student | null>(null);
-
-  const handleDeleteStudent = async (s: Student) => {
-    if (!window.confirm(`Are you sure you want to delete student "${s.name}" (${s.roll_number})? This will also remove any evaluations associated with this student.`)) return;
-    try {
-      await api(`/students/${s.id}`, { method: "DELETE" });
-      reload();
-    } catch (err: any) {
-      alert(err.message || "Failed to delete student.");
-    }
-  };
+  const [deletingStudent, setDeletingStudent] = useState<Student | null>(null);
 
   const classOptions = useMemo(() => {
     if (!data) return [];
@@ -498,12 +542,16 @@ export function Students() {
   ];
 
   return (
-    <>
+    <div className="space-y-4">
       <PageHeader
-        title="Students"
+        title="Student Roster"
+        sub="Enroll and manage student records and roll numbers across all classes."
         actions={
-          <Button variant="primary" onClick={() => setOpen(true)}>
-            Add Student
+          <Button variant="primary" onClick={() => setOpen(true)} className="shadow-xs">
+            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+            <span>Add Student</span>
           </Button>
         }
       />
@@ -512,8 +560,9 @@ export function Students() {
         <Loading />
       ) : !data?.length ? (
         <Empty
-          title="No students yet"
-          hint="Students are also added automatically when you upload an answer sheet."
+          title="No students enrolled yet"
+          hint="Add students manually, or upload their answer sheets during examinations to enroll them automatically."
+          action={<Button variant="primary" onClick={() => setOpen(true)}>Add Student</Button>}
         />
       ) : (
         <>
@@ -541,37 +590,40 @@ export function Students() {
               onClearFilters={table.clearFilters}
             />
           ) : (
-            <Card className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="border-b border-line text-left text-mute">
+            <Card className="overflow-x-auto shadow-soft">
+              <table className="w-full text-left text-sm">
+                <thead className="border-b border-line bg-surface text-xs font-semibold uppercase tracking-wider text-mute">
                   <tr>
-                    <th className="px-4 py-2 font-medium">Roll no.</th>
-                    <th className="px-4 py-2 font-medium">Name</th>
-                    <th className="px-4 py-2 font-medium">Class</th>
-                    <th className="px-4 py-2 font-medium text-right">Actions</th>
+                    <th className="px-4 py-3">Roll No.</th>
+                    <th className="px-4 py-3">Student Name</th>
+                    <th className="px-4 py-3">Class</th>
+                    <th className="px-4 py-3 text-right">Actions</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-line">
+                <tbody className="divide-y divide-line text-sm">
                   {table.paginatedData.map((s) => (
-                    <tr key={s.id} className="hover:bg-sunken">
-                      <td className="px-4 py-2 font-medium">{s.roll_number}</td>
-                      <td className="px-4 py-2 font-medium text-ink">{s.name}</td>
-                      <td className="px-4 py-2 text-mute">{s.class_name ?? "–"}</td>
-                      <td className="px-4 py-2 text-right space-x-3">
-                        <button
-                          type="button"
-                          className="text-xs text-primary hover:underline font-medium"
-                          onClick={() => setEditingStudent(s)}
-                        >
-                          Edit
-                        </button>
-                        <button
-                          type="button"
-                          className="text-xs text-danger hover:underline font-medium"
-                          onClick={() => handleDeleteStudent(s)}
-                        >
-                          Delete
-                        </button>
+                    <tr key={s.id} className="hover:bg-sunken/40">
+                      <td className="px-4 py-3 font-mono font-medium text-ink">{s.roll_number}</td>
+                      <td className="px-4 py-3 font-semibold text-ink">{s.name}</td>
+                      <td className="px-4 py-3 font-medium text-mute">{s.class_name ?? "–"}</td>
+                      <td className="px-4 py-3 text-right whitespace-nowrap">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <Button
+                            small
+                            variant="soft"
+                            onClick={() => setEditingStudent(s)}
+                          >
+                            Edit
+                          </Button>
+                          <Button
+                            small
+                            variant="ghost"
+                            className="text-mark hover:bg-mark-soft hover:text-mark"
+                            onClick={() => setDeletingStudent(s)}
+                          >
+                            Delete
+                          </Button>
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -598,7 +650,30 @@ export function Students() {
           close={() => setEditingStudent(null)}
         />
       )}
-    </>
+      {deletingStudent && (
+        <Confirm
+          title={`Delete student "${deletingStudent.name}"?`}
+          danger
+          confirmLabel="Delete Student"
+          body={
+            <div className="space-y-2 text-sm text-ink">
+              <p>
+                Are you sure you want to delete student <b>{deletingStudent.name}</b> (Roll: {deletingStudent.roll_number})?
+              </p>
+              <p className="text-xs text-mute">
+                This will also remove any evaluations associated with this student.
+              </p>
+            </div>
+          }
+          onConfirm={async () => {
+            await api(`/students/${deletingStudent.id}`, { method: "DELETE" });
+            await reload();
+            setDeletingStudent(null);
+          }}
+          onClose={() => setDeletingStudent(null)}
+        />
+      )}
+    </div>
   );
 }
 
@@ -609,7 +684,7 @@ function StudentForm({ done, close }: { done: () => void; close: () => void }) {
   const [cls, setCls] = useState("");
   return (
     <SimpleForm
-      title="Add student"
+      title="Add New Student"
       onClose={close}
       onSubmit={async () => {
         await api("/students", {
@@ -619,16 +694,16 @@ function StudentForm({ done, close }: { done: () => void; close: () => void }) {
         done();
       }}
     >
-      <Field label="Name">
-        {(id) => <Input id={id} required value={name} onChange={(e) => setName(e.target.value)} />}
+      <Field label="Student Full Name">
+        {(id) => <Input id={id} required placeholder="e.g. Priya Patel" value={name} onChange={(e) => setName(e.target.value)} />}
       </Field>
-      <Field label="Roll number">
-        {(id) => <Input id={id} required value={roll} onChange={(e) => setRoll(e.target.value)} />}
+      <Field label="Roll Number">
+        {(id) => <Input id={id} required placeholder="e.g. 101" value={roll} onChange={(e) => setRoll(e.target.value)} />}
       </Field>
       <Field label="Class">
         {(id) => (
           <Select id={id} required value={cls} onChange={(e) => setCls(e.target.value)}>
-            <option value="">Choose a class</option>
+            <option value="">Choose a class...</option>
             {classes.data?.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
@@ -658,7 +733,7 @@ function EditStudentForm({ student, done, close }: { student: Student; done: () 
         done();
       }}
     >
-      <Field label="Student Name">
+      <Field label="Student Full Name">
         {(id) => <Input id={id} required value={name} onChange={(e) => setName(e.target.value)} />}
       </Field>
       <Field label="Roll Number">
@@ -687,26 +762,45 @@ export function SettingsPage() {
     message: string;
     detail?: string;
   }>("/system/ai-status");
+
   return (
-    <>
-      <PageHeader title="Settings" />
-      <Card className="max-w-2xl p-5">
-        <h2 className="font-semibold">AI service</h2>
+    <div className="space-y-4 max-w-2xl">
+      <PageHeader
+        title="System Settings"
+        sub="Monitor local Ollama AI model connectivity and application status."
+      />
+      <Card className="p-6 shadow-soft space-y-4">
+        <div className="flex items-center justify-between border-b border-line pb-3">
+          <h2 className="text-base font-semibold text-ink">Local AI Service Health</h2>
+          {data && <StatusBadge status={data.available ? "READY" : "AI_ERROR"} />}
+        </div>
         {loading || !data ? (
           <Loading />
         ) : (
-          <div className="mt-3 space-y-2 text-sm">
-            <p className="flex items-center gap-2">
-              <StatusBadge status={data.available ? "READY" : "AI_ERROR"} /> {data.message}
+          <div className="space-y-3 text-sm">
+            <p className="flex items-center gap-2 font-medium text-ink">
+              <span>{data.message}</span>
             </p>
-            <p className="text-mute">
-              Model <code>{data.model}</code> at <code>{data.url}</code>
-            </p>
-            {data.detail && <p className="text-xs text-mute">{data.detail}</p>}
-            <Button onClick={reload}>Check again</Button>
+            <div className="rounded-lg bg-sunken p-3 font-mono text-xs text-mute space-y-1 border border-line/60">
+              <p>Model: <span className="text-ink font-semibold">{data.model}</span></p>
+              <p>Endpoint URL: <span className="text-ink">{data.url}</span></p>
+            </div>
+            {data.detail && (
+              <div className="rounded-lg bg-warn-soft/50 p-3 text-xs text-warn border border-warn/30">
+                {data.detail}
+              </div>
+            )}
+            <div className="pt-2">
+              <Button onClick={reload} variant="soft">
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                <span>Check Service Status Again</span>
+              </Button>
+            </div>
           </div>
         )}
       </Card>
-    </>
+    </div>
   );
 }

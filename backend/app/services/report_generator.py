@@ -149,10 +149,15 @@ def format_math_text(raw_text: str | None) -> str:
 
     text = str(raw_text).strip()
 
-    # Step 1: Escape basic XML entities
+    # Step 1: Strip LaTeX math wrappers \( ... \), \[ ... \], \left, \right
+    text = re.sub(r"\\left\b", "", text)
+    text = re.sub(r"\\right\b", "", text)
+    text = re.sub(r"\\\(|\\\)|\\\[|\\\]", "", text)
+
+    # Step 2: Escape basic XML entities
     text = html.escape(text)
 
-    # Step 2: LaTeX math symbols to Unicode equivalents
+    # Step 3: LaTeX math symbols to Unicode equivalents
     replacements = [
         (r"\\times", "×"),
         (r"\\cdot", "·"),
@@ -175,24 +180,25 @@ def format_math_text(raw_text: str | None) -> str:
     for pattern, repl in replacements:
         text = re.sub(pattern, repl, text)
 
-    # Step 3: Handle \frac{a}{b} -> (a / b)
-    text = re.sub(r"\\frac\{([^{}]+)\}\{([^{}]+)\}", r"(\1 / \2)", text)
+    # Step 4: Handle nested or single \frac{a}{b} -> (a / b)
+    while re.search(r"\\frac\{([^{}]+)\}\{([^{}]+)\}", text):
+        text = re.sub(r"\\frac\{([^{}]+)\}\{([^{}]+)\}", r"(\1 / \2)", text)
 
-    # Step 4: Handle \sqrt{a} -> √(a)
+    # Step 5: Handle \sqrt{a} -> √(a)
     text = re.sub(r"\\sqrt\{([^{}]+)\}", r"√(\1)", text)
 
-    # Step 5: Convert exponents (superscripts):
+    # Step 6: Convert exponents (superscripts):
     # e.g., ^(k+1) or ^{k+1} -> <sup>k+1</sup>
     text = re.sub(r"\^\{([^{}]+)\}", r"<sup>\1</sup>", text)
     text = re.sub(r"\^\(([^\(\)]+)\)", r"<sup>\1</sup>", text)
-    # Simple base^power like x^2, 10^3, 2^k
+    # Simple base^power like x^2, 10^3, 2^k, 2^-n
     text = re.sub(r"(?<=[a-zA-Z0-9\)])\^([0-9a-zA-Z+-]+)", r"<sup>\1</sup>", text)
 
     # Subscripts:
     text = re.sub(r"_\{([^{}]+)\}", r"<sub>\1</sub>", text)
     text = re.sub(r"(?<=[a-zA-Z0-9\)])_([0-9a-zA-Z+-]+)", r"<sub>\1</sub>", text)
 
-    # Step 6: Convert newlines to <br/>
+    # Step 7: Convert newlines to <br/>
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = text.replace("\n", "<br/>")
 

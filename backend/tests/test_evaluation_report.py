@@ -34,6 +34,14 @@ def test_format_math_text():
     # Test empty
     assert format_math_text(None) == "&ndash;"
 
+    # Test stripping LaTeX math wrappers \left, \right, \(, \)
+    t3 = format_math_text(r"\(\left(\frac{a}{b}\right)^{-n} = \left(\frac{b}{a}\right)^{n}\)")
+    assert r"\(" not in t3
+    assert r"\)" not in t3
+    assert r"\left" not in t3
+    assert "(a / b)" in t3
+    assert "(b / a)" in t3
+
 
 def test_download_evaluation_report_pdf_e2e(client, auth):
     c, h = client, auth
