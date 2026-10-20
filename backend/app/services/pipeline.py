@@ -11,7 +11,7 @@ from ..database import SessionLocal
 from ..documents import cropping
 from ..documents.renderer import RenderError, render_document
 from ..documents.storage import abs_path, rel
-from ..models import (AnswerKey, AnswerKeyDocument, AnswerSheetDocument, Evaluation, Exam, ExamQuestion,
+from ..models import (AnswerKey, AnswerKeyDocument, AnswerSheetDocument, Evaluation, EvaluationItem, Exam, ExamQuestion,
                       QuestionPaperDocument, StudentAnswer)
 from ..ocr import prompts
 from ..ocr.internvl import AIResponseError, AIUnavailable, chat_structured, check_model
@@ -253,7 +253,7 @@ def _build_questions(db: Session, doc, exam: Exam, wd: Path, results) -> None:
     if existing_q_ids:
         db.query(AnswerKey).filter_by(exam_id=exam.id).update({AnswerKey.exam_question_id: None})
         db.query(StudentAnswer).filter(StudentAnswer.exam_question_id.in_(existing_q_ids)).update({StudentAnswer.exam_question_id: None}, synchronize_session=False)
-        db.query(Evaluation).filter(Evaluation.exam_question_id.in_(existing_q_ids)).update({Evaluation.exam_question_id: None}, synchronize_session=False)
+        db.query(EvaluationItem).filter(EvaluationItem.exam_question_id.in_(existing_q_ids)).delete(synchronize_session=False)
         db.query(ExamQuestion).filter_by(exam_id=exam.id).delete()
     struct = parse_question_paper_structure(results)
 
