@@ -173,7 +173,14 @@ def is_passage_block(text: str) -> bool:
     if is_table_block(text):
         return False
     s = text.strip()
-    if len(s) < 150:
+    if len(s) < 180:
+        return False
+    # If text contains imperative question verbs, it is an exam question, NEVER a reading passage
+    if re.search(
+        r"\b(?:Draw|Explain|Identify|Calculate|State|Define|Describe|Show|Prove|Differentiate|Find|Solve|Write|Distinguish|Compare|List|Name|Give\s+reasons?)\b",
+        s,
+        re.IGNORECASE,
+    ):
         return False
     # Check if text is predominantly narrative or descriptive text without question question-mark
     if "?" not in s and ("." in s or "\n" in s) and not re.search(r"^\s*(?:Q\d|\d+[\.\)])", s):
@@ -207,6 +214,13 @@ def _is_question_continuation(
         if not norm or norm == last_q.normalized_number:
             return True
 
+    # If incoming text is an exact or near duplicate of last_q, it is NEVER a continuation
+    if text and last_q.question_text:
+        norm_incoming = re.sub(r"\s+", " ", text.strip().lower())
+        norm_last = re.sub(r"\s+", " ", last_q.question_text.strip().lower())
+        if norm_incoming == norm_last or (len(norm_incoming) > 35 and norm_incoming in norm_last):
+            return False
+
     # 2. Repeated question number on a new page (e.g. Page 1 ends with Q4, Page 2 starts with Q4 / 4)
     if lbl and page_num > last_q.page_end:
         norm = normalize_question_number(lbl)
@@ -218,7 +232,9 @@ def _is_question_continuation(
         return True
 
     # 4. Check negative signals that prove this is a NEW question, NEVER a continuation
-    # If the text has a new section or subject header e.g. "Reading Comprehension:", "Literature:", "Grammar:", "Section C:"
+    # If the text has a section or subject header e.g. "Reading Comprehension:", "Literature:", "Grammar:", "Section C:"
+    if re.search(r"\b(?:SECTION|PART|UNIT|GROUP)\s+[A-Z0-9IVX]+\b", text, re.IGNORECASE):
+        return False
     if re.match(r"^\s*(?:Reading\s+Comprehension|Literature|Grammar|Writing\s+Skills|Section\s+[A-Z]|Part\s+[A-Z])[\:\b]", text, re.IGNORECASE):
         return False
     # If it contains instructions to read a passage or answer questions
@@ -350,6 +366,8 @@ def _consolidate_subquestions(questions: list[StructuredQuestion]) -> list[Struc
             merged_texts = [sub_qs[0].question_text.strip()]
 
         combined_text = "\n".join(merged_texts)
+        cleaned_comb, embedded_secs = _extract_and_strip_embedded_sections(combined_text)
+        combined_text = _deduplicate_question_text(cleaned_comb)
 
         sec = first_q.section or ""
         rule_mark = extract_section_marks_rule(sec)
@@ -387,6 +405,104 @@ def _consolidate_subquestions(questions: list[StructuredQuestion]) -> list[Struc
     return consolidated
 
 
+def _extract_and_strip_embedded_sections(
+    text: str,
+) -> tuple[str, list[tuple[str, str | None, float | None]]]:
+    """Scan text for embedded SECTION/PART headers and instruction lines.
+
+    Extracts:
+        (cleaned_text, list of (section_title, instruction_line, marks_rule))
+    """
+    if not text:
+        return text, []
+
+    sec_pat = re.compile(
+        r"(?:^|\n+)[ \t]*((?:SECTION|PART|UNIT|GROUP)\s+[A-Z0-9IVX]+(?:\s*[:\-]\s*[^\n]+)?)"
+        r"(?:[ \t]*\n+[ \t]*(\([^\n]*(?:marks?|questions?)[^\n]*\)|[^\n]*(?:marks?|questions?)[^\n]*))?",
+        re.IGNORECASE,
+    )
+
+    found_sections: list[tuple[str, str | None, float | None]] = []
+
+    def _replacer(m: re.Match) -> str:
+        sec_title = m.group(1).strip()
+        sec_inst = m.group(2).strip() if m.group(2) else None
+        rule = extract_section_marks_rule(sec_inst or sec_title)
+        found_sections.append((sec_title, sec_inst, rule))
+        return "\n"
+
+    cleaned = sec_pat.sub(_replacer, text)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+    return cleaned, found_sections
+
+
+def _deduplicate_question_text(text: str) -> str:
+    """Detect and remove duplicate or high-similarity repeated sentences/paragraphs within a question block."""
+    if not text or len(text.strip()) < 15:
+        return text
+
+    s = text.strip()
+    lines = [l.strip() for l in s.splitlines() if l.strip()]
+    if not lines:
+        return text
+
+    # 1. Collapse consecutive identical lines (e.g. repeated topic title: "Flame & Combustion:\nFlame & Combustion:")
+    dedup_lines = []
+    for line in lines:
+        if dedup_lines and line.lower() == dedup_lines[-1].lower():
+            continue
+        dedup_lines.append(line)
+
+    # 2. Check for exact half-block repetition: "Block A... \n Block A..."
+    full_joined = "\n".join(dedup_lines)
+    half_len = len(full_joined) // 2
+    for offset in range(-20, 21):
+        mid = half_len + offset
+        if 10 < mid < len(full_joined) - 10:
+            part1 = full_joined[:mid].strip()
+            part2 = full_joined[mid:].strip()
+            p1_norm = re.sub(r"\s+", " ", part1.lower())
+            p2_norm = re.sub(r"\s+", " ", part2.lower())
+            if p1_norm and p1_norm == p2_norm:
+                return part1
+
+    # 3. Check for repeated topic header pattern (e.g. "Topic:\nBody\nTopic:\nBody")
+    m_topic = re.match(r"^([^:\n]{3,60}:)\s*(.*)", full_joined, re.DOTALL)
+    if m_topic:
+        topic_header = m_topic.group(1).strip()
+        body = m_topic.group(2).strip()
+        if topic_header.lower() in body.lower():
+            pat_topic = re.compile(rf"(?:^|\n+)\s*{re.escape(topic_header)}\s*", re.IGNORECASE)
+            sub_blocks = [b.strip() for b in pat_topic.split(body) if b.strip()]
+            if sub_blocks:
+                first_body = sub_blocks[0]
+                b1_norm = re.sub(r"\s+", " ", first_body.lower())
+                all_duplicates = True
+                for other_b in sub_blocks[1:]:
+                    other_norm = re.sub(r"\s+", " ", other_b.lower())
+                    if other_norm != b1_norm and (len(other_norm) > 30 and other_norm not in b1_norm and b1_norm not in other_norm):
+                        all_duplicates = False
+                        break
+                if all_duplicates:
+                    return f"{topic_header}\n{first_body}"
+
+    # 4. Sentence-level deduplication: remove exact duplicate question sentences
+    raw_sentences = re.split(r"(?<=[.?!])\s+", full_joined)
+    if len(raw_sentences) > 2:
+        seen_sents = set()
+        clean_sents = []
+        for sent in raw_sentences:
+            s_clean = re.sub(r"\s+", " ", sent.strip().lower())
+            if len(s_clean) > 20 and s_clean in seen_sents:
+                continue
+            if len(s_clean) > 20:
+                seen_sents.add(s_clean)
+            clean_sents.append(sent.strip())
+        full_joined = " ".join(clean_sents)
+
+    return full_joined.strip()
+
+
 def split_swallowed_qp_blocks(
     raw_label: str | None,
     text: str,
@@ -396,7 +512,30 @@ def split_swallowed_qp_blocks(
     boundaries = []
     for m in pat.finditer(text):
         boundaries.append((m.start(), f"Q{m.group(1)}", m.end()))
+
+    # If no question boundaries exist, check for an embedded SECTION header in the middle of text
     if not boundaries:
+        sec_m = re.search(
+            r"(?:^|\n+)[ \t]*((?:SECTION|PART|UNIT|GROUP)\s+[A-Z0-9IVX]+(?:\s*[:\-]\s*[^\n]+)?)"
+            r"(?:[ \t]*\n+[ \t]*(\([^\n]*(?:marks?|questions?)[^\n]*\)|[^\n]*(?:marks?|questions?)[^\n]*))?",
+            text,
+            re.IGNORECASE,
+        )
+        if sec_m:
+            pre = text[:sec_m.start()].strip()
+            sec_full = text[sec_m.start():sec_m.end()].strip()
+            post = text[sec_m.end():].strip()
+            res: list[tuple[str | None, str]] = []
+            if pre:
+                res.append((raw_label, pre))
+            sec_lines = [l.strip() for l in sec_full.splitlines() if l.strip()]
+            if sec_lines:
+                res.append((None, sec_lines[0]))
+                if len(sec_lines) > 1:
+                    res.append((None, "\n".join(sec_lines[1:])))
+            if post:
+                res.append((None, post))
+            return res
         return [(raw_label, text)]
 
     first_start = boundaries[0][0]
@@ -407,9 +546,17 @@ def split_swallowed_qp_blocks(
     if len(boundaries) == 1 and first_start <= 5 and not intro:
         return [(boundaries[0][1], text[boundaries[0][2]:].strip())]
 
-    # If only 1 boundary and it's near the start with no heading/preamble, no split needed
+    # If only 1 boundary and it's near the start with no heading/preamble, check if section is embedded in remainder
     if len(boundaries) == 1 and not is_sec_lbl and first_start <= 10:
-        return [(raw_label, text)]
+        chunk = text[boundaries[0][2]:].strip()
+        sec_m = re.search(
+            r"(?:^|\n+)[ \t]*((?:SECTION|PART|UNIT|GROUP)\s+[A-Z0-9IVX]+(?:\s*[:\-]\s*[^\n]+)?)"
+            r"(?:[ \t]*\n+[ \t]*(\([^\n]*(?:marks?|questions?)[^\n]*\)|[^\n]*(?:marks?|questions?)[^\n]*))?",
+            chunk,
+            re.IGNORECASE,
+        )
+        if not sec_m:
+            return [(raw_label, text)]
 
     res: list[tuple[str | None, str]] = []
     if intro or is_sec_lbl:
@@ -419,18 +566,24 @@ def split_swallowed_qp_blocks(
         next_start = boundaries[i + 1][0] if i + 1 < len(boundaries) else len(text)
         chunk = text[b_end:next_start].strip()
         m_sec = re.search(
-            r"(?:\n+)\s*((?:SECTION|PART|UNIT|GROUP)\s+[A-Z0-9IVX]+(?:\s*[:\-]\s*[^\n]+)?(?:\n+.*)?)$",
+            r"(?:^|\n+)[ \t]*((?:SECTION|PART|UNIT|GROUP)\s+[A-Z0-9IVX]+(?:\s*[:\-]\s*[^\n]+)?)"
+            r"(?:[ \t]*\n+[ \t]*(\([^\n]*(?:marks?|questions?)[^\n]*\)|[^\n]*(?:marks?|questions?)[^\n]*))?",
             chunk,
-            re.IGNORECASE | re.DOTALL,
+            re.IGNORECASE,
         )
         if m_sec:
             q_part = chunk[:m_sec.start()].strip()
-            sec_part = m_sec.group(1).strip()
-            res.append((b_lbl, q_part))
-            sec_lines = [l.strip() for l in sec_part.splitlines() if l.strip()]
-            res.append((None, sec_lines[0]))
-            if len(sec_lines) > 1:
-                res.append((None, "\n".join(sec_lines[1:])))
+            sec_full = chunk[m_sec.start():m_sec.end()].strip()
+            post_part = chunk[m_sec.end():].strip()
+            if q_part:
+                res.append((b_lbl, q_part))
+            sec_lines = [l.strip() for l in sec_full.splitlines() if l.strip()]
+            if sec_lines:
+                res.append((None, sec_lines[0]))
+                if len(sec_lines) > 1:
+                    res.append((None, "\n".join(sec_lines[1:])))
+            if post_part:
+                res.append((None, post_part))
         else:
             res.append((b_lbl, chunk))
     return res
@@ -770,6 +923,32 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
             if current_passage:
                 full_text = f"[Reading Passage Context]\n{current_passage}\n\n{full_text}"
                 current_passage = None
+
+            # Clean and strip any embedded sections/instructions that leaked into full_text
+            cleaned_ft, embedded_secs = _extract_and_strip_embedded_sections(full_text)
+            if embedded_secs:
+                for s_title, s_inst, s_rule in embedded_secs:
+                    if s_title not in doc_struct.sections:
+                        doc_struct.sections.append(s_title)
+                    current_section = s_title
+                    if s_rule is not None:
+                        section_marks_rule = s_rule
+                        assigned_marks = s_rule
+                    if s_inst:
+                        doc_struct.instructions.append(s_inst)
+            full_text = _deduplicate_question_text(cleaned_ft)
+
+            # Check if this question is a duplicate of the previous question
+            if doc_struct.questions and full_text.strip():
+                last_q = doc_struct.questions[-1]
+                norm_curr = re.sub(r"\s+", " ", full_text.strip().lower())
+                norm_prev = re.sub(r"\s+", " ", (last_q.question_text or "").strip().lower())
+                if norm_curr and (norm_curr == norm_prev or (len(norm_curr) > 35 and norm_curr in norm_prev)):
+                    if current_section and not last_q.section:
+                        last_q.section = current_section
+                    if assigned_marks and not last_q.max_marks:
+                        last_q.max_marks = assigned_marks
+                    continue
 
             bbox_dict = q.bbox.model_dump() if getattr(q, "bbox", None) else None
 

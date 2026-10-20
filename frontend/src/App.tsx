@@ -5,11 +5,9 @@ import Dashboard from "./pages/Dashboard";
 import { Classes, Subjects, Students, SettingsPage } from "./pages/Lists";
 import { ExamsList, ExamNew } from "./pages/Exams";
 import ExamWorkspace from "./pages/ExamWorkspace";
-import Overview from "./pages/exam/Overview";
-import QuestionPaper from "./pages/exam/QuestionPaper";
-import Questions from "./pages/exam/Questions";
-import AnswerKey from "./pages/exam/AnswerKey";
-import { ExamStudents, AnswerSheets, ExamEvaluation, ExamResults } from "./pages/exam/Sheets";
+import ContentAndKey from "./pages/exam/ContentAndKey";
+import Submissions from "./pages/exam/Submissions";
+import { ExamEvaluation, ExamResults } from "./pages/exam/Sheets";
 import EvaluationPage from "./pages/EvaluationPage";
 import { ResultPage, ResultsList, EvaluationsList } from "./pages/Results";
 
@@ -28,12 +26,15 @@ export default function App() {
         <Route path="/exams" element={<ExamsList />} />
         <Route path="/exams/new" element={<ExamNew />} />
         <Route path="/exams/:id" element={<ExamWorkspace />}>
-          <Route index element={<Overview />} />
-          <Route path="question-paper" element={<QuestionPaper />} />
-          <Route path="questions" element={<Questions />} />
-          <Route path="answer-key" element={<AnswerKey />} />
-          <Route path="students" element={<ExamStudents />} />
-          <Route path="answer-sheets" element={<AnswerSheets />} />
+          <Route index element={<ContentAndKey defaultSubTab="overview" />} />
+          <Route path="content" element={<ContentAndKey defaultSubTab="overview" />} />
+          <Route path="overview" element={<ContentAndKey defaultSubTab="overview" />} />
+          <Route path="question-paper" element={<ContentAndKey defaultSubTab="paper" />} />
+          <Route path="questions" element={<ContentAndKey defaultSubTab="questions" />} />
+          <Route path="answer-key" element={<ContentAndKey defaultSubTab="key" />} />
+          <Route path="submissions" element={<Submissions defaultSubTab="sheets" />} />
+          <Route path="students" element={<Submissions defaultSubTab="roster" />} />
+          <Route path="answer-sheets" element={<Submissions defaultSubTab="sheets" />} />
           <Route path="evaluation" element={<ExamEvaluation />} />
           <Route path="results" element={<ExamResults />} />
         </Route>

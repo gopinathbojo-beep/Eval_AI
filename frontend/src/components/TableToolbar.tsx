@@ -158,17 +158,17 @@ export function TableToolbar({
           </div>
 
           {/* Clear Filters Button */}
-          {isFiltered && (
+          {Boolean(isFiltered !== undefined ? isFiltered : (Boolean(searchValue?.trim()) || filters.some((f) => Boolean(f.value?.trim())))) && (
             <button
               type="button"
               onClick={onClearFilters}
-              aria-label="Clear all filters and search"
-              className="inline-flex h-9 items-center gap-1.5 rounded-md border border-line bg-sunken px-2.5 text-xs font-medium text-mute hover:bg-line hover:text-ink focus:border-pen focus:outline-none"
+              aria-label="Clear all active filters and search"
+              className="inline-flex h-9 items-center gap-1.5 rounded-md border border-line bg-sunken px-2.5 text-xs font-medium text-mute hover:bg-line hover:text-ink focus:border-pen focus:outline-none transition-colors"
             >
               <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
-              <span>Clear</span>
+              <span>Clear Filters</span>
             </button>
           )}
 
@@ -179,7 +179,7 @@ export function TableToolbar({
       {/* Result Count and Active Filters Bar */}
       <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-xs text-mute">
         <div>
-          {isFiltered ? (
+          {Boolean(isFiltered !== undefined ? isFiltered : (Boolean(searchValue?.trim()) || filters.some((f) => Boolean(f.value?.trim())))) ? (
             <span>
               Showing <strong className="text-ink">{filteredCount}</strong> of{" "}
               <strong className="text-ink">{totalCount}</strong> {itemLabel}
@@ -192,7 +192,7 @@ export function TableToolbar({
         </div>
 
         {/* Active Filter Tags */}
-        {isFiltered && (
+        {Boolean(isFiltered !== undefined ? isFiltered : (Boolean(searchValue?.trim()) || filters.some((f) => Boolean(f.value?.trim())))) && (
           <div className="flex flex-wrap items-center gap-1.5">
             {searchValue.trim() && (
               <span className="inline-flex items-center gap-1 rounded bg-sunken px-2 py-0.5 text-ink">
@@ -200,15 +200,15 @@ export function TableToolbar({
                 <button
                   type="button"
                   onClick={() => onSearchChange("")}
-                  className="hover:text-mark"
-                  aria-label="Remove search term"
+                  className="hover:text-mark ml-0.5"
+                  aria-label="Remove search filter"
                 >
                   ✕
                 </button>
               </span>
             )}
             {filters
-              .filter((f) => f.value)
+              .filter((f) => Boolean(f.value && f.value.trim() !== ""))
               .map((f) => {
                 const optLabel = f.options.find((o) => o.value === f.value)?.label || f.value;
                 return (
@@ -220,7 +220,7 @@ export function TableToolbar({
                     <button
                       type="button"
                       onClick={() => f.onChange("")}
-                      className="hover:text-mark"
+                      className="hover:text-mark ml-0.5"
                       aria-label={`Remove ${f.label} filter`}
                     >
                       ✕
@@ -351,7 +351,7 @@ export function FilteredEmptyState({
           onClick={onClearFilters}
           className="rounded-md bg-pen px-3.5 py-1.5 text-xs font-medium text-surface hover:opacity-90 transition-opacity"
         >
-          Clear filters
+          Clear Filters
         </button>
       </div>
     </div>

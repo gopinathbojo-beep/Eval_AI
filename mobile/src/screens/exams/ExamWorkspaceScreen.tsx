@@ -258,6 +258,19 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
   const [cameraScannerVisible, setCameraScannerVisible] = useState(false);
   const [scannerTarget, setScannerTarget] = useState<"question_paper" | "answer_key" | "student_sheet">("question_paper");
 
+  // Failed uploads queue for offline / network resilience
+  const [failedUploads, setFailedUploads] = useState<
+    Array<{
+      id: string;
+      studentId: string;
+      studentName: string;
+      rollNumber: string;
+      fileUri: string;
+      fileName: string;
+      error: string;
+    }>
+  >([]);
+
   // Total marks verification & popup modal state
   const [totalMarksModalVisible, setTotalMarksModalVisible] = useState(false);
   const [customTotalMarks, setCustomTotalMarks] = useState("");
@@ -892,7 +905,8 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
         "All canonical questions have been verified! Moving to the Answer Key module."
       );
     } catch (err: any) {
-      Alert.alert("Error", err.message || "Verification failed");
+      await Promise.all([loadTabData("questions"), fetchExamDetail()]);
+      Alert.alert("Verification Notice", err.message || "Verification failed");
     } finally {
       setActionLoading(false);
     }
@@ -936,6 +950,68 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
     }
     setCameraScannerVisible(false);
     setUploadSheetModal(true);
+  };
+
+  /**
+   * Continuous Classroom Batch Scanning:
+   * Handles immediate background upload of Student A while the camera stays active for Student B
+   */
+  const handleScanNextStudentBatch = async (
+    file: DocumentScannerResult,
+    currentStudentId: string,
+    nextStudentId?: string
+  ) => {
+    try {
+      const student = students.find((s) => s.id === currentStudentId);
+      const params = { student_id: currentStudentId };
+
+      // Dispatch non-blocking background upload
+      uploadFileNative(`/exams/${examId}/answer-sheets`, file.uri, {
+        fileName: file.name,
+        mimeType: file.type || "application/pdf",
+        params,
+      })
+        .then(() => {
+          fetchExamDetail();
+          loadTabData("submissions");
+        })
+        .catch((err: any) => {
+          // If upload fails, retain in failedUploads queue so teacher can retry without re-scanning
+          setFailedUploads((prev) => [
+            ...prev,
+            {
+              id: `failed_${Date.now()}`,
+              studentId: currentStudentId,
+              studentName: student?.name || "Student",
+              rollNumber: student?.roll_number || "",
+              fileUri: file.uri,
+              fileName: file.name,
+              error: err.message || "Network upload error",
+            },
+          ]);
+        });
+
+      if (nextStudentId) {
+        setSelectedStudentId(nextStudentId);
+      }
+    } catch (err: any) {
+      console.warn("Batch student dispatch error", err);
+    }
+  };
+
+  const handleRetryFailedUpload = async (item: typeof failedUploads[0]) => {
+    try {
+      await uploadFileNative(`/exams/${examId}/answer-sheets`, item.fileUri, {
+        fileName: item.fileName,
+        mimeType: "application/pdf",
+        params: { student_id: item.studentId },
+      });
+      setFailedUploads((prev) => prev.filter((f) => f.id !== item.id));
+      await Promise.all([fetchExamDetail(), loadTabData("submissions")]);
+      Alert.alert("Upload Succeeded", `Answer sheet for ${item.studentName} uploaded successfully.`);
+    } catch (err: any) {
+      Alert.alert("Retry Failed", err.message || "Could not upload answer sheet. Please try again.");
+    }
   };
 
   const handleSubmitStudentSheet = async () => {
@@ -1704,6 +1780,11 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                         variant="secondary"
                         size="small"
                         loading={actionLoading}
+                        disabled={
+                          actionLoading ||
+                          (!!exam?.question_paper && ["UPLOADED", "RENDERING", "OCR_PROCESSING", "EXTRACTING"].includes(exam.question_paper.status)) ||
+                          Boolean(questionsData && (questionsData as any).document_status && ["UPLOADED", "RENDERING", "OCR_PROCESSING", "EXTRACTING"].includes((questionsData as any).document_status))
+                        }
                         onPress={handleAcceptAllValid}
                       />
                     )}
@@ -1714,6 +1795,11 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                         variant="gradient"
                         size="small"
                         loading={actionLoading}
+                        disabled={
+                          actionLoading ||
+                          (!!exam?.question_paper && ["UPLOADED", "RENDERING", "OCR_PROCESSING", "EXTRACTING"].includes(exam.question_paper.status)) ||
+                          Boolean(questionsData && (questionsData as any).document_status && ["UPLOADED", "RENDERING", "OCR_PROCESSING", "EXTRACTING"].includes((questionsData as any).document_status))
+                        }
                         onPress={handleVerifyQuestions}
                       />
                     )}
@@ -2478,6 +2564,64 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
               </View>
             </View>
 
+            {/* Failed uploads retry queue banner for network resilience */}
+            {failedUploads.length > 0 && (
+              <View
+                style={{
+                  backgroundColor: "rgba(220, 38, 38, 0.08)",
+                  borderColor: "rgba(220, 38, 38, 0.3)",
+                  borderWidth: 1,
+                  borderRadius: 12,
+                  padding: 12,
+                  marginBottom: 14,
+                }}
+              >
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                  <Ionicons name="cloud-offline" size={16} color="#DC2626" />
+                  <Text style={{ fontSize: 13, fontWeight: "700", color: "#DC2626" }}>
+                    {failedUploads.length} Answer Sheet Upload(s) Failed (Network Issue)
+                  </Text>
+                </View>
+                {failedUploads.map((f) => (
+                  <View
+                    key={f.id}
+                    style={{
+                      flexDirection: "row",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      paddingVertical: 6,
+                      borderTopWidth: StyleSheet.hairlineWidth,
+                      borderTopColor: "rgba(220, 38, 38, 0.2)",
+                    }}
+                  >
+                    <View style={{ flex: 1, paddingRight: 8 }}>
+                      <Text style={{ fontSize: 13, fontWeight: "600", color: colors.text }}>
+                        {f.studentName} (Roll: {f.rollNumber})
+                      </Text>
+                      <Text style={{ fontSize: 11, color: colors.textSecondary }} numberOfLines={1}>
+                        {f.error}
+                      </Text>
+                    </View>
+                    <TouchableOpacity
+                      onPress={() => handleRetryFailedUpload(f)}
+                      style={{
+                        backgroundColor: "#DC2626",
+                        paddingHorizontal: 12,
+                        paddingVertical: 6,
+                        borderRadius: 6,
+                        flexDirection: "row",
+                        alignItems: "center",
+                        gap: 4,
+                      }}
+                    >
+                      <Ionicons name="refresh" size={12} color="#FFFFFF" />
+                      <Text style={{ color: "#FFFFFF", fontSize: 11, fontWeight: "700" }}>Retry</Text>
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+            )}
+
             {evaluations.length === 0 ? (
               <Card style={styles.scannerPromptCard}>
                 <View style={[styles.scannerPromptIcon, { backgroundColor: "rgba(7, 159, 189, 0.12)" }]}>
@@ -3199,6 +3343,9 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
             ? handleScannedAnswerKeyComplete
             : handleScannedPaperComplete
         }
+        students={scannerTarget === "student_sheet" ? students : undefined}
+        currentStudentId={scannerTarget === "student_sheet" ? selectedStudentId : undefined}
+        onScanNextStudent={scannerTarget === "student_sheet" ? handleScanNextStudentBatch : undefined}
         title={
           scannerTarget === "student_sheet"
             ? (selectedStudent ? `Scan Sheet: ${selectedStudent.name}` : "Scan Student Answer Sheet")

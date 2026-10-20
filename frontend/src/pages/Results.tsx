@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { downloadFile } from "../api/client";
 import { FilteredEmptyState, TablePagination, TableToolbar } from "../components/TableToolbar";
 import { Badge, Button, Card, Empty, ErrorPanel, Loading, MathView, PageHeader, PenScore, StatusBadge } from "../components/ui";
@@ -45,7 +45,7 @@ export function EvaluationsList() {
                   {e.status === "FINALIZED" ? "Evaluation Finalized" : "Evaluation in Progress"}
                 </span>
                 <span className="inline-flex items-center gap-1 font-semibold text-pen group-hover:translate-x-0.5 transition-transform">
-                  {e.status === "FINALIZED" ? "View Results &rarr;" : "Review &rarr;"}
+                  {e.status === "FINALIZED" ? "View Results →" : "Review →"}
                 </span>
               </div>
             </Link>
@@ -251,9 +251,26 @@ export function ResultsList() {
 
 export function ResultPage() {
   const { id } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = searchParams.get("tab") === "detailed" ? "detailed" : "breakdown";
   const { data, loading, error } = useApi<ResultResponse>(`/evaluations/${id}/result`);
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+
+  const handleTabChange = (tab: "breakdown" | "detailed") => {
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        if (tab === "detailed") {
+          next.set("tab", "detailed");
+        } else {
+          next.delete("tab");
+        }
+        return next;
+      },
+      { replace: true }
+    );
+  };
 
   const handleDownloadReport = async () => {
     if (!id || !data) return;
@@ -351,102 +368,177 @@ export function ResultPage() {
         </div>
       </Card>
 
-      {/* Question Performance Table Overview */}
-      <Card className="overflow-x-auto shadow-soft">
-        <div className="border-b border-line px-4 py-3">
-          <h3 className="text-sm font-semibold text-ink">Marks Breakdown by Question</h3>
+      {/* Tabs Navigation */}
+      <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+        <div className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-surface p-1.5 shadow-soft">
+          {/* Tab 1: Marks Breakdown by Question */}
+          <button
+            type="button"
+            onClick={() => handleTabChange("breakdown")}
+            className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-xs sm:text-sm font-semibold transition-all select-none ${
+              activeTab === "breakdown"
+                ? "bg-pen text-white shadow-xs"
+                : "text-mute hover:text-ink hover:bg-sunken"
+            }`}
+          >
+            <svg
+              className="h-4 w-4 shrink-0"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={1.75}
+                d="M3 10h18M3 14h18m-9-4v8m-7 4h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
+              />
+            </svg>
+            <span>Marks Breakdown by Question</span>
+            <span
+              className={`rounded-full px-2 py-0.5 text-[10px] font-mono font-bold ${
+                activeTab === "breakdown"
+                  ? "bg-white/20 text-white"
+                  : "bg-sunken text-mute"
+              }`}
+            >
+              {data.questions.length}
+            </span>
+          </button>
+
+          {/* Tab 2: Detailed Question-by-Question Evaluation */}
+          <button
+            type="button"
+            onClick={() => handleTabChange("detailed")}
+            className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-xs sm:text-sm font-semibold transition-all select-none ${
+              activeTab === "detailed"
+                ? "bg-pen text-white shadow-xs"
+                : "text-mute hover:text-ink hover:bg-sunken"
+            }`}
+          >
+            <svg
+              className="h-4 w-4 shrink-0"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={1.75}
+                d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"
+              />
+            </svg>
+            <span>Detailed Question-by-Question Evaluation</span>
+            <span
+              className={`rounded-full px-2 py-0.5 text-[10px] font-mono font-bold ${
+                activeTab === "detailed"
+                  ? "bg-white/20 text-white"
+                  : "bg-sunken text-mute"
+              }`}
+            >
+              {data.questions.length}
+            </span>
+          </button>
         </div>
-        <table className="w-full text-left text-sm">
-          <thead className="border-b border-line bg-surface text-xs font-semibold uppercase tracking-wider text-mute">
-            <tr>
-              <th className="px-4 py-2.5">Question</th>
-              <th className="px-4 py-2.5">Marks Awarded</th>
-              <th className="px-4 py-2.5">Max Marks</th>
-              <th className="px-4 py-2.5">Evaluation Status</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-line text-sm">
-            {data.questions.map((q) => (
-              <tr key={q.question_id} className="hover:bg-sunken/40">
-                <td className="px-4 py-2.5 font-bold text-ink">Question {q.question}</td>
-                <td className="px-4 py-2.5 font-mono font-bold text-pen">{fmt(q.final_marks)}</td>
-                <td className="px-4 py-2.5 font-mono text-mute">{fmt(q.max_marks)}</td>
-                <td className="px-4 py-2.5">
-                  {q.teacher_overridden ? (
-                    <Badge tone="warn">Teacher Adjusted ({fmt(q.ai_marks)} &rarr; {fmt(q.final_marks)})</Badge>
-                  ) : (
-                    <Badge tone="ok">AI Evaluated</Badge>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </Card>
-
-      {/* Detailed Question Review Cards */}
-      <div className="space-y-4">
-        <h3 className="text-sm font-semibold text-ink px-1">Detailed Question-by-Question Evaluation</h3>
-        {data.questions.map((q) => (
-          <Card key={q.question_id} className="p-5 shadow-soft space-y-3.5">
-            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line pb-3">
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-base font-bold text-ink">Question {q.question}</span>
-                  <Badge tone="pen">{fmt(q.max_marks)} Marks</Badge>
-                  {q.teacher_overridden && (
-                    <Badge tone="warn">Teacher Override</Badge>
-                  )}
-                </div>
-                <div className="doc-text mt-1.5 text-sm text-ink/80">
-                  <MathView text={q.question_text} />
-                </div>
-              </div>
-              <div className="text-right flex-shrink-0">
-                <PenScore got={q.final_marks} max={q.max_marks} />
-                {q.teacher_overridden && (
-                  <p className="mt-1 font-mono text-[11px] text-warn font-medium">
-                    Adjusted from {fmt(q.ai_marks)}
-                  </p>
-                )}
-              </div>
-            </div>
-
-            {/* Answer Comparison Cards */}
-            <div className="grid gap-3.5 md:grid-cols-2">
-              <div className="rounded-xl border border-line bg-sunken/50 p-3.5">
-                <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-mute">
-                  Student's Written Answer
-                </p>
-                <div className="doc-text rounded-lg bg-surface border border-line/60 p-3 text-sm text-ink">
-                  {q.student_answer ? (
-                    <MathView text={q.student_answer} />
-                  ) : (
-                    <em className="text-mute">No answer written or detected</em>
-                  )}
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-line bg-pen-soft/20 p-3.5">
-                <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-pen">
-                  Official Model Answer
-                </p>
-                <div className="doc-text rounded-lg bg-surface border border-pen/20 p-3 text-sm text-ink">
-                  <MathView text={q.official_answer} />
-                </div>
-              </div>
-            </div>
-
-            {/* AI Feedback */}
-            {q.feedback && (
-              <div className="rounded-lg bg-sunken p-3 text-xs sm:text-sm text-ink border border-line/60">
-                <span className="font-semibold text-pen">Evaluator Assessment: </span>
-                <span className="text-ink/90">{q.feedback}</span>
-              </div>
-            )}
-          </Card>
-        ))}
       </div>
+
+      {/* Tab 1 Content: Marks Breakdown by Question */}
+      {activeTab === "breakdown" && (
+        <Card className="overflow-x-auto shadow-soft">
+          <table className="w-full text-left text-sm">
+            <thead className="border-b border-line bg-surface text-xs font-semibold uppercase tracking-wider text-mute">
+              <tr>
+                <th className="px-4 py-3">Question</th>
+                <th className="px-4 py-3">Marks Awarded</th>
+                <th className="px-4 py-3">Max Marks</th>
+                <th className="px-4 py-3">Evaluation Status</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line text-sm">
+              {data.questions.map((q) => (
+                <tr key={q.question_id} className="hover:bg-sunken/40">
+                  <td className="px-4 py-3 font-bold text-ink">Question {q.question}</td>
+                  <td className="px-4 py-3 font-mono font-bold text-pen">{fmt(q.final_marks)}</td>
+                  <td className="px-4 py-3 font-mono text-mute">{fmt(q.max_marks)}</td>
+                  <td className="px-4 py-3">
+                    {q.teacher_overridden ? (
+                      <Badge tone="warn">Teacher Adjusted ({fmt(q.ai_marks)} &rarr; {fmt(q.final_marks)})</Badge>
+                    ) : (
+                      <Badge tone="ok">AI Evaluated</Badge>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+      )}
+
+      {/* Tab 2 Content: Detailed Question-by-Question Evaluation */}
+      {activeTab === "detailed" && (
+        <div className="space-y-4">
+          {data.questions.map((q) => (
+            <Card key={q.question_id} className="p-5 shadow-soft space-y-3.5">
+              <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line pb-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-base font-bold text-ink">Question {q.question}</span>
+                    <Badge tone="pen">{fmt(q.max_marks)} Marks</Badge>
+                    {q.teacher_overridden && (
+                      <Badge tone="warn">Teacher Override</Badge>
+                    )}
+                  </div>
+                  <div className="doc-text mt-1.5 text-sm text-ink/80">
+                    <MathView text={q.question_text} />
+                  </div>
+                </div>
+                <div className="text-right flex-shrink-0">
+                  <PenScore got={q.final_marks} max={q.max_marks} />
+                  {q.teacher_overridden && (
+                    <p className="mt-1 font-mono text-[11px] text-warn font-medium">
+                      Adjusted from {fmt(q.ai_marks)}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Answer Comparison Cards */}
+              <div className="grid gap-3.5 md:grid-cols-2">
+                <div className="rounded-xl border border-line bg-sunken/50 p-3.5">
+                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-mute">
+                    Student's Written Answer
+                  </p>
+                  <div className="doc-text rounded-lg bg-surface border border-line/60 p-3 text-sm text-ink">
+                    {q.student_answer ? (
+                      <MathView text={q.student_answer} />
+                    ) : (
+                      <em className="text-mute">No answer written or detected</em>
+                    )}
+                  </div>
+                </div>
+
+                <div className="rounded-xl border border-line bg-pen-soft/20 p-3.5">
+                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-pen">
+                    Official Model Answer
+                  </p>
+                  <div className="doc-text rounded-lg bg-surface border border-pen/20 p-3 text-sm text-ink">
+                    <MathView text={q.official_answer} />
+                  </div>
+                </div>
+              </div>
+
+              {/* AI Feedback */}
+              {q.feedback && (
+                <div className="rounded-lg bg-sunken p-3 text-xs sm:text-sm text-ink border border-line/60">
+                  <span className="font-semibold text-pen">Evaluator Assessment: </span>
+                  <span className="text-ink/90">{q.feedback}</span>
+                </div>
+              )}
+            </Card>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

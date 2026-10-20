@@ -46,6 +46,8 @@ UNIVERSAL EXTRACTION RULES:
 5. MARKS & SECTIONS:
    - Identify the enclosing SECTION heading (e.g. "SECTION A: SHORT ANSWER QUESTIONS", "SECTION B: MEDIUM ANSWER QUESTIONS", "SECTION C: LONG ANSWER & WRITING SKILLS") and populate "section" with the full section title for every question in that section.
    - Extract marks printed next to the question or derived from section instructions (e.g. '4 questions x 2 marks = 8 Marks' -> 2 marks each, '4 questions x 3 marks = 12 Marks' -> 3 marks each, '2 questions x 5 marks = 10 Marks' -> 5 marks each).
+   - CRITICAL: NEVER embed or include section headings (e.g. "SECTION C: LONG ANSWER & DETAILED QUESTIONS") or section instruction lines (e.g. "(2 questions x 5 marks = 10 Marks)") inside "question_text"! Store section titles ONLY in the "section" property.
+   - NEVER repeat or duplicate question text, sentences, or topic headings within the same question entry.
 6. CONTINUATIONS ACROSS PAGES:
    - When a question starts on one page and continues onto the next page (e.g. Question 4 or Question 6 table starts at the bottom of Page 1 and finishes at the top of Page 2), YOU MUST transcribe the continued text/table at the top of Page 2 completely.
    - Set raw_question_number to null or "cont".

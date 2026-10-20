@@ -27,8 +27,16 @@ export interface Question {
   verification_status: "UNVERIFIED" | "VERIFIED" | "NEEDS_REVIEW"; review_reason: string | null;
 }
 export interface QuestionsResponse {
-  questions: Question[]; document_id: string | null; sum_of_marks: number; exam_total_marks: number;
-  marks_warning: string | null; locked: boolean;
+  questions: Question[];
+  document_id: string | null;
+  document_status?: string | null;
+  document_stage?: string | null;
+  exam_status?: string;
+  can_verify?: boolean;
+  sum_of_marks: number;
+  exam_total_marks: number;
+  marks_warning: string | null;
+  locked: boolean;
 }
 export interface AnswerKeyRow {
   id: string; raw_question_number: string | null; normalized_number: string | null; exam_question_id: string | null;
