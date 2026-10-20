@@ -12,14 +12,17 @@ import {
   Input,
   Loading,
   PageHeader,
-  Select,
+  SearchableCombobox,
   StatusBadge,
   Textarea,
+  type ComboboxOption,
 } from "../components/ui";
+import { IconClasses, IconExam, IconSubjects } from "../components/Icons";
 import { useApi } from "../hooks/useApi";
 import { useTableState } from "../hooks/useTableState";
 import type { ClassRow, Exam, Subject } from "../types";
 import { EXAM_STEPS } from "../utils/format";
+
 
 export function ExamsList() {
   const { data, error, loading, reload } = useApi<Exam[]>("/exams");
@@ -255,6 +258,17 @@ export function ExamsList() {
   );
 }
 
+const EXAM_TYPE_PRESETS: ComboboxOption[] = [
+  { value: "Unit test", label: "Unit test", sublabel: "Periodic chapter or unit check" },
+  { value: "Midterm Assessment", label: "Midterm Assessment", sublabel: "Mid-semester evaluation" },
+  { value: "Quarterly Exam", label: "Quarterly Exam", sublabel: "End of term 1 evaluation" },
+  { value: "Half-Yearly Exam", label: "Half-Yearly Exam", sublabel: "Mid-year formal examination" },
+  { value: "Semester Exam", label: "Semester Exam", sublabel: "Full semester assessment" },
+  { value: "Final Examination", label: "Final Examination", sublabel: "Year-end comprehensive exam" },
+  { value: "Weekly Quiz", label: "Weekly Quiz", sublabel: "Short form diagnostic" },
+  { value: "Mock Exam", label: "Mock Exam", sublabel: "Practice test for board/term" },
+];
+
 export function ExamNew() {
   const nav = useNavigate();
   const classes = useApi<ClassRow[]>("/classes");
@@ -270,12 +284,69 @@ export function ExamNew() {
     instructions: "",
   });
   const [error, setError] = useState<unknown>(null);
+  const [classError, setClassError] = useState<string | null>(null);
+  const [subjectError, setSubjectError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) =>
-    setF({ ...f, [k]: e.target.value });
+    setF((prev) => ({ ...prev, [k]: e.target.value }));
+
+  const classOptions: ComboboxOption[] = useMemo(() => {
+    if (!classes.data) return [];
+    return classes.data.map((c) => ({
+      value: c.id,
+      label: c.name,
+      sublabel:
+        c.student_count !== undefined
+          ? `${c.student_count} student${c.student_count === 1 ? "" : "s"}`
+          : undefined,
+    }));
+  }, [classes.data]);
+
+  const subjectOptions: ComboboxOption[] = useMemo(() => {
+    if (!subjects.data) return [];
+    return subjects.data.map((s) => ({
+      value: s.id,
+      label: s.name,
+      sublabel: s.code ? `Code: ${s.code}` : undefined,
+    }));
+  }, [subjects.data]);
+
+  const handleAddClass = async (className: string) => {
+    const created = await api<ClassRow>("/classes", {
+      method: "POST",
+      json: { name: className.trim() },
+    });
+    await classes.reload();
+    setF((prev) => ({ ...prev, class_id: created.id }));
+    setClassError(null);
+    return created.id;
+  };
+
+  const handleAddSubject = async (subjectName: string) => {
+    const created = await api<Subject>("/subjects", {
+      method: "POST",
+      json: { name: subjectName.trim() },
+    });
+    await subjects.reload();
+    setF((prev) => ({ ...prev, subject_id: created.id }));
+    setSubjectError(null);
+    return created.id;
+  };
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    let hasErr = false;
+
+    if (!f.class_id) {
+      setClassError("Please select a class or click '+ Add' to confirm creating a new one.");
+      hasErr = true;
+    }
+    if (!f.subject_id) {
+      setSubjectError("Please select a subject or click '+ Add' to confirm creating a new one.");
+      hasErr = true;
+    }
+    if (hasErr) return;
+
     setBusy(true);
     setError(null);
     try {
@@ -296,7 +367,8 @@ export function ExamNew() {
     }
   };
 
-  const noRefs = classes.data && subjects.data && (!classes.data.length || !subjects.data.length);
+  const hasNoClassesOrSubjects =
+    classes.data && subjects.data && (!classes.data.length || !subjects.data.length);
 
   return (
     <div className="max-w-3xl space-y-5">
@@ -310,14 +382,13 @@ export function ExamNew() {
         }
       />
 
-      {noRefs && (
-        <div className="rounded-xl border border-warn/40 bg-warn-soft p-4 text-sm text-ink flex items-start gap-3">
-          <span className="text-warn font-bold text-base">⚠</span>
+      {hasNoClassesOrSubjects && (
+        <div className="rounded-xl border border-pen/20 bg-pen-soft/40 p-4 text-sm text-ink flex items-start gap-3">
+          <span className="text-pen font-bold text-base">💡</span>
           <div>
-            <p className="font-semibold text-warn">Prerequisites Required</p>
+            <p className="font-semibold text-pen">Flexible Setup</p>
             <p className="text-xs text-mute mt-0.5">
-              Please create at least one <Link className="underline font-medium text-pen" to="/classes">class</Link> and one{" "}
-              <Link className="underline font-medium text-pen" to="/subjects">subject</Link> first before setting up an exam.
+              You can search existing options or type any new class (e.g. 10-A, 11-B) and subject directly in the fields below. Select <b>+ Add</b> to register them on the fly.
             </p>
           </div>
         </div>
@@ -327,42 +398,100 @@ export function ExamNew() {
         <Card className="grid gap-4 p-6 shadow-soft sm:grid-cols-2">
           <div className="sm:col-span-2">
             <Field label="Exam Name" hint="e.g. Midterm Physics Assessment 2026">
-              {(id) => <Input id={id} required placeholder="Midterm Assessment" value={f.name} onChange={set("name")} />}
+              {(id) => (
+                <Input
+                  id={id}
+                  required
+                  placeholder="Midterm Assessment"
+                  value={f.name}
+                  onChange={set("name")}
+                />
+              )}
             </Field>
           </div>
 
-          <Field label="Class">
+          <Field
+            label="Class"
+            required
+            hint="Search or type custom class"
+            error={classError || undefined}
+          >
             {(id) => (
-              <Select id={id} required value={f.class_id} onChange={set("class_id")}>
-                <option value="">Select class...</option>
-                {classes.data?.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </Select>
+              <SearchableCombobox
+                id={id}
+                value={f.class_id}
+                onChange={(val) => {
+                  setF((prev) => ({ ...prev, class_id: val }));
+                  if (val) setClassError(null);
+                }}
+                options={classOptions}
+                placeholder="Search or enter class (e.g. 10-A, 11-B)..."
+                itemNoun="class"
+                allowCustom
+                emptyMessage="No matching classes found"
+                onAddCustom={handleAddClass}
+                icon={<IconClasses size={16} />}
+                required
+              />
             )}
           </Field>
 
-          <Field label="Subject">
+          <Field
+            label="Subject"
+            required
+            hint="Search or type custom subject"
+            error={subjectError || undefined}
+          >
             {(id) => (
-              <Select id={id} required value={f.subject_id} onChange={set("subject_id")}>
-                <option value="">Select subject...</option>
-                {subjects.data?.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </Select>
+              <SearchableCombobox
+                id={id}
+                value={f.subject_id}
+                onChange={(val) => {
+                  setF((prev) => ({ ...prev, subject_id: val }));
+                  if (val) setSubjectError(null);
+                }}
+                options={subjectOptions}
+                placeholder="Search or enter subject (e.g. Mathematics)..."
+                itemNoun="subject"
+                allowCustom
+                emptyMessage="No matching subjects found"
+                onAddCustom={handleAddSubject}
+                icon={<IconSubjects size={16} />}
+                required
+              />
             )}
           </Field>
 
-          <Field label="Exam Type">
-            {(id) => <Input id={id} required placeholder="Unit test / Semester" value={f.exam_type} onChange={set("exam_type")} />}
+          <Field
+            label="Exam Type"
+            required
+            hint="Select preset or type custom format"
+          >
+            {(id) => (
+              <SearchableCombobox
+                id={id}
+                value={f.exam_type}
+                onChange={(val) => setF((prev) => ({ ...prev, exam_type: val }))}
+                options={EXAM_TYPE_PRESETS}
+                placeholder="Select or enter exam type (e.g. Unit test)..."
+                itemNoun="exam type"
+                allowCustom
+                emptyMessage="No preset exam types found"
+                icon={<IconExam size={16} />}
+                required
+              />
+            )}
           </Field>
 
           <Field label="Exam Date">
-            {(id) => <Input id={id} type="date" value={f.exam_date} onChange={set("exam_date")} />}
+            {(id) => (
+              <Input
+                id={id}
+                type="date"
+                value={f.exam_date}
+                onChange={set("exam_date")}
+              />
+            )}
           </Field>
 
           <Field label="Duration (minutes)">
@@ -394,8 +523,19 @@ export function ExamNew() {
           </Field>
 
           <div className="sm:col-span-2">
-            <Field label="Instructions (optional)" hint="Any general exam guidance or section instructions">
-              {(id) => <Textarea id={id} rows={3} placeholder="Answer all questions in Section A..." value={f.instructions} onChange={set("instructions")} />}
+            <Field
+              label="Instructions (optional)"
+              hint="Any general exam guidance or section instructions"
+            >
+              {(id) => (
+                <Textarea
+                  id={id}
+                  rows={3}
+                  placeholder="Answer all questions in Section A..."
+                  value={f.instructions}
+                  onChange={set("instructions")}
+                />
+              )}
             </Field>
           </div>
         </Card>
@@ -406,7 +546,12 @@ export function ExamNew() {
           <Link to="/exams">
             <Button variant="ghost">Cancel</Button>
           </Link>
-          <Button type="submit" variant="primary" busy={busy} className="shadow-xs">
+          <Button
+            type="submit"
+            variant="primary"
+            busy={busy}
+            className="shadow-xs"
+          >
             Create Exam &amp; Continue
           </Button>
         </div>
@@ -414,3 +559,4 @@ export function ExamNew() {
     </div>
   );
 }
+

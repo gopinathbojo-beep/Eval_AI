@@ -1,8 +1,8 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, downloadFile } from "../../api/client";
 import { useApi } from "../../hooks/useApi";
 import type { Question, QuestionsResponse } from "../../types";
-import { fmt, pct } from "../../utils/format";
+import { BUSY_DOC, fmt, pct } from "../../utils/format";
 import { Badge, Button, Card, Confirm, Empty, ErrorPanel, Field, Input, Loading, MathTextarea, MathView, Modal, Select, StatusBadge } from "../../components/ui";
 import { PageViewer } from "../../components/PageViewer";
 import { AuthImage } from "../../components/AuthImage";
@@ -14,7 +14,14 @@ type Dlg = { kind: "edit" | "split" | "merge" | "delete" | "review" | "add"; q?:
 
 export default function Questions() {
   const { exam, reload: reloadExam } = useExam();
-  const { data, error, loading, reload } = useApi<QuestionsResponse>(`/exams/${exam.id}/questions`);
+  const doc = exam.question_paper;
+  const isDocBusy = !!doc && BUSY_DOC.includes(doc.status);
+
+  const { data, error, loading, reload } = useApi<QuestionsResponse>(
+    `/exams/${exam.id}/questions`,
+    (d) => (isDocBusy || (d && d.document_status && BUSY_DOC.includes(d.document_status))) ? 1500 : null
+  );
+
   const [page, setPage] = useState(1);
   const [sel, setSel] = useState<string | null>(null);
   const [dlg, setDlg] = useState<Dlg>(null);
@@ -25,10 +32,28 @@ export default function Questions() {
   const [referenceTarget, setReferenceTarget] = useState<Question | null>(null);
   const [activeTab, setActiveTab] = useState<"both" | "scan" | "questions">("both");
 
+  const isExtracting = isDocBusy || (data?.document_status ? BUSY_DOC.includes(data.document_status) : false);
+
+  const prevExtracting = useRef(isExtracting);
+  useEffect(() => {
+    if (prevExtracting.current && !isExtracting) {
+      reloadExam();
+    }
+    prevExtracting.current = isExtracting;
+  }, [isExtracting, reloadExam]);
+
   const after = async () => { await Promise.all([reload(), reloadExam()]); };
   const run = async (key: string, fn: () => Promise<unknown>) => {
     setBusy(key); setActionErr(null);
-    try { await fn(); await after(); } catch (e) { setActionErr(e); } finally { setBusy(null); }
+    try {
+      await fn();
+      await after();
+    } catch (e) {
+      setActionErr(e);
+      await Promise.all([reload(), reloadExam()]);
+    } finally {
+      setBusy(null);
+    }
   };
 
   const download = async () => {
@@ -46,15 +71,35 @@ export default function Questions() {
 
   if (loading) return <Loading />;
   if (error || !data) return <ErrorPanel error={error} />;
-  const doc = exam.question_paper;
+
   const qs = data.questions;
   const verified = exam.status !== "QUESTION_PAPER_UPLOADED" && exam.status !== "QUESTIONS_EXTRACTED";
 
+  if (!qs.length && isExtracting) {
+    return (
+      <div className="space-y-4">
+        <Card className="flex flex-col items-center justify-center py-16 px-6 text-center shadow-soft border-dashed border-2 border-line">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-pen-soft text-pen mb-4">
+            <svg className="h-6 w-6 animate-spin" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+          </div>
+          <h3 className="text-base font-semibold text-ink">Extracting Questions from Question Paper</h3>
+          <p className="mt-1 max-w-md text-xs sm:text-sm text-mute">
+            {data?.document_stage || doc?.stage || "Processing pages and detecting questions..."} Questions will appear automatically once extraction completes.
+          </p>
+        </Card>
+      </div>
+    );
+  }
+
   if (!qs.length && !verified) {
+    const isFailed = doc?.status === "FAILED" || (data?.document_status === "FAILED");
     return (
       <Empty
-        title="No questions extracted yet"
-        hint="Upload the question paper first, or add questions manually."
+        title={isFailed ? "Question extraction failed" : "No questions extracted yet"}
+        hint={doc?.error_message || "Upload the question paper first, or add questions manually."}
         action={<Button variant="primary" onClick={() => setDlg({ kind: "add" })}>Add Question</Button>}
       />
     );
@@ -119,12 +164,14 @@ export default function Questions() {
 
           {!data.locked && (
             <>
-              <Button small onClick={() => setDlg({ kind: "add" })}>
+              <Button small onClick={() => setDlg({ kind: "add" })} disabled={isExtracting}>
                 Add Question
               </Button>
               <Button
                 small
                 busy={busy === "bulk"}
+                disabled={isExtracting || qs.length === 0}
+                title={isExtracting ? "Extraction in progress" : qs.length === 0 ? "No questions to accept" : "Accept all complete questions"}
                 onClick={() => run("bulk", () => api(`/exams/${exam.id}/questions/accept-valid`, { method: "POST" }))}
               >
                 Accept All Complete
@@ -133,6 +180,16 @@ export default function Questions() {
                 small
                 variant="primary"
                 busy={busy === "verify"}
+                disabled={isExtracting || qs.length === 0 || counts.ok < qs.length}
+                title={
+                  isExtracting
+                    ? "Extraction is still in progress"
+                    : qs.length === 0
+                    ? "No questions to verify"
+                    : counts.ok < qs.length
+                    ? `Review and accept all ${qs.length} questions before verifying (${counts.ok}/${qs.length} accepted)`
+                    : "Lock and verify all questions"
+                }
                 onClick={() => run("verify", () => api(`/exams/${exam.id}/questions/verify`, { method: "POST" }))}
               >
                 Verify Questions
@@ -142,6 +199,20 @@ export default function Questions() {
           {data.locked && <StatusBadge status="VERIFIED" />}
         </div>
       </div>
+
+      {isExtracting && (
+        <div className="flex items-center gap-3 rounded-xl border border-pen/30 bg-pen-soft/40 p-3 text-xs sm:text-sm text-pen">
+          <svg className="h-4 w-4 animate-spin shrink-0 text-pen" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+          <div className="flex-1">
+            <span className="font-semibold text-ink">Extraction in progress: </span>
+            <span className="text-mute">{data?.document_stage || doc?.stage || "Processing document pages..."}</span>
+            <span className="text-mute ml-1">— Questions will appear and verification will be enabled once extraction finishes.</span>
+          </div>
+        </div>
+      )}
 
       {data.marks_warning && (
         <div className="rounded-xl border border-warn/40 bg-warn-soft p-3 text-xs sm:text-sm text-ink flex items-start gap-2.5">

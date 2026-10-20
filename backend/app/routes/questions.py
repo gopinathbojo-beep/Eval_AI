@@ -48,13 +48,24 @@ def _validate_for_verified(q: ExamQuestion, siblings: list[ExamQuestion]) -> lis
     return probs
 
 
+BUSY = {"UPLOADED", "RENDERING", "OCR_PROCESSING", "EXTRACTING"}
+
+
 @router.get("/exams/{exam_id}/questions")
 def list_questions(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     exam = get_exam(db, t, exam_id)
     qs = db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all()
     doc = db.query(QuestionPaperDocument).filter_by(exam_id=exam.id, is_active=True).order_by(QuestionPaperDocument.uploaded_at.desc()).first()
+    # Reconcile state if extraction completed and questions exist but exam status is still QUESTION_PAPER_UPLOADED
+    if exam.status == "QUESTION_PAPER_UPLOADED" and qs and (not doc or doc.status in ("READY", "NEEDS_ATTENTION")):
+        set_state(exam, "QUESTIONS_EXTRACTED")
+        db.commit()
     total = sum(q.max_marks or 0 for q in qs)
     return {"questions": [question_view(q) for q in qs], "document_id": doc.id if doc else None,
+            "document_status": doc.status if doc else None,
+            "document_stage": doc.stage if doc else None,
+            "exam_status": exam.status,
+            "can_verify": exam.status == "QUESTIONS_EXTRACTED" and len(qs) > 0 and (not doc or doc.status == "READY"),
             "sum_of_marks": total, "exam_total_marks": exam.total_marks,
             "marks_warning": (f"Questions add up to {total:g} marks but the exam total is {exam.total_marks:g}."
                               if qs and abs(total - exam.total_marks) > 1e-9 else None),
@@ -110,6 +121,8 @@ def patch_question(qid: str, body: QuestionPatch, db: Session = Depends(get_db),
         q.review_reason = reason if status == "NEEDS_REVIEW" else None
         audit(db, exam_id=exam.id, teacher_id=t.id, entity_type="exam_question", entity_id=q.id,
               action=f"question_{status.lower()}", reason=reason)
+    if exam.status == "QUESTION_PAPER_UPLOADED":
+        set_state(exam, "QUESTIONS_EXTRACTED")
     db.commit()
     return question_view(q)
 
@@ -216,7 +229,14 @@ def accept_valid(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depen
     exam = get_exam(db, t, exam_id)
     if exam.status not in EDITABLE:
         raise err(409, "QUESTIONS_LOCKED", "Questions are verified and locked.")
+    doc = db.query(QuestionPaperDocument).filter_by(exam_id=exam.id, is_active=True).order_by(QuestionPaperDocument.uploaded_at.desc()).first()
+    if doc and doc.status in BUSY:
+        raise err(409, "INVALID_EXAM_STATE", "Question paper extraction is still in progress. Please wait for extraction to complete.")
     qs = db.query(ExamQuestion).filter_by(exam_id=exam.id).all()
+    if not qs:
+        raise err(409, "INVALID_EXAM_STATE", "Questions can only be accepted after they have been extracted.")
+    if exam.status == "QUESTION_PAPER_UPLOADED" and qs and (not doc or doc.status in ("READY", "NEEDS_ATTENTION")):
+        set_state(exam, "QUESTIONS_EXTRACTED")
     n = 0
     for q in qs:
         if q.verification_status == "UNVERIFIED" and not _validate_for_verified(q, qs):
@@ -230,15 +250,41 @@ def accept_valid(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depen
 @router.post("/exams/{exam_id}/questions/verify")
 def verify_questions(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     exam = get_exam(db, t, exam_id)
-    if exam.status != "QUESTIONS_EXTRACTED":
-        raise err(409, "INVALID_EXAM_STATE", "Questions can only be verified after they have been extracted.")
     doc = db.query(QuestionPaperDocument).filter_by(exam_id=exam.id, is_active=True).order_by(QuestionPaperDocument.uploaded_at.desc()).first()
     qs = db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all()
+
+    # 1. Idempotency: If already verified, return verified count and marks
+    if exam.status == "QUESTIONS_VERIFIED":
+        total = sum(q.max_marks or 0 for q in qs)
+        return {"verified": len(qs), "sum_of_marks": total,
+                "marks_warning": (f"Questions add up to {total:g} marks but the exam total is {exam.total_marks:g}."
+                                  if abs(total - exam.total_marks) > 1e-9 else None)}
+
+    # 2. Check if locked past editable
+    if exam.status not in EDITABLE:
+        raise err(409, "QUESTIONS_LOCKED", "Questions are already verified and locked.")
+
+    # 3. Guard against premature verification while extraction is actively running
+    if doc and doc.status in BUSY:
+        raise err(409, "INVALID_EXAM_STATE", "Question paper extraction is still in progress. Please wait for extraction to complete.")
+
+    # 4. Check if questions have actually been extracted/saved
+    if not qs:
+        raise err(409, "INVALID_EXAM_STATE", "Questions can only be verified after they have been extracted. Please upload a question paper or add questions.")
+
+    # 5. Reconcile state if extraction completed and questions exist but exam status is still QUESTION_PAPER_UPLOADED
+    if exam.status == "QUESTION_PAPER_UPLOADED" and qs and (not doc or doc.status in ("READY", "NEEDS_ATTENTION")):
+        set_state(exam, "QUESTIONS_EXTRACTED")
+        db.flush()
+
+    # 6. Verify exam is in QUESTIONS_EXTRACTED
+    if exam.status != "QUESTIONS_EXTRACTED":
+        raise err(409, "INVALID_EXAM_STATE", "Questions can only be verified after they have been extracted.")
+
+    # 7. Collect validation issues
     issues = []
     if doc is None or doc.status != "READY":
         issues.append({"question": "Question paper", "reason": "Some pages failed OCR. Retry them before verifying."})
-    if not qs:
-        issues.append({"question": "Question paper", "reason": "No questions have been extracted."})
     for q in qs:
         for p in _validate_for_verified(q, qs):
             issues.append({"question": q.display_number, "reason": p})
@@ -246,10 +292,12 @@ def verify_questions(exam_id: str, db: Session = Depends(get_db), t: Teacher = D
             issues.append({"question": q.display_number, "reason": f"Not accepted yet ({q.verification_status.replace('_', ' ').lower()})"})
     if issues:
         raise err(400, "QUESTIONS_NOT_READY", f"{len(issues)} issue(s) must be resolved before the questions can be verified.", issues)
+
     set_state(exam, "QUESTIONS_VERIFIED")
     audit(db, exam_id=exam.id, teacher_id=t.id, entity_type="exam", entity_id=exam.id, action="questions_verified", new=len(qs))
     db.commit()
-    total = sum(q.max_marks for q in qs)
+    total = sum(q.max_marks or 0 for q in qs)
     return {"verified": len(qs), "sum_of_marks": total,
             "marks_warning": (f"Questions add up to {total:g} marks but the exam total is {exam.total_marks:g}."
                               if abs(total - exam.total_marks) > 1e-9 else None)}
+

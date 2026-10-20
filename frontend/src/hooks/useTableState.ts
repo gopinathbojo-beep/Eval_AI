@@ -6,23 +6,27 @@ export interface UseTableStateOptions<T> {
   data: T[] | null | undefined;
   searchFilter: (item: T, query: string) => boolean;
   filters?: Record<string, (item: T, value: string) => boolean>;
+  defaultFilters?: Record<string, string>;
   sortFns: Record<string, (a: T, b: T) => number>;
   defaultSort: string;
   defaultOrder?: SortOrder;
   initialPageSize?: number;
+  includeSortInClear?: boolean;
 }
 
 export function useTableState<T>({
   data,
   searchFilter,
   filters = {},
+  defaultFilters = {},
   sortFns,
   defaultSort,
   defaultOrder = "asc",
   initialPageSize = 10,
+  includeSortInClear = false,
 }: UseTableStateOptions<T>) {
   const [search, setSearch] = useState("");
-  const [activeFilters, setActiveFilters] = useState<Record<string, string>>({});
+  const [activeFilters, setActiveFilters] = useState<Record<string, string>>({ ...defaultFilters });
   const [sortBy, setSortBy] = useState(defaultSort);
   const [sortOrder, setSortOrder] = useState<SortOrder>(defaultOrder);
   const [page, setPage] = useState(1);
@@ -32,8 +36,16 @@ export function useTableState<T>({
   const setFilter = (key: string, value: string) => {
     setActiveFilters((prev) => {
       const next = { ...prev };
-      if (!value) delete next[key];
-      else next[key] = value;
+      const defVal = defaultFilters[key] ?? "";
+      if (!value || value === defVal) {
+        if (defVal) {
+          next[key] = defVal;
+        } else {
+          delete next[key];
+        }
+      } else {
+        next[key] = value;
+      }
       return next;
     });
     setPage(1);
@@ -54,18 +66,31 @@ export function useTableState<T>({
     setPage(1);
   };
 
-  const isFiltered = useMemo(() => {
+  const resetSort = () => {
+    setSortBy(defaultSort);
+    setSortOrder(defaultOrder);
+    setPage(1);
+  };
+
+  const hasActiveFilters = useMemo(() => {
     const hasSearch = search.trim().length > 0;
-    const hasFilters = Object.values(activeFilters).some((v) => v !== "");
-    const isNonDefaultSort = sortBy !== defaultSort || sortOrder !== defaultOrder;
+    const hasFilters = Object.entries(activeFilters).some(([key, val]) => {
+      const defVal = defaultFilters[key] ?? "";
+      return Boolean(val && val.trim() !== "" && val !== defVal);
+    });
+    const isNonDefaultSort = includeSortInClear
+      ? (sortBy !== defaultSort || sortOrder !== defaultOrder)
+      : false;
     return hasSearch || hasFilters || isNonDefaultSort;
-  }, [search, activeFilters, sortBy, defaultSort, sortOrder, defaultOrder]);
+  }, [search, activeFilters, defaultFilters, sortBy, defaultSort, sortOrder, defaultOrder, includeSortInClear]);
 
   const clearFilters = () => {
     setSearch("");
-    setActiveFilters({});
-    setSortBy(defaultSort);
-    setSortOrder(defaultOrder);
+    setActiveFilters({ ...defaultFilters });
+    if (includeSortInClear) {
+      setSortBy(defaultSort);
+      setSortOrder(defaultOrder);
+    }
     setPage(1);
   };
 
@@ -135,7 +160,9 @@ export function useTableState<T>({
     setSortBy: handleSortChange,
     sortOrder,
     toggleSortOrder: handleSortOrderToggle,
-    isFiltered,
+    resetSort,
+    hasActiveFilters,
+    isFiltered: hasActiveFilters,
     clearFilters,
     page,
     setPage,

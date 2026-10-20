@@ -120,10 +120,9 @@ export function AppLayout() {
                     key={to}
                     to={to}
                     className={({ isActive }) =>
-                      `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-ui ${
-                        isActive
-                          ? "bg-pen-soft text-pen shadow-sm"
-                          : "text-ink/80 hover:bg-sunken hover:text-ink"
+                      `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-ui ${isActive
+                        ? "bg-pen-soft text-pen shadow-sm"
+                        : "text-ink/80 hover:bg-sunken hover:text-ink"
                       }`
                     }
                   >
@@ -188,9 +187,8 @@ export function AppLayout() {
 
       {/* Mobile drawer panel */}
       <div
-        className={`fixed inset-y-0 left-0 z-50 w-72 transform bg-surface shadow-2xl transition-transform duration-300 ease-in-out lg:hidden ${
-          sidebarOpen ? "translate-x-0" : "-translate-x-full"
-        }`}
+        className={`fixed inset-y-0 left-0 z-50 w-72 transform bg-surface shadow-2xl transition-transform duration-300 ease-in-out lg:hidden ${sidebarOpen ? "translate-x-0" : "-translate-x-full"
+          }`}
       >
         <div className="absolute right-3 top-3">
           <button
@@ -231,13 +229,6 @@ export function AppLayout() {
                   </span>
                 );
               })}
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3">
-            <div className="hidden md:flex items-center gap-1.5 rounded-full border border-ok/30 bg-ok-soft px-2.5 py-0.5 text-xs font-medium text-ok">
-              <span className="h-1.5 w-1.5 rounded-full bg-ok animate-pulse" />
-              <span>Assessment System Online</span>
             </div>
           </div>
         </header>

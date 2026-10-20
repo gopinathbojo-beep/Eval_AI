@@ -477,3 +477,5 @@ export function Stat({
 
 export { MathView } from "./MathView";
 export { MathTextarea } from "./MathTextarea";
+export { SearchableCombobox, type ComboboxOption } from "./SearchableCombobox";
+

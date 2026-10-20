@@ -118,6 +118,61 @@ export default function Dashboard() {
         />
       </div>
 
+      {/* Quick Action Shortcuts */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Link
+          to="/exams/new"
+          className="flex items-center gap-3.5 rounded-xl border border-line bg-surface p-3.5 shadow-xs transition-all hover:border-pen/40 hover:shadow-sm group"
+        >
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-pen/10 text-pen group-hover:bg-pen group-hover:text-white transition-colors">
+            <IconPlus size={18} />
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-ink group-hover:text-pen transition-colors">New Examination</p>
+            <p className="text-xs text-mute truncate">Setup paper, key & criteria</p>
+          </div>
+        </Link>
+
+        <Link
+          to="/exams"
+          className="flex items-center gap-3.5 rounded-xl border border-line bg-surface p-3.5 shadow-xs transition-all hover:border-pen/40 hover:shadow-sm group"
+        >
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-ok/10 text-ok group-hover:bg-ok group-hover:text-white transition-colors">
+            <IconFileText size={18} />
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-ink group-hover:text-pen transition-colors">Upload Answer Sheets</p>
+            <p className="text-xs text-mute truncate">Add scans for OCR intake</p>
+          </div>
+        </Link>
+
+        <Link
+          to="/evaluations"
+          className="flex items-center gap-3.5 rounded-xl border border-line bg-surface p-3.5 shadow-xs transition-all hover:border-pen/40 hover:shadow-sm group"
+        >
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-warn/10 text-warn group-hover:bg-warn group-hover:text-white transition-colors">
+            <IconClock size={18} />
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-ink group-hover:text-pen transition-colors">Pending Evaluations</p>
+            <p className="text-xs text-mute truncate">{data.pending_evaluations} submissions to review</p>
+          </div>
+        </Link>
+
+        <Link
+          to="/results"
+          className="flex items-center gap-3.5 rounded-xl border border-line bg-surface p-3.5 shadow-xs transition-all hover:border-pen/40 hover:shadow-sm group"
+        >
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-pen-soft text-pen group-hover:bg-pen group-hover:text-white transition-colors">
+            <IconCheckCircle size={18} />
+          </div>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-ink group-hover:text-pen transition-colors">Class Marksheets</p>
+            <p className="text-xs text-mute truncate">View score distributions</p>
+          </div>
+        </Link>
+      </div>
+
       {/* Recent Activity Sections */}
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Recent Exams */}

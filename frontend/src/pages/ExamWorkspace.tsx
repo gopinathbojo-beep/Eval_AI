@@ -10,14 +10,10 @@ export interface ExamCtx { exam: ExamDetail; reload: () => Promise<void> }
 export const useExam = () => useOutletContext<ExamCtx>();
 
 const TABS: [string, string][] = [
-  ["", "Overview"],
-  ["question-paper", "Question Paper"],
-  ["questions", "Questions"],
-  ["answer-key", "Answer Key"],
-  ["students", "Students Roster"],
-  ["answer-sheets", "Answer Sheets"],
-  ["evaluation", "Evaluation"],
-  ["results", "Results"],
+  ["", "1. Content & Key"],
+  ["submissions", "2. Submissions"],
+  ["evaluation", "3. Evaluation"],
+  ["results", "4. Results & Marksheet"],
 ];
 
 export default function ExamWorkspace() {

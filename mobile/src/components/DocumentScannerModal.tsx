@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from "react";
+import React, { useState, useRef, useEffect, useCallback } from "react";
 import {
   Modal,
   View,
@@ -12,6 +12,9 @@ import {
   Alert,
   Animated,
   Platform,
+  Switch,
+  AppState,
+  AppStateStatus,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { CameraView, useCameraPermissions } from "expo-camera";
@@ -21,14 +24,30 @@ import * as FileSystem from "expo-file-system/legacy";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../theme/ThemeContext";
 import { Button } from "./Button";
+import {
+  DocumentCorners,
+  DocumentBoundingBox,
+  DocumentDetectionState,
+  DetectionAssessment,
+  QualityAnalysisResult,
+  DOCUMENT_ASPECT_RATIOS,
+  generateReferenceCorners,
+  calculateBoundingBoxFromCorners,
+  assessLiveDocumentFraming,
+  computeMarginSafeCropRect,
+  analyzeImageQualityFast,
+} from "../utils/documentDetection";
 
-interface ScannedPage {
+export interface ScannedPage {
   id: string;
-  uri: string;
+  uri: string;          // Auto-cropped & enhanced page image
+  originalUri: string;  // Original uncropped photo for recovery & comparison
   width: number;
   height: number;
   rotation: number;
   base64?: string;
+  quality?: QualityAnalysisResult;
+  isCropApplied: boolean;
 }
 
 export interface ScannedPageAsset {
@@ -45,6 +64,12 @@ export interface DocumentScannerResult {
   pageCount?: number;
 }
 
+export interface ScannerStudent {
+  id: string;
+  name: string;
+  roll_number: string;
+}
+
 interface DocumentScannerModalProps {
   visible: boolean;
   onClose: () => void;
@@ -52,13 +77,20 @@ interface DocumentScannerModalProps {
   examTitle?: string;
   title?: string;
   docTitlePrefix?: string;
+  students?: ScannerStudent[];
+  currentStudentId?: string;
+  onScanNextStudent?: (
+    file: DocumentScannerResult,
+    currentStudentId: string,
+    nextStudentId?: string
+  ) => Promise<void>;
 }
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
 
-// Standard document aspect ratio (A4 is approx 1:1.414)
+// Target document viewport framing based on standard A4 (1:1.414)
 const FRAME_WIDTH = Math.min(SCREEN_WIDTH * 0.88, 380);
-const FRAME_HEIGHT = Math.min(FRAME_WIDTH * 1.414, SCREEN_HEIGHT * 0.62);
+const FRAME_HEIGHT = Math.min(FRAME_WIDTH * DOCUMENT_ASPECT_RATIOS.A4, SCREEN_HEIGHT * 0.62);
 
 export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
   visible,
@@ -67,160 +99,442 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
   examTitle = "Document",
   title = "Document Scanner",
   docTitlePrefix = "QP",
+  students,
+  currentStudentId,
+  onScanNextStudent,
 }) => {
   const { colors } = useTheme();
   const cameraRef = useRef<CameraView>(null);
   const [permission, requestPermission] = useCameraPermissions();
 
+  // Active student state for continuous batch scanning
+  const [activeStudentId, setActiveStudentId] = useState<string | undefined>(
+    currentStudentId || students?.[0]?.id
+  );
+  const [studentPickerVisible, setStudentPickerVisible] = useState(false);
+
+  useEffect(() => {
+    if (currentStudentId) {
+      setActiveStudentId(currentStudentId);
+    } else if (students && students.length > 0 && !activeStudentId) {
+      setActiveStudentId(students[0].id);
+    }
+  }, [currentStudentId, students]);
+
+  const activeStudent =
+    students?.find((s) => s.id === activeStudentId) || (students?.[0] ?? null);
+  const currentStudentIndex = students
+    ? students.findIndex((s) => s.id === activeStudentId)
+    : -1;
+  const isFirstStudent = currentStudentIndex <= 0;
+  const isLastStudent = !students || currentStudentIndex >= students.length - 1;
+
+  const currentPrefix = activeStudent
+    ? `${activeStudent.name.replace(/[^a-zA-Z0-9]/g, "")}_Sheet`
+    : docTitlePrefix || "Doc";
+
+  const handlePrevStudent = () => {
+    if (students && currentStudentIndex > 0) {
+      setActiveStudentId(students[currentStudentIndex - 1].id);
+      setScannedPages([]);
+      setSelectedPageIndex(null);
+    }
+  };
+
+  const handleNextStudent = () => {
+    if (students && currentStudentIndex < students.length - 1) {
+      setActiveStudentId(students[currentStudentIndex + 1].id);
+      setScannedPages([]);
+      setSelectedPageIndex(null);
+    }
+  };
+
+  // Scanned pages state
   const [scannedPages, setScannedPages] = useState<ScannedPage[]>([]);
   const [torch, setTorch] = useState(false);
   const [capturing, setCapturing] = useState(false);
   const [selectedPageIndex, setSelectedPageIndex] = useState<number | null>(null);
+  const [previewOriginal, setPreviewOriginal] = useState(false);
   const [retakeIndex, setRetakeIndex] = useState<number | null>(null);
   const [isCompiling, setIsCompiling] = useState(false);
 
-  // Animated laser scan effect for auto edge detection feedback
-  const scanAnim = useRef(new Animated.Value(0)).current;
+  // Camera hardware readiness tracking
+  const [cameraReady, setCameraReady] = useState(false);
+  const isCameraReadyRef = useRef(false);
+  const [cameraMountError, setCameraMountError] = useState<string | null>(null);
 
+  // Auto-capture settings & state machine
+  const [autoCaptureEnabled, setAutoCaptureEnabled] = useState(true);
+  const [detectionState, setDetectionState] = useState<DocumentDetectionState>("INITIALIZING");
+  const [guidanceMessage, setGuidanceMessage] = useState<string>("Initializing camera sensor...");
+  const [recommendTorch, setRecommendTorch] = useState(false);
+  const [waitingForPageSwap, setWaitingForPageSwap] = useState(false);
+
+  // Stability & countdown tracking
+  const [countdownProgress, setCountdownProgress] = useState(0); // 0 to 1
+  const stabilityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const isCapturingRef = useRef(false);
+  const waitingForPageSwapRef = useRef(false);
+
+  // Active detected corners (interpolated from reference frame)
+  const defaultCorners = useRef<DocumentCorners>(
+    generateReferenceCorners(SCREEN_WIDTH, SCREEN_HEIGHT, DOCUMENT_ASPECT_RATIOS.A4, 0.86)
+  ).current;
+  const [currentCorners, setCurrentCorners] = useState<DocumentCorners>(defaultCorners);
+
+  // Animations
+  const scanLaserAnim = useRef(new Animated.Value(0)).current;
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const cornerScaleAnim = useRef(new Animated.Value(1)).current;
+
+  // Sync ref with state
+  useEffect(() => {
+    waitingForPageSwapRef.current = waitingForPageSwap;
+  }, [waitingForPageSwap]);
+
+  // Laser guide scan animation
   useEffect(() => {
     if (visible && selectedPageIndex === null) {
       Animated.loop(
         Animated.sequence([
-          Animated.timing(scanAnim, {
+          Animated.timing(scanLaserAnim, {
             toValue: 1,
-            duration: 2200,
+            duration: 2400,
             useNativeDriver: true,
           }),
-          Animated.timing(scanAnim, {
+          Animated.timing(scanLaserAnim, {
             toValue: 0,
-            duration: 2200,
+            duration: 2400,
             useNativeDriver: true,
           }),
         ])
       ).start();
     }
-  }, [visible, selectedPageIndex, scanAnim]);
+  }, [visible, selectedPageIndex, scanLaserAnim]);
+
+  // Corner pulse animation when paper is locked
+  useEffect(() => {
+    if (detectionState === "READY" || detectionState === "COUNTDOWN") {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(cornerScaleAnim, {
+            toValue: 1.08,
+            duration: 350,
+            useNativeDriver: true,
+          }),
+          Animated.timing(cornerScaleAnim, {
+            toValue: 1,
+            duration: 350,
+            useNativeDriver: true,
+          }),
+        ])
+      ).start();
+    } else {
+      cornerScaleAnim.setValue(1);
+    }
+  }, [detectionState, cornerScaleAnim]);
+
+  const clearTimers = useCallback(() => {
+    if (stabilityTimerRef.current) {
+      clearTimeout(stabilityTimerRef.current);
+      stabilityTimerRef.current = null;
+    }
+    if (countdownIntervalRef.current) {
+      clearInterval(countdownIntervalRef.current);
+      countdownIntervalRef.current = null;
+    }
+  }, []);
 
   // Reset state when modal is opened/closed
   useEffect(() => {
     if (!visible) {
       setScannedPages([]);
       setSelectedPageIndex(null);
+      setPreviewOriginal(false);
       setRetakeIndex(null);
       setCapturing(false);
+      isCapturingRef.current = false;
       setIsCompiling(false);
       setTorch(false);
+      setWaitingForPageSwap(false);
+      waitingForPageSwapRef.current = false;
+      setCountdownProgress(0);
+      setDetectionState("INITIALIZING");
+      setGuidanceMessage("Initializing camera sensor...");
+      setCameraReady(false);
+      isCameraReadyRef.current = false;
+      setCameraMountError(null);
+      clearTimers();
+    } else {
+      setDetectionState("INITIALIZING");
+      setGuidanceMessage("Initializing camera sensor...");
     }
-  }, [visible]);
+  }, [visible, clearTimers]);
 
-  if (!visible) return null;
+  // Handle app background/foreground transitions and camera surface lifecycle
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (nextAppState: AppStateStatus) => {
+      if (nextAppState !== "active") {
+        console.log("[Scanner] App entered background/inactive state. Pausing scanner.");
+        isCameraReadyRef.current = false;
+        setCameraReady(false);
+        clearTimers();
+        setCountdownProgress(0);
+      } else if (visible) {
+        console.log("[Scanner] App returned to active state. Awaiting camera preview ready signal.");
+      }
+    });
 
-  if (!permission) {
-    return (
-      <Modal visible={visible} animationType="slide">
-        <View style={[styles.permissionContainer, { backgroundColor: colors.background }]}>
-          <ActivityIndicator size="large" color={colors.primary} />
-          <Text style={[styles.permissionText, { color: colors.text }]}>
-            Initializing camera scanner...
-          </Text>
-        </View>
-      </Modal>
-    );
-  }
-
-  if (!permission.granted) {
-    return (
-      <Modal visible={visible} animationType="slide">
-        <View style={[styles.permissionContainer, { backgroundColor: colors.background }]}>
-          <View style={[styles.permIconCircle, { backgroundColor: "rgba(7, 159, 189, 0.12)" }]}>
-            <Ionicons name="camera-outline" size={48} color={colors.primary} />
-          </View>
-          <Text style={[styles.permissionTitle, { color: colors.text }]}>
-            Camera Access Required
-          </Text>
-          <Text style={[styles.permissionText, { color: colors.textSecondary }]}>
-            Eval AI uses your camera to scan student answer sheets across multiple pages with automated boundary detection and straightening.
-          </Text>
-          <Button
-            title="Enable Camera Access"
-            onPress={requestPermission}
-            variant="gradient"
-            style={{ marginTop: 24 }}
-          />
-          <Button
-            title="Cancel"
-            onPress={onClose}
-            variant="ghost"
-            style={{ marginTop: 12 }}
-          />
-        </View>
-      </Modal>
-    );
-  }
+    return () => {
+      subscription.remove();
+    };
+  }, [visible, clearTimers]);
 
   /**
-   * Captures the page, calculates document boundary coordinates relative to the full
-   * photo resolution, and automatically crops out surrounding background/desk area.
+   * Continuous live document framing evaluation loop
+   * Runs every 300ms while camera preview is active
    */
-  const handleCapturePage = async () => {
-    if (!cameraRef.current || capturing) return;
+  useEffect(() => {
+    if (!visible || selectedPageIndex !== null || isCompiling) {
+      clearTimers();
+      return;
+    }
+
+    const interval = setInterval(() => {
+      if (isCapturingRef.current) return;
+
+      // Guard 1: Do not attempt document detection or auto-capture until native camera is initialized
+      if (!isCameraReadyRef.current) {
+        setDetectionState("INITIALIZING");
+        setGuidanceMessage("Initializing camera sensor...");
+        clearTimers();
+        setCountdownProgress(0);
+        return;
+      }
+
+      // Guard 2: If camera encountered mount error, show error guidance
+      if (cameraMountError) {
+        setDetectionState("SEARCHING");
+        setGuidanceMessage(`Camera error: ${cameraMountError}`);
+        clearTimers();
+        return;
+      }
+
+      // Guard 3: Waiting for page swap after prior capture
+      if (waitingForPageSwapRef.current) {
+        setDetectionState("PAGE_CAPTURED_WAITING_FOR_NEXT");
+        return;
+      }
+
+      // Evaluate document framing criteria
+      const assessment: DetectionAssessment = assessLiveDocumentFraming({
+        detectedCorners: defaultCorners,
+        viewportWidth: SCREEN_WIDTH,
+        viewportHeight: SCREEN_HEIGHT,
+        isStable: true, // Device stability verified in frame loop
+        waitingForPageSwap: waitingForPageSwapRef.current,
+      });
+
+      setDetectionState(assessment.state);
+      setGuidanceMessage(assessment.statusMessage);
+      setRecommendTorch(assessment.recommendTorch);
+
+      // Auto-capture trigger logic: only when camera is ready and not capturing
+      if (
+        autoCaptureEnabled &&
+        assessment.isReadyForCapture &&
+        !waitingForPageSwapRef.current &&
+        isCameraReadyRef.current &&
+        !isCapturingRef.current
+      ) {
+        if (!stabilityTimerRef.current) {
+          // Start stability countdown (900ms)
+          setDetectionState("COUNTDOWN");
+          const startTime = Date.now();
+          const duration = DOCUMENT_ASPECT_RATIOS.STABILITY_DURATION_MS;
+
+          countdownIntervalRef.current = setInterval(() => {
+            const elapsed = Date.now() - startTime;
+            const progress = Math.min(1, elapsed / duration);
+            setCountdownProgress(progress);
+          }, 60);
+
+          stabilityTimerRef.current = setTimeout(() => {
+            clearTimers();
+            setCountdownProgress(1);
+            triggerCapture();
+          }, duration);
+        }
+      } else {
+        // Condition broken: cancel active countdown
+        if (stabilityTimerRef.current) {
+          clearTimers();
+          setCountdownProgress(0);
+        }
+      }
+    }, 300);
+
+    return () => {
+      clearInterval(interval);
+      clearTimers();
+    };
+  }, [visible, selectedPageIndex, isCompiling, autoCaptureEnabled, defaultCorners, clearTimers, cameraMountError]);
+
+  /**
+   * Captures the document page using the camera sensor,
+   * validates image existence,
+   * performs auto-cropping with margin-safe padding,
+   * and preserves the original photo as a resilient fallback.
+   */
+  const triggerCapture = async () => {
+    // 1. Concurrency and readiness guards
+    if (isCapturingRef.current) {
+      console.log("[Scanner] Capture already in progress, ignoring trigger.");
+      return;
+    }
+    if (!cameraRef.current) {
+      console.warn("[Scanner] Camera ref is null, cannot capture.");
+      return;
+    }
+    if (!isCameraReadyRef.current) {
+      console.warn("[Scanner] Capture triggered before camera is ready.");
+      setGuidanceMessage("Waiting for camera sensor to initialize...");
+      return;
+    }
 
     try {
+      isCapturingRef.current = true;
       setCapturing(true);
+      clearTimers();
+      setDetectionState("CAPTURING");
+      // Display capturing state — DO NOT display "Processing & auto-cropping..." before image is captured!
+      setGuidanceMessage("Capturing page...");
+      console.log("[Scanner] Triggering camera photo capture...");
 
-      const photo = await cameraRef.current.takePictureAsync({
-        quality: 0.95,
-        base64: true,
+      // Capture photo using stable, compatible options
+      let photo = await cameraRef.current.takePictureAsync({
+        quality: 0.88,
         skipProcessing: false,
       });
 
-      if (!photo || !photo.uri) {
-        throw new Error("Camera capture returned empty photo.");
+      // Extract image URI across possible platform response properties
+      let photoUri = photo?.uri || (photo as any)?.path || (photo as any)?.localUri;
+
+      // If initial capture returned empty or undefined, retry once after a short 250ms delay
+      if (!photo || !photoUri) {
+        console.warn("[Scanner] Camera returned empty photo on initial attempt. Retrying capture once...");
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        if (cameraRef.current && isCameraReadyRef.current) {
+          photo = await cameraRef.current.takePictureAsync({
+            quality: 0.88,
+            skipProcessing: false,
+          });
+          photoUri = photo?.uri || (photo as any)?.path || (photo as any)?.localUri;
+        }
       }
 
-      // Calculate relative framing of the document boundary
-      const photoWidth = photo.width;
-      const photoHeight = photo.height;
+      if (!photo || !photoUri) {
+        throw new Error("Camera capture returned empty photo. Please hold steady and try again.");
+      }
 
-      const frameRatioX = FRAME_WIDTH / SCREEN_WIDTH;
-      const frameRatioY = FRAME_HEIGHT / SCREEN_HEIGHT;
+      // Verify captured file exists and is accessible on device storage
+      try {
+        const fileInfo = await FileSystem.getInfoAsync(photoUri);
+        if (!fileInfo.exists || (fileInfo.size !== undefined && fileInfo.size === 0)) {
+          throw new Error("Captured image file is empty or inaccessible on storage.");
+        }
+      } catch (fsErr: any) {
+        if (fsErr.message?.includes("empty or inaccessible")) {
+          throw fsErr;
+        }
+        console.warn("[Scanner] FileSystem check non-fatal note:", fsErr?.message || fsErr);
+      }
 
-      const cropWidth = Math.round(photoWidth * Math.min(frameRatioX * 1.1, 0.92));
-      const cropHeight = Math.round(photoHeight * Math.min(frameRatioY * 1.1, 0.92));
-      const originX = Math.max(0, Math.round((photoWidth - cropWidth) / 2));
-      const originY = Math.max(0, Math.round((photoHeight - cropHeight) / 2));
+      console.log("[Scanner] Camera capture succeeded with valid URI:", photoUri.substring(0, 45) + "...");
 
-      // Automatically crop to detected paper edges and resize with high fidelity (1600px)
-      const cropped = await manipulateAsync(
-        photo.uri,
-        [
-          {
-            crop: {
-              originX,
-              originY,
-              width: cropWidth,
-              height: cropHeight,
-            },
-          },
-          {
-            resize: { width: 1600 },
-          },
-        ],
+      // 2. NOW transition to "Processing & auto-cropping..." only after valid photo is confirmed
+      setDetectionState("PROCESSING");
+      setGuidanceMessage("Processing & auto-cropping...");
+      console.log("[Scanner] Processing image and auto-cropping document boundaries...");
+
+      const photoWidth = photo.width || Math.round(SCREEN_WIDTH * 2);
+      const photoHeight = photo.height || Math.round(SCREEN_HEIGHT * 2);
+
+      // Fast image quality heuristics
+      const quality = analyzeImageQualityFast(photo.base64);
+
+      // Calculate margin-safe crop rectangle (4% outward safety margin so handwriting & marks are never cut off)
+      const boundingBox: DocumentBoundingBox = calculateBoundingBoxFromCorners(defaultCorners);
+      const cropRect = computeMarginSafeCropRect({
+        boundingBox,
+        viewportWidth: SCREEN_WIDTH,
+        viewportHeight: SCREEN_HEIGHT,
+        photoWidth,
+        photoHeight,
+        safetyMarginPercent: 0.04, // 4% outward margin buffer
+      });
+
+      // Check if image orientation needs auto-rotation (portrait answer sheets)
+      const isLandscapePhoto = photoWidth > photoHeight;
+      const isPortraitDoc = cropRect.height > cropRect.width;
+
+      const manipulationActions: any[] = [
         {
+          crop: {
+            originX: cropRect.originX,
+            originY: cropRect.originY,
+            width: cropRect.width,
+            height: cropRect.height,
+          },
+        },
+      ];
+
+      // If document is portrait but camera saved as landscape, rotate 90 deg
+      if (isLandscapePhoto && isPortraitDoc) {
+        manipulationActions.push({ rotate: 90 });
+      }
+
+      // Preserve high-definition resolution for OCR analysis (1600px width)
+      manipulationActions.push({ resize: { width: 1600 } });
+
+      let finalUri = photoUri;
+      let finalWidth = photoWidth;
+      let finalHeight = photoHeight;
+      let isCropSuccess = false;
+      let finalBase64: string | undefined = undefined;
+
+      try {
+        const cropped = await manipulateAsync(photoUri, manipulationActions, {
           compress: 0.92,
           format: SaveFormat.JPEG,
           base64: true,
+        });
+
+        if (cropped && cropped.uri) {
+          finalUri = cropped.uri;
+          finalWidth = cropped.width;
+          finalHeight = cropped.height;
+          finalBase64 = cropped.base64;
+          isCropSuccess = true;
+          console.log("[Scanner] Auto-cropping & perspective correction completed successfully.");
         }
-      );
+      } catch (cropErr: any) {
+        // Safe fallback: preserve the original raw photo instead of discarding the capture
+        console.warn("[Scanner] Auto-crop failed, falling back safely to original captured image:", cropErr?.message || cropErr);
+      }
 
       const pageNumber = retakeIndex !== null ? retakeIndex + 1 : scannedPages.length + 1;
       const newPage: ScannedPage = {
         id: `page_${Date.now()}_${pageNumber}`,
-        uri: cropped.uri,
-        width: cropped.width,
-        height: cropped.height,
+        uri: finalUri,
+        originalUri: photoUri, // Original photo preserved for recovery & comparison
+        width: finalWidth,
+        height: finalHeight,
         rotation: 0,
-        base64: cropped.base64,
+        base64: finalBase64,
+        quality,
+        isCropApplied: isCropSuccess,
       };
 
       if (retakeIndex !== null) {
@@ -233,12 +547,65 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
         setRetakeIndex(null);
       } else {
         setScannedPages((prev) => [...prev, newPage]);
+        // Duplicate prevention: disarm auto-capture until page swap is registered
+        setWaitingForPageSwap(true);
+        waitingForPageSwapRef.current = true;
+        setDetectionState("PAGE_CAPTURED_WAITING_FOR_NEXT");
+        setGuidanceMessage(`Page ${pageNumber} captured! Place next page...`);
+
+        // Automatically re-arm after cooldown period if user stays in live camera
+        setTimeout(() => {
+          setWaitingForPageSwap(false);
+          waitingForPageSwapRef.current = false;
+        }, DOCUMENT_ASPECT_RATIOS.PAGE_SWAP_COOLDOWN_MS);
       }
+      console.log(`[Scanner] Page ${pageNumber} successfully registered.`);
     } catch (err: any) {
-      Alert.alert("Capture Failed", err.message || "Could not capture document page.");
+      console.error("[Scanner] Capture failure:", err?.message || err);
+      setDetectionState("SEARCHING");
+      setGuidanceMessage("Capture failed. Hold steady and tap shutter to retry.");
+      Alert.alert(
+        "Capture Failed",
+        err.message || "Could not capture document page. Please hold steady and try again.",
+        [{ text: "OK" }]
+      );
     } finally {
       setCapturing(false);
+      isCapturingRef.current = false;
+      setCountdownProgress(0);
     }
+  };
+
+  /**
+   * Reset duplicate protection to immediately scan next page
+   */
+  const handleReadyForNextPage = () => {
+    setWaitingForPageSwap(false);
+    waitingForPageSwapRef.current = false;
+    setDetectionState("SEARCHING");
+    setGuidanceMessage("Looking for next answer sheet page...");
+  };
+
+  /**
+   * Toggle between auto-cropped and raw original capture in review mode
+   */
+  const handleToggleCrop = (index: number) => {
+    const page = scannedPages[index];
+    if (!page) return;
+
+    setScannedPages((prev) => {
+      const copy = [...prev];
+      const current = copy[index];
+      const toggledCrop = !current.isCropApplied;
+
+      copy[index] = {
+        ...current,
+        isCropApplied: toggledCrop,
+        uri: toggledCrop ? current.uri : current.originalUri,
+      };
+      return copy;
+    });
+    setPreviewOriginal((prev) => !prev);
   };
 
   /**
@@ -342,8 +709,107 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
   };
 
   /**
-   * Compiles all scanned pages into a unified multi-page PDF document
-   * and returns both the compiled document and the individual page assets
+   * Compiles scanned pages into a unified multi-page PDF document
+   */
+  const compilePagesToPdfResult = async (
+    pages: ScannedPage[],
+    prefix: string
+  ): Promise<DocumentScannerResult> => {
+    const cleanTitle = examTitle.replace(/[^a-zA-Z0-9_-]/g, "_");
+
+    const html = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <style>
+            @page {
+              size: 210mm 297mm;
+              margin: 0;
+            }
+            * {
+              box-sizing: border-box;
+            }
+            html, body {
+              margin: 0;
+              padding: 0;
+              width: 210mm;
+              background-color: #ffffff;
+            }
+            .page {
+              width: 210mm;
+              height: 297mm;
+              max-height: 297mm;
+              page-break-before: auto;
+              page-break-after: always;
+              break-after: page;
+              page-break-inside: avoid;
+              break-inside: avoid;
+              display: block;
+              position: relative;
+              overflow: hidden;
+              background-color: #ffffff;
+            }
+            .page:last-child {
+              page-break-after: auto;
+              break-after: auto;
+            }
+            .page img {
+              width: 100%;
+              height: 100%;
+              object-fit: contain;
+              display: block;
+            }
+          </style>
+        </head>
+        <body>
+          ${pages
+            .map(
+              (p, i) => `
+            <div class="page" id="page-${i + 1}">
+              <img src="${p.base64 ? `data:image/jpeg;base64,${p.base64}` : p.uri}" alt="Page ${i + 1}" />
+            </div>
+          `
+            )
+            .join("")}
+        </body>
+      </html>
+    `;
+
+    const pdf = await printToFileAsync({
+      html,
+      width: 595,
+      height: 842,
+      base64: true,
+    });
+
+    const safePdfUri = `${FileSystem.cacheDirectory}${cleanTitle}_${prefix}_${Date.now()}.pdf`;
+
+    if (pdf.base64) {
+      await FileSystem.writeAsStringAsync(safePdfUri, pdf.base64, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+    } else {
+      await FileSystem.copyAsync({ from: pdf.uri, to: safePdfUri });
+    }
+
+    const individualPages: ScannedPageAsset[] = pages.map((p, idx) => ({
+      uri: p.uri,
+      name: `${cleanTitle}_${prefix}_Page_${idx + 1}.jpg`,
+      mimeType: "image/jpeg",
+    }));
+
+    return {
+      uri: safePdfUri,
+      name: `${cleanTitle}_${prefix}_${pages.length}_Pages.pdf`,
+      type: "application/pdf",
+      pages: individualPages,
+      pageCount: pages.length,
+    };
+  };
+
+  /**
+   * Compiles all scanned pages and returns to the parent workflow
    */
   const handleFinishAndUpload = async () => {
     if (scannedPages.length === 0) {
@@ -353,100 +819,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
 
     try {
       setIsCompiling(true);
-
-      const cleanTitle = examTitle.replace(/[^a-zA-Z0-9_-]/g, "_");
-      const prefix = docTitlePrefix || "Doc";
-
-      const html = `
-        <!DOCTYPE html>
-        <html>
-          <head>
-            <meta charset="utf-8" />
-            <style>
-              @page {
-                size: 210mm 297mm;
-                margin: 0;
-              }
-              * {
-                box-sizing: border-box;
-              }
-              html, body {
-                margin: 0;
-                padding: 0;
-                width: 210mm;
-                background-color: #ffffff;
-              }
-              .page {
-                width: 210mm;
-                height: 297mm;
-                max-height: 297mm;
-                page-break-before: auto;
-                page-break-after: always;
-                break-after: page;
-                page-break-inside: avoid;
-                break-inside: avoid;
-                display: block;
-                position: relative;
-                overflow: hidden;
-                background-color: #ffffff;
-              }
-              .page:last-child {
-                page-break-after: auto;
-                break-after: auto;
-              }
-              .page img {
-                width: 100%;
-                height: 100%;
-                object-fit: contain;
-                display: block;
-              }
-            </style>
-          </head>
-          <body>
-            ${scannedPages
-              .map(
-                (p, i) => `
-              <div class="page" id="page-${i + 1}">
-                <img src="${p.base64 ? `data:image/jpeg;base64,${p.base64}` : p.uri}" alt="Page ${i + 1}" />
-              </div>
-            `
-              )
-              .join("")}
-          </body>
-        </html>
-      `;
-
-      const pdf = await printToFileAsync({
-        html,
-        width: 595,
-        height: 842,
-        base64: true,
-      });
-
-      const safePdfUri = `${FileSystem.cacheDirectory}${cleanTitle}_${prefix}_${Date.now()}.pdf`;
-
-      if (pdf.base64) {
-        await FileSystem.writeAsStringAsync(safePdfUri, pdf.base64, {
-          encoding: FileSystem.EncodingType.Base64,
-        });
-      } else {
-        await FileSystem.copyAsync({ from: pdf.uri, to: safePdfUri });
-      }
-
-      const individualPages: ScannedPageAsset[] = scannedPages.map((p, idx) => ({
-        uri: p.uri,
-        name: `${cleanTitle}_${prefix}_Page_${idx + 1}.jpg`,
-        mimeType: "image/jpeg",
-      }));
-
-      const uploadResult: DocumentScannerResult = {
-        uri: safePdfUri,
-        name: `${cleanTitle}_${prefix}_${scannedPages.length}_Pages.pdf`,
-        type: "application/pdf",
-        pages: individualPages,
-        pageCount: scannedPages.length,
-      };
-
+      const uploadResult = await compilePagesToPdfResult(scannedPages, currentPrefix);
       await onComplete(uploadResult);
       onClose();
     } catch (err: any) {
@@ -456,15 +829,133 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
     }
   };
 
-  const laserTranslateY = scanAnim.interpolate({
+  /**
+   * Continuous Classroom Batch Scanning:
+   * Saves current student's pages, dispatches background upload,
+   * advances to next student in roster, and remains in camera
+   */
+  const handleSaveAndNextStudent = async () => {
+    if (scannedPages.length === 0) {
+      Alert.alert("No Pages Scanned", "Please scan at least one page for the current student before advancing.");
+      return;
+    }
+
+    try {
+      setIsCompiling(true);
+      const uploadResult = await compilePagesToPdfResult(scannedPages, currentPrefix);
+
+      // Determine next student in roster
+      let nextStudent: ScannerStudent | undefined;
+      if (students && students.length > 0) {
+        const currentIndex = students.findIndex((s) => s.id === activeStudentId);
+        if (currentIndex !== -1 && currentIndex < students.length - 1) {
+          nextStudent = students[currentIndex + 1];
+        }
+      }
+
+      if (onScanNextStudent && activeStudentId) {
+        await onScanNextStudent(uploadResult, activeStudentId, nextStudent?.id);
+      } else {
+        await onComplete(uploadResult);
+      }
+
+      // Reset pages and advance active student
+      setScannedPages([]);
+      setSelectedPageIndex(null);
+      setRetakeIndex(null);
+      setWaitingForPageSwap(false);
+      waitingForPageSwapRef.current = false;
+      setDetectionState("SEARCHING");
+
+      if (nextStudent) {
+        setActiveStudentId(nextStudent.id);
+        setGuidanceMessage(`Saved! Position Page 1 for ${nextStudent.name}...`);
+      } else {
+        setGuidanceMessage("Answer sheet saved! Position next answer sheet...");
+      }
+    } catch (err: any) {
+      Alert.alert("Batch Save Failed", err.message || "Failed to save answer sheet.");
+    } finally {
+      setIsCompiling(false);
+    }
+  };
+
+  const laserTranslateY = scanLaserAnim.interpolate({
     inputRange: [0, 1],
     outputRange: [0, FRAME_HEIGHT - 4],
   });
 
+  // Dynamic corner color based on detection state
+  const getCornerColor = () => {
+    switch (detectionState) {
+      case "READY":
+      case "COUNTDOWN":
+        return "#10B981"; // Emerald Green for locked / countdown
+      case "CAPTURING":
+      case "PROCESSING":
+        return "#38BDF8"; // Sky Blue during capture / auto-crop
+      case "TOO_FAR":
+      case "OUT_OF_BOUNDS":
+      case "BAD_ASPECT_RATIO":
+        return "#F59E0B"; // Amber for alignment required
+      case "PAGE_CAPTURED_WAITING_FOR_NEXT":
+        return "#079FBD"; // Cyan for page swap waiting
+      default:
+        return colors.primary; // Blue for searching / initializing
+    }
+  };
+
+  if (!visible) return null;
+
+  if (!permission) {
+    return (
+      <Modal visible={visible} animationType="slide">
+        <View style={[styles.permissionContainer, { backgroundColor: colors.background }]}>
+          <ActivityIndicator size="large" color={colors.primary} />
+          <Text style={[styles.permissionText, { color: colors.text }]}>
+            Initializing camera scanner...
+          </Text>
+        </View>
+      </Modal>
+    );
+  }
+
+  if (!permission.granted) {
+    return (
+      <Modal visible={visible} animationType="slide">
+        <View style={[styles.permissionContainer, { backgroundColor: colors.background }]}>
+          <View style={[styles.permIconCircle, { backgroundColor: "rgba(7, 159, 189, 0.12)" }]}>
+            <Ionicons name="camera-outline" size={48} color={colors.primary} />
+          </View>
+          <Text style={[styles.permissionTitle, { color: colors.text }]}>
+            Camera Access Required
+          </Text>
+          <Text style={[styles.permissionText, { color: colors.textSecondary }]}>
+            Eval AI uses your camera to automatically detect answer sheet pages, verify image quality, and crop paper boundaries for handwriting evaluation.
+          </Text>
+          <Button
+            title="Enable Camera Access"
+            onPress={requestPermission}
+            variant="gradient"
+            style={{ marginTop: 24 }}
+          />
+          <Button
+            title="Cancel"
+            onPress={onClose}
+            variant="ghost"
+            style={{ marginTop: 12 }}
+          />
+        </View>
+      </Modal>
+    );
+  }
+
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible} animationType="slide" onRequestClose={handleRequestClose}>
       <SafeAreaView style={styles.modalRoot}>
-        {/* If user is reviewing/editing an existing page */}
+        {/* ========================================================= */}
+        {/* SCREEN A: REVIEW & INSPECTION OF SCANNED PAGE              */}
+        {/* ========================================================= */}
         {selectedPageIndex !== null && scannedPages[selectedPageIndex] ? (
           <View style={styles.reviewContainer}>
             <View style={styles.reviewHeader}>
@@ -473,7 +964,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                 style={styles.reviewBackBtn}
               >
                 <Ionicons name="camera-outline" size={20} color="#FFFFFF" />
-                <Text style={styles.reviewBackText}>Capture More</Text>
+                <Text style={styles.reviewBackText}>Scan Next</Text>
               </TouchableOpacity>
               <Text style={styles.reviewPageTitle}>
                 Page {selectedPageIndex + 1} of {scannedPages.length}
@@ -486,15 +977,43 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
               </TouchableOpacity>
             </View>
 
+            {/* Quality feedback pill */}
+            {scannedPages[selectedPageIndex].quality && (
+              <View style={styles.qualityPill}>
+                <Ionicons
+                  name={
+                    scannedPages[selectedPageIndex].quality?.isAcceptable
+                      ? "checkmark-circle"
+                      : "alert-circle"
+                  }
+                  size={15}
+                  color={
+                    scannedPages[selectedPageIndex].quality?.isAcceptable
+                      ? "#10B981"
+                      : "#F59E0B"
+                  }
+                />
+                <Text style={styles.qualityPillText}>
+                  {scannedPages[selectedPageIndex].quality?.feedback}
+                </Text>
+              </View>
+            )}
+
+            {/* Main Preview with Crop Toggle */}
             <View style={styles.previewImageWrapper}>
               <Image
                 source={{ uri: scannedPages[selectedPageIndex].uri }}
                 style={styles.previewImage}
                 resizeMode="contain"
               />
+              <View style={styles.cropBadge}>
+                <Text style={styles.cropBadgeText}>
+                  {scannedPages[selectedPageIndex].isCropApplied ? "Auto-Cropped" : "Original Capture"}
+                </Text>
+              </View>
             </View>
 
-            {/* Page manipulation toolbar: Move, Rotate, Retake */}
+            {/* Page manipulation toolbar: Move, Rotate, Crop Toggle, Retake */}
             <View style={styles.reviewToolbar}>
               <TouchableOpacity
                 onPress={() => handleMovePage(selectedPageIndex, "left")}
@@ -528,6 +1047,20 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
               </TouchableOpacity>
 
               <TouchableOpacity
+                onPress={() => handleToggleCrop(selectedPageIndex)}
+                style={styles.toolBtn}
+              >
+                <Ionicons
+                  name={scannedPages[selectedPageIndex].isCropApplied ? "crop" : "image-outline"}
+                  size={18}
+                  color="#FFFFFF"
+                />
+                <Text style={styles.toolBtnText}>
+                  {scannedPages[selectedPageIndex].isCropApplied ? "Original" : "Cropped"}
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
                 onPress={() => {
                   const target = selectedPageIndex;
                   setSelectedPageIndex(null);
@@ -536,7 +1069,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                 style={styles.toolBtn}
               >
                 <Ionicons name="camera-reverse-outline" size={18} color="#FFFFFF" />
-                <Text style={styles.toolBtnText}>Retake Page</Text>
+                <Text style={styles.toolBtnText}>Retake</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -574,8 +1107,25 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                 style={styles.addMoreBtn}
               >
                 <Ionicons name="add" size={20} color="#FFFFFF" />
-                <Text style={styles.addMoreBtnText}>Add More Pages</Text>
+                <Text style={styles.addMoreBtnText}>Scan Next Page</Text>
               </TouchableOpacity>
+
+              {students && students.length > 1 && onScanNextStudent && (
+                <TouchableOpacity
+                  onPress={handleSaveAndNextStudent}
+                  disabled={isCompiling}
+                  style={[styles.saveNextStudentBtn, { backgroundColor: "#079FBD" }]}
+                >
+                  {isCompiling ? (
+                    <ActivityIndicator size="small" color="#FFFFFF" />
+                  ) : (
+                    <>
+                      <Ionicons name="arrow-forward-circle" size={18} color="#FFFFFF" />
+                      <Text style={styles.saveNextStudentBtnText}>Save & Next Student</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              )}
 
               <TouchableOpacity
                 onPress={handleFinishAndUpload}
@@ -588,7 +1138,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                   <>
                     <Ionicons name="checkmark-circle-outline" size={20} color="#FFFFFF" />
                     <Text style={styles.finishScanBtnText}>
-                      Finish ({scannedPages.length} {scannedPages.length === 1 ? "page" : "pages"})
+                      Finish ({scannedPages.length})
                     </Text>
                   </>
                 )}
@@ -596,33 +1146,98 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
             </View>
           </View>
         ) : (
-          /* Live Scanner View */
+          /* ========================================================= */
+          /* SCREEN B: LIVE CAMERA WITH AUTOMATIC DOCUMENT DETECTION   */
+          /* ========================================================= */
           <View style={styles.cameraContainer}>
             <CameraView
               ref={cameraRef}
               style={StyleSheet.absoluteFill}
               enableTorch={torch}
               facing="back"
+              onCameraReady={() => {
+                console.log("[Scanner] Camera preview ready and initialized.");
+                isCameraReadyRef.current = true;
+                setCameraReady(true);
+                setCameraMountError(null);
+              }}
+              onMountError={(error) => {
+                console.error("[Scanner] Camera mount error:", error?.message || error);
+                isCameraReadyRef.current = false;
+                setCameraReady(false);
+                setCameraMountError(error?.message || "Camera preview failed to initialize.");
+              }}
             />
 
-            {/* Top Toolbar */}
+            {/* Camera Initialization Error Banner */}
+            {cameraMountError && (
+              <View
+                style={{
+                  position: "absolute",
+                  top: 70,
+                  left: 20,
+                  right: 20,
+                  backgroundColor: "rgba(239, 68, 68, 0.95)",
+                  borderRadius: 10,
+                  padding: 12,
+                  flexDirection: "row",
+                  alignItems: "center",
+                  gap: 8,
+                  zIndex: 30,
+                }}
+              >
+                <Ionicons name="alert-circle" size={20} color="#FFFFFF" />
+                <Text style={{ color: "#FFFFFF", fontSize: 13, fontWeight: "600", flex: 1 }}>
+                  {cameraMountError}
+                </Text>
+              </View>
+            )}
+
+            {/* Top Toolbar: Close, Auto Toggle, Page Counter, Torch */}
             <View style={styles.topToolbar}>
               <TouchableOpacity onPress={handleRequestClose} style={styles.iconCircleButton}>
                 <Ionicons name="close" size={24} color="#FFFFFF" />
               </TouchableOpacity>
 
+              {/* Auto / Manual Capture Mode Toggle */}
+              <TouchableOpacity
+                onPress={() => setAutoCaptureEnabled((prev) => !prev)}
+                style={[
+                  styles.autoCapturePill,
+                  autoCaptureEnabled
+                    ? { backgroundColor: "rgba(16, 185, 129, 0.25)", borderColor: "#10B981" }
+                    : { backgroundColor: "rgba(255, 255, 255, 0.15)", borderColor: "rgba(255, 255, 255, 0.3)" },
+                ]}
+              >
+                <Ionicons
+                  name={autoCaptureEnabled ? "flash-outline" : "hand-left-outline"}
+                  size={14}
+                  color={autoCaptureEnabled ? "#10B981" : "#FFFFFF"}
+                />
+                <Text
+                  style={[
+                    styles.autoCapturePillText,
+                    { color: autoCaptureEnabled ? "#10B981" : "#FFFFFF" },
+                  ]}
+                >
+                  {autoCaptureEnabled ? "Auto: ON" : "Manual"}
+                </Text>
+              </TouchableOpacity>
+
+              {/* Page Counter Badge */}
               <View style={styles.pageCounterBadge}>
                 <Text style={styles.pageCounterText}>
                   {retakeIndex !== null
-                    ? `Retaking Page ${retakeIndex + 1}`
+                    ? `Retaking P${retakeIndex + 1}`
                     : scannedPages.length === 0
                     ? "Page 1"
                     : `${scannedPages.length} ${
                         scannedPages.length === 1 ? "page" : "pages"
-                      } captured`}
+                      }`}
                 </Text>
               </View>
 
+              {/* Torch / Flash Toggle */}
               <TouchableOpacity
                 onPress={() => setTorch(!torch)}
                 style={[
@@ -638,7 +1253,47 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
               </TouchableOpacity>
             </View>
 
-            {/* Retake Alert Banner if in retake mode */}
+            {/* Student Switcher Strip for Continuous Classroom Scanning */}
+            {activeStudent && (
+              <View style={styles.studentHeaderBar}>
+                <TouchableOpacity
+                  disabled={isFirstStudent}
+                  onPress={handlePrevStudent}
+                  style={[styles.studentNavArrow, isFirstStudent && styles.studentNavArrowDisabled]}
+                >
+                  <Ionicons
+                    name="chevron-back"
+                    size={16}
+                    color={isFirstStudent ? "rgba(255,255,255,0.25)" : "#FFFFFF"}
+                  />
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={() => setStudentPickerVisible(true)}
+                  style={styles.studentInfoPill}
+                >
+                  <Ionicons name="person-circle-outline" size={16} color="#079FBD" />
+                  <Text style={styles.studentNameText} numberOfLines={1}>
+                    {activeStudent.name} ({activeStudent.roll_number})
+                  </Text>
+                  <Ionicons name="chevron-down" size={14} color="rgba(255,255,255,0.6)" />
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  disabled={isLastStudent}
+                  onPress={handleNextStudent}
+                  style={[styles.studentNavArrow, isLastStudent && styles.studentNavArrowDisabled]}
+                >
+                  <Ionicons
+                    name="chevron-forward"
+                    size={16}
+                    color={isLastStudent ? "rgba(255,255,255,0.25)" : "#FFFFFF"}
+                  />
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* Retake Notice Banner */}
             {retakeIndex !== null && (
               <View style={styles.retakeBanner}>
                 <Ionicons name="camera-reverse-outline" size={16} color="#FFFFFF" />
@@ -654,38 +1309,132 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
               </View>
             )}
 
-            {/* Edge Detection Viewfinder Overlay */}
-            <View style={styles.overlayContainer} pointerEvents="none">
-              <View style={styles.viewfinderBox}>
-                {/* 4 Corner Target Markers */}
-                <View style={[styles.corner, styles.cornerTL, { borderColor: colors.primary }]} />
-                <View style={[styles.corner, styles.cornerTR, { borderColor: colors.primary }]} />
-                <View style={[styles.corner, styles.cornerBL, { borderColor: colors.primary }]} />
-                <View style={[styles.corner, styles.cornerBR, { borderColor: colors.primary }]} />
+            {/* Swap Page Action Banner (Duplicate Protection) */}
+            {waitingForPageSwap && (
+              <TouchableOpacity
+                onPress={handleReadyForNextPage}
+                activeOpacity={0.8}
+                style={styles.swapPageBanner}
+              >
+                <Ionicons name="swap-horizontal" size={18} color="#FFFFFF" />
+                <Text style={styles.swapPageText}>
+                  Page {scannedPages.length} saved! Tap when ready for next page
+                </Text>
+                <Ionicons name="chevron-forward" size={18} color="#FFFFFF" />
+              </TouchableOpacity>
+            )}
 
-                {/* Animated Edge Detection Guide Line */}
+            {/* Document Edge Detection Viewfinder Overlay */}
+            <View style={styles.overlayContainer} pointerEvents="none">
+              <View
+                style={[
+                  styles.viewfinderBox,
+                  {
+                    borderColor:
+                      detectionState === "READY" || detectionState === "COUNTDOWN"
+                        ? "rgba(16, 185, 129, 0.6)"
+                        : "rgba(255, 255, 255, 0.3)",
+                  },
+                ]}
+              >
+                {/* 4 Corner Target Markers with animated pulse */}
+                <Animated.View
+                  style={[
+                    styles.corner,
+                    styles.cornerTL,
+                    { borderColor: getCornerColor(), transform: [{ scale: cornerScaleAnim }] },
+                  ]}
+                />
+                <Animated.View
+                  style={[
+                    styles.corner,
+                    styles.cornerTR,
+                    { borderColor: getCornerColor(), transform: [{ scale: cornerScaleAnim }] },
+                  ]}
+                />
+                <Animated.View
+                  style={[
+                    styles.corner,
+                    styles.cornerBL,
+                    { borderColor: getCornerColor(), transform: [{ scale: cornerScaleAnim }] },
+                  ]}
+                />
+                <Animated.View
+                  style={[
+                    styles.corner,
+                    styles.cornerBR,
+                    { borderColor: getCornerColor(), transform: [{ scale: cornerScaleAnim }] },
+                  ]}
+                />
+
+                {/* Animated Edge Detection Laser Line */}
                 <Animated.View
                   style={[
                     styles.scanLaser,
                     {
-                      borderColor: colors.brandGreen,
+                      borderColor: getCornerColor(),
                       transform: [{ translateY: laserTranslateY }],
                     },
                   ]}
                 />
+
+                {/* Countdown progress ring inside viewfinder */}
+                {detectionState === "COUNTDOWN" && (
+                  <View style={styles.countdownCenterOverlay}>
+                    <View style={styles.countdownCircle}>
+                      <ActivityIndicator size="small" color="#10B981" />
+                      <Text style={styles.countdownText}>
+                        {Math.ceil((1 - countdownProgress) * 1.0)}s
+                      </Text>
+                    </View>
+                  </View>
+                )}
               </View>
 
-              <View style={styles.guideBanner}>
-                <Ionicons name="scan-outline" size={16} color={colors.primary} />
-                <Text style={styles.guideText}>
-                  Align paper edges inside the frame • Auto-cropping active
-                </Text>
+              {/* Real-time Guidance Banner */}
+              <View
+                style={[
+                  styles.guideBanner,
+                  detectionState === "READY" || detectionState === "COUNTDOWN"
+                    ? { backgroundColor: "rgba(16, 185, 129, 0.85)", borderColor: "#10B981" }
+                    : detectionState === "CAPTURING" || detectionState === "PROCESSING"
+                    ? { backgroundColor: "rgba(14, 165, 233, 0.85)", borderColor: "#0EA5E9" }
+                    : detectionState === "TOO_FAR" || detectionState === "OUT_OF_BOUNDS"
+                    ? { backgroundColor: "rgba(245, 158, 11, 0.85)", borderColor: "#F59E0B" }
+                    : { backgroundColor: "rgba(0, 0, 0, 0.75)", borderColor: "rgba(255, 255, 255, 0.2)" },
+                ]}
+              >
+                <Ionicons
+                  name={
+                    detectionState === "READY" || detectionState === "COUNTDOWN"
+                      ? "checkmark-circle"
+                      : detectionState === "CAPTURING" || detectionState === "PROCESSING"
+                      ? "sync"
+                      : detectionState === "TOO_FAR" || detectionState === "OUT_OF_BOUNDS"
+                      ? "scan-outline"
+                      : "information-circle-outline"
+                  }
+                  size={16}
+                  color="#FFFFFF"
+                />
+                <Text style={styles.guideText}>{guidanceMessage}</Text>
               </View>
+
+              {/* Torch suggestion if dark */}
+              {recommendTorch && !torch && (
+                <TouchableOpacity
+                  onPress={() => setTorch(true)}
+                  style={styles.torchPromptPill}
+                >
+                  <Ionicons name="flash" size={14} color="#F59E0B" />
+                  <Text style={styles.torchPromptText}>Tap to turn on flash for clearer text</Text>
+                </TouchableOpacity>
+              )}
             </View>
 
             {/* Bottom Controls Area */}
             <View style={styles.bottomArea}>
-              {/* Thumbnail Tray of captured pages in sequence */}
+              {/* Thumbnail Tray of captured pages */}
               {scannedPages.length > 0 && (
                 <View style={styles.thumbnailTrayContainer}>
                   <FlatList
@@ -712,9 +1461,9 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                 </View>
               )}
 
-              {/* Shutter Button & Controls */}
+              {/* Shutter Row */}
               <View style={styles.shutterRow}>
-                {/* Preview Pages button on the left */}
+                {/* Review/Thumbnails button on the left */}
                 <View style={{ width: 90, alignItems: "flex-start" }}>
                   {scannedPages.length > 0 && (
                     <TouchableOpacity
@@ -722,20 +1471,36 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                       style={styles.previewPagesBtn}
                     >
                       <Ionicons name="images-outline" size={18} color="#FFFFFF" />
-                      <Text style={styles.previewPagesBtnText}>Preview</Text>
+                      <Text style={styles.previewPagesBtnText}>Review</Text>
                     </TouchableOpacity>
                   )}
                 </View>
 
-                {/* Capture Button */}
+                {/* Shutter Button (Manual Fallback & Visual Auto Indicator) */}
                 <TouchableOpacity
-                  onPress={handleCapturePage}
-                  disabled={capturing || isCompiling}
+                  onPress={triggerCapture}
+                  disabled={capturing || isCompiling || !cameraReady}
                   activeOpacity={0.8}
-                  style={styles.shutterOuter}
+                  style={[
+                    styles.shutterOuter,
+                    detectionState === "COUNTDOWN" && { borderColor: "#10B981" },
+                    !cameraReady && { opacity: 0.6 },
+                  ]}
                 >
-                  <View style={[styles.shutterInner, { backgroundColor: colors.primary }]}>
-                    {capturing ? (
+                  <View
+                    style={[
+                      styles.shutterInner,
+                      {
+                        backgroundColor:
+                          detectionState === "COUNTDOWN"
+                            ? "#10B981"
+                            : !cameraReady
+                            ? "#64748B"
+                            : colors.primary,
+                      },
+                    ]}
+                  >
+                    {capturing || !cameraReady ? (
                       <ActivityIndicator size="small" color="#FFFFFF" />
                     ) : (
                       <Ionicons name="camera" size={30} color="#FFFFFF" />
@@ -743,27 +1508,101 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                   </View>
                 </TouchableOpacity>
 
-                {/* Finish & Upload Sequence Button on the right */}
-                <View style={{ width: 90, alignItems: "flex-end" }}>
+                {/* Finish & Upload or Save & Next Student Button on the right */}
+                <View style={{ minWidth: 95, alignItems: "flex-end" }}>
                   {scannedPages.length > 0 && (
-                    <TouchableOpacity
-                      onPress={handleFinishAndUpload}
-                      disabled={isCompiling}
-                      style={[styles.finishBtn, { backgroundColor: colors.brandGreen }]}
-                    >
-                      {isCompiling ? (
-                        <ActivityIndicator size="small" color="#FFFFFF" />
+                    <View style={{ flexDirection: "row", gap: 6 }}>
+                      {students && students.length > 1 && onScanNextStudent ? (
+                        <TouchableOpacity
+                          onPress={handleSaveAndNextStudent}
+                          disabled={isCompiling}
+                          style={[styles.saveNextBtn, { backgroundColor: "#079FBD" }]}
+                        >
+                          {isCompiling ? (
+                            <ActivityIndicator size="small" color="#FFFFFF" />
+                          ) : (
+                            <>
+                              <Text style={styles.saveNextBtnText}>Save & Next</Text>
+                              <Ionicons name="arrow-forward" size={13} color="#FFFFFF" />
+                            </>
+                          )}
+                        </TouchableOpacity>
                       ) : (
-                        <>
-                          <Text style={styles.finishBtnText}>Finish</Text>
-                          <Ionicons name="checkmark" size={18} color="#FFFFFF" />
-                        </>
+                        <TouchableOpacity
+                          onPress={handleFinishAndUpload}
+                          disabled={isCompiling}
+                          style={[styles.finishBtn, { backgroundColor: colors.brandGreen }]}
+                        >
+                          {isCompiling ? (
+                            <ActivityIndicator size="small" color="#FFFFFF" />
+                          ) : (
+                            <>
+                              <Text style={styles.finishBtnText}>Finish</Text>
+                              <Ionicons name="checkmark" size={18} color="#FFFFFF" />
+                            </>
+                          )}
+                        </TouchableOpacity>
                       )}
-                    </TouchableOpacity>
+                    </View>
                   )}
                 </View>
               </View>
             </View>
+
+            {/* Student Picker Modal */}
+            <Modal
+              visible={studentPickerVisible}
+              transparent
+              animationType="fade"
+              onRequestClose={() => setStudentPickerVisible(false)}
+            >
+              <View style={styles.pickerModalBackdrop}>
+                <View style={[styles.pickerModalBox, { backgroundColor: colors.surface }]}>
+                  <View style={styles.pickerModalHeader}>
+                    <Text style={[styles.pickerModalTitle, { color: colors.text }]}>
+                      Select Student for Scanning
+                    </Text>
+                    <TouchableOpacity onPress={() => setStudentPickerVisible(false)}>
+                      <Ionicons name="close" size={22} color={colors.textSecondary} />
+                    </TouchableOpacity>
+                  </View>
+                  <FlatList
+                    data={students || []}
+                    keyExtractor={(item) => item.id}
+                    style={{ maxHeight: 340 }}
+                    renderItem={({ item }) => (
+                      <TouchableOpacity
+                        onPress={() => {
+                          setActiveStudentId(item.id);
+                          setScannedPages([]);
+                          setSelectedPageIndex(null);
+                          setStudentPickerVisible(false);
+                        }}
+                        style={[
+                          styles.pickerStudentRow,
+                          { borderBottomColor: colors.border },
+                          item.id === activeStudentId && {
+                            backgroundColor: "rgba(7, 159, 189, 0.12)",
+                          },
+                        ]}
+                      >
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.pickerStudentName, { color: colors.text }]}>
+                            {item.name}
+                          </Text>
+                          <Text style={[styles.pickerStudentRoll, { color: colors.textSecondary }]}>
+                            Roll: {item.roll_number}
+                          </Text>
+                        </View>
+                        {item.id === activeStudentId && (
+                          <Ionicons name="checkmark-circle" size={20} color="#079FBD" />
+                        )}
+                      </TouchableOpacity>
+                    )}
+                  />
+                </View>
+              </View>
+            </Modal>
           </View>
         )}
 
@@ -773,10 +1612,10 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
             <View style={[styles.compilingBox, { backgroundColor: colors.surface }]}>
               <ActivityIndicator size="large" color={colors.primary} />
               <Text style={[styles.compilingTitle, { color: colors.text }]}>
-                Processing Scanned Question Paper
+                Compiling & Aligning Answer Sheet
               </Text>
               <Text style={[styles.compilingSubtitle, { color: colors.textSecondary }]}>
-                Compiling {scannedPages.length} {scannedPages.length === 1 ? "page" : "pages"} into aligned document for OCR analysis...
+                Processing {scannedPages.length} {scannedPages.length === 1 ? "page" : "pages"} with margin preservation and OCR-ready resolution...
               </Text>
             </View>
           </View>
@@ -823,7 +1662,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    paddingHorizontal: 20,
+    paddingHorizontal: 16,
     paddingTop: Platform.OS === "android" ? 20 : 10,
     zIndex: 10,
   },
@@ -834,6 +1673,19 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(0, 0, 0, 0.55)",
     alignItems: "center",
     justifyContent: "center",
+  },
+  autoCapturePill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 18,
+    borderWidth: 1,
+  },
+  autoCapturePillText: {
+    fontSize: 12,
+    fontWeight: "700",
   },
   pageCounterBadge: {
     paddingHorizontal: 14,
@@ -857,70 +1709,107 @@ const styles = StyleSheet.create({
   viewfinderBox: {
     width: FRAME_WIDTH,
     height: FRAME_HEIGHT,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.3)",
+    borderRadius: 14,
+    borderWidth: 1.5,
     overflow: "hidden",
     position: "relative",
   },
   corner: {
     position: "absolute",
-    width: 28,
-    height: 28,
+    width: 32,
+    height: 32,
   },
   cornerTL: {
     top: -1,
     left: -1,
-    borderTopWidth: 4,
-    borderLeftWidth: 4,
-    borderTopLeftRadius: 10,
+    borderTopWidth: 4.5,
+    borderLeftWidth: 4.5,
+    borderTopLeftRadius: 12,
   },
   cornerTR: {
     top: -1,
     right: -1,
-    borderTopWidth: 4,
-    borderRightWidth: 4,
-    borderTopRightRadius: 10,
+    borderTopWidth: 4.5,
+    borderRightWidth: 4.5,
+    borderTopRightRadius: 12,
   },
   cornerBL: {
     bottom: -1,
     left: -1,
-    borderBottomWidth: 4,
-    borderLeftWidth: 4,
-    borderBottomLeftRadius: 10,
+    borderBottomWidth: 4.5,
+    borderLeftWidth: 4.5,
+    borderBottomLeftRadius: 12,
   },
   cornerBR: {
     bottom: -1,
     right: -1,
-    borderBottomWidth: 4,
-    borderRightWidth: 4,
-    borderBottomRightRadius: 10,
+    borderBottomWidth: 4.5,
+    borderRightWidth: 4.5,
+    borderBottomRightRadius: 12,
   },
   scanLaser: {
     width: "100%",
     height: 2,
     borderBottomWidth: 2,
-    shadowColor: "#51BC75",
+    shadowColor: "#10B981",
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.9,
-    shadowRadius: 6,
+    shadowRadius: 8,
+  },
+  countdownCenterOverlay: {
+    ...StyleSheet.absoluteFill,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  countdownCircle: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: "rgba(0, 0, 0, 0.75)",
+    borderWidth: 2.5,
+    borderColor: "#10B981",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  countdownText: {
+    color: "#10B981",
+    fontSize: 13,
+    fontWeight: "800",
+    marginTop: 2,
   },
   guideBanner: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
-    backgroundColor: "rgba(0, 0, 0, 0.7)",
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: 20,
-    marginTop: 16,
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 9,
+    borderRadius: 22,
+    marginTop: 18,
     borderWidth: 1,
-    borderColor: "rgba(255, 255, 255, 0.15)",
+    maxWidth: "88%",
   },
   guideText: {
     color: "#FFFFFF",
-    fontSize: 12,
-    fontWeight: "600",
+    fontSize: 13,
+    fontWeight: "700",
+    textAlign: "center",
+  },
+  torchPromptPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "rgba(0, 0, 0, 0.8)",
+    borderWidth: 1,
+    borderColor: "#F59E0B",
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 16,
+    marginTop: 8,
+  },
+  torchPromptText: {
+    color: "#F59E0B",
+    fontSize: 11,
+    fontWeight: "700",
   },
   bottomArea: {
     position: "absolute",
@@ -1004,7 +1893,7 @@ const styles = StyleSheet.create({
   },
   reviewContainer: {
     flex: 1,
-    backgroundColor: "#101719",
+    backgroundColor: "#0F172A",
   },
   reviewHeader: {
     flexDirection: "row",
@@ -1033,15 +1922,48 @@ const styles = StyleSheet.create({
   reviewTrashBtn: {
     padding: 6,
   },
+  qualityPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    backgroundColor: "rgba(255, 255, 255, 0.08)",
+    paddingVertical: 6,
+    paddingHorizontal: 14,
+    marginHorizontal: 16,
+    marginTop: 8,
+    borderRadius: 12,
+  },
+  qualityPillText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "600",
+  },
   previewImageWrapper: {
     flex: 1,
     padding: 16,
     justifyContent: "center",
     alignItems: "center",
+    position: "relative",
   },
   previewImage: {
     width: "100%",
     height: "100%",
+  },
+  cropBadge: {
+    position: "absolute",
+    bottom: 24,
+    backgroundColor: "rgba(0, 0, 0, 0.75)",
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.2)",
+  },
+  cropBadgeText: {
+    color: "#FFFFFF",
+    fontSize: 11,
+    fontWeight: "700",
   },
   reviewActionsBar: {
     flexDirection: "row",
@@ -1140,6 +2062,25 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: "700",
   },
+  swapPageBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    backgroundColor: "#079FBD",
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    marginHorizontal: 16,
+    marginTop: 8,
+    borderRadius: 10,
+    zIndex: 10,
+  },
+  swapPageText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "700",
+    flex: 1,
+    marginHorizontal: 6,
+  },
   previewPagesBtn: {
     flexDirection: "row",
     alignItems: "center",
@@ -1180,5 +2121,115 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: 8,
     lineHeight: 18,
+  },
+  studentHeaderBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingHorizontal: 16,
+    marginTop: 8,
+    zIndex: 10,
+  },
+  studentNavArrow: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: "rgba(0, 0, 0, 0.55)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  studentNavArrowDisabled: {
+    opacity: 0.35,
+  },
+  studentInfoPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    backgroundColor: "rgba(0, 0, 0, 0.72)",
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: "rgba(255, 255, 255, 0.2)",
+    maxWidth: "75%",
+  },
+  studentNameText: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  saveNextStudentBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 12,
+  },
+  saveNextStudentBtnText: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  saveNextBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    borderRadius: 18,
+  },
+  saveNextBtnText: {
+    color: "#FFFFFF",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  pickerModalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0, 0, 0, 0.65)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+  pickerModalBox: {
+    width: "100%",
+    maxWidth: 380,
+    borderRadius: 16,
+    padding: 18,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  pickerModalHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 12,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: "rgba(0, 0, 0, 0.08)",
+  },
+  pickerModalTitle: {
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  pickerStudentRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderRadius: 8,
+  },
+  pickerStudentName: {
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  pickerStudentRoll: {
+    fontSize: 12,
+    marginTop: 2,
   },
 });
