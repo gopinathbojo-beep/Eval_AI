@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { NavLink, Outlet, useNavigate, useOutletContext, useParams } from "react-router-dom";
+import { NavLink, Outlet, useLocation, useNavigate, useOutletContext, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import { useApi } from "../hooks/useApi";
 import type { ExamDetail } from "../types";
@@ -18,6 +18,7 @@ const TABS: [string, string][] = [
 
 export default function ExamWorkspace() {
   const { id } = useParams();
+  const location = useLocation();
   const navigate = useNavigate();
   const [confirmDelete, setConfirmDelete] = useState(false);
   const { data, error, loading, reload } = useApi<ExamDetail>(`/exams/${id}`, (d) =>
@@ -103,29 +104,46 @@ export default function ExamWorkspace() {
 
       {/* Tabs Navigation */}
       <nav className="flex gap-1 overflow-x-auto border-b border-line pb-px" aria-label="Exam sections">
-        {TABS.map(([to, text]) => (
-          <NavLink
-            key={to}
-            end
-            to={to}
-            className={({ isActive }) =>
-              `group relative flex items-center gap-2 whitespace-nowrap px-4 py-2.5 text-sm font-medium transition-colors ${
-                isActive
+        {TABS.map(([to, text]) => {
+          const tabPath = to ? `/exams/${id}/${to}` : `/exams/${id}`;
+          const isTabActive = (() => {
+            if (to === "") {
+              return (
+                location.pathname === `/exams/${id}` ||
+                location.pathname.startsWith(`/exams/${id}/content`) ||
+                location.pathname.startsWith(`/exams/${id}/overview`) ||
+                location.pathname.startsWith(`/exams/${id}/question-paper`) ||
+                location.pathname.startsWith(`/exams/${id}/questions`) ||
+                location.pathname.startsWith(`/exams/${id}/answer-key`)
+              );
+            }
+            if (to === "submissions") {
+              return (
+                location.pathname.startsWith(`/exams/${id}/submissions`) ||
+                location.pathname.startsWith(`/exams/${id}/students`) ||
+                location.pathname.startsWith(`/exams/${id}/answer-sheets`)
+              );
+            }
+            return location.pathname.startsWith(`/exams/${id}/${to}`);
+          })();
+
+          return (
+            <NavLink
+              key={to}
+              to={tabPath}
+              className={`group relative flex items-center gap-2 whitespace-nowrap px-4 py-2.5 text-sm font-medium transition-colors ${
+                isTabActive
                   ? "text-pen"
                   : "text-mute hover:text-ink hover:bg-sunken/60 rounded-t-lg"
-              }`
-            }
-          >
-            {({ isActive }) => (
-              <>
-                <span>{text}</span>
-                {isActive && (
-                  <span className="absolute bottom-0 left-0 right-0 h-0.5 rounded-t bg-pen" />
-                )}
-              </>
-            )}
-          </NavLink>
-        ))}
+              }`}
+            >
+              <span>{text}</span>
+              {isTabActive && (
+                <span className="absolute bottom-0 left-0 right-0 h-0.5 rounded-t bg-pen" />
+              )}
+            </NavLink>
+          );
+        })}
       </nav>
 
       {/* Tab Content */}

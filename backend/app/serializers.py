@@ -15,9 +15,39 @@ def doc_view(doc, kind: str) -> dict | None:
 
 
 def question_view(q: ExamQuestion) -> dict:
+    q_text = q.question_text or ""
+    passage_text = None
+    if "[/Reading Passage Context]" in q_text:
+        parts = q_text.split("[/Reading Passage Context]", 1)
+        passage_text = parts[0].replace("[Reading Passage Context]\n", "").replace("[Reading Passage Context]", "").strip()
+        q_text = parts[1].strip()
+    elif "[Reading Passage Context]\n" in q_text:
+        parts = q_text.split("[Reading Passage Context]\n", 1)
+        subparts = parts[1].split("\n\n(", 1)
+        if len(subparts) == 2:
+            passage_text = subparts[0].strip()
+            q_text = "(" + subparts[1].strip()
+        else:
+            subparts = parts[1].split("\n\n", 1)
+            if len(subparts) == 2:
+                passage_text = subparts[0].strip()
+                q_text = subparts[1].strip()
+    elif "[Reading Passage]\n" in q_text:
+        parts = q_text.split("[Reading Passage]\n", 1)
+        subparts = parts[1].split("\n\n[Questions]\n", 1)
+        if len(subparts) == 2:
+            passage_text = subparts[0].strip()
+            q_text = subparts[1].strip()
+        else:
+            subparts = parts[1].split("\n\n", 1)
+            if len(subparts) == 2:
+                passage_text = subparts[0].strip()
+                q_text = subparts[1].strip()
+
     return {
         "id": q.id, "exam_id": q.exam_id, "display_number": q.display_number,
-        "normalized_number": q.normalized_number, "question_text": q.question_text,
+        "normalized_number": q.normalized_number, "question_text": q_text,
+        "clean_question_text": q_text, "passage_text": passage_text,
         "raw_ocr_text": q.raw_ocr_text, "question_type": q.question_type, "max_marks": q.max_marks,
         "section": q.section, "position": q.position, "page_start": q.page_start, "page_end": q.page_end,
         "bbox": q.bbox, "has_crop": bool(q.crop_file), "document_id": q.document_id,

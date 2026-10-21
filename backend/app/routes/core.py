@@ -299,8 +299,8 @@ def download_marksheet(db: Session = Depends(get_db), t: Teacher = Depends(curre
     from fastapi.responses import JSONResponse
     try:
         from ..services.marksheet import generate_marksheet_bytes, sync_root_marksheet_file
-        sync_root_marksheet_file(db, t.id)
         stream = generate_marksheet_bytes(db, teacher_id=t.id)
+        sync_root_marksheet_file(db, teacher_id=t.id, stream=stream)
         return Response(
             content=stream.getvalue(),
             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

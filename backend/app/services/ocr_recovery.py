@@ -145,6 +145,9 @@ def find_recovery_candidates(
                     # If exact question has distinct constant matches and alt has none, skip alt
                     if exact_dist_nums and not alt_dist_nums:
                         continue
+                    # If exact question has equal or stronger keyword overlap than alt, and alt has no unique numbers, skip alt
+                    if len(exact_shared_toks) >= len(common) and not alt_dist_nums:
+                        continue
                     # Alt must have positive evidence
                     if not (alt_dist_nums or alt_dist_toks or len(common) >= 2 or (shared_nums and len(common) >= 1)):
                         continue

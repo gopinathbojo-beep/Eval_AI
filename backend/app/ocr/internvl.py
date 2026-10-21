@@ -195,9 +195,39 @@ def chat_structured(system: str, user: str, schema: Type[T], image_path: Path | 
         try:
             obj = extract_json_object(raw)
             parsed = schema.model_validate(obj)
-            # If answers were expected from an answer sheet image but 0 were parsed while raw mentions questions
-            if hasattr(parsed, "answers") and len(parsed.answers) == 0 and ("question" in raw.lower() or "answer" in raw.lower()):
-                raise ParseError("0 answers parsed from model output containing question text")
+            # Check if this is a tall document page where the model only extracted items in the upper portion
+            if image_path is not None and hasattr(parsed, "questions") and parsed.questions:
+                try:
+                    import cv2
+                    img = cv2.imread(str(image_path))
+                    if img is not None:
+                        img_h, img_w = img.shape[:2]
+                        if img_h >= 1800:
+                            bboxes = [q.bbox for q in parsed.questions if q.bbox]
+                            max_y = max((bb.y + bb.height) for bb in bboxes) if bboxes else 0
+                            if max_y > 0 and (max_y / img_h) < 0.35 and len(parsed.questions) <= 3:
+                                crop_y = int(img_h * 0.25)
+                                bot_img = img[crop_y:, :]
+                                bot_path = image_path.parent / f"{image_path.stem}_bot_strip{image_path.suffix}"
+                                cv2.imwrite(str(bot_path), bot_img)
+                                try:
+                                    bot_raw = _call_once(system, user, bot_path, format="json")
+                                    bot_obj = extract_json_object(bot_raw)
+                                    bot_parsed = schema.model_validate(bot_obj)
+                                    if hasattr(bot_parsed, "questions") and bot_parsed.questions:
+                                        seen_texts = {q.question_text.strip().lower()[:50] for q in parsed.questions if q.question_text}
+                                        for bq in bot_parsed.questions:
+                                            if bq.question_text and bq.question_text.strip().lower()[:50] not in seen_texts:
+                                                if bq.bbox:
+                                                    bq.bbox.y += crop_y
+                                                parsed.questions.append(bq)
+                                                seen_texts.add(bq.question_text.strip().lower()[:50])
+                                finally:
+                                    if bot_path.exists():
+                                        bot_path.unlink(missing_ok=True)
+                except Exception as ex:
+                    log.warning("Tall page lower strip scan failed: %s", ex)
+
             return AICall(parsed, raw, i)
         except ParseError as e:
             last_err, kind = f"JSON parse failed: {e}", "FAILED_PARSE"

@@ -799,30 +799,39 @@ def build_evaluation_pdf_report(db: Session, teacher: Teacher, evaluation_id: st
 
         # Question Prompt
         q_text_content = format_math_text(q.question_text) or "<i>(No question text recorded)</i>"
-        q_block = Table(
-            [
+        if len(q_text_content) <= 350 and "\n" not in q_text_content:
+            q_block = Table(
                 [
-                    Paragraph("<b>QUESTION PROMPT:</b>", style_meta_label),
+                    [
+                        Paragraph("<b>QUESTION PROMPT:</b>", style_meta_label),
+                    ],
+                    [
+                        Paragraph(q_text_content, style_body),
+                    ],
                 ],
-                [
-                    Paragraph(q_text_content, style_body),
-                ],
-            ],
-            colWidths=[usable_width],
-        )
-        q_block.setStyle(
-            TableStyle(
-                [
-                    ("BACKGROUND", (0, 0), (-1, -1), c_bg_sunken),
-                    ("BOX", (0, 0), (-1, -1), 0.5, c_border),
-                    ("TOPPADDING", (0, 0), (-1, -1), 4),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 8),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-                ]
+                colWidths=[usable_width],
             )
-        )
-        card_flowables.append(q_block)
+            q_block.setStyle(
+                TableStyle(
+                    [
+                        ("BACKGROUND", (0, 0), (-1, -1), c_bg_sunken),
+                        ("BOX", (0, 0), (-1, -1), 0.5, c_border),
+                        ("TOPPADDING", (0, 0), (-1, -1), 4),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                    ]
+                )
+            )
+            card_flowables.append(q_block)
+        else:
+            card_flowables.append(Spacer(1, 2))
+            card_flowables.append(Paragraph("<b>QUESTION PROMPT:</b>", style_meta_label))
+            for line in q_text_content.split("\n"):
+                clean_line = line.strip()
+                if clean_line:
+                    card_flowables.append(Paragraph(clean_line, style_body))
+            card_flowables.append(Spacer(1, 3))
 
         # Answers Comparison: Official Key vs Student Answer
         official_ans_text = (
@@ -839,34 +848,42 @@ def build_evaluation_pdf_report(db: Session, teacher: Teacher, evaluation_id: st
             crit_items = "<br/>".join([f"• {html.escape(str(c))}" for c in key.criteria])
             official_ans_text += f"<br/><font size='7.5' color='#64748B'><b>Marking Criteria:</b><br/>{crit_items}</font>"
 
-        answers_table = Table(
-            [
+        if len(official_ans_text) > 1200 or len(student_ans_text) > 1200:
+            card_flowables.append(Paragraph("<b>OFFICIAL ANSWER KEY:</b>", style_meta_label))
+            card_flowables.append(Paragraph(official_ans_text, style_mono))
+            card_flowables.append(Spacer(1, 3))
+            card_flowables.append(Paragraph("<b>STUDENT SUBMISSION (OCR):</b>", style_meta_label))
+            card_flowables.append(Paragraph(student_ans_text, style_mono))
+            card_flowables.append(Spacer(1, 3))
+        else:
+            answers_table = Table(
                 [
-                    Paragraph("<b>OFFICIAL ANSWER KEY</b>", style_meta_label),
-                    Paragraph("<b>STUDENT SUBMISSION (OCR)</b>", style_meta_label),
+                    [
+                        Paragraph("<b>OFFICIAL ANSWER KEY</b>", style_meta_label),
+                        Paragraph("<b>STUDENT SUBMISSION (OCR)</b>", style_meta_label),
+                    ],
+                    [
+                        Paragraph(official_ans_text, style_mono),
+                        Paragraph(student_ans_text, style_mono),
+                    ],
                 ],
-                [
-                    Paragraph(official_ans_text, style_mono),
-                    Paragraph(student_ans_text, style_mono),
-                ],
-            ],
-            colWidths=[usable_width / 2.0, usable_width / 2.0],
-        )
-        answers_table.setStyle(
-            TableStyle(
-                [
-                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                    ("BACKGROUND", (0, 0), (-1, -1), c_bg_white),
-                    ("BOX", (0, 0), (-1, -1), 0.5, c_border),
-                    ("INNERGRID", (0, 0), (-1, -1), 0.5, c_border),
-                    ("TOPPADDING", (0, 0), (-1, -1), 5),
-                    ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-                    ("LEFTPADDING", (0, 0), (-1, -1), 8),
-                    ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-                ]
+                colWidths=[usable_width / 2.0, usable_width / 2.0],
             )
-        )
-        card_flowables.append(answers_table)
+            answers_table.setStyle(
+                TableStyle(
+                    [
+                        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                        ("BACKGROUND", (0, 0), (-1, -1), c_bg_white),
+                        ("BOX", (0, 0), (-1, -1), 0.5, c_border),
+                        ("INNERGRID", (0, 0), (-1, -1), 0.5, c_border),
+                        ("TOPPADDING", (0, 0), (-1, -1), 5),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                    ]
+                )
+            )
+            card_flowables.append(answers_table)
 
         # AI Evaluation & Teacher Feedback Block
         ai_feedback_str = (
@@ -943,9 +960,12 @@ def build_evaluation_pdf_report(db: Session, teacher: Teacher, evaluation_id: st
         )
         card_flowables.append(eval_breakdown_table)
 
-        # Wrap question block so that question header + prompt don't get orphaned if possible
-        story.append(KeepTogether(card_flowables[:3]))
-        story.extend(card_flowables[3:])
+        # Wrap question block so that question header doesn't get orphaned if possible
+        if len(card_flowables) >= 2 and isinstance(card_flowables[0], Table) and isinstance(card_flowables[1], Table):
+            story.append(KeepTogether(card_flowables[:2]))
+            story.extend(card_flowables[2:])
+        else:
+            story.extend(card_flowables)
         story.append(Spacer(1, 10))
 
     # -------------------------------------------------------------

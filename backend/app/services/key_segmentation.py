@@ -82,12 +82,16 @@ def extract_criteria_from_block(text: str) -> tuple[str, list[str]]:
 
 
 def split_key_text(raw_lbl: str | None, text: str) -> list[tuple[str | None, str]]:
-    """Split an answer block if it swallowed subsequent question keys (e.g. Q8 inside Q7, or Q9 cont inside Q10)."""
-    pat = re.compile(r"(?:\n+)\s*(?:Q(?:uestion)?\.?\s*([0-9]{1,2}))[\.\:\s\-\,]+", re.I)
+    """Split an answer block if it swallowed subsequent question keys (e.g. Q8 inside Q7, or Ans 9 inside Q8)."""
+    pat = re.compile(
+        r"(?:\n+)\s*(?:(?:Q(?:uestion)?|Ans(?:wer)?)\.?\s*([0-9]{1,3})|([0-9]{1,3})\.)[\.\:\s\-\,]+",
+        re.I,
+    )
     boundaries = []
     for m in pat.finditer(text):
         if m.start() > 15:
-            boundaries.append((m.start(), f"Q{m.group(1)}"))
+            q_num = m.group(1) or m.group(2)
+            boundaries.append((m.start(), f"Q{q_num}"))
     if not boundaries:
         return [(raw_lbl, text)]
 

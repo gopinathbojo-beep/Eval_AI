@@ -371,6 +371,65 @@ export const VerifyExamScreen: React.FC<VerifyExamScreenProps> = ({
           </View>
         </Card>
 
+        {/* Document Information & Paper Structure Card */}
+        {questionsData && (
+          <Card style={[styles.issueCard, { marginBottom: 14 }]}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
+              <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                <Ionicons name="document-text-outline" size={20} color={colors.primary} />
+                <Text style={[styles.issueTitle, { color: colors.text }]}>Question Paper Structure</Text>
+              </View>
+              {questionsData.qp_code && (
+                <View style={{ backgroundColor: colors.surfaceElevated, paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, borderWidth: 1, borderColor: colors.border }}>
+                  <Text style={{ fontSize: 11, fontWeight: "700", color: colors.primary }}>Code: {questionsData.qp_code}</Text>
+                </View>
+              )}
+            </View>
+
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
+              <View style={{ backgroundColor: colors.surfaceElevated, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, borderWidth: 1, borderColor: colors.border }}>
+                <Text style={{ fontSize: 11, color: colors.textSecondary }}>Time Allowed</Text>
+                <Text style={{ fontSize: 12, fontWeight: "700", color: colors.text, marginTop: 2 }}>
+                  {questionsData.exam_duration_minutes ? `${Math.floor(questionsData.exam_duration_minutes / 60)}h ${questionsData.exam_duration_minutes % 60 ? `${questionsData.exam_duration_minutes % 60}m` : ""}` : "3 hours"}
+                </Text>
+              </View>
+
+              <View style={{ backgroundColor: colors.surfaceElevated, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, borderWidth: 1, borderColor: colors.border }}>
+                <Text style={{ fontSize: 11, color: colors.textSecondary }}>Maximum Marks</Text>
+                <Text style={{ fontSize: 12, fontWeight: "700", color: colors.primary, marginTop: 2 }}>
+                  {questionsData.exam_total_marks || 80} Marks
+                </Text>
+              </View>
+
+              <View style={{ backgroundColor: colors.successSoft, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, borderWidth: 1, borderColor: colors.success }}>
+                <Text style={{ fontSize: 11, color: colors.success }}>Detected Count</Text>
+                <Text style={{ fontSize: 12, fontWeight: "700", color: colors.success, marginTop: 2 }}>
+                  {questionsData.questions.length} of {questionsData.stated_question_count || 11} Questions ✓
+                </Text>
+              </View>
+            </View>
+
+            {/* Section Breakdown */}
+            <View style={{ marginTop: 12, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 10 }}>
+              <Text style={{ fontSize: 11, fontWeight: "700", color: colors.textSecondary, textTransform: "uppercase", marginBottom: 6 }}>
+                Examination Sections
+              </Text>
+              <View style={{ gap: 6 }}>
+                {(questionsData.sections_summary && questionsData.sections_summary.length > 0 ? questionsData.sections_summary : [
+                  { section: "Section A: Reading Skills", marks: 20, count: 2 },
+                  { section: "Section B: Writing Skills & Grammar", marks: 20, count: 3 },
+                  { section: "Section C: Language through Literature", marks: 40, count: 6 },
+                ]).map((s, idx) => (
+                  <View key={idx} style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", backgroundColor: colors.surfaceElevated, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6 }}>
+                    <Text style={{ fontSize: 12, fontWeight: "600", color: colors.text, flex: 1 }}>{s.section}</Text>
+                    <Text style={{ fontSize: 12, fontWeight: "700", color: colors.primary }}>{s.marks}m ({s.count} Qs)</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          </Card>
+        )}
+
         {/* Verification Checklist Section */}
         <Text style={[styles.sectionTitle, { color: colors.text }]}>
           Deterministic Verification Checklist

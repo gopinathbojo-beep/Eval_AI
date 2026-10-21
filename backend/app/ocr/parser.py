@@ -66,6 +66,16 @@ def _normalize_extracted_obj(obj: dict) -> dict:
     return obj
 
 
+def _combine_duplicate_keys(pairs):
+    d: dict = {}
+    for k, v in pairs:
+        if k in d and isinstance(d[k], list) and isinstance(v, list):
+            d[k].extend(v)
+        else:
+            d[k] = v
+    return d
+
+
 def _try_repair_json(text: str) -> dict | None:
     # Fix mismatched quotes on keys like 'page_number': or "page_number':
     cleaned = re.sub(r'["\']([a-zA-Z0-9_]+)["\']\s*:', r'"\1":', text)
@@ -74,7 +84,7 @@ def _try_repair_json(text: str) -> dict | None:
     for closing in ["", "}", "]}", "]}}"]:
         try:
             cand = cleaned + closing
-            obj = json.loads(cand)
+            obj = json.loads(cand, object_pairs_hook=_combine_duplicate_keys)
             if isinstance(obj, dict) and ("answers" in obj or "questions" in obj or "page_number" in obj):
                 return obj
         except Exception:
@@ -122,7 +132,7 @@ def extract_json_object(raw: str) -> dict:
 
     # 1) the whole thing
     try:
-        obj = json.loads(text)
+        obj = json.loads(text, object_pairs_hook=_combine_duplicate_keys)
         if isinstance(obj, dict):
             return _normalize_extracted_obj(obj)
         if isinstance(obj, list):
@@ -134,7 +144,7 @@ def extract_json_object(raw: str) -> dict:
     for m in _FENCE.finditer(text):
         body = m.group(1).strip()
         try:
-            obj = json.loads(body)
+            obj = json.loads(body, object_pairs_hook=_combine_duplicate_keys)
             if isinstance(obj, dict):
                 return _normalize_extracted_obj(obj)
         except json.JSONDecodeError:
@@ -150,7 +160,7 @@ def extract_json_object(raw: str) -> dict:
     best_len = -1
     for cand in _balanced_candidates(text):
         try:
-            obj = json.loads(cand)
+            obj = json.loads(cand, object_pairs_hook=_combine_duplicate_keys)
         except json.JSONDecodeError:
             continue
         if isinstance(obj, dict) and len(cand) > best_len:

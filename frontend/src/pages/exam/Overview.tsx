@@ -18,10 +18,37 @@ const NEXT: Record<string, [string, string, string]> = {
   FINALIZED: ["All Results Finalized", "results", "All student evaluations are final. Download marksheets and reports."],
 };
 
-export default function Overview() {
+interface OverviewProps {
+  onSelectSubTab?: (tab: "overview" | "paper" | "questions" | "key") => void;
+}
+
+export default function Overview({ onSelectSubTab }: OverviewProps) {
   const { exam } = useExam();
   const audit = useApi<AuditRow[]>(`/exams/${exam.id}/audit-logs`);
   const [title, to, hint] = NEXT[exam.status] || ["Continue Workflow", "", ""];
+
+  const targetUrl = (() => {
+    if (!to) return "";
+    if (to === "answer-sheets") return `/exams/${exam.id}/submissions`;
+    return `/exams/${exam.id}/${to}`;
+  })();
+
+  const handleContinue = () => {
+    if (onSelectSubTab) {
+      if (to === "question-paper" || to === "paper") {
+        onSelectSubTab("paper");
+        return;
+      }
+      if (to === "questions") {
+        onSelectSubTab("questions");
+        return;
+      }
+      if (to === "answer-key" || to === "key") {
+        onSelectSubTab("key");
+        return;
+      }
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -37,7 +64,7 @@ export default function Overview() {
             {hint && <p className="text-xs text-mute max-w-xl">{hint}</p>}
           </div>
           {to && (
-            <Link to={to}>
+            <Link to={targetUrl} onClick={handleContinue}>
               <Button variant="primary" className="shadow-xs">
                 <span>Continue</span>
                 <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

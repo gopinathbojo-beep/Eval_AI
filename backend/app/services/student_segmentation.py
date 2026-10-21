@@ -175,9 +175,10 @@ def _split_swallowed_answers(
         ]):
             continue
 
-        # If current question is >= num_str and num_str is a small bullet (1, 2, 3), it's a content bullet
+        is_explicit_q = bool(m.group(1))
+        # If not an explicit Q prefix, check if it's a small content bullet (1, 2, 3) inside an ongoing answer
         int_n = int(num_str) if num_str.isdigit() else 0
-        if curr_p_num is not None and curr_p_num >= int_n and int_n in (1, 2, 3):
+        if not is_explicit_q and curr_p_num is not None and curr_p_num >= int_n and int_n in (1, 2, 3):
             continue
 
         # If canonical questions are known, ensure this is a question number in the exam
@@ -345,10 +346,13 @@ def segment_student_answers(
                 rec = find_recovery_candidates(raw_lbl, text, canonical_questions)
                 if rec and rec[0].normalized_number != norm:
                     top = rec[0]
-                    # Check if norm was already mapped in an earlier answer
-                    already_mapped = any(
-                        g.normalized_number and parent_number(g.normalized_number) == parent_number(norm)
-                        for g in grouped
+                    # Check if norm was already mapped in an earlier answer or is currently active
+                    already_mapped = (
+                        (curr_norm_num is not None and parent_number(curr_norm_num) == parent_number(norm))
+                        or any(
+                            g.normalized_number and parent_number(g.normalized_number) == parent_number(norm)
+                            for g in grouped
+                        )
                     )
                     top_q = next((q for q in canonical_questions if q.normalized_number == top.normalized_number), None)
                     top_nums = _extract_distinct_numbers(getattr(top_q, "question_text", None)) if top_q else set()
@@ -362,7 +366,7 @@ def segment_student_answers(
                     should_redirect = False
                     if not exact_match and top.score >= 0.70:
                         should_redirect = True
-                    elif already_mapped and top.score >= 0.85:
+                    elif already_mapped and top.score >= 0.75:
                         should_redirect = True
                     elif top_dist_nums and not exact_dist_nums and top.score >= 0.85:
                         should_redirect = True
@@ -429,9 +433,13 @@ def segment_student_answers(
                         curr_confs.append(conf)
                     continue
 
-            # If current block has the exact same normalized number as ongoing question across pages, with explicit continuation, or continuing a redirected answer
+            # If current block has the exact same normalized number as ongoing question across pages or with explicit continuation
             is_explicit_cont = bool(raw_lbl and re.search(r"\b(?:cont|continued|contd)\b", raw_lbl, re.IGNORECASE))
-            if curr_norm_num and norm == curr_norm_num and (page_num > curr_page or is_explicit_cont or curr_was_redirected):
+            has_new_explicit_label = bool(raw_lbl and not is_explicit_cont and not _SUBPART_PATTERN.match(str(raw_lbl).strip()))
+            if curr_norm_num and norm == curr_norm_num and (
+                curr_was_redirected
+                or (not has_new_explicit_label and (page_num > curr_page or is_explicit_cont))
+            ):
                 curr_text_parts.append(text)
                 if bb and curr_page == page_num:
                     curr_bbox = _merge_bboxes(curr_bbox, bb)

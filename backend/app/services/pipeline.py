@@ -88,7 +88,8 @@ def process_document(kind: str, doc_id: str, only_failed: bool = False) -> None:
         model_cls = KINDS[kind][0]
         doc = db.get(model_cls, doc_id)
         if doc and doc.status != "CANCELLED":
-            doc.status, doc.error_message = "FAILED", "Processing failed unexpectedly. See the server log for details."
+            err_detail = f": {type(e).__name__} - {e}" if str(e) else f": {type(e).__name__}"
+            doc.status, doc.error_message = "FAILED", f"Processing failed unexpectedly{err_detail}. See the server log for details."
             db.commit()
     finally:
         db.close()
@@ -198,7 +199,7 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
         doc.error_message = f"{AI_BAD_RESPONSE_MESSAGE} Page(s) affected: {', '.join(map(str, failed))}."
         doc.stage = "Needs attention"
     else:
-        doc.status, doc.stage = "READY", "Ready for review"
+        doc.status, doc.stage, doc.error_message = "READY", "Ready for review", None
     db.commit()
 
 
@@ -257,19 +258,15 @@ def _build_questions(db: Session, doc, exam: Exam, wd: Path, results) -> None:
         db.query(ExamQuestion).filter_by(exam_id=exam.id).delete()
     struct = parse_question_paper_structure(results)
 
-    # Safety Net: If 0 questions were parsed, check if OCR captured any non-empty text blocks
+    # Safety Net: If 0 questions were parsed, check if OCR captured any non-empty text blocks (excluding instructions)
     if not struct.questions:
         fallback_texts = []
         for p, pres in results:
             raw_qs = getattr(pres, "questions", [])
             for q in raw_qs:
                 t = (getattr(q, "question_text", None) or "").strip()
-                if t:
+                if t and getattr(q, "question_type", None) not in ("information", "instruction", "metadata", "header"):
                     fallback_texts.append((p.get("page_number", 1), getattr(q, "bbox", None), t, getattr(q, "marks", None)))
-        if not fallback_texts and struct.instructions:
-            for inst in struct.instructions:
-                if len(inst.strip()) > 3:
-                    fallback_texts.append((1, None, inst.strip(), None))
 
         for idx, (p_num, bbox, fb_text, fb_marks) in enumerate(fallback_texts, 1):
             bbox_dict = bbox.model_dump() if hasattr(bbox, "model_dump") else (bbox if isinstance(bbox, dict) else None)
@@ -291,9 +288,16 @@ def _build_questions(db: Session, doc, exam: Exam, wd: Path, results) -> None:
                 )
             )
 
-    # Reconcile exam total marks if explicitly printed on paper and significantly different
+    # Reconcile exam total marks, duration, and instructions if printed on paper
     if struct.exam_max_marks and abs(exam.total_marks - struct.exam_max_marks) > 1e-9:
         log.info("Detected paper max marks %g vs exam total %g", struct.exam_max_marks, exam.total_marks)
+        exam.total_marks = struct.exam_max_marks
+
+    if struct.exam_duration_minutes and exam.duration_minutes != struct.exam_duration_minutes:
+        exam.duration_minutes = struct.exam_duration_minutes
+
+    if struct.instructions and not exam.instructions:
+        exam.instructions = "\n".join(struct.instructions)
 
     pages_by_num = {p["page_number"]: p for p, _ in results}
     pos, rows = 0, []
@@ -334,6 +338,22 @@ def _build_questions(db: Session, doc, exam: Exam, wd: Path, results) -> None:
                 r.verification_status = "NEEDS_REVIEW"
                 r.review_reason = "; ".join(filter(None, [r.review_reason, "Duplicate question number"]))
 
+    try:
+        import json
+        struct_path = wd / "structure.json"
+        with open(struct_path, "w", encoding="utf-8") as f:
+            json.dump({
+                "stated_question_count": struct.stated_question_count,
+                "stated_printed_pages": struct.stated_printed_pages,
+                "exam_duration_minutes": struct.exam_duration_minutes,
+                "exam_max_marks": struct.exam_max_marks,
+                "qp_code": struct.qp_code,
+                "sections": struct.sections,
+                "unclassified_blocks": struct.unclassified_blocks,
+            }, f, indent=2)
+    except Exception as e:
+        log.warning("Could not write structure.json: %s", e)
+
     if rows:
         from .state import at_least
         if not at_least(exam, "QUESTIONS_EXTRACTED"):
@@ -341,6 +361,14 @@ def _build_questions(db: Session, doc, exam: Exam, wd: Path, results) -> None:
     else:
         log.warning("No questions extracted for exam %s", exam.id)
         doc.error_message = "No questions could be extracted from this document. Please check the document or add questions manually."
+    db.commit()
+
+    # Reconcile dependent answer keys and student answers when question paper is processed or reprocessed
+    for key_doc in db.query(AnswerKeyDocument).filter_by(exam_id=exam.id, is_active=True).all():
+        apply_key_mapping(db, exam.id, key_doc.id)
+    for ev in db.query(Evaluation).filter_by(exam_id=exam.id).all():
+        if ev.status != "FINALIZED":
+            apply_student_mapping(db, ev)
     db.commit()
 
 

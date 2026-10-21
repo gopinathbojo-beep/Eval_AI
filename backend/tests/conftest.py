@@ -82,8 +82,7 @@ class _H(BaseHTTPRequestHandler):
 
     def do_POST(self):
         req = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-        assert req["model"] == MODEL and req["stream"] is False
-        assert req.get("format") in ("json", None)
+        assert req["model"] == MODEL and req["stream"] is False and req.get("format") in ("json", None)
         msgs = req["messages"]
         if "images" in msgs[1]:
             assert len(msgs[1]["images"][0]) > 100          # real base64 image was sent

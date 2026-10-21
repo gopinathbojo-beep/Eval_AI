@@ -1,7 +1,7 @@
 import pytest
 from pathlib import Path
-from backend.app.ocr.internvl import fallback_parse_plain_text
-from backend.app.ocr.schemas import StudentPageResult, QuestionPageResult, AnswerKeyPageResult
+from app.ocr.internvl import fallback_parse_plain_text
+from app.ocr.schemas import StudentPageResult, QuestionPageResult, AnswerKeyPageResult
 
 
 def test_fallback_parse_student_answers():
