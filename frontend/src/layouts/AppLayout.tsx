@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, NavLink, Navigate, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../context/Auth";
+import { useApi } from "../hooks/useApi";
 import { Loading } from "../components/ui";
 import {
   IconDashboard,
@@ -18,6 +19,7 @@ import {
   IconX,
   IconChevronRight,
   IconSparkles,
+  IconAlertTriangle,
 } from "../components/Icons";
 
 interface NavGroup {
@@ -56,6 +58,14 @@ export function AppLayout() {
   const loc = useLocation();
   const [dark, setDark] = useState(() => localStorage.getItem("adem_theme") === "dark");
   const [sidebarOpen, setSidebarOpen] = useState(false); // Mobile drawer state
+  const { data: aiStatus } = useApi<{
+    available: boolean;
+    model: string;
+    url: string;
+    message: string;
+    detail?: string;
+  }>("/system/ai-status");
+  const [aiBannerDismissed, setAiBannerDismissed] = useState(false);
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
@@ -232,6 +242,29 @@ export function AppLayout() {
             </div>
           </div>
         </header>
+
+        {/* Offline AI Diagnostics Banner */}
+        {aiStatus && !aiStatus.available && !aiBannerDismissed && (
+          <div className="bg-amber-500/10 border-b border-amber-500/30 px-4 py-2.5 text-xs text-amber-800 dark:text-amber-200 flex items-center justify-between gap-3 animate-fadeIn">
+            <div className="flex items-center gap-2">
+              <IconAlertTriangle size={16} className="text-amber-600 dark:text-amber-400 shrink-0" />
+              <span>
+                <strong>Offline AI Mode:</strong> {aiStatus.message || "Local AI model is currently offline."} Manual teacher grading, OCR review, and marksheet export remain active.
+              </span>
+              <Link to="/settings" className="underline font-semibold ml-1 hover:text-amber-900 dark:hover:text-amber-100">
+                AI Diagnostics
+              </Link>
+            </div>
+            <button
+              onClick={() => setAiBannerDismissed(true)}
+              className="rounded p-1 hover:bg-amber-500/20 text-amber-700 dark:text-amber-300 transition-ui"
+              title="Dismiss banner"
+              aria-label="Dismiss banner"
+            >
+              <IconX size={14} />
+            </button>
+          </div>
+        )}
 
         {/* Scrollable Page Body */}
         <main className="min-w-0 flex-1 overflow-y-auto">

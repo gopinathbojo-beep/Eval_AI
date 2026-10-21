@@ -34,7 +34,8 @@ Read the entire page visually. Adapt to any layout, curriculum, or typography. I
 
 UNIVERSAL EXTRACTION RULES:
 1. DETECT ALL ELEMENTS: Extract EVERY question, problem, task, table, and exercise on the page.
-   - CRITICAL: Look at the VERY TOP of the page. If there is a table, grid, or exercise continuation (e.g. an editing exercise with columns "Line | Incorrect Word | Correct Word" or fill-in blanks), YOU MUST EXTRACT IT as an item with raw_question_number null (or "cont"). NEVER SKIP OR OMIT A TABLE AT THE TOP OF THE PAGE!
+   - Scan the ENTIRE page from top to bottom. If a previous section or exercise ends and a new section (e.g. "SECTION B: CREATIVE WRITING SKILLS") or new question starts in the middle or bottom half of the page, YOU MUST EXTRACT IT!
+   - Look at the VERY TOP of the page. If there is a table, grid, or exercise continuation (e.g. an editing exercise with columns "Line | Incorrect Word | Correct Word" or fill-in blanks), YOU MUST EXTRACT IT as an item with raw_question_number null (or "cont"). NEVER SKIP OR OMIT A TABLE AT THE TOP OF THE PAGE!
 2. PRESERVE STRUCTURE & TEXT: Transcribe full text verbatim without truncation or summarisation.
    - Mathematical expressions: inline vertical fractions and powers e.g. [((2/3)⁻² × (3/4)⁻³) ÷ (8/9)⁻²], superscripts e.g. x² + 1/x² = 6, 16x⁴ - 81y⁴, π, √.
    - Chemical equations: keep reaction arrows →, gas evolution ↑, and blanks ________ (e.g. Na + H₂O → ________ + H₂ ↑).

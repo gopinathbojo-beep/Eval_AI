@@ -96,16 +96,32 @@ export interface Question {
   normalized_number: string | null;
   question_text: string;
   raw_ocr_text: string;
+  clean_question_text?: string;
+  passage_text?: string | null;
   question_type: string | null;
   max_marks: number | null;
   section: string | null;
   position: number;
   page_start: number | null;
+  page_end?: number | null;
   bbox: BBox | null;
   has_crop: boolean;
   ocr_confidence: number | null;
   verification_status: "UNVERIFIED" | "VERIFIED" | "NEEDS_REVIEW";
   review_reason: string | null;
+}
+
+export interface SectionSummary {
+  section: string;
+  count: number;
+  marks: number;
+}
+
+export interface UnclassifiedBlock {
+  page_number: number;
+  label: string | null;
+  text: string;
+  bbox?: BBox | null;
 }
 
 export interface QuestionsResponse {
@@ -115,6 +131,15 @@ export interface QuestionsResponse {
   exam_total_marks: number;
   marks_warning: string | null;
   locked: boolean;
+  exam_name?: string | null;
+  exam_subject?: string | null;
+  exam_duration_minutes?: number | null;
+  exam_instructions?: string | null;
+  stated_question_count?: number | null;
+  stated_printed_pages?: number | null;
+  qp_code?: string | null;
+  sections_summary?: SectionSummary[];
+  unclassified_blocks?: UnclassifiedBlock[];
 }
 
 export interface AnswerKeyRow {

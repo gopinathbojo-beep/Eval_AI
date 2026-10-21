@@ -191,7 +191,12 @@ def confirm_all_mappings(ev_id: str, db: Session = Depends(get_db), t: Teacher =
     answers = db.query(StudentAnswer).filter_by(evaluation_id=ev.id).all()
     count = 0
     for a in answers:
-        if a.status == "MAPPED" and a.exam_question_id and not a.mapping_confirmed:
+        if (
+            a.status == "MAPPED"
+            and a.exam_question_id
+            and not a.mapping_confirmed
+            and not (a.mapping_note or "").startswith("DUPLICATE")
+        ):
             a.mapping_confirmed = True
             count += 1
             audit(db, exam_id=ev.exam_id, teacher_id=t.id, entity_type="student_answer", entity_id=a.id,

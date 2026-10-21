@@ -3,7 +3,7 @@ from __future__ import annotations
 from sqlalchemy.orm import Session
 from ..config import get_settings
 from ..models import AnswerKey, Evaluation, ExamQuestion, StudentAnswer
-from .mapping import MAPPED, NEEDS_REVIEW, UNMAPPED, flag_duplicates, map_label
+from .mapping import MAPPED, NEEDS_REVIEW, UNMAPPED, flag_duplicates, map_label, detect_mapping_anomalies
 
 DUP_NOTE = "DUPLICATE_MAPPING: another answer also maps to this question"
 _RECOMPUTABLE = {"UNMAPPED", "NEEDS_REVIEW", "MAPPED"}
@@ -18,11 +18,15 @@ def apply_student_mapping(db: Session, ev: Evaluation) -> None:
     minc = get_settings().min_label_confidence
     answers = db.query(StudentAnswer).filter_by(evaluation_id=ev.id).order_by(StudentAnswer.position).all()
     total_ans = len(answers)
+    prev_qid = None
     for a in answers:
         if a.status == "IGNORED" or a.status not in _RECOMPUTABLE:
+            if a.exam_question_id:
+                prev_qid = a.exam_question_id
             continue
         if a.mapping_confirmed and a.exam_question_id:
             a.status, a.mapping_note, a.mapping_candidates = "MAPPED", None, []
+            prev_qid = a.exam_question_id
             continue
         res = map_label(
             a.raw_question_number,
@@ -32,12 +36,15 @@ def apply_student_mapping(db: Session, ev: Evaluation) -> None:
             answer_text=a.answer_text,
             answer_position=a.position,
             total_answers=total_ans,
+            prev_question_id=prev_qid,
         )
         a.normalized_number = res.normalized_number
         a.exam_question_id = res.question_id
         a.mapping_note = res.note
         a.mapping_candidates = res.candidates
         a.status = {MAPPED: "MAPPED", NEEDS_REVIEW: "NEEDS_REVIEW", UNMAPPED: "UNMAPPED"}[res.status]
+        if res.question_id:
+            prev_qid = res.question_id
     live = [a for a in answers if a.status != "IGNORED"]
     dups = flag_duplicates(live)
     for a in live:
@@ -51,6 +58,7 @@ def apply_student_mapping(db: Session, ev: Evaluation) -> None:
 def apply_key_mapping(db: Session, exam_id: str, doc_id: str) -> None:
     qs = exam_questions(db, exam_id)
     keys = db.query(AnswerKey).filter_by(exam_id=exam_id, document_id=doc_id).order_by(AnswerKey.created_at).all()
+    prev_qid = None
     for idx, k in enumerate(keys, 1):
         res = map_label(
             k.raw_question_number,
@@ -60,9 +68,12 @@ def apply_key_mapping(db: Session, exam_id: str, doc_id: str) -> None:
             answer_text=k.answer_text,
             answer_position=idx,
             total_answers=len(keys),
+            prev_question_id=prev_qid,
         )
         k.normalized_number, k.exam_question_id = res.normalized_number, res.question_id
         k.mapping_status, k.mapping_note, k.mapping_candidates = res.status, res.note, res.candidates
+        if res.question_id:
+            prev_qid = res.question_id
     db.flush()
     refresh_key_state(db, exam_id)
 
@@ -117,4 +128,5 @@ def mapping_summary(db: Session, ev: Evaluation) -> dict:
         "missing": len(missing),
         "ignored": len(answers) - len(live),
         "missing_question_ids": [q.id for q in missing],
+        "anomalies": detect_mapping_anomalies(live, qs),
     }

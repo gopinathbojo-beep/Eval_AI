@@ -76,6 +76,12 @@ class DocumentStructure:
     questions: list[StructuredQuestion] = field(default_factory=list)
     sections: list[str] = field(default_factory=list)
     instructions: list[str] = field(default_factory=list)
+    stated_question_count: int | None = None
+    stated_printed_pages: int | None = None
+    exam_duration_minutes: int | None = None
+    qp_code: str | None = None
+    passages: dict[str, str] = field(default_factory=dict)
+    unclassified_blocks: list[dict] = field(default_factory=list)
 
 
 def is_heading_or_title(text: str) -> bool:
@@ -336,6 +342,14 @@ def _consolidate_subquestions(questions: list[StructuredQuestion]) -> list[Struc
         if len(sub_qs) == 1:
             consolidated.append(sub_qs[0])
             continue
+
+        has_explicit_parent = any(sq.raw_question_number and not is_sub_question(sq.normalized_number or "") for sq in sub_qs)
+        has_bare_sub = any(sq.raw_question_number and not re.search(r"\d", sq.raw_question_number) for sq in sub_qs)
+        if not (has_explicit_parent or has_bare_sub):
+            for sq in sub_qs:
+                consolidated.append(sq)
+            continue
+
         first_q = sub_qs[0]
         merged_texts = []
         seen_texts = set()
@@ -593,6 +607,36 @@ def split_swallowed_qp_blocks(
 def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> DocumentStructure:
     """Parse raw page extraction results into a unified DocumentStructure model."""
     doc_struct = DocumentStructure()
+
+    # Step 1: Scan global metadata across all pages
+    for page_info, page_res in page_results:
+        for q in getattr(page_res, "questions", []):
+            txt = (getattr(q, "question_text", None) or "").strip()
+            if not doc_struct.stated_question_count:
+                m_qc = re.search(r"\b(?:contains|comprises)\s+([0-9]{1,3})\s+questions\b", txt, re.I)
+                if m_qc:
+                    doc_struct.stated_question_count = int(m_qc.group(1))
+            if not doc_struct.stated_printed_pages:
+                m_pc = re.search(r"\b(?:contains|comprises)\s+([0-9]{1,3})\s+printed\s+pages\b", txt, re.I)
+                if m_pc:
+                    doc_struct.stated_printed_pages = int(m_pc.group(1))
+            if not doc_struct.exam_max_marks:
+                m_mm = re.search(r"\b(?:Maximum|Max\.?|Total)\s*Marks?\s*[:\-]?\s*([0-9]+(?:\.[0-9]+)?)\b", txt, re.I)
+                if m_mm:
+                    doc_struct.exam_max_marks = float(m_mm.group(1))
+            if not doc_struct.exam_duration_minutes:
+                m_tm = re.search(r"\bTime\s*allowed\s*[:\-]?\s*([0-9]+)\s*(?:hours?|hrs?)\b", txt, re.I)
+                if m_tm:
+                    doc_struct.exam_duration_minutes = int(m_tm.group(1)) * 60
+            if not doc_struct.qp_code:
+                m_qp_slash = re.search(r"\b([0-9]{1,3}\/[0-9]{1,3}\/[0-9]{1,3})\b", txt)
+                if m_qp_slash:
+                    doc_struct.qp_code = m_qp_slash.group(1).strip()
+                else:
+                    m_qp = re.search(r"\bQ\.?P\.?\s*Code(?:\s*No\.?)?\s*[:\s]*([0-9a-zA-Z\/\-]+)", txt, re.I)
+                    if m_qp and m_qp.group(1).lower() not in ("given", "no", "number", "on"):
+                        doc_struct.qp_code = m_qp.group(1).strip()
+
     current_section: str | None = None
     section_marks_rule: float | None = None
     current_passage: str | None = None
@@ -664,13 +708,6 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
                         section_marks_rule = rule
                 continue
 
-            # If raw_label is missing or empty, attempt to extract label from start of question text
-            if raw_label is None or raw_label.lower() in ("null", "none", "?", "unknown", ""):
-                extracted_lbl, rest_text = _extract_label_from_text_prefix(text)
-                if extracted_lbl:
-                    raw_label = extracted_lbl
-                    text = rest_text
-
             # Check for overall exam max marks in headers
             header_max = extract_exam_total_marks(text)
             if header_max and not doc_struct.exam_max_marks:
@@ -693,6 +730,13 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
                 if rule is not None:
                     section_marks_rule = rule
                 continue
+
+            # If raw_label is missing or empty, attempt to extract label from start of question text
+            if raw_label is None or raw_label.lower() in ("null", "none", "?", "unknown", ""):
+                extracted_lbl, rest_text = _extract_label_from_text_prefix(text)
+                if extracted_lbl:
+                    raw_label = extracted_lbl
+                    text = rest_text
 
             last_q = doc_struct.questions[-1] if doc_struct.questions else None
 
@@ -847,7 +891,7 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
                     display_num = "1"
             else:
                 norm = normalize_question_number(raw_label)
-                if norm is None:
+                if norm is None or (is_sub_question(norm) and not parent_number(norm)):
                     sub_tok = extract_subquestion_token(raw_label)
                     if sub_tok and doc_struct.questions:
                         last_q = doc_struct.questions[-1]

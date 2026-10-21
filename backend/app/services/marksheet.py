@@ -24,7 +24,7 @@ from openpyxl.formatting.rule import CellIsRule
 from openpyxl.worksheet.datavalidation import DataValidation
 from sqlalchemy.orm import Session
 
-from ..models import SchoolClass, Subject, Student, Exam, Evaluation
+from ..models import SchoolClass, Subject, Student, Exam, Evaluation, Teacher
 
 # Theme Colors (ADEM Executive Palette)
 NAVY_HEADER = "1E3A8A"       # Primary deep navy header
@@ -62,6 +62,11 @@ def generate_marksheet_workbook(db: Session, teacher_id: str | None = None) -> o
     """
     Builds the complete multi-sheet Marksheet Excel workbook.
     """
+    if not teacher_id:
+        primary_teacher = db.query(Teacher).filter_by(email="you@school.org").first() or db.query(Teacher).first()
+        if primary_teacher:
+            teacher_id = primary_teacher.id
+
     # 1. Fetch Classes
     class_query = db.query(SchoolClass)
     if teacher_id:
@@ -153,7 +158,6 @@ def generate_marksheet_workbook(db: Session, teacher_id: str | None = None) -> o
 
     # 5. Build Consolidated Overview Sheet (Inserted as the very first sheet)
     build_overview_sheet(wb, class_sheets_meta, subjects)
-
     return wb
 
 
@@ -287,6 +291,10 @@ def build_class_sheet(
     num_rows = max(len(students), 15) if not is_template else 25
     end_row = start_row + num_rows - 1
 
+    for _, c_th, c_in, _ in subject_col_triplets:
+        theory_dv.add(f"{c_th}{start_row}:{c_th}{end_row}")
+        internal_dv.add(f"{c_in}{start_row}:{c_in}{end_row}")
+
     for idx in range(num_rows):
         r = start_row + idx
         sno = idx + 1
@@ -303,9 +311,12 @@ def build_class_sheet(
             # If evaluated marks exist for this student and subject
             if st and (st.id, sub.id) in eval_map:
                 total_ev = eval_map[(st.id, sub.id)]
-                # Split roughly theory (80%) and internal (20%)
-                th_val = round(min(80, total_ev * 0.8))
-                in_val = round(min(20, total_ev - th_val))
+                if total_ev <= 80:
+                    th_val = round(total_ev)
+                    in_val = 19
+                else:
+                    th_val = round(min(80, total_ev * 0.8))
+                    in_val = round(min(20, total_ev - th_val))
                 ws[f"{c_th}{r}"].value = th_val
                 ws[f"{c_in}{r}"].value = in_val
 
@@ -315,9 +326,6 @@ def build_class_sheet(
             ws[f"{c_in}{r}"].alignment = Alignment(horizontal="center", vertical="center")
             ws[f"{c_tot}{r}"].alignment = Alignment(horizontal="center", vertical="center")
             ws[f"{c_tot}{r}"].font = Font(name="Calibri", size=10, bold=True)
-
-            theory_dv.add(f"{c_th}{r}")
-            internal_dv.add(f"{c_in}{r}")
 
         # Grand Total formula: Sum of all subject totals
         sum_terms = "+".join([f"{c}{r}" for c in tot_col_letters])
@@ -586,7 +594,7 @@ def generate_marksheet_bytes(db: Session, teacher_id: str | None = None) -> io.B
     return stream
 
 
-def sync_root_marksheet_file(db: Session, teacher_id: str | None = None) -> bool:
+def sync_root_marksheet_file(db: Session, teacher_id: str | None = None, stream: io.BytesIO | None = None) -> bool:
     """
     Safely writes the dynamically updated workbook to Student_Marksheet.xlsx in the project root.
     If the file is locked open in Excel, saves to Student_Marksheet_Updated.xlsx as a fallback.
@@ -595,8 +603,7 @@ def sync_root_marksheet_file(db: Session, teacher_id: str | None = None) -> bool
         import os
         base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
         target_path = os.path.join(base_dir, "Student_Marksheet.xlsx")
-        stream = generate_marksheet_bytes(db, teacher_id=teacher_id)
-        data = stream.getvalue()
+        data = stream.getvalue() if stream is not None else generate_marksheet_bytes(db, teacher_id=teacher_id).getvalue()
         try:
             with open(target_path, "wb") as f:
                 f.write(data)

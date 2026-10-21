@@ -80,12 +80,18 @@ export function Classes() {
     }
   };
 
+
   const table = useTableState<ClassRow>({
     data,
     searchFilter: (c, q) => c.name.toLowerCase().includes(q),
     sortFns: {
-      name: (a, b) => a.name.localeCompare(b.name),
-      student_count: (a, b) => (a.student_count ?? 0) - (b.student_count ?? 0),
+      name: (a, b) =>
+        a.name.localeCompare(b.name, undefined, {
+          numeric: true,
+          sensitivity: "base",
+        }),
+      student_count: (a, b) =>
+        (a.student_count ?? 0) - (b.student_count ?? 0),
     },
     defaultSort: "name",
     defaultOrder: "asc",
@@ -96,6 +102,7 @@ export function Classes() {
     { value: "name", label: "Class name" },
     { value: "student_count", label: "Student count" },
   ];
+
 
   return (
     <div className="space-y-4">
@@ -507,20 +514,38 @@ export function Students() {
       .sort((a, b) => a.label.localeCompare(b.label));
   }, [data]);
 
+
   const table = useTableState<Student>({
     data,
     searchFilter: (s, q) =>
-      s.name.toLowerCase().includes(q) || s.roll_number.toLowerCase().includes(q),
+      s.name.toLowerCase().includes(q) ||
+      s.roll_number.toLowerCase().includes(q),
+
     filters: {
       class: (s, val) => (s.class_name || s.class_id) === val,
     },
+
     sortFns: {
       name: (a, b) => a.name.localeCompare(b.name),
+
       roll: (a, b) =>
-        a.roll_number.localeCompare(b.roll_number, undefined, { numeric: true, sensitivity: "base" }),
-      class: (a, b) => (a.class_name || "").localeCompare(b.class_name || ""),
+        a.roll_number.localeCompare(b.roll_number, undefined, {
+          numeric: true,
+          sensitivity: "base",
+        }),
+
+      class: (a, b) =>
+        (a.class_name || "").localeCompare(
+          b.class_name || "",
+          undefined,
+          {
+            numeric: true,
+            sensitivity: "base",
+          }
+        ),
     },
-    defaultSort: "roll",
+
+    defaultSort: "class",
     defaultOrder: "asc",
     initialPageSize: 10,
   });
@@ -530,6 +555,7 @@ export function Students() {
     { value: "name", label: "Student name" },
     { value: "class", label: "Class" },
   ];
+
 
   const filterConfigs = [
     {

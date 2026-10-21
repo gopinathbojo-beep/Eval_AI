@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useExam } from "../ExamWorkspace";
 import Overview from "./Overview";
 import QuestionPaper from "./QuestionPaper";
@@ -22,6 +22,12 @@ export default function ContentAndKey({ defaultSubTab }: ContentAndKeyProps) {
   };
 
   const [activeSubTab, setActiveSubTab] = useState<"overview" | "paper" | "questions" | "key">(getInitialTab);
+
+  useEffect(() => {
+    if (defaultSubTab) {
+      setActiveSubTab(defaultSubTab);
+    }
+  }, [defaultSubTab]);
 
   const subTabs = [
     {
@@ -86,8 +92,8 @@ export default function ContentAndKey({ defaultSubTab }: ContentAndKeyProps) {
 
       {/* Render Active Sub-section */}
       <div>
-        {activeSubTab === "overview" && <Overview />}
-        {activeSubTab === "paper" && <QuestionPaper />}
+        {activeSubTab === "overview" && <Overview onSelectSubTab={(tab) => setActiveSubTab(tab)} />}
+        {activeSubTab === "paper" && <QuestionPaper onReviewQuestions={() => setActiveSubTab("questions")} />}
         {activeSubTab === "questions" && <Questions />}
         {activeSubTab === "key" && <AnswerKey />}
       </div>

@@ -1,15 +1,30 @@
+import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AppLayout } from "./layouts/AppLayout";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
-import { Classes, Subjects, Students, SettingsPage } from "./pages/Lists";
-import { ExamsList, ExamNew } from "./pages/Exams";
-import ExamWorkspace from "./pages/ExamWorkspace";
-import ContentAndKey from "./pages/exam/ContentAndKey";
-import Submissions from "./pages/exam/Submissions";
-import { ExamEvaluation, ExamResults } from "./pages/exam/Sheets";
-import EvaluationPage from "./pages/EvaluationPage";
-import { ResultPage, ResultsList, EvaluationsList } from "./pages/Results";
+import { Loading } from "./components/ui";
+
+// Dynamic lazy-loaded routes for optimal initial bundle size
+const Classes = lazy(() => import("./pages/Lists").then((m) => ({ default: m.Classes })));
+const Subjects = lazy(() => import("./pages/Lists").then((m) => ({ default: m.Subjects })));
+const Students = lazy(() => import("./pages/Lists").then((m) => ({ default: m.Students })));
+const SettingsPage = lazy(() => import("./pages/Lists").then((m) => ({ default: m.SettingsPage })));
+const ExamsList = lazy(() => import("./pages/Exams").then((m) => ({ default: m.ExamsList })));
+const ExamNew = lazy(() => import("./pages/Exams").then((m) => ({ default: m.ExamNew })));
+const ExamWorkspace = lazy(() => import("./pages/ExamWorkspace"));
+const ContentAndKey = lazy(() => import("./pages/exam/ContentAndKey"));
+const Submissions = lazy(() => import("./pages/exam/Submissions"));
+const ExamEvaluation = lazy(() => import("./pages/exam/Sheets").then((m) => ({ default: m.ExamEvaluation })));
+const ExamResults = lazy(() => import("./pages/exam/Sheets").then((m) => ({ default: m.ExamResults })));
+const EvaluationPage = lazy(() => import("./pages/EvaluationPage"));
+const ResultsList = lazy(() => import("./pages/Results").then((m) => ({ default: m.ResultsList })));
+const ResultPage = lazy(() => import("./pages/Results").then((m) => ({ default: m.ResultPage })));
+const EvaluationsList = lazy(() => import("./pages/Results").then((m) => ({ default: m.EvaluationsList })));
+
+const Suspended = ({ children }: { children: React.ReactNode }) => (
+  <Suspense fallback={<Loading text="Loading workspace..." />}>{children}</Suspense>
+);
 
 export default function App() {
   return (
@@ -19,29 +34,29 @@ export default function App() {
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/teacher/*" element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/classes" element={<Classes />} />
-        <Route path="/subjects" element={<Subjects />} />
-        <Route path="/students" element={<Students />} />
-        <Route path="/settings" element={<SettingsPage />} />
-        <Route path="/exams" element={<ExamsList />} />
-        <Route path="/exams/new" element={<ExamNew />} />
-        <Route path="/exams/:id" element={<ExamWorkspace />}>
-          <Route index element={<ContentAndKey defaultSubTab="overview" />} />
-          <Route path="content" element={<ContentAndKey defaultSubTab="overview" />} />
-          <Route path="overview" element={<ContentAndKey defaultSubTab="overview" />} />
-          <Route path="question-paper" element={<ContentAndKey defaultSubTab="paper" />} />
-          <Route path="questions" element={<ContentAndKey defaultSubTab="questions" />} />
-          <Route path="answer-key" element={<ContentAndKey defaultSubTab="key" />} />
-          <Route path="submissions" element={<Submissions defaultSubTab="sheets" />} />
-          <Route path="students" element={<Submissions defaultSubTab="roster" />} />
-          <Route path="answer-sheets" element={<Submissions defaultSubTab="sheets" />} />
-          <Route path="evaluation" element={<ExamEvaluation />} />
-          <Route path="results" element={<ExamResults />} />
+        <Route path="/classes" element={<Suspended><Classes /></Suspended>} />
+        <Route path="/subjects" element={<Suspended><Subjects /></Suspended>} />
+        <Route path="/students" element={<Suspended><Students /></Suspended>} />
+        <Route path="/settings" element={<Suspended><SettingsPage /></Suspended>} />
+        <Route path="/exams" element={<Suspended><ExamsList /></Suspended>} />
+        <Route path="/exams/new" element={<Suspended><ExamNew /></Suspended>} />
+        <Route path="/exams/:id" element={<Suspended><ExamWorkspace /></Suspended>}>
+          <Route index element={<Suspended><ContentAndKey defaultSubTab="overview" /></Suspended>} />
+          <Route path="content" element={<Suspended><ContentAndKey defaultSubTab="overview" /></Suspended>} />
+          <Route path="overview" element={<Suspended><ContentAndKey defaultSubTab="overview" /></Suspended>} />
+          <Route path="question-paper" element={<Suspended><ContentAndKey defaultSubTab="paper" /></Suspended>} />
+          <Route path="questions" element={<Suspended><ContentAndKey defaultSubTab="questions" /></Suspended>} />
+          <Route path="answer-key" element={<Suspended><ContentAndKey defaultSubTab="key" /></Suspended>} />
+          <Route path="submissions" element={<Suspended><Submissions defaultSubTab="sheets" /></Suspended>} />
+          <Route path="students" element={<Suspended><Submissions defaultSubTab="roster" /></Suspended>} />
+          <Route path="answer-sheets" element={<Suspended><Submissions defaultSubTab="sheets" /></Suspended>} />
+          <Route path="evaluation" element={<Suspended><ExamEvaluation /></Suspended>} />
+          <Route path="results" element={<Suspended><ExamResults /></Suspended>} />
         </Route>
-        <Route path="/evaluations" element={<EvaluationsList />} />
-        <Route path="/evaluations/:id" element={<EvaluationPage />} />
-        <Route path="/results" element={<ResultsList />} />
-        <Route path="/results/:id" element={<ResultPage />} />
+        <Route path="/evaluations" element={<Suspended><EvaluationsList /></Suspended>} />
+        <Route path="/evaluations/:id" element={<Suspended><EvaluationPage /></Suspended>} />
+        <Route path="/results" element={<Suspended><ResultsList /></Suspended>} />
+        <Route path="/results/:id" element={<Suspended><ResultPage /></Suspended>} />
       </Route>
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>

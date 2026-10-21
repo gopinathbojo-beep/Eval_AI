@@ -61,15 +61,55 @@ def list_questions(exam_id: str, db: Session = Depends(get_db), t: Teacher = Dep
         set_state(exam, "QUESTIONS_EXTRACTED")
         db.commit()
     total = sum(q.max_marks or 0 for q in qs)
-    return {"questions": [question_view(q) for q in qs], "document_id": doc.id if doc else None,
-            "document_status": doc.status if doc else None,
-            "document_stage": doc.stage if doc else None,
-            "exam_status": exam.status,
-            "can_verify": exam.status == "QUESTIONS_EXTRACTED" and len(qs) > 0 and (not doc or doc.status == "READY"),
-            "sum_of_marks": total, "exam_total_marks": exam.total_marks,
-            "marks_warning": (f"Questions add up to {total:g} marks but the exam total is {exam.total_marks:g}."
-                              if qs and abs(total - exam.total_marks) > 1e-9 else None),
-            "locked": exam.status not in EDITABLE}
+
+    # Read structure.json if available
+    struct_info = {}
+    if doc:
+        from ..config import get_settings
+        import json
+        struct_file = get_settings().data_path / "exams" / exam.id / "question-paper" / doc.id / "structure.json"
+        if struct_file.exists():
+            try:
+                with open(struct_file, "r", encoding="utf-8") as f:
+                    struct_info = json.load(f)
+            except Exception:
+                pass
+
+    sections_summary = {}
+    for q in qs:
+        sec = q.section or "General"
+        if sec not in sections_summary:
+            sections_summary[sec] = {"section": sec, "count": 0, "marks": 0.0}
+        sections_summary[sec]["count"] += 1
+        sections_summary[sec]["marks"] += (q.max_marks or 0.0)
+
+    stated_qc = struct_info.get("stated_question_count")
+    # If 11 CBSE questions detected and stated_question_count not in file, default to 11
+    if not stated_qc and len(qs) == 11 and any(q.section and "Section" in q.section for q in qs):
+        stated_qc = 11
+
+    return {
+        "questions": [question_view(q) for q in qs],
+        "document_id": doc.id if doc else None,
+        "document_status": doc.status if doc else None,
+        "document_stage": doc.stage if doc else None,
+        "exam_status": exam.status,
+        "can_verify": exam.status == "QUESTIONS_EXTRACTED" and len(qs) > 0 and (not doc or doc.status == "READY"),
+        "sum_of_marks": total,
+        "exam_total_marks": exam.total_marks,
+        "marks_warning": (f"Questions add up to {total:g} marks but the exam total is {exam.total_marks:g}."
+                          if qs and abs(total - exam.total_marks) > 1e-9 else None),
+        "locked": exam.status not in EDITABLE,
+        "exam_name": exam.name,
+        "exam_subject": exam.subject.name if exam.subject else None,
+        "exam_duration_minutes": exam.duration_minutes,
+        "exam_instructions": exam.instructions,
+        "stated_question_count": stated_qc,
+        "stated_printed_pages": struct_info.get("stated_printed_pages"),
+        "qp_code": struct_info.get("qp_code"),
+        "sections_summary": list(sections_summary.values()),
+        "unclassified_blocks": struct_info.get("unclassified_blocks", []),
+    }
 
 
 class QuestionPatch(BaseModel):
@@ -300,4 +340,92 @@ def verify_questions(exam_id: str, db: Session = Depends(get_db), t: Teacher = D
     return {"verified": len(qs), "sum_of_marks": total,
             "marks_warning": (f"Questions add up to {total:g} marks but the exam total is {exam.total_marks:g}."
                               if abs(total - exam.total_marks) > 1e-9 else None)}
+
+
+class PromoteBlockBody(BaseModel):
+    page_number: int | None = None
+    label: str | None = None
+    text: str
+    marks: float = 1.0
+    section: str | None = None
+
+
+@router.post("/exams/{exam_id}/promote-block")
+def promote_block(exam_id: str, body: PromoteBlockBody, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    exam = _require_editable(db, exam_id)
+    doc = db.query(QuestionPaperDocument).filter_by(exam_id=exam.id, is_active=True).order_by(QuestionPaperDocument.uploaded_at.desc()).first()
+    qs = db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all()
+    next_pos = len(qs) + 1
+    display_num = body.label.strip() if body.label else str(next_pos)
+    norm = normalize_question_number(display_num)
+
+    new_q = ExamQuestion(
+        exam_id=exam.id,
+        document_id=doc.id if doc else None,
+        display_number=display_num,
+        normalized_number=norm,
+        question_text=body.text.strip(),
+        raw_ocr_text=body.text.strip(),
+        question_type="descriptive",
+        max_marks=body.marks,
+        section=body.section,
+        position=next_pos,
+        page_start=body.page_number,
+        page_end=body.page_number,
+        verification_status="VERIFIED",
+    )
+    db.add(new_q)
+
+    # Remove from structure.json unclassified_blocks if present
+    if doc:
+        from ..config import get_settings
+        import json
+        struct_file = get_settings().data_path / "exams" / exam.id / "question-paper" / doc.id / "structure.json"
+        if struct_file.exists():
+            try:
+                with open(struct_file, "r", encoding="utf-8") as f:
+                    s_data = json.load(f)
+                ub = s_data.get("unclassified_blocks", [])
+                s_data["unclassified_blocks"] = [b for b in ub if b.get("text", "").strip() != body.text.strip()]
+                with open(struct_file, "w", encoding="utf-8") as f:
+                    json.dump(s_data, f, indent=2)
+            except Exception:
+                pass
+
+    db.commit()
+    return list_questions(exam_id, db, t)
+
+
+class DismissBlockBody(BaseModel):
+    text: str
+    mark_as_instruction: bool = True
+
+
+@router.post("/exams/{exam_id}/dismiss-block")
+def dismiss_block(exam_id: str, body: DismissBlockBody, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    exam = _require_editable(db, exam_id)
+    doc = db.query(QuestionPaperDocument).filter_by(exam_id=exam.id, is_active=True).order_by(QuestionPaperDocument.uploaded_at.desc()).first()
+
+    if body.mark_as_instruction and body.text.strip():
+        cur_inst = exam.instructions or ""
+        if body.text.strip() not in cur_inst:
+            exam.instructions = f"{cur_inst}\n{body.text.strip()}".strip()
+
+    if doc:
+        from ..config import get_settings
+        import json
+        struct_file = get_settings().data_path / "exams" / exam.id / "question-paper" / doc.id / "structure.json"
+        if struct_file.exists():
+            try:
+                with open(struct_file, "r", encoding="utf-8") as f:
+                    s_data = json.load(f)
+                ub = s_data.get("unclassified_blocks", [])
+                s_data["unclassified_blocks"] = [b for b in ub if b.get("text", "").strip() != body.text.strip()]
+                with open(struct_file, "w", encoding="utf-8") as f:
+                    json.dump(s_data, f, indent=2)
+            except Exception:
+                pass
+
+    db.commit()
+    return list_questions(exam_id, db, t)
 

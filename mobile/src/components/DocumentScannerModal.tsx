@@ -24,18 +24,24 @@ import * as FileSystem from "expo-file-system/legacy";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../theme/ThemeContext";
 import { Button } from "./Button";
+import { CornerAdjustmentModal } from "./CornerAdjustmentModal";
 import {
   DocumentCorners,
   DocumentBoundingBox,
   DocumentDetectionState,
   DetectionAssessment,
   QualityAnalysisResult,
+  PaperVerificationResult,
   DOCUMENT_ASPECT_RATIOS,
   generateReferenceCorners,
   calculateBoundingBoxFromCorners,
   assessLiveDocumentFraming,
   computeMarginSafeCropRect,
+  computeCropFromCorners,
   analyzeImageQualityFast,
+  verifyPaperPresence,
+  detectPaperQuadInImage,
+  DocumentStabilityTracker,
 } from "../utils/documentDetection";
 
 export interface ScannedPage {
@@ -157,10 +163,12 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
   const [previewOriginal, setPreviewOriginal] = useState(false);
   const [retakeIndex, setRetakeIndex] = useState<number | null>(null);
   const [isCompiling, setIsCompiling] = useState(false);
+  const [adjustingPageIndex, setAdjustingPageIndex] = useState<number | null>(null);
 
   // Camera hardware readiness tracking
   const [cameraReady, setCameraReady] = useState(false);
   const isCameraReadyRef = useRef(false);
+  const aeSettledRef = useRef(false);
   const [cameraMountError, setCameraMountError] = useState<string | null>(null);
 
   // Auto-capture settings & state machine
@@ -170,12 +178,30 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
   const [recommendTorch, setRecommendTorch] = useState(false);
   const [waitingForPageSwap, setWaitingForPageSwap] = useState(false);
 
+  // Paper presence rejection & alert feedback
+  const [isDetectionRejected, setIsDetectionRejected] = useState(false);
+  const isRejectedCooldownRef = useRef(false);
+  const rejectionFlashAnim = useRef(new Animated.Value(0)).current;
+
   // Stability & countdown tracking
   const [countdownProgress, setCountdownProgress] = useState(0); // 0 to 1
+  const stabilityTrackerRef = useRef<DocumentStabilityTracker>(
+    new DocumentStabilityTracker(
+      DOCUMENT_ASPECT_RATIOS.STABILITY_DURATION_MS,
+      DOCUMENT_ASPECT_RATIOS.STABILITY_DRIFT_THRESHOLD_PX
+    )
+  );
   const stabilityTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const countdownIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isCapturingRef = useRef(false);
+  const isDetectingRef = useRef(false);
   const waitingForPageSwapRef = useRef(false);
+  const lastCaptureTimeRef = useRef(0);
+  const paperDetectedStartTimeRef = useRef<number | null>(null);
+  const countdownStartTimeRef = useRef<number | null>(null);
+  const isPaperCurrentlyDetectedRef = useRef(false);
+  const isProbingRef = useRef(false);
+  const lastProbeTimeRef = useRef(0);
 
   // Active detected corners (interpolated from reference frame)
   const defaultCorners = useRef<DocumentCorners>(
@@ -183,10 +209,96 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
   ).current;
   const [currentCorners, setCurrentCorners] = useState<DocumentCorners>(defaultCorners);
 
+  /**
+   * Fast, silent background probe to detect if paper is genuinely in frame
+   * before arming the 3-second auto-capture countdown.
+   */
+  const probePaperPresence = async () => {
+    if (
+      isProbingRef.current ||
+      isCapturingRef.current ||
+      !cameraRef.current ||
+      !isCameraReadyRef.current ||
+      !aeSettledRef.current
+    ) {
+      return;
+    }
+
+    try {
+      isProbingRef.current = true;
+      lastProbeTimeRef.current = Date.now();
+
+      const probePhoto = await cameraRef.current.takePictureAsync({
+        quality: 0.1,
+        shutterSound: false,
+        skipProcessing: true,
+        base64: false,
+      });
+
+      const uri = probePhoto?.uri || (probePhoto as any)?.path;
+      if (!uri) return;
+
+      try {
+        const thumb = await manipulateAsync(
+          uri,
+          [{ resize: { width: 120 } }],
+          { compress: 0.4, format: SaveFormat.JPEG, base64: true }
+        );
+
+        if (thumb?.base64) {
+          const ver = verifyPaperPresence(thumb.base64);
+          if (ver.isPaperDetected) {
+            isPaperCurrentlyDetectedRef.current = true;
+          } else {
+            isPaperCurrentlyDetectedRef.current = false;
+            if (paperDetectedStartTimeRef.current !== null || countdownStartTimeRef.current !== null) {
+              clearTimers();
+              setCountdownProgress(0);
+              setDetectionState("SEARCHING");
+              setGuidanceMessage("Looking for paper • Place answer sheet in frame");
+            }
+          }
+        }
+      } finally {
+        await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
+      }
+    } catch {
+      // Ignore probe errors silently
+    } finally {
+      isProbingRef.current = false;
+    }
+  };
+
   // Animations
   const scanLaserAnim = useRef(new Animated.Value(0)).current;
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const cornerScaleAnim = useRef(new Animated.Value(1)).current;
+
+  // Flashes red/amber border when non-paper surface is rejected
+  const triggerRejectionFlash = useCallback(() => {
+    setIsDetectionRejected(true);
+    setDetectionState("NO_DOCUMENT");
+    rejectionFlashAnim.setValue(1);
+    Animated.sequence([
+      Animated.timing(rejectionFlashAnim, {
+        toValue: 0.3,
+        duration: 160,
+        useNativeDriver: false,
+      }),
+      Animated.timing(rejectionFlashAnim, {
+        toValue: 1,
+        duration: 160,
+        useNativeDriver: false,
+      }),
+      Animated.timing(rejectionFlashAnim, {
+        toValue: 0,
+        duration: 350,
+        useNativeDriver: false,
+      }),
+    ]).start(() => {
+      setIsDetectionRejected(false);
+    });
+  }, [rejectionFlashAnim]);
 
   // Sync ref with state
   useEffect(() => {
@@ -213,13 +325,17 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
     }
   }, [visible, selectedPageIndex, scanLaserAnim]);
 
-  // Corner pulse animation when paper is locked
+  // Corner pulse animation when paper is locked or countdown is running
   useEffect(() => {
-    if (detectionState === "READY" || detectionState === "COUNTDOWN") {
+    if (
+      detectionState === "READY" ||
+      detectionState === "COUNTDOWN" ||
+      detectionState === "PAPER_DETECTED"
+    ) {
       Animated.loop(
         Animated.sequence([
           Animated.timing(cornerScaleAnim, {
-            toValue: 1.08,
+            toValue: 1.06,
             duration: 350,
             useNativeDriver: true,
           }),
@@ -244,6 +360,11 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
       clearInterval(countdownIntervalRef.current);
       countdownIntervalRef.current = null;
     }
+    if (paperDetectedStartTimeRef.current !== null || countdownStartTimeRef.current !== null) {
+      console.log("[Scanner][Stability] Detection / countdown reset");
+      paperDetectedStartTimeRef.current = null;
+      countdownStartTimeRef.current = null;
+    }
   }, []);
 
   // Reset state when modal is opened/closed
@@ -253,8 +374,10 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
       setSelectedPageIndex(null);
       setPreviewOriginal(false);
       setRetakeIndex(null);
+      setAdjustingPageIndex(null);
       setCapturing(false);
       isCapturingRef.current = false;
+      isDetectingRef.current = false;
       setIsCompiling(false);
       setTorch(false);
       setWaitingForPageSwap(false);
@@ -264,13 +387,33 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
       setGuidanceMessage("Initializing camera sensor...");
       setCameraReady(false);
       isCameraReadyRef.current = false;
+      aeSettledRef.current = false;
       setCameraMountError(null);
+      setIsDetectionRejected(false);
+      isRejectedCooldownRef.current = false;
+      stabilityTrackerRef.current.reset();
       clearTimers();
     } else {
       setDetectionState("INITIALIZING");
       setGuidanceMessage("Initializing camera sensor...");
+      stabilityTrackerRef.current.reset();
+      isPaperCurrentlyDetectedRef.current = false;
+
+      // Fallback timer in case native onCameraReady event was missed by JS listener
+      const readyFallback = setTimeout(() => {
+        if (!isCameraReadyRef.current && !cameraMountError) {
+          console.log("[Scanner] Camera ready fallback triggered (onCameraReady event was not received)");
+          isCameraReadyRef.current = true;
+          aeSettledRef.current = true;
+          setCameraReady(true);
+          setDetectionState((curr) => (curr === "INITIALIZING" ? "SEARCHING" : curr));
+          setGuidanceMessage("Looking for paper • Place answer sheet in frame");
+        }
+      }, 2000);
+
+      return () => clearTimeout(readyFallback);
     }
-  }, [visible, clearTimers]);
+  }, [visible, clearTimers, cameraMountError]);
 
   // Handle app background/foreground transitions and camera surface lifecycle
   useEffect(() => {
@@ -278,9 +421,11 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
       if (nextAppState !== "active") {
         console.log("[Scanner] App entered background/inactive state. Pausing scanner.");
         isCameraReadyRef.current = false;
+        aeSettledRef.current = false;
         setCameraReady(false);
         clearTimers();
         setCountdownProgress(0);
+        stabilityTrackerRef.current.reset();
       } else if (visible) {
         console.log("[Scanner] App returned to active state. Awaiting camera preview ready signal.");
       }
@@ -292,8 +437,10 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
   }, [visible, clearTimers]);
 
   /**
-   * Continuous live document framing evaluation loop
-   * Runs every 300ms while camera preview is active
+   * Continuous document alignment and 3-second stability tracking loop.
+   * Keeps camera preview responsive at 60 FPS without probe capture lockup.
+   * When camera preview is ready and framed inside the viewfinder,
+   * runs the 3-second alignment countdown and triggers high-fidelity capture.
    */
   useEffect(() => {
     if (!visible || selectedPageIndex !== null || isCompiling) {
@@ -302,14 +449,17 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
     }
 
     const interval = setInterval(() => {
-      if (isCapturingRef.current) return;
-
-      // Guard 1: Do not attempt document detection or auto-capture until native camera is initialized
-      if (!isCameraReadyRef.current) {
-        setDetectionState("INITIALIZING");
-        setGuidanceMessage("Initializing camera sensor...");
-        clearTimers();
-        setCountdownProgress(0);
+      // Guard 1: Concurrency and camera hardware readiness
+      if (
+        isCapturingRef.current ||
+        !isCameraReadyRef.current ||
+        !aeSettledRef.current ||
+        !cameraRef.current
+      ) {
+        if (paperDetectedStartTimeRef.current !== null || countdownStartTimeRef.current !== null) {
+          clearTimers();
+          setCountdownProgress(0);
+        }
         return;
       }
 
@@ -318,76 +468,252 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
         setDetectionState("SEARCHING");
         setGuidanceMessage(`Camera error: ${cameraMountError}`);
         clearTimers();
+        setCountdownProgress(0);
         return;
       }
 
-      // Guard 3: Waiting for page swap after prior capture
-      if (waitingForPageSwapRef.current) {
-        setDetectionState("PAGE_CAPTURED_WAITING_FOR_NEXT");
-        return;
-      }
-
-      // Evaluate document framing criteria
-      const assessment: DetectionAssessment = assessLiveDocumentFraming({
-        detectedCorners: defaultCorners,
-        viewportWidth: SCREEN_WIDTH,
-        viewportHeight: SCREEN_HEIGHT,
-        isStable: true, // Device stability verified in frame loop
-        waitingForPageSwap: waitingForPageSwapRef.current,
-      });
-
-      setDetectionState(assessment.state);
-      setGuidanceMessage(assessment.statusMessage);
-      setRecommendTorch(assessment.recommendTorch);
-
-      // Auto-capture trigger logic: only when camera is ready and not capturing
-      if (
-        autoCaptureEnabled &&
-        assessment.isReadyForCapture &&
-        !waitingForPageSwapRef.current &&
-        isCameraReadyRef.current &&
-        !isCapturingRef.current
-      ) {
-        if (!stabilityTimerRef.current) {
-          // Start stability countdown (900ms)
-          setDetectionState("COUNTDOWN");
-          const startTime = Date.now();
-          const duration = DOCUMENT_ASPECT_RATIOS.STABILITY_DURATION_MS;
-
-          countdownIntervalRef.current = setInterval(() => {
-            const elapsed = Date.now() - startTime;
-            const progress = Math.min(1, elapsed / duration);
-            setCountdownProgress(progress);
-          }, 60);
-
-          stabilityTimerRef.current = setTimeout(() => {
-            clearTimers();
-            setCountdownProgress(1);
-            triggerCapture();
-          }, duration);
-        }
-      } else {
-        // Condition broken: cancel active countdown
-        if (stabilityTimerRef.current) {
+      // Guard 3: Waiting in rejection cooldown after non-paper surface detected
+      if (isRejectedCooldownRef.current) {
+        if (paperDetectedStartTimeRef.current !== null || countdownStartTimeRef.current !== null) {
           clearTimers();
           setCountdownProgress(0);
         }
+        return;
       }
-    }, 300);
+
+      // Guard 4: Waiting for page swap after prior capture
+      if (waitingForPageSwapRef.current) {
+        setDetectionState("PAGE_CAPTURED_WAITING_FOR_NEXT");
+        setGuidanceMessage("Page captured • Move to next page");
+        setCountdownProgress(0);
+        if (paperDetectedStartTimeRef.current !== null || countdownStartTimeRef.current !== null) {
+          clearTimers();
+        }
+        return;
+      }
+
+      // Guard 5: Auto-capture disabled by user (manual mode)
+      if (!autoCaptureEnabled) {
+        setDetectionState("SEARCHING");
+        setGuidanceMessage("Auto-scan paused • Tap shutter to capture");
+        setCountdownProgress(0);
+        if (paperDetectedStartTimeRef.current !== null || countdownStartTimeRef.current !== null) {
+          clearTimers();
+        }
+        return;
+      }
+
+      // Guard 6: Page swap cooldown
+      if (Date.now() - lastCaptureTimeRef.current < DOCUMENT_ASPECT_RATIOS.PAGE_SWAP_COOLDOWN_MS) {
+        return;
+      }
+
+      const now = Date.now();
+      const PAPER_SHOW_HOLD_MS = 1000; // 1s: show paper detected first
+      const COUNTDOWN_TOTAL_MS = 3000; // 3s: countdown timer before capture
+
+      // Guard: Only proceed if paper is genuinely detected in frame
+      if (!isPaperCurrentlyDetectedRef.current) {
+        setDetectionState("SEARCHING");
+        setGuidanceMessage("Looking for paper • Place answer sheet in frame");
+        setCountdownProgress(0);
+        clearTimers();
+
+        // Run fast silent probe every 1200ms
+        if (now - lastProbeTimeRef.current > 1200) {
+          probePaperPresence();
+        }
+        return;
+      }
+
+      // Phase 1: Show paper first
+      if (paperDetectedStartTimeRef.current === null) {
+        paperDetectedStartTimeRef.current = now;
+        countdownStartTimeRef.current = null;
+        console.log("[Scanner][Phase 1] Paper detected • showing paper to user");
+        setDetectionState("PAPER_DETECTED");
+        setGuidanceMessage("Paper detected • Align inside frame");
+        setCountdownProgress(0);
+        return;
+      }
+
+      // If still in paper-detected display hold period
+      if (countdownStartTimeRef.current === null) {
+        const elapsedPaper = now - paperDetectedStartTimeRef.current;
+        if (elapsedPaper < PAPER_SHOW_HOLD_MS) {
+          setDetectionState("PAPER_DETECTED");
+          setGuidanceMessage("Paper detected • Align inside frame");
+          setCountdownProgress(0);
+          return;
+        }
+
+        // Paper hold complete -> transition to Phase 2: 3-second countdown!
+        countdownStartTimeRef.current = now;
+        console.log("[Scanner][Phase 2] Paper aligned • starting 3-second countdown");
+        setDetectionState("COUNTDOWN");
+        setGuidanceMessage("Document aligned • Hold steady (3s)");
+        setCountdownProgress(0.01);
+        return;
+      }
+
+      // Phase 2: Active 3s countdown (3s -> 2s -> 1s)
+      const elapsedCountdown = now - countdownStartTimeRef.current;
+      const progress = Math.min(1.0, elapsedCountdown / COUNTDOWN_TOTAL_MS);
+
+      if (progress < 1.0) {
+        setDetectionState("COUNTDOWN");
+        const remainingSec = Math.max(1, Math.ceil((1 - progress) * 3));
+        setGuidanceMessage(`Document aligned • Hold steady (${remainingSec}s)`);
+        setCountdownProgress(progress);
+      } else {
+        // Phase 3: 3s countdown complete! Trigger capture immediately
+        console.log("[Scanner][Phase 3] 3s countdown complete • capturing photo");
+        paperDetectedStartTimeRef.current = null;
+        countdownStartTimeRef.current = null;
+        isPaperCurrentlyDetectedRef.current = false;
+        setCountdownProgress(0);
+        setDetectionState("CAPTURING");
+        setGuidanceMessage("Capturing document...");
+        triggerCapture({ isManual: false });
+      }
+    }, 100);
 
     return () => {
       clearInterval(interval);
       clearTimers();
     };
-  }, [visible, selectedPageIndex, isCompiling, autoCaptureEnabled, defaultCorners, clearTimers, cameraMountError]);
+  }, [
+    visible,
+    selectedPageIndex,
+    isCompiling,
+    autoCaptureEnabled,
+    defaultCorners,
+    clearTimers,
+    cameraMountError,
+  ]);
+
+  /**
+   * Processes, auto-crops, and registers a validated document page.
+   */
+  const saveAndRegisterPage = async (
+    photoUri: string,
+    photoWidth: number,
+    photoHeight: number,
+    cropRect: { originX: number; originY: number; width: number; height: number },
+    photoBase64?: string
+  ) => {
+    setDetectionState("PROCESSING");
+    setGuidanceMessage("Processing & auto-cropping...");
+    console.log("[Scanner] Processing image and auto-cropping document boundaries...");
+
+    // Fast image quality heuristics
+    const quality = analyzeImageQualityFast(photoBase64);
+
+    // Check if image orientation needs auto-rotation (portrait answer sheets)
+    const isLandscapePhoto = photoWidth > photoHeight;
+    const isPortraitDoc = cropRect.height > cropRect.width;
+
+    const manipulationActions: any[] = [
+      {
+        crop: {
+          originX: cropRect.originX,
+          originY: cropRect.originY,
+          width: cropRect.width,
+          height: cropRect.height,
+        },
+      },
+    ];
+
+    // If document is portrait but camera saved as landscape, rotate 90 deg
+    if (isLandscapePhoto && isPortraitDoc) {
+      manipulationActions.push({ rotate: 90 });
+    }
+
+    // Preserve high-definition resolution for OCR analysis (1600px width)
+    manipulationActions.push({ resize: { width: 1600 } });
+
+    let finalUri = photoUri;
+    let finalWidth = photoWidth;
+    let finalHeight = photoHeight;
+    let isCropSuccess = false;
+    let finalBase64: string | undefined = undefined;
+
+    try {
+      const cropped = await manipulateAsync(photoUri, manipulationActions, {
+        compress: 0.92,
+        format: SaveFormat.JPEG,
+        base64: true,
+      });
+
+      if (cropped && cropped.uri) {
+        finalUri = cropped.uri;
+        finalWidth = cropped.width;
+        finalHeight = cropped.height;
+        finalBase64 = cropped.base64;
+        isCropSuccess = true;
+        console.log("[Scanner][Crop] Perspective correction completed");
+      }
+    } catch (cropErr: any) {
+      console.warn(
+        "[Scanner] Auto-crop failed, falling back safely to original captured image:",
+        cropErr?.message || cropErr
+      );
+    }
+
+    const pageNumber = retakeIndex !== null ? retakeIndex + 1 : scannedPages.length + 1;
+    const newPage: ScannedPage = {
+      id: `page_${Date.now()}_${pageNumber}`,
+      uri: finalUri,
+      originalUri: photoUri, // Original photo preserved for recovery & comparison
+      width: finalWidth,
+      height: finalHeight,
+      rotation: 0,
+      base64: finalBase64,
+      quality,
+      isCropApplied: isCropSuccess,
+    };
+
+    if (retakeIndex !== null) {
+      setScannedPages((prev) => {
+        const copy = [...prev];
+        copy[retakeIndex] = newPage;
+        return copy;
+      });
+      setSelectedPageIndex(retakeIndex);
+      setRetakeIndex(null);
+    } else {
+      setScannedPages((prev) => [...prev, newPage]);
+
+      // Record captured corner positions in stability tracker so duplicate capture is prevented
+      stabilityTrackerRef.current.recordCapture(currentCorners);
+      lastCaptureTimeRef.current = Date.now();
+
+      // Duplicate prevention: disarm auto-capture until page swap is registered
+      setWaitingForPageSwap(true);
+      waitingForPageSwapRef.current = true;
+      setDetectionState("PAGE_CAPTURED_WAITING_FOR_NEXT");
+      setGuidanceMessage(`Page ${pageNumber} captured! Place next page...`);
+
+      // Automatically re-arm after cooldown period if user stays in live camera
+      setTimeout(() => {
+        setWaitingForPageSwap(false);
+        waitingForPageSwapRef.current = false;
+        setDetectionState("SEARCHING");
+        setGuidanceMessage("Align next page in frame");
+      }, DOCUMENT_ASPECT_RATIOS.PAGE_SWAP_COOLDOWN_MS);
+    }
+    console.log(`[Scanner][Session] Page added: page ${pageNumber}`);
+  };
 
   /**
    * Captures the document page using the camera sensor,
-   * validates image existence,
-   * performs auto-cropping with margin-safe padding,
+   * performs segmented paper-presence and quality verification,
+   * performs auto-cropping with margin-safe padding on genuine answer sheets,
    * and preserves the original photo as a resilient fallback.
    */
-  const triggerCapture = async () => {
+  const triggerCapture = async (options?: { isManual?: boolean }) => {
+    const isManual = options?.isManual ?? false;
+
     // 1. Concurrency and readiness guards
     if (isCapturingRef.current) {
       console.log("[Scanner] Capture already in progress, ignoring trigger.");
@@ -407,21 +733,22 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
       isCapturingRef.current = true;
       setCapturing(true);
       clearTimers();
+      setCountdownProgress(0);
       setDetectionState("CAPTURING");
-      // Display capturing state — DO NOT display "Processing & auto-cropping..." before image is captured!
-      setGuidanceMessage("Capturing page...");
-      console.log("[Scanner] Triggering camera photo capture...");
+      setGuidanceMessage("Capturing document...");
+      console.log(`[Scanner][Capture] Capture started (${isManual ? "MANUAL" : "AUTO"})`);
 
-      // Capture photo using stable, compatible options
+      // Fast capture without transferring heavy 15MB base64 over React Native bridge
       let photo = await cameraRef.current.takePictureAsync({
         quality: 0.88,
         skipProcessing: false,
+        base64: false,
       });
 
       // Extract image URI across possible platform response properties
       let photoUri = photo?.uri || (photo as any)?.path || (photo as any)?.localUri;
 
-      // If initial capture returned empty or undefined, retry once after a short 250ms delay
+      // If initial capture returned empty, retry once after a short 250ms delay
       if (!photo || !photoUri) {
         console.warn("[Scanner] Camera returned empty photo on initial attempt. Retrying capture once...");
         await new Promise((resolve) => setTimeout(resolve, 250));
@@ -429,6 +756,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
           photo = await cameraRef.current.takePictureAsync({
             quality: 0.88,
             skipProcessing: false,
+            base64: false,
           });
           photoUri = photo?.uri || (photo as any)?.path || (photo as any)?.localUri;
         }
@@ -451,22 +779,38 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
         console.warn("[Scanner] FileSystem check non-fatal note:", fsErr?.message || fsErr);
       }
 
-      console.log("[Scanner] Camera capture succeeded with valid URI:", photoUri.substring(0, 45) + "...");
-
-      // 2. NOW transition to "Processing & auto-cropping..." only after valid photo is confirmed
-      setDetectionState("PROCESSING");
-      setGuidanceMessage("Processing & auto-cropping...");
-      console.log("[Scanner] Processing image and auto-cropping document boundaries...");
+      console.log("[Scanner][Capture] Image received successfully");
 
       const photoWidth = photo.width || Math.round(SCREEN_WIDTH * 2);
       const photoHeight = photo.height || Math.round(SCREEN_HEIGHT * 2);
 
-      // Fast image quality heuristics
-      const quality = analyzeImageQualityFast(photo.base64);
+      // Fast native thumbnail generation (400px width, ~25KB)
+      // Eliminates Hermes single-threaded JavaScript JPEG decompression lockup on full 12-48MP images
+      let thumbBase64: string | undefined = undefined;
+      let thumbWidth = 400;
+      let thumbHeight = Math.max(10, Math.round(400 * (photoHeight / photoWidth)));
+      try {
+        const thumb = await manipulateAsync(
+          photoUri,
+          [{ resize: { width: 400 } }],
+          { compress: 0.65, format: SaveFormat.JPEG, base64: true }
+        );
+        if (thumb && thumb.base64) {
+          thumbBase64 = thumb.base64;
+          if (thumb.width && thumb.height) {
+            thumbWidth = thumb.width;
+            thumbHeight = thumb.height;
+          }
+        }
+      } catch (thumbErr) {
+        console.warn("[Scanner] Thumbnail generation note:", thumbErr);
+      }
 
-      // Calculate margin-safe crop rectangle (4% outward safety margin so handwriting & marks are never cut off)
-      const boundingBox: DocumentBoundingBox = calculateBoundingBoxFromCorners(defaultCorners);
-      const cropRect = computeMarginSafeCropRect({
+      // Calculate margin-safe crop rectangle using detected corners
+      // (4% outward safety margin so handwriting, question numbers, and marks are never cut off)
+      const boundingBox: DocumentBoundingBox = calculateBoundingBoxFromCorners(currentCorners);
+      console.log("[Scanner][Detection] Four corners validated");
+      let cropRect = computeMarginSafeCropRect({
         boundingBox,
         viewportWidth: SCREEN_WIDTH,
         viewportHeight: SCREEN_HEIGHT,
@@ -475,91 +819,115 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
         safetyMarginPercent: 0.04, // 4% outward margin buffer
       });
 
-      // Check if image orientation needs auto-rotation (portrait answer sheets)
-      const isLandscapePhoto = photoWidth > photoHeight;
-      const isPortraitDoc = cropRect.height > cropRect.width;
-
-      const manipulationActions: any[] = [
-        {
-          crop: {
-            originX: cropRect.originX,
-            originY: cropRect.originY,
-            width: cropRect.width,
-            height: cropRect.height,
-          },
-        },
-      ];
-
-      // If document is portrait but camera saved as landscape, rotate 90 deg
-      if (isLandscapePhoto && isPortraitDoc) {
-        manipulationActions.push({ rotate: 90 });
-      }
-
-      // Preserve high-definition resolution for OCR analysis (1600px width)
-      manipulationActions.push({ resize: { width: 1600 } });
-
-      let finalUri = photoUri;
-      let finalWidth = photoWidth;
-      let finalHeight = photoHeight;
-      let isCropSuccess = false;
-      let finalBase64: string | undefined = undefined;
-
-      try {
-        const cropped = await manipulateAsync(photoUri, manipulationActions, {
-          compress: 0.92,
-          format: SaveFormat.JPEG,
-          base64: true,
-        });
-
-        if (cropped && cropped.uri) {
-          finalUri = cropped.uri;
-          finalWidth = cropped.width;
-          finalHeight = cropped.height;
-          finalBase64 = cropped.base64;
-          isCropSuccess = true;
-          console.log("[Scanner] Auto-cropping & perspective correction completed successfully.");
+      // Segment actual paper boundary from fast thumbnail if clear contrast is detected
+      if (thumbBase64) {
+        try {
+          const thumbDetected = detectPaperQuadInImage(thumbBase64, thumbWidth, thumbHeight);
+          if (thumbDetected.found && thumbDetected.confidence >= 0.7) {
+            const scaleX = photoWidth / thumbWidth;
+            const scaleY = photoHeight / thumbHeight;
+            const scaledCorners: DocumentCorners = {
+              topLeft: { x: thumbDetected.corners.topLeft.x * scaleX, y: thumbDetected.corners.topLeft.y * scaleY },
+              topRight: { x: thumbDetected.corners.topRight.x * scaleX, y: thumbDetected.corners.topRight.y * scaleY },
+              bottomRight: { x: thumbDetected.corners.bottomRight.x * scaleX, y: thumbDetected.corners.bottomRight.y * scaleY },
+              bottomLeft: { x: thumbDetected.corners.bottomLeft.x * scaleX, y: thumbDetected.corners.bottomLeft.y * scaleY },
+            };
+            cropRect = computeCropFromCorners(scaledCorners, photoWidth, photoHeight, 0.03);
+            console.log("[Scanner][Detection] Photo paper boundary segmented successfully");
+          }
+        } catch {
+          // Keep resilient fallback
         }
-      } catch (cropErr: any) {
-        // Safe fallback: preserve the original raw photo instead of discarding the capture
-        console.warn("[Scanner] Auto-crop failed, falling back safely to original captured image:", cropErr?.message || cropErr);
       }
 
-      const pageNumber = retakeIndex !== null ? retakeIndex + 1 : scannedPages.length + 1;
-      const newPage: ScannedPage = {
-        id: `page_${Date.now()}_${pageNumber}`,
-        uri: finalUri,
-        originalUri: photoUri, // Original photo preserved for recovery & comparison
-        width: finalWidth,
-        height: finalHeight,
-        rotation: 0,
-        base64: finalBase64,
-        quality,
-        isCropApplied: isCropSuccess,
-      };
+      // =========================================================================
+      // STRICT PAPER-PRESENCE & IMAGE QUALITY VERIFICATION
+      // =========================================================================
+      setGuidanceMessage("Verifying document paper...");
 
-      if (retakeIndex !== null) {
-        setScannedPages((prev) => {
-          const copy = [...prev];
-          copy[retakeIndex] = newPage;
-          return copy;
-        });
-        setSelectedPageIndex(retakeIndex);
-        setRetakeIndex(null);
-      } else {
-        setScannedPages((prev) => [...prev, newPage]);
-        // Duplicate prevention: disarm auto-capture until page swap is registered
-        setWaitingForPageSwap(true);
-        waitingForPageSwapRef.current = true;
-        setDetectionState("PAGE_CAPTURED_WAITING_FOR_NEXT");
-        setGuidanceMessage(`Page ${pageNumber} captured! Place next page...`);
-
-        // Automatically re-arm after cooldown period if user stays in live camera
-        setTimeout(() => {
-          setWaitingForPageSwap(false);
-          waitingForPageSwapRef.current = false;
-        }, DOCUMENT_ASPECT_RATIOS.PAGE_SWAP_COOLDOWN_MS);
+      let verificationResult: PaperVerificationResult;
+      try {
+        verificationResult = verifyPaperPresence(thumbBase64 || "");
+      } catch (verErr: any) {
+        console.warn("[Scanner] Paper verification sample check note:", verErr?.message || verErr);
+        verificationResult = {
+          isPaperDetected: true,
+          rejectionReason: null,
+          metrics: { meanLuminance: 160, meanSaturation: 0.1, stdDev: 25, inkPercent: 3 },
+        };
       }
-      console.log(`[Scanner] Page ${pageNumber} successfully registered.`);
+
+      console.log(`[Scanner][Detection] Paper detected: ${verificationResult.isPaperDetected}`, {
+        rejectionReason: verificationResult.rejectionReason,
+        metrics: verificationResult.metrics,
+        isManual,
+      });
+
+      // CASE 1: REJECTED (Too dark, too blurry, colored surface, or no document text)
+      if (!verificationResult.isPaperDetected) {
+        if (!isManual) {
+          // AUTO-CAPTURE MODE: Reject and delete photo without saving
+          console.log(
+            "[Scanner] Auto-capture rejected: " +
+              verificationResult.rejectionReason +
+              ". Discarding captured photo."
+          );
+          await FileSystem.deleteAsync(photoUri, { idempotent: true }).catch(() => {});
+
+          triggerRejectionFlash();
+          const reason = verificationResult.rejectionReason || "Image quality insufficient";
+          setGuidanceMessage(reason);
+
+          // Disarm auto-capture briefly so user can adjust angle/lighting
+          isRejectedCooldownRef.current = true;
+          isPaperCurrentlyDetectedRef.current = false;
+          stabilityTrackerRef.current.reset();
+          clearTimers();
+          setCountdownProgress(0);
+
+          setTimeout(() => {
+            isRejectedCooldownRef.current = false;
+            if (!waitingForPageSwapRef.current) {
+              setDetectionState("SEARCHING");
+              setGuidanceMessage("Looking for paper • Place answer sheet in frame");
+            }
+          }, 1200);
+
+          return;
+        } else {
+          // MANUAL MODE: Shutter button pressed manually — prompt confirmation
+          Alert.alert(
+            "Document Quality Notice",
+            `The camera noticed an issue: ${
+              verificationResult.rejectionReason || "Check lighting and hold steady"
+            }.\n\nDo you want to keep this photo anyway or retake?`,
+            [
+              {
+                text: "Retake",
+                style: "cancel",
+                onPress: () => {
+                  FileSystem.deleteAsync(photoUri, { idempotent: true }).catch(() => {});
+                  triggerRejectionFlash();
+                  clearTimers();
+                  setCountdownProgress(0);
+                  setDetectionState("SEARCHING");
+                  setGuidanceMessage("Looking for paper • Place answer sheet in frame");
+                },
+              },
+              {
+                text: "Keep Anyway",
+                onPress: () => {
+                  saveAndRegisterPage(photoUri, photoWidth, photoHeight, cropRect, thumbBase64);
+                },
+              },
+            ]
+          );
+          return;
+        }
+      }
+
+      // CASE 2: PAPER VERIFIED! Proceed with auto-crop and registration
+      await saveAndRegisterPage(photoUri, photoWidth, photoHeight, cropRect, thumbBase64);
     } catch (err: any) {
       console.error("[Scanner] Capture failure:", err?.message || err);
       setDetectionState("SEARCHING");
@@ -640,6 +1008,57 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
       });
     } catch (err: any) {
       Alert.alert("Rotation Failed", err.message || "Failed to rotate page.");
+    }
+  };
+
+  /**
+   * Applies user-adjusted 4-corner crop to a scanned page, preserving original uncropped photo
+   */
+  const handleApplyManualCrop = async (
+    pageIndex: number,
+    cropRect: { originX: number; originY: number; width: number; height: number },
+    newCorners: DocumentCorners
+  ) => {
+    const page = scannedPages[pageIndex];
+    if (!page) return;
+
+    try {
+      const cropped = await manipulateAsync(
+        page.originalUri,
+        [
+          {
+            crop: {
+              originX: cropRect.originX,
+              originY: cropRect.originY,
+              width: cropRect.width,
+              height: cropRect.height,
+            },
+          },
+          { resize: { width: 1600 } },
+        ],
+        {
+          compress: 0.92,
+          format: SaveFormat.JPEG,
+          base64: true,
+        }
+      );
+
+      setScannedPages((prev) => {
+        const copy = [...prev];
+        copy[pageIndex] = {
+          ...copy[pageIndex],
+          uri: cropped.uri,
+          width: cropped.width,
+          height: cropped.height,
+          base64: cropped.base64,
+          isCropApplied: true,
+        };
+        return copy;
+      });
+
+      console.log(`[Scanner][Crop] Manual corner adjustment applied to page ${pageIndex + 1}`);
+    } catch (err: any) {
+      Alert.alert("Crop Adjustment Failed", err?.message || "Failed to crop adjusted page");
     }
   };
 
@@ -799,6 +1218,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
       mimeType: "image/jpeg",
     }));
 
+    console.log("[Scanner][PDF] Compilation completed");
     return {
       uri: safePdfUri,
       name: `${cleanTitle}_${prefix}_${pages.length}_Pages.pdf`,
@@ -821,6 +1241,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
       setIsCompiling(true);
       const uploadResult = await compilePagesToPdfResult(scannedPages, currentPrefix);
       await onComplete(uploadResult);
+      console.log("[Scanner][Upload] Upload completed");
       onClose();
     } catch (err: any) {
       Alert.alert("Processing Failed", err.message || "Failed to process and compile scanned pages.");
@@ -858,6 +1279,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
       } else {
         await onComplete(uploadResult);
       }
+      console.log("[Scanner][Upload] Upload completed");
 
       // Reset pages and advance active student
       setScannedPages([]);
@@ -887,6 +1309,9 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
 
   // Dynamic corner color based on detection state
   const getCornerColor = () => {
+    if (isDetectionRejected || detectionState === "NO_DOCUMENT") {
+      return "#EF4444"; // Red for rejected non-paper surface
+    }
     switch (detectionState) {
       case "READY":
       case "COUNTDOWN":
@@ -894,9 +1319,14 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
       case "CAPTURING":
       case "PROCESSING":
         return "#38BDF8"; // Sky Blue during capture / auto-crop
+      case "PAPER_DETECTED":
+        return "#079FBD"; // Teal for paper detected & aligning
       case "TOO_FAR":
+      case "TOO_CLOSE":
       case "OUT_OF_BOUNDS":
       case "BAD_ASPECT_RATIO":
+      case "UNSTABLE":
+      case "LOW_LIGHT":
         return "#F59E0B"; // Amber for alignment required
       case "PAGE_CAPTURED_WAITING_FOR_NEXT":
         return "#079FBD"; // Cyan for page swap waiting
@@ -1061,6 +1491,14 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
               </TouchableOpacity>
 
               <TouchableOpacity
+                onPress={() => setAdjustingPageIndex(selectedPageIndex)}
+                style={styles.toolBtn}
+              >
+                <Ionicons name="expand" size={18} color="#10B981" />
+                <Text style={[styles.toolBtnText, { color: "#10B981" }]}>Adjust</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
                 onPress={() => {
                   const target = selectedPageIndex;
                   setSelectedPageIndex(null);
@@ -1156,10 +1594,15 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
               enableTorch={torch}
               facing="back"
               onCameraReady={() => {
-                console.log("[Scanner] Camera preview ready and initialized.");
+                console.log("[Scanner][Camera] Preview initialized");
                 isCameraReadyRef.current = true;
                 setCameraReady(true);
                 setCameraMountError(null);
+                setTimeout(() => {
+                  aeSettledRef.current = true;
+                  setDetectionState((current) => (current === "INITIALIZING" ? "SEARCHING" : current));
+                  setGuidanceMessage("Looking for paper • Place answer sheet in frame");
+                }, 400);
               }}
               onMountError={(error) => {
                 console.error("[Scanner] Camera mount error:", error?.message || error);
@@ -1182,14 +1625,35 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                   padding: 12,
                   flexDirection: "row",
                   alignItems: "center",
+                  justifyContent: "space-between",
                   gap: 8,
                   zIndex: 30,
                 }}
               >
-                <Ionicons name="alert-circle" size={20} color="#FFFFFF" />
-                <Text style={{ color: "#FFFFFF", fontSize: 13, fontWeight: "600", flex: 1 }}>
-                  {cameraMountError}
-                </Text>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 8, flex: 1 }}>
+                  <Ionicons name="alert-circle" size={20} color="#FFFFFF" />
+                  <Text style={{ color: "#FFFFFF", fontSize: 13, fontWeight: "600", flex: 1 }}>
+                    {cameraMountError}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  onPress={() => {
+                    setCameraMountError(null);
+                    setCameraReady(false);
+                    isCameraReadyRef.current = false;
+                    aeSettledRef.current = false;
+                    setDetectionState("INITIALIZING");
+                    setGuidanceMessage("Retrying camera initialization...");
+                  }}
+                  style={{
+                    backgroundColor: "rgba(255,255,255,0.25)",
+                    paddingHorizontal: 12,
+                    paddingVertical: 6,
+                    borderRadius: 6,
+                  }}
+                >
+                  <Text style={{ color: "#FFFFFF", fontSize: 12, fontWeight: "bold" }}>Retry</Text>
+                </TouchableOpacity>
               </View>
             )}
 
@@ -1199,28 +1663,28 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                 <Ionicons name="close" size={24} color="#FFFFFF" />
               </TouchableOpacity>
 
-              {/* Auto / Manual Capture Mode Toggle */}
+              {/* Auto / Manual (Pause / Resume) Capture Mode Toggle */}
               <TouchableOpacity
                 onPress={() => setAutoCaptureEnabled((prev) => !prev)}
                 style={[
                   styles.autoCapturePill,
                   autoCaptureEnabled
                     ? { backgroundColor: "rgba(16, 185, 129, 0.25)", borderColor: "#10B981" }
-                    : { backgroundColor: "rgba(255, 255, 255, 0.15)", borderColor: "rgba(255, 255, 255, 0.3)" },
+                    : { backgroundColor: "rgba(245, 158, 11, 0.25)", borderColor: "#F59E0B" },
                 ]}
               >
                 <Ionicons
-                  name={autoCaptureEnabled ? "flash-outline" : "hand-left-outline"}
-                  size={14}
-                  color={autoCaptureEnabled ? "#10B981" : "#FFFFFF"}
+                  name={autoCaptureEnabled ? "pause-circle-outline" : "play-circle-outline"}
+                  size={15}
+                  color={autoCaptureEnabled ? "#10B981" : "#F59E0B"}
                 />
                 <Text
                   style={[
                     styles.autoCapturePillText,
-                    { color: autoCaptureEnabled ? "#10B981" : "#FFFFFF" },
+                    { color: autoCaptureEnabled ? "#10B981" : "#F59E0B" },
                   ]}
                 >
-                  {autoCaptureEnabled ? "Auto: ON" : "Manual"}
+                  {autoCaptureEnabled ? "Pause Auto" : "Resume Auto"}
                 </Text>
               </TouchableOpacity>
 
@@ -1309,19 +1773,37 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
               </View>
             )}
 
-            {/* Swap Page Action Banner (Duplicate Protection) */}
+            {/* Swap Page Action Banner (Duplicate Protection & Quick Corner Adjustment) */}
             {waitingForPageSwap && (
-              <TouchableOpacity
-                onPress={handleReadyForNextPage}
-                activeOpacity={0.8}
-                style={styles.swapPageBanner}
-              >
-                <Ionicons name="swap-horizontal" size={18} color="#FFFFFF" />
-                <Text style={styles.swapPageText}>
-                  Page {scannedPages.length} saved! Tap when ready for next page
-                </Text>
-                <Ionicons name="chevron-forward" size={18} color="#FFFFFF" />
-              </TouchableOpacity>
+              <View style={styles.swapPageBanner}>
+                <TouchableOpacity
+                  onPress={handleReadyForNextPage}
+                  activeOpacity={0.8}
+                  style={{ flexDirection: "row", alignItems: "center", gap: 8, flex: 1 }}
+                >
+                  <Ionicons name="checkmark-circle" size={18} color="#10B981" />
+                  <Text style={styles.swapPageText} numberOfLines={1}>
+                    Page {scannedPages.length} saved! Tap for next
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => setAdjustingPageIndex(scannedPages.length - 1)}
+                  style={{
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 4,
+                    backgroundColor: "rgba(56, 189, 248, 0.2)",
+                    paddingHorizontal: 10,
+                    paddingVertical: 5,
+                    borderRadius: 8,
+                    borderWidth: 1,
+                    borderColor: "#38BDF8",
+                  }}
+                >
+                  <Ionicons name="expand" size={13} color="#38BDF8" />
+                  <Text style={{ color: "#38BDF8", fontSize: 12, fontWeight: "700" }}>Adjust</Text>
+                </TouchableOpacity>
+              </View>
             )}
 
             {/* Document Edge Detection Viewfinder Overlay */}
@@ -1331,9 +1813,14 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                   styles.viewfinderBox,
                   {
                     borderColor:
-                      detectionState === "READY" || detectionState === "COUNTDOWN"
-                        ? "rgba(16, 185, 129, 0.6)"
+                      isDetectionRejected || detectionState === "NO_DOCUMENT"
+                        ? "rgba(239, 68, 68, 0.95)"
+                        : detectionState === "READY" || detectionState === "COUNTDOWN"
+                        ? "rgba(16, 185, 129, 0.8)"
+                        : detectionState === "PAPER_DETECTED"
+                        ? "rgba(7, 159, 189, 0.7)"
                         : "rgba(255, 255, 255, 0.3)",
+                    borderWidth: isDetectionRejected || detectionState === "NO_DOCUMENT" ? 2.5 : 1.5,
                   },
                 ]}
               >
@@ -1378,13 +1865,44 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                   ]}
                 />
 
-                {/* Countdown progress ring inside viewfinder */}
-                {detectionState === "COUNTDOWN" && (
+                {/* Visual Feedback Badge When Paper Is Detected First */}
+                {detectionState === "PAPER_DETECTED" && (
+                  <View style={styles.countdownCenterOverlay}>
+                    <View
+                      style={[
+                        styles.countdownCircle,
+                        {
+                          borderColor: "#079FBD",
+                          backgroundColor: "rgba(7, 159, 189, 0.25)",
+                          width: "auto",
+                          paddingHorizontal: 16,
+                          height: 42,
+                          borderRadius: 21,
+                          flexDirection: "row",
+                          gap: 8,
+                        },
+                      ]}
+                    >
+                      <Ionicons name="document-text" size={18} color="#079FBD" />
+                      <Text
+                        style={[
+                          styles.countdownText,
+                          { color: "#079FBD", fontSize: 13, fontWeight: "700", marginTop: 0 },
+                        ]}
+                      >
+                        Paper Detected
+                      </Text>
+                    </View>
+                  </View>
+                )}
+
+                {/* 3-Second Alignment Countdown Progress Ring */}
+                {detectionState === "COUNTDOWN" && countdownProgress > 0 && (
                   <View style={styles.countdownCenterOverlay}>
                     <View style={styles.countdownCircle}>
                       <ActivityIndicator size="small" color="#10B981" />
                       <Text style={styles.countdownText}>
-                        {Math.ceil((1 - countdownProgress) * 1.0)}s
+                        {Math.max(1, Math.ceil((1 - countdownProgress) * 3))}s
                       </Text>
                     </View>
                   </View>
@@ -1395,19 +1913,32 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
               <View
                 style={[
                   styles.guideBanner,
-                  detectionState === "READY" || detectionState === "COUNTDOWN"
-                    ? { backgroundColor: "rgba(16, 185, 129, 0.85)", borderColor: "#10B981" }
+                  isDetectionRejected || detectionState === "NO_DOCUMENT"
+                    ? { backgroundColor: "rgba(239, 68, 68, 0.92)", borderColor: "#EF4444" }
+                    : detectionState === "READY" || detectionState === "COUNTDOWN"
+                    ? { backgroundColor: "rgba(16, 185, 129, 0.88)", borderColor: "#10B981" }
+                    : detectionState === "PAPER_DETECTED"
+                    ? { backgroundColor: "rgba(7, 159, 189, 0.90)", borderColor: "#079FBD" }
                     : detectionState === "CAPTURING" || detectionState === "PROCESSING"
-                    ? { backgroundColor: "rgba(14, 165, 233, 0.85)", borderColor: "#0EA5E9" }
-                    : detectionState === "TOO_FAR" || detectionState === "OUT_OF_BOUNDS"
-                    ? { backgroundColor: "rgba(245, 158, 11, 0.85)", borderColor: "#F59E0B" }
-                    : { backgroundColor: "rgba(0, 0, 0, 0.75)", borderColor: "rgba(255, 255, 255, 0.2)" },
+                    ? { backgroundColor: "rgba(14, 165, 233, 0.88)", borderColor: "#0EA5E9" }
+                    : detectionState === "TOO_FAR" ||
+                      detectionState === "TOO_CLOSE" ||
+                      detectionState === "OUT_OF_BOUNDS" ||
+                      detectionState === "BAD_ASPECT_RATIO" ||
+                      detectionState === "UNSTABLE" ||
+                      detectionState === "LOW_LIGHT"
+                    ? { backgroundColor: "rgba(245, 158, 11, 0.88)", borderColor: "#F59E0B" }
+                    : { backgroundColor: "rgba(0, 0, 0, 0.78)", borderColor: "rgba(255, 255, 255, 0.2)" },
                 ]}
               >
                 <Ionicons
                   name={
-                    detectionState === "READY" || detectionState === "COUNTDOWN"
+                    isDetectionRejected || detectionState === "NO_DOCUMENT"
+                      ? "alert-circle"
+                      : detectionState === "READY" || detectionState === "COUNTDOWN"
                       ? "checkmark-circle"
+                      : detectionState === "PAPER_DETECTED"
+                      ? "document-text-outline"
                       : detectionState === "CAPTURING" || detectionState === "PROCESSING"
                       ? "sync"
                       : detectionState === "TOO_FAR" || detectionState === "OUT_OF_BOUNDS"
@@ -1478,7 +2009,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
 
                 {/* Shutter Button (Manual Fallback & Visual Auto Indicator) */}
                 <TouchableOpacity
-                  onPress={triggerCapture}
+                  onPress={() => triggerCapture({ isManual: true })}
                   disabled={capturing || isCompiling || !cameraReady}
                   activeOpacity={0.8}
                   style={[
@@ -1604,6 +2135,22 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
               </View>
             </Modal>
           </View>
+        )}
+
+        {/* Manual 4-Corner Document Boundary Adjustment Modal */}
+        {adjustingPageIndex !== null && scannedPages[adjustingPageIndex] && (
+          <CornerAdjustmentModal
+            visible={adjustingPageIndex !== null}
+            imageUri={scannedPages[adjustingPageIndex].originalUri}
+            imageWidth={scannedPages[adjustingPageIndex].width}
+            imageHeight={scannedPages[adjustingPageIndex].height}
+            pageNumber={adjustingPageIndex + 1}
+            onApplyCrop={(newCropRect, newCorners) => {
+              handleApplyManualCrop(adjustingPageIndex, newCropRect, newCorners);
+              setAdjustingPageIndex(null);
+            }}
+            onClose={() => setAdjustingPageIndex(null)}
+          />
         )}
 
         {/* Compiling / Uploading Overlay */}

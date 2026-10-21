@@ -33,6 +33,10 @@ class Settings(BaseSettings):
 
     @property
     def data_path(self) -> Path:
+        if self.data_dir and self.data_dir != "../data":
+            p = Path(self.data_dir).resolve()
+            p.mkdir(parents=True, exist_ok=True)
+            return p
         root_data = Path(__file__).resolve().parent.parent.parent / "data"
         if root_data.exists():
             return root_data

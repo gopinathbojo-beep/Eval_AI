@@ -8,7 +8,11 @@ import { Button, Card, ErrorPanel, Loading } from "../../components/ui";
 import { DocProgress, UploadZone } from "../../components/DocPanel";
 import { useExam } from "../ExamWorkspace";
 
-export default function QuestionPaper() {
+interface QuestionPaperProps {
+  onReviewQuestions?: () => void;
+}
+
+export default function QuestionPaper({ onReviewQuestions }: QuestionPaperProps) {
   const { exam, reload } = useExam();
   const { data: doc, loading, reload: reloadDoc } = useApi<DocInfo | null>(`/exams/${exam.id}/question-paper`, (d) => (d && BUSY_DOC.includes(d.status) ? 1500 : null));
   const [downloading, setDownloading] = useState(false);
@@ -96,14 +100,23 @@ export default function QuestionPaper() {
 
       {doc && ["READY", "NEEDS_ATTENTION"].includes(doc.status) && (
         <div className="pt-2">
-          <Link to="../questions">
-            <Button variant="primary" className="shadow-xs">
+          {onReviewQuestions ? (
+            <Button variant="primary" className="shadow-xs" onClick={onReviewQuestions}>
               <span>Review {exam.question_count} Extracted Questions</span>
               <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
               </svg>
             </Button>
-          </Link>
+          ) : (
+            <Link to={`/exams/${exam.id}/questions`}>
+              <Button variant="primary" className="shadow-xs">
+                <span>Review {exam.question_count} Extracted Questions</span>
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                </svg>
+              </Button>
+            </Link>
+          )}
         </div>
       )}
     </div>

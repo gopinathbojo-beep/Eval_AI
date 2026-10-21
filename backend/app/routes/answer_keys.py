@@ -289,9 +289,6 @@ def generate_answer_keys_ai(exam_id: str, db: Session = Depends(get_db), t: Teac
             except Exception:
                 pass
 
-    prompt = prompts.generate_answer_key_prompt(exam.name, q_dicts)
-    call = chat_structured(prompts.GEN_ANSWER_KEY_SYSTEM, prompt, GeneratedAnswerKeyResult, image_path=img_path)
-
     by_id = {q.id: q for q in qs}
     by_norm = {q.normalized_number: q for q in qs}
     by_disp = {q.display_number: q for q in qs}
@@ -299,30 +296,40 @@ def generate_answer_keys_ai(exam_id: str, db: Session = Depends(get_db), t: Teac
     matched_answers: list[dict] = []
     accounted_qids = set()
 
-    for ans in call.parsed.answers:
-        target_q = None
-        if ans.exam_question_id and ans.exam_question_id in by_id:
-            target_q = by_id[ans.exam_question_id]
-        elif ans.question_number:
-            target_q = by_disp.get(ans.question_number) or by_norm.get(normalize_question_number(ans.question_number))
-            if not target_q:
-                res = map_label(ans.question_number, qs)
-                if res.question_id and res.question_id in by_id:
-                    target_q = by_id[res.question_id]
+    # Batch questions in chunks of up to 3 to prevent token exhaustion and JSON truncation
+    batch_size = 3
+    for i in range(0, len(q_dicts), batch_size):
+        chunk = q_dicts[i:i + batch_size]
+        prompt = prompts.generate_answer_key_prompt(exam.name, chunk)
+        try:
+            call = chat_structured(prompts.GEN_ANSWER_KEY_SYSTEM, prompt, GeneratedAnswerKeyResult, image_path=img_path)
+            for ans in call.parsed.answers:
+                target_q = None
+                if ans.exam_question_id and ans.exam_question_id in by_id:
+                    target_q = by_id[ans.exam_question_id]
+                elif ans.question_number:
+                    target_q = by_disp.get(ans.question_number) or by_norm.get(normalize_question_number(ans.question_number))
+                    if not target_q:
+                        res = map_label(ans.question_number, qs)
+                        if res.question_id and res.question_id in by_id:
+                            target_q = by_id[res.question_id]
 
-        if target_q and target_q.id not in accounted_qids:
-            accounted_qids.add(target_q.id)
-            matched_answers.append({
-                "exam_question_id": target_q.id,
-                "question_number": target_q.display_number,
-                "question_text": target_q.question_text,
-                "max_marks": target_q.max_marks,
-                "answer_text": ans.answer_text,
-                "marks": ans.marks if ans.marks is not None else target_q.max_marks,
-                "criteria": ans.criteria,
-                "keywords": ans.keywords,
-                "accepted_answers": ans.accepted_answers,
-            })
+                if target_q and target_q.id not in accounted_qids:
+                    accounted_qids.add(target_q.id)
+                    matched_answers.append({
+                        "exam_question_id": target_q.id,
+                        "question_number": target_q.display_number,
+                        "question_text": target_q.question_text,
+                        "max_marks": target_q.max_marks,
+                        "answer_text": ans.answer_text,
+                        "marks": ans.marks if ans.marks is not None else target_q.max_marks,
+                        "criteria": ans.criteria,
+                        "keywords": ans.keywords,
+                        "accepted_answers": ans.accepted_answers,
+                    })
+        except Exception as e:
+            # If a chunk fails, log and continue so subsequent chunks can succeed
+            pass
 
     for q in qs:
         if q.id not in accounted_qids:

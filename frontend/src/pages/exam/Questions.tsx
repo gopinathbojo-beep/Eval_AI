@@ -31,6 +31,15 @@ export default function Questions() {
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [referenceTarget, setReferenceTarget] = useState<Question | null>(null);
   const [activeTab, setActiveTab] = useState<"both" | "scan" | "questions">("both");
+  const [expandedPassages, setExpandedPassages] = useState<Record<string, boolean>>({});
+  const [openSectionPassages, setOpenSectionPassages] = useState<Record<string, boolean>>({
+    "SECTION A: READING SKILLS": true,
+    "SECTION A": true,
+  });
+
+  const toggleSectionPassage = (sec: string) => {
+    setOpenSectionPassages((prev) => ({ ...prev, [sec]: !prev[sec] }));
+  };
 
   const isExtracting = isDocBusy || (data?.document_status ? BUSY_DOC.includes(data.document_status) : false);
 
@@ -228,6 +237,64 @@ export default function Questions() {
         </div>
       )}
 
+      {/* CBSE Document Information & Specification Header */}
+      <Card className="p-4 shadow-soft border-line/80 bg-surface/90">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line/60 pb-3">
+          <div className="flex items-center gap-2.5">
+            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-pen/10 text-pen font-bold text-sm">
+              QP
+            </span>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm sm:text-base font-bold text-ink">
+                  {data.exam_subject || exam.subject_name || "English Language and Literature"}
+                </h3>
+                {data.qp_code && (
+                  <Badge tone="pen" className="font-mono font-semibold">
+                    Code: {data.qp_code}
+                  </Badge>
+                )}
+              </div>
+              <p className="text-xs text-mute mt-0.5">
+                CBSE Secondary School Examination · Question Paper Document Structure
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <div className="flex items-center gap-1.5 rounded-lg border border-line bg-sunken px-2.5 py-1 text-ink font-medium">
+              <span className="text-mute">Time:</span>
+              <b>{data.exam_duration_minutes ? `${Math.floor(data.exam_duration_minutes / 60)}h ${data.exam_duration_minutes % 60 ? `${data.exam_duration_minutes % 60}m` : ""}` : "3 hours"}</b>
+            </div>
+            <div className="flex items-center gap-1.5 rounded-lg border border-line bg-sunken px-2.5 py-1 text-ink font-medium">
+              <span className="text-mute">Max Marks:</span>
+              <b className="text-pen">{fmt(data.exam_total_marks || 80)}</b>
+            </div>
+            <div className="flex items-center gap-1.5 rounded-lg border border-ok/30 bg-ok-soft/30 px-2.5 py-1 text-ok font-semibold">
+              <span>✓</span>
+              <span>{qs.length} of {data.stated_question_count || 11} Questions Detected</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Section Breakdown Pills */}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <span className="text-xs font-semibold text-mute uppercase tracking-wider mr-1">Sections:</span>
+          {(data.sections_summary && data.sections_summary.length > 0 ? data.sections_summary : [
+            { section: "Section A: Reading Skills", marks: 20, count: 2 },
+            { section: "Section B: Writing Skills & Grammar", marks: 20, count: 3 },
+            { section: "Section C: Language through Literature", marks: 40, count: 6 },
+          ]).map((s, idx) => (
+            <div key={idx} className="flex items-center gap-1.5 rounded-lg border border-line bg-sunken/60 px-2.5 py-1 text-xs">
+              <span className="font-medium text-ink">{s.section}</span>
+              <span className="text-mute">·</span>
+              <b className="text-pen">{fmt(s.marks)}m</b>
+              <span className="text-mute">({s.count} Qs)</span>
+            </div>
+          ))}
+        </div>
+      </Card>
+
       {/* Two-panel Question Review Workspace */}
       <div className="grid gap-4 lg:grid-cols-2" style={{ minHeight: "65vh" }}>
         {/* Left Panel: Scan Viewer */}
@@ -266,115 +333,308 @@ export default function Questions() {
           )}
         </Card>
 
-        {/* Right Panel: Question Cards List */}
+        {/* Right Panel: Question Cards List Grouped by Section */}
         <div
-          className={`h-[calc(100vh-16rem)] min-h-[30rem] space-y-3 overflow-y-auto pr-1 ${
+          className={`h-[calc(100vh-16rem)] min-h-[30rem] space-y-4 overflow-y-auto pr-1 ${
             activeTab === "scan" ? "hidden lg:block" : "block"
           }`}
         >
-          {qs.map((q) => {
-            const isSelected = sel === q.id;
-            return (
-              <Card
-                key={q.id}
-                className={`p-4 transition-all shadow-soft ${
-                  isSelected ? "border-pen ring-2 ring-pen/20" : "hover:border-line"
-                } ${q.verification_status === "NEEDS_REVIEW" ? "border-mark/50 bg-mark-soft/10" : ""}`}
-              >
-                <button
-                  type="button"
-                  className="block w-full text-left cursor-pointer"
-                  onClick={() => {
-                    setSel(q.id);
-                    if (q.page_start) setPage(q.page_start);
-                  }}
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-base font-bold text-ink">
-                      Question {q.display_number}
-                    </span>
-                    <div className="flex items-center gap-1.5">
-                      <Badge tone="pen">{fmt(q.max_marks)} marks</Badge>
-                      <Badge tone="mute">conf. {pct(q.ocr_confidence)}</Badge>
-                      <StatusBadge status={q.verification_status} />
+          {(() => {
+            const groupedSections = qs.reduce((acc, q) => {
+              const sec = q.section || "General Questions";
+              if (!acc[sec]) acc[sec] = [];
+              acc[sec].push(q);
+              return acc;
+            }, {} as Record<string, Question[]>);
+
+            return Object.entries(groupedSections).map(([secName, secQuestions]) => {
+              const secMarks = secQuestions.reduce((sum, q) => sum + (q.max_marks || 0), 0);
+              const hasPassages = secQuestions.some((q) => !!q.passage_text);
+              const isPassageOpen = openSectionPassages[secName] ?? true;
+
+              return (
+                <div key={secName} className="space-y-3">
+                  {/* Sticky Section Header */}
+                  <div className="sticky top-0 z-[5] rounded-xl border border-line/70 bg-sunken/95 px-3.5 py-2.5 shadow-xs backdrop-blur flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="h-2 w-2 rounded-full bg-pen" />
+                      <span className="text-xs font-bold uppercase tracking-wider text-ink">{secName}</span>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs">
+                      <Badge tone="pen">{fmt(secMarks)} marks</Badge>
+                      <span className="text-mute">{secQuestions.length} questions</span>
                     </div>
                   </div>
-                  {q.review_reason && (
-                    <p className="mt-1.5 text-xs font-semibold text-mark">
-                      ⚠️ {q.review_reason}
-                    </p>
+
+                  {/* Collapsible Shared Reading Passage Container for Section A */}
+                  {hasPassages && (
+                    <div className="rounded-xl border border-line bg-surface p-3.5 shadow-soft">
+                      <button
+                        type="button"
+                        onClick={() => toggleSectionPassage(secName)}
+                        className="flex w-full items-center justify-between text-left cursor-pointer"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="text-base">📖</span>
+                          <div>
+                            <span className="text-xs sm:text-sm font-bold text-ink">
+                              Shared Reading Passages ({secQuestions.filter((q) => !!q.passage_text).length} passages linked)
+                            </span>
+                            <p className="text-[11px] text-mute">
+                              Passages are shared context for dependent comprehension questions
+                            </p>
+                          </div>
+                        </div>
+                        <span className="text-xs font-semibold text-pen">
+                          {isPassageOpen ? "Hide Passages ▲" : "View Passages ▼"}
+                        </span>
+                      </button>
+
+                      {isPassageOpen && (
+                        <div className="mt-3 space-y-3 border-t border-line/60 pt-3">
+                          {secQuestions
+                            .filter((q) => !!q.passage_text)
+                            .map((q) => (
+                              <div
+                                key={q.id}
+                                className="rounded-lg border border-line/70 bg-sunken/40 p-3 text-xs leading-relaxed text-ink/90"
+                              >
+                                <div className="flex items-center justify-between mb-1.5 font-semibold text-pen">
+                                  <span>Reading Passage for Question {q.display_number}</span>
+                                  <span className="text-mute font-normal text-[11px]">Linked to Q{q.display_number}</span>
+                                </div>
+                                <div className="max-h-48 overflow-y-auto whitespace-pre-wrap font-serif text-xs text-ink/80 pr-1">
+                                  {q.passage_text}
+                                </div>
+                              </div>
+                            ))}
+                        </div>
+                      )}
+                    </div>
                   )}
-                  <div className="doc-text mt-2.5 line-clamp-4 text-sm text-ink/90">
-                    {q.question_text ? <MathView text={q.question_text} /> : <em className="text-mute">(empty)</em>}
-                  </div>
-                </button>
 
-                {/* Show OCR image crop if selected and available */}
-                {isSelected && q.has_crop && (
-                  <div className="mt-3 rounded-lg border border-line bg-sunken p-2.5">
-                    <p className="mb-1 text-xs font-medium text-mute">What the OCR detected (source crop)</p>
-                    <AuthImage
-                      path={`/crops/question/${q.id}`}
-                      alt={`Crop of question ${q.display_number}`}
-                      className="max-h-48 rounded border border-line/60 bg-surface object-contain"
-                    />
-                  </div>
-                )}
+                  {/* Section Questions */}
+                  {secQuestions.map((q) => {
+                    const isSelected = sel === q.id;
+                    const hasPassage = !!q.passage_text;
+                    const isPassageExpanded = expandedPassages[q.id];
 
-                {/* Action Controls */}
-                <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-line/50 pt-2.5">
-                  {!data.locked && (
-                    <>
+                    return (
+                      <Card
+                        key={q.id}
+                        className={`p-4 transition-all shadow-soft ${
+                          isSelected ? "border-pen ring-2 ring-pen/20" : "hover:border-line"
+                        } ${q.verification_status === "NEEDS_REVIEW" ? "border-mark/50 bg-mark-soft/10" : ""}`}
+                      >
+                        <button
+                          type="button"
+                          className="block w-full text-left cursor-pointer"
+                          onClick={() => {
+                            setSel(q.id);
+                            if (q.page_start) setPage(q.page_start);
+                          }}
+                        >
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="text-base font-bold text-ink">
+                              Question {q.display_number}
+                            </span>
+                            <div className="flex items-center gap-1.5">
+                              <Badge tone="pen">{fmt(q.max_marks)} marks</Badge>
+                              <Badge tone="mute">conf. {pct(q.ocr_confidence)}</Badge>
+                              <StatusBadge status={q.verification_status} />
+                            </div>
+                          </div>
+                          {q.review_reason && (
+                            <p className="mt-1.5 text-xs font-semibold text-mark">
+                              ⚠️ {q.review_reason}
+                            </p>
+                          )}
+
+                          {/* Collapsible inline reading passage reference */}
+                          {hasPassage && (
+                            <div className="mt-2 rounded-lg border border-pen/20 bg-pen-soft/20 p-2 text-xs">
+                              <div
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setExpandedPassages((prev) => ({ ...prev, [q.id]: !prev[q.id] }));
+                                }}
+                                className="flex w-full items-center justify-between text-left cursor-pointer font-semibold text-pen"
+                              >
+                                <span className="flex items-center gap-1.5">
+                                  <span>📖</span>
+                                  <span>Reading Passage Context</span>
+                                </span>
+                                <span className="text-[11px]">{isPassageExpanded ? "Collapse ▲" : "Expand ▼"}</span>
+                              </div>
+                              {isPassageExpanded && (
+                                <div className="mt-2 max-h-40 overflow-y-auto whitespace-pre-wrap font-serif text-[11px] text-ink/80 border-t border-pen/10 pt-2">
+                                  {q.passage_text}
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          <div className="doc-text mt-2.5 line-clamp-4 text-sm text-ink/90">
+                            {q.clean_question_text || q.question_text ? (
+                              <MathView text={q.clean_question_text || q.question_text} />
+                            ) : (
+                              <em className="text-mute">(empty)</em>
+                            )}
+                          </div>
+                        </button>
+
+                        {/* Show OCR image crop if selected and available */}
+                        {isSelected && q.has_crop && (
+                          <div className="mt-3 rounded-lg border border-line bg-sunken p-2.5">
+                            <p className="mb-1 text-xs font-medium text-mute">What the OCR detected (source crop)</p>
+                            <AuthImage
+                              path={`/crops/question/${q.id}`}
+                              alt={`Crop of question ${q.display_number}`}
+                              className="max-h-48 rounded border border-line/60 bg-surface object-contain"
+                            />
+                          </div>
+                        )}
+
+                        {/* Action Controls */}
+                        <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-line/50 pt-2.5">
+                          {!data.locked && (
+                            <>
+                              <Button
+                                small
+                                variant="primary"
+                                disabled={q.verification_status === "VERIFIED"}
+                                busy={busy === q.id}
+                                onClick={() =>
+                                  run(q.id, () =>
+                                    api(`/exam-questions/${q.id}`, {
+                                      method: "PATCH",
+                                      json: { verification_status: "VERIFIED" },
+                                    })
+                                  )
+                                }
+                              >
+                                Accept
+                              </Button>
+                              <Button small onClick={() => setDlg({ kind: "edit", q })}>
+                                Edit
+                              </Button>
+                              <Button small onClick={() => setDlg({ kind: "split", q })}>
+                                Split
+                              </Button>
+                              <Button small onClick={() => setDlg({ kind: "merge", q })}>
+                                Merge
+                              </Button>
+                              <Button small onClick={() => setDlg({ kind: "review", q })}>
+                                Flag Review
+                              </Button>
+                              <Button
+                                small
+                                variant="ghost"
+                                className="text-mark hover:bg-mark-soft hover:text-mark"
+                                onClick={() => setDlg({ kind: "delete", q })}
+                              >
+                                Delete
+                              </Button>
+                            </>
+                          )}
+                          <Button
+                            small
+                            variant="soft"
+                            onClick={() => setReferenceTarget(q)}
+                            title="Add to verified local reference collection"
+                          >
+                            Save as Reference
+                          </Button>
+                        </div>
+                      </Card>
+                    );
+                  })}
+                </div>
+              );
+            });
+          })()}
+
+          {/* Unclassified Content for Review */}
+          {data.unclassified_blocks && data.unclassified_blocks.length > 0 && (
+            <div className="rounded-xl border border-line bg-surface p-4 shadow-soft space-y-3 mt-4">
+              <div className="flex items-center justify-between border-b border-line pb-2.5">
+                <div className="flex items-center gap-2">
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-mark-soft text-mark text-xs font-bold">
+                    !
+                  </span>
+                  <h4 className="text-xs sm:text-sm font-bold text-ink">
+                    Unclassified Content for Review ({data.unclassified_blocks.length})
+                  </h4>
+                </div>
+                <span className="text-[11px] text-mute">Non-question document blocks</span>
+              </div>
+
+              <div className="space-y-2.5">
+                {data.unclassified_blocks.map((block, bIdx) => (
+                  <div key={bIdx} className="rounded-lg border border-line bg-sunken/50 p-3 text-xs space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold text-pen">Page {block.page_number}</span>
+                      {block.label && <Badge tone="mute">{block.label}</Badge>}
+                    </div>
+                    <p className="text-ink/80 line-clamp-3 font-mono text-[11px] bg-surface/50 p-2 rounded border border-line/40">
+                      {block.text}
+                    </p>
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
                       <Button
                         small
                         variant="primary"
-                        disabled={q.verification_status === "VERIFIED"}
-                        busy={busy === q.id}
+                        busy={busy === `promote-${bIdx}`}
                         onClick={() =>
-                          run(q.id, () =>
-                            api(`/exam-questions/${q.id}`, {
-                              method: "PATCH",
-                              json: { verification_status: "VERIFIED" },
+                          run(`promote-${bIdx}`, () =>
+                            api(`/exams/${exam.id}/promote-block`, {
+                              method: "POST",
+                              json: {
+                                page_number: block.page_number,
+                                label: block.label,
+                                text: block.text,
+                                marks: 1.0,
+                              },
                             })
                           )
                         }
                       >
-                        Accept
+                        Promote to Question
                       </Button>
-                      <Button small onClick={() => setDlg({ kind: "edit", q })}>
-                        Edit
-                      </Button>
-                      <Button small onClick={() => setDlg({ kind: "split", q })}>
-                        Split
-                      </Button>
-                      <Button small onClick={() => setDlg({ kind: "merge", q })}>
-                        Merge
-                      </Button>
-                      <Button small onClick={() => setDlg({ kind: "review", q })}>
-                        Flag Review
+                      <Button
+                        small
+                        busy={busy === `inst-${bIdx}`}
+                        onClick={() =>
+                          run(`inst-${bIdx}`, () =>
+                            api(`/exams/${exam.id}/dismiss-block`, {
+                              method: "POST",
+                              json: { text: block.text, mark_as_instruction: true },
+                            })
+                          )
+                        }
+                      >
+                        Mark as Instruction
                       </Button>
                       <Button
                         small
                         variant="ghost"
-                        className="text-mark hover:bg-mark-soft hover:text-mark"
-                        onClick={() => setDlg({ kind: "delete", q })}
+                        busy={busy === `dismiss-${bIdx}`}
+                        onClick={() =>
+                          run(`dismiss-${bIdx}`, () =>
+                            api(`/exams/${exam.id}/dismiss-block`, {
+                              method: "POST",
+                              json: { text: block.text, mark_as_instruction: false },
+                            })
+                          )
+                        }
                       >
-                        Delete
+                        Dismiss
                       </Button>
-                    </>
-                  )}
-                  <Button
-                    small
-                    variant="soft"
-                    onClick={() => setReferenceTarget(q)}
-                    title="Add to verified local reference collection"
-                  >
-                    Save as Reference
-                  </Button>
-                </div>
-              </Card>
-            );
-          })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
