@@ -74,7 +74,7 @@ def _handle_cancel(db: Session, doc, doc_id: str) -> None:
     _CANCEL_REQUESTED.discard(doc_id)
     doc.status = "CANCELLED"
     doc.stage = "Cancelled by user"
-    doc.error_message = "git Reading was stopped by the user."
+    doc.error_message = "Reading was stopped by the user."
     db.commit()
 
 
