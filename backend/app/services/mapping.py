@@ -58,8 +58,12 @@ def map_label(
     total_answers: int = 1,
     section: str | None = None,
     prev_question_id: str | None = None,
+    check_content: bool = True,
 ) -> MappingResult:
-    """Map a question or answer label to an authoritative exam question using the 7-tier evidence hierarchy."""
+    """Map a question or answer label to an authoritative exam question using the 7-tier evidence hierarchy.
+
+    check_content=False trusts an exact label over content similarity (printed answer keys).
+    """
     q_list = list(questions)
     qs = [q for q in q_list if getattr(q, "normalized_number", None)]
 
@@ -159,7 +163,7 @@ def map_label(
         matched_q = exact[0]
 
         # Tier 6 Contradiction Check: Did the student write e.g. '1' but answer question 5?
-        if answer_text and (len(_tokenize(answer_text)) >= 2 or len(_extract_distinct_numbers(answer_text)) >= 2):
+        if check_content and answer_text and (len(_tokenize(answer_text)) >= 2 or len(_extract_distinct_numbers(answer_text)) >= 2):
             q_tokens = _tokenize(getattr(matched_q, "question_text", None))
             ans_tokens = _tokenize(answer_text)
             q_nums = _extract_distinct_numbers(getattr(matched_q, "question_text", None))

@@ -69,6 +69,7 @@ def apply_key_mapping(db: Session, exam_id: str, doc_id: str) -> None:
             answer_position=idx,
             total_answers=len(keys),
             prev_question_id=prev_qid,
+            check_content=False,  # a printed key label is authoritative; content checks are for handwritten labels
         )
         k.normalized_number, k.exam_question_id = res.normalized_number, res.question_id
         k.mapping_status, k.mapping_note, k.mapping_candidates = res.status, res.note, res.candidates

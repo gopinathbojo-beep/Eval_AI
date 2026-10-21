@@ -666,7 +666,8 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
             if q.raw_question_number and normalize_question_number(q.raw_question_number)
         }
 
-        expanded_items: list[tuple[str | None, str, float | None, Any]] = []
+        # (label, text, marks, source block, whether the item is the whole source block)
+        expanded_items: list[tuple[str | None, str, float | None, Any, bool]] = []
         for q in questions_raw:
             q_text = (q.question_text or "").strip()
             q_lbl = (q.raw_question_number or "").strip() or None
@@ -681,16 +682,20 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
                 }
                 overlap = split_parents & explicit_parents
                 if len(overlap) >= 2 and len(overlap) >= len(split_parents) * 0.5:
-                    intro_item = splits[0] if (splits[0][0] is None or is_heading_or_title(splits[0][0] or "")) else None
-                    if intro_item and intro_item[1].strip():
-                        expanded_items.append((intro_item[0], intro_item[1], None, q))
+                    # drop only the questions extracted separately; keep the rest (e.g. Q1-Q4 found only in the dump)
+                    for s_lbl, s_txt in splits:
+                        s_norm = normalize_question_number(s_lbl) if s_lbl else None
+                        if s_norm and parent_number(s_norm) in explicit_parents:
+                            continue
+                        if s_txt.strip():
+                            expanded_items.append((s_lbl, s_txt, None, q, False))
                     continue
 
             for s_lbl, s_txt in splits:
                 s_marks = q.marks if len(splits) == 1 else None
-                expanded_items.append((s_lbl, s_txt, s_marks, q))
+                expanded_items.append((s_lbl, s_txt, s_marks, q, len(splits) == 1))
 
-        for raw_label, text, marks, q in expanded_items:
+        for raw_label, text, marks, q, whole_block in expanded_items:
             # Check if block is document header / metadata
             if (raw_label is None or raw_label.lower() in ("null", "none", "?", "unknown", "")) and is_document_header(text):
                 header_max = extract_exam_total_marks(text)
@@ -806,8 +811,8 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
                         if current_section not in doc_struct.sections:
                             doc_struct.sections.append(current_section)
 
-            # If not explicitly aligned by PDF offset, check q.section
-            if not has_pdf_sec_alignment and q.section and q.section.strip():
+            # If not explicitly aligned by PDF offset, check q.section (one tag on a split block can't describe every part)
+            if not has_pdf_sec_alignment and whole_block and q.section and q.section.strip():
                 new_sec = q.section.strip()
                 if new_sec != current_section:
                     current_section = new_sec
