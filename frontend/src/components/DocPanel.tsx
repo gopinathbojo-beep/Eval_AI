@@ -16,11 +16,14 @@ export function UploadZone({
   accept,
   disabled,
   onFile,
+  onFiles,
   hint,
 }: {
   accept: string;
   disabled?: boolean;
-  onFile: (f: File) => Promise<void>;
+  onFile?: (f: File) => Promise<void>;
+  /** when given, the zone accepts many files at once and hands them over together */
+  onFiles?: (fs: File[]) => Promise<void>;
   hint?: ReactNode;
 }) {
   const [drag, setDrag] = useState(false);
@@ -28,12 +31,14 @@ export function UploadZone({
   const [error, setError] = useState<unknown>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const send = async (f: File | undefined) => {
-    if (!f) return;
+  const send = async (list: FileList | null | undefined) => {
+    const files = Array.from(list ?? []);
+    if (!files.length) return;
     setBusy(true);
     setError(null);
     try {
-      await onFile(f);
+      if (onFiles) await onFiles(files);
+      else await onFile?.(files[0]);
     } catch (e) {
       setError(e);
     } finally {
@@ -52,16 +57,16 @@ export function UploadZone({
         onDrop={(e) => {
           e.preventDefault();
           setDrag(false);
-          if (!disabled && e.dataTransfer.files[0]) {
-            send(e.dataTransfer.files[0]);
+          if (!disabled && e.dataTransfer.files.length) {
+            send(e.dataTransfer.files);
           }
         }}
-        className={`group relative flex flex-col items-center justify-center rounded-2xl border-2 border-dashed p-8 text-center transition-ui ${
+        className={`group relative flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-8 text-center transition-ui ${
           disabled
             ? "cursor-not-allowed bg-sunken/40 opacity-60 border-line"
             : drag
             ? "border-pen bg-pen-soft/40 shadow-inner scale-[1.005]"
-            : "border-line bg-surface hover:border-pen/60 hover:bg-sunken/30 cursor-pointer"
+            : "border-line bg-surface hover:border-pen/60 hover:bg-hover cursor-pointer"
         }`}
         onClick={() => {
           if (!disabled && !busy) fileInputRef.current?.click();
@@ -72,23 +77,24 @@ export function UploadZone({
           type="file"
           className="sr-only"
           accept={accept}
+          multiple={Boolean(onFiles)}
           disabled={disabled || busy}
           onChange={(e) => {
-            send(e.target.files?.[0]);
+            send(e.target.files);
             e.target.value = "";
           }}
         />
 
         <div
-          className={`mb-3 flex h-14 w-14 items-center justify-center rounded-2xl transition-ui ${
-            drag ? "bg-pen text-white shadow-md" : "bg-pen-soft text-pen group-hover:scale-105"
+          className={`mb-3 flex h-14 w-14 items-center justify-center rounded-xl transition-ui ${
+            drag ? "bg-pen text-surface shadow-md" : "bg-pen-soft text-pen group-hover:scale-105"
           }`}
         >
           <IconUpload size={26} />
         </div>
 
         <p className="text-base font-semibold text-ink">
-          {busy ? "Uploading and submitting file..." : "Drag and drop document here"}
+          {busy ? "Uploading and submitting..." : onFiles ? "Drag and drop documents here" : "Drag and drop document here"}
         </p>
         <p className="mt-1 text-xs text-mute max-w-sm">
           {hint || "Supported formats: PDF, PNG, or JPG"}
@@ -111,7 +117,7 @@ export function UploadZone({
 const STEPS = [
   "Uploaded",
   "Rendering pages",
-  "Reading pages (OCR)",
+  "Reading pages",
   "Checking results",
   "Ready to review",
 ];
@@ -207,7 +213,7 @@ export function DocProgress({
     <Card className="p-5 space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-pen-soft text-pen shadow-xs">
+          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-pen-soft text-pen shadow-xs">
             <IconFileText size={20} />
           </div>
           <div>
@@ -223,7 +229,7 @@ export function DocProgress({
       </div>
 
       {busy && (
-        <div className="space-y-3 rounded-xl border border-line bg-sunken/40 p-4">
+        <div className="space-y-3 rounded-lg border border-line bg-sunken/40 p-4">
           <ol className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs">
             {STEPS.map((s, i) => {
               const isPast = i < step;
@@ -265,18 +271,18 @@ export function DocProgress({
               variant="danger"
               busy={cancelling}
               onClick={cancel}
-              title="Stop ongoing OCR perception process"
+              title="Stop reading this document"
             >
-              Stop OCR
+              Stop Reading
             </Button>
           </div>
         </div>
       )}
 
       {doc.status === "CANCELLED" && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warn/30 bg-warn-soft p-4 text-xs">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-warn/30 bg-warn-soft p-4 text-xs">
           <div>
-            <p className="font-bold text-warn">OCR Processing Cancelled</p>
+            <p className="font-bold text-warn">Reading Cancelled</p>
             <p className="text-mute mt-0.5">
               The process was interrupted. You can resume reading or upload a replacement file.
             </p>
@@ -294,7 +300,7 @@ export function DocProgress({
 
       {doc.error_message && !busy && doc.status !== "CANCELLED" && (
         <div
-          className="flex items-start gap-2.5 rounded-xl border border-mark/30 bg-mark-soft p-4 text-xs text-mark"
+          className="flex items-start gap-2.5 rounded-lg border border-mark/30 bg-mark-soft p-4 text-xs text-mark"
           role="alert"
         >
           <IconAlertCircle size={16} className="shrink-0 mt-0.5" />
@@ -303,7 +309,7 @@ export function DocProgress({
       )}
 
       {failedPages.length > 0 && !busy && (
-        <div className="space-y-2 rounded-xl border border-line bg-surface p-3.5 text-xs">
+        <div className="space-y-2 rounded-lg border border-line bg-surface p-3.5 text-xs">
           <p className="font-semibold text-ink">Pages requiring attention:</p>
           <ul className="space-y-1.5">
             {failedPages.map((p) => (
@@ -355,7 +361,7 @@ export function DocProgress({
           <p className="mb-2 text-xs font-semibold text-mute">
             Perception Status: {diag.status}. {diag.error}
           </p>
-          <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-xl border border-line bg-sunken p-4 font-mono text-xs text-ink/90">
+          <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-lg border border-line bg-sunken p-4 font-mono text-xs text-ink/90">
             {diag.raw || "(empty response from model)"}
           </pre>
         </Modal>

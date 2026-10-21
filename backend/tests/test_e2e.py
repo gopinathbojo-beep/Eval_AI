@@ -39,9 +39,7 @@ def test_full_workflow(client, auth):
     assert r.status_code == 400
     r = c.post(f"/api/exams/{eid}/question-paper", headers=h, files={"file": ("x.exe", b"MZ", "application/octet-stream")})
     assert r.status_code == 400
-    # answer key before questions verified is blocked
-    r = c.post(f"/api/exams/{eid}/answer-key", headers=h, files={"file": ("k.png", make_png(), "image/png")})
-    assert r.status_code == 409
+    # (an answer key uploaded before the questions are verified waits for them: see test_bulk_sheets_and_early_key.py)
 
     # --- question paper (page 2 fails to parse first)
     BEHAVIOUR["garbage_pages"] = {2}
@@ -180,13 +178,53 @@ def test_full_workflow(client, auth):
     assert res["finalized"] and [(q["question"], q["final_marks"], q["max_marks"]) for q in res["questions"]] == \
         [("1", 2, 2), ("2", 1, 5), ("3(a)", 3, 3), ("3(b)", 5, 5)]
     assert res["questions"][1]["ai_marks"] == 0 and res["questions"][1]["official_answer"]
+    # K levels suggested from the question wording: Define->K1, Explain/Describe->K2, Draw->K3
+    assert [q["k_level"] for q in res["questions"]] == ["K1", "K2", "K2", "K3"]
+    k = {r["key"]: (r["scored"], r["max_marks"]) for r in res["outcomes"]["k_levels"]}
+    assert k == {"K1": (2, 2), "K2": (1 + 3, 5 + 3), "K3": (5, 5)}
+    j(c.patch(f"/api/exam-questions/{qid['2']}/outcome", json={"k_level": "k4", "course_outcome": "2"}, headers=h), 200)
+    assert c.patch(f"/api/exam-questions/{qid['2']}/outcome", json={"k_level": "K9"}, headers=h).status_code == 400
+    summ = j(c.get(f"/api/exams/{eid}/outcome-summary", headers=h), 200)
+    assert summ["finalized_students"] == 1
+    assert {r["key"]: r["percentage"] for r in summ["k_levels"]} == {"K1": 100.0, "K2": 100.0, "K3": 100.0, "K4": 20.0}
+    assert [r["key"] for r in summ["course_outcomes"]] == ["CO2", "Untagged"]
+    rep_pdf = c.get(f"/api/evaluations/{evid}/report.pdf", headers=h)
+    assert rep_pdf.status_code == 200 and rep_pdf.content.startswith(b"%PDF")
+    from io import BytesIO
+    from openpyxl import load_workbook
+    ws = load_workbook(BytesIO(c.get("/api/reports/marksheet", headers=h).content))["K-Level Analysis"]
+    row = next(r for r in ws.iter_rows(values_only=True) if r[1] == "Term 1")
+    assert row[6:10] == ("2 / 2", "3 / 3", "5 / 5", "1 / 5")   # Q2 retagged K4 above
     # audit trail
     logs = j(c.get(f"/api/exams/{eid}/audit-logs", headers=h), 200)
     actions = {l["action"] for l in logs}
     assert {"marks_changed", "student_answer_mapping_changed", "evaluation_finalized", "question_max_marks_changed"} & actions
     assert "answer_key_marks_aligned_to_question" in actions and "questions_verified" in actions
-    # exam finalize
-    assert j(c.post(f"/api/exams/{eid}/finalize", headers=h), 200)["status"] == "FINALIZED"
+    # exam finalize: every student's report is saved, files are deleted 24 h later (or on demand)
+    assert c.post(f"/api/exams/{eid}/purge-files", headers=h).status_code == 409        # not finalized yet
+    fin = j(c.post(f"/api/exams/{eid}/finalize", headers=h), 200)
+    assert fin["status"] == "FINALIZED" and fin["reports_saved"] == 1 and fin["files_purge_at"]
+    from datetime import datetime, timedelta, timezone
+    from app.database import SessionLocal
+    from app.models import Exam
+    from app.services.exam_files import exam_dir, purge_due
+    assert purge_due() == 0                                                           # still inside the grace period
+    root = exam_dir(eid)
+    assert {p.name for p in root.iterdir()} >= {"question-paper", "answer-key", "answer-sheets", "reports"}
+    db = SessionLocal()
+    db.get(Exam, eid).files_purge_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+    db.commit()
+    db.close()
+    assert purge_due() == 1
+    assert [p.name for p in root.iterdir()] == ["reports"] and len(list((root / "reports").iterdir())) == 1
+    assert j(c.get(f"/api/exams/{eid}", headers=h))["files_purged_at"]
+    r = c.get(f"/api/documents/answer-sheet/{d['document']['id']}/pages/1/image", headers=h)
+    assert r.status_code == 404 and r.json()["code"] == "FILES_DELETED"
+    # results and the saved official report still work without the files
+    assert j(c.get(f"/api/evaluations/{evid}/result", headers=h), 200)["total_marks"] == 11
+    rep_pdf = c.get(f"/api/evaluations/{evid}/report.pdf", headers=h)
+    assert rep_pdf.status_code == 200 and rep_pdf.content.startswith(b"%PDF")
+    assert "attachment" in rep_pdf.headers["content-disposition"] and "__" not in rep_pdf.headers["content-disposition"]
 
 
 def test_duplicate_mapping_and_ai_unavailable(client, auth):

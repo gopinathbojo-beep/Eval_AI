@@ -1,7 +1,26 @@
 export interface Teacher { id: string; name: string; email: string }
 export interface ClassRow { id: string; name: string; student_count: number }
 export interface Subject { id: string; name: string; code: string | null }
-export interface Student { id: string; name: string; roll_number: string; class_id: string; class_name: string | null }
+export interface Student {
+  id: string; name: string; roll_number: string; class_id: string; class_name: string | null;
+  registration_number?: string | null; section?: string | null;
+}
+export interface IdentityRead {
+  name: string | null; roll_number: string | null; registration_number: string | null; class_name: string | null; section: string | null;
+}
+export interface UnassignedSheet extends DocInfo {
+  identity: { match?: string; note?: string; read?: Partial<IdentityRead>; candidates?: string[] };
+  candidates: { id: string; name: string; roll_number: string; registration_number: string | null; section: string | null }[];
+}
+export interface ImportSummary { created: number; updated: number; errors: { row: number; reason: string }[] }
+export interface OutcomeRow {
+  key: string; label: string; questions: number; max_marks: number; scored?: number; average_scored?: number; percentage: number | null;
+}
+export interface Outcomes { k_levels: OutcomeRow[]; course_outcomes: OutcomeRow[] }
+export interface OutcomeSummary extends Outcomes {
+  finalized_students: number;
+  students: (Outcomes & { evaluation_id: string; student_id: string; name: string; roll_number: string })[];
+}
 export type ExamStatus =
   | "DRAFT" | "QUESTION_PAPER_UPLOADED" | "QUESTIONS_EXTRACTED" | "QUESTIONS_VERIFIED" | "ANSWER_KEY_UPLOADED"
   | "ANSWER_KEY_VERIFIED" | "READY_FOR_EVALUATION" | "EVALUATING" | "REVIEW_REQUIRED" | "FINALIZED";
@@ -14,6 +33,7 @@ export interface Exam {
   id: string; name: string; academic_year: string; class_id: string; class_name: string; subject_id: string;
   subject_name: string; exam_type: string; exam_date: string | null; duration_minutes: number | null;
   total_marks: number; instructions: string | null; status: ExamStatus; created_at: string;
+  files_purge_at?: string | null; files_purged_at?: string | null;
 }
 export interface ExamDetail extends Exam {
   question_paper: DocInfo | null; answer_key_document: DocInfo | null; question_count: number;
@@ -26,6 +46,7 @@ export interface Question {
   question_type: string | null; max_marks: number | null; section: string | null; position: number;
   page_start: number | null; page_end?: number | null; bbox: BBox | null; has_crop: boolean; ocr_confidence: number | null;
   verification_status: "UNVERIFIED" | "VERIFIED" | "NEEDS_REVIEW"; review_reason: string | null;
+  k_level?: string | null; k_level_source?: "SUGGESTED" | "TEACHER" | null; course_outcome?: string | null;
 }
 export interface SectionSummary {
   section: string;
@@ -105,11 +126,11 @@ export interface EvaluationDetail {
 export interface ResultRow {
   question_id: string; question: string; question_text: string; max_marks: number | null; final_marks: number | null;
   ai_marks: number | null; teacher_overridden: boolean; student_answer: string | null; official_answer: string | null;
-  feedback: string | null; status: string;
+  feedback: string | null; status: string; k_level?: string | null; course_outcome?: string | null;
 }
 export interface ResultResponse {
   finalized: boolean; evaluation: Evaluation; exam: { id: string; name: string; subject: string; class: string };
-  total_marks: number; maximum_marks: number; percentage: number; questions: ResultRow[];
+  total_marks: number; maximum_marks: number; percentage: number; questions: ResultRow[]; outcomes?: Outcomes;
 }
 export interface AuditRow {
   id: string; entity_type: string; action: string; old_value: unknown; new_value: unknown; reason: string | null;
@@ -119,3 +140,19 @@ export interface Dashboard {
   total_classes: number; total_subjects: number; total_exams: number; total_students: number;
   pending_evaluations: number; completed_evaluations: number; recent_exams: Exam[]; recent_evaluations: Evaluation[];
 }
+
+export interface SchoolProfile {
+  name: string; address: string; principal_name: string; has_logo: boolean;
+  active_report_template: string; active_card_template: string;
+}
+export type TemplateKind = "report" | "report_card";
+export interface Toggle { id: string; visible: boolean }
+export interface TemplateConfig {
+  sections: Toggle[]; columns: Toggle[]; summary: Toggle[];
+  labels: Record<string, string>;
+  style: { accent: string; font: string; font_size: number; logo_size: number; logo_position: string; borders: string; zebra: boolean; paper: string };
+  text: { footer: string; note: string };
+  signers: string[];
+}
+export interface ReportTemplate { id: string; name: string; preset: boolean; config: TemplateConfig }
+export interface ReportCardTerm { academic_year: string; exam_type: string; subjects: string[] }

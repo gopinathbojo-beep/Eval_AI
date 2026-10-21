@@ -6,7 +6,7 @@ import { Button, Card, Stat } from "../../components/ui";
 import { useExam } from "../ExamWorkspace";
 
 const NEXT: Record<string, [string, string, string]> = {
-  DRAFT: ["Upload the Question Paper", "question-paper", "The model reads each page and proposes the extracted questions."],
+  DRAFT: ["Upload the Question Paper", "question-paper", ""],
   QUESTION_PAPER_UPLOADED: ["Wait for Paper Processing", "question-paper", "Or check status and fix any failed pages."],
   QUESTIONS_EXTRACTED: ["Review and Verify Questions", "questions", "Verify each question number, text, and marks against the page scan."],
   QUESTIONS_VERIFIED: ["Upload or Generate Answer Key", "answer-key", "Provide the official answers or generate model answers using AI."],
@@ -53,13 +53,9 @@ export default function Overview({ onSelectSubTab }: OverviewProps) {
   return (
     <div className="space-y-6">
       {/* Recommended Next Action Banner */}
-      <Card className="relative overflow-hidden border-pen/20 bg-gradient-to-r from-pen-soft/60 via-surface to-surface p-5 shadow-soft">
+      <Card className="p-5 shadow-soft">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="space-y-1">
-            <div className="inline-flex items-center gap-1.5 rounded-full bg-pen/10 px-2.5 py-0.5 text-xs font-semibold text-pen">
-              <span className="h-1.5 w-1.5 rounded-full bg-pen animate-pulse" />
-              Recommended Next Action
-            </div>
             <h2 className="text-lg font-bold text-ink">{title}</h2>
             {hint && <p className="text-xs text-mute max-w-xl">{hint}</p>}
           </div>
@@ -143,7 +139,7 @@ export default function Overview({ onSelectSubTab }: OverviewProps) {
               </thead>
               <tbody className="divide-y divide-line text-xs">
                 {audit.data.map((a) => (
-                  <tr key={a.id} className="align-top hover:bg-sunken/40">
+                  <tr key={a.id} className="align-top hover:bg-hover">
                     <td className="whitespace-nowrap px-4 py-2.5 font-mono text-mute">{date(a.created_at)}</td>
                     <td className="px-4 py-2.5 font-medium text-ink">{a.user ?? "System"}</td>
                     <td className="px-4 py-2.5">

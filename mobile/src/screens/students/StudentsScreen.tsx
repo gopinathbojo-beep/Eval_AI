@@ -11,8 +11,9 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../../theme/ThemeContext";
-import { api } from "../../api/client";
-import type { Student, ClassRow } from "../../types";
+import * as DocumentPicker from "expo-document-picker";
+import { api, downloadAndShareFile, uploadFileNative } from "../../api/client";
+import type { Student, ClassRow, ImportSummary } from "../../types";
 import { Card } from "../../components/Card";
 import { Button } from "../../components/Button";
 import { Input } from "../../components/Input";
@@ -22,6 +23,7 @@ import { ModalDialog } from "../../components/ModalDialog";
 import { Loading } from "../../components/Loading";
 import { Empty } from "../../components/Empty";
 import { Badge } from "../../components/Badge";
+import { ReportCardModal } from "../../components/SchoolReports";
 
 interface StudentsScreenProps {
   route: any;
@@ -46,9 +48,13 @@ export const StudentsScreen: React.FC<StudentsScreenProps> = ({ route }) => {
 
   // Modal State
   const [modalVisible, setModalVisible] = useState(false);
+  const [cardFor, setCardFor] = useState<Student | null>(null);
   const [editingStudent, setEditingStudent] = useState<Student | null>(null);
   const [nameInput, setNameInput] = useState("");
   const [rollInput, setRollInput] = useState("");
+  const [regInput, setRegInput] = useState("");
+  const [sectionInput, setSectionInput] = useState("");
+  const [transferBusy, setTransferBusy] = useState<"import" | "xlsx" | "pdf" | null>(null);
   const [modalClassId, setModalClassId] = useState<string>("");
   const [saving, setSaving] = useState(false);
 
@@ -84,6 +90,8 @@ export const StudentsScreen: React.FC<StudentsScreenProps> = ({ route }) => {
     setEditingStudent(null);
     setNameInput("");
     setRollInput("");
+    setRegInput("");
+    setSectionInput("");
     if (selectedClassId) {
       setModalClassId(selectedClassId);
     } else if (classes.length > 0) {
@@ -96,6 +104,8 @@ export const StudentsScreen: React.FC<StudentsScreenProps> = ({ route }) => {
     setEditingStudent(st);
     setNameInput(st.name);
     setRollInput(st.roll_number);
+    setRegInput(st.registration_number || "");
+    setSectionInput(st.section || "");
     setModalClassId(st.class_id);
     setModalVisible(true);
   };
@@ -114,6 +124,8 @@ export const StudentsScreen: React.FC<StudentsScreenProps> = ({ route }) => {
             name: nameInput.trim(),
             roll_number: rollInput.trim(),
             class_id: modalClassId,
+            registration_number: regInput.trim() || null,
+            section: sectionInput.trim() || null,
           },
         });
         Alert.alert("Success", "Student details updated successfully.");
@@ -124,6 +136,8 @@ export const StudentsScreen: React.FC<StudentsScreenProps> = ({ route }) => {
             name: nameInput.trim(),
             roll_number: rollInput.trim(),
             class_id: modalClassId,
+            registration_number: regInput.trim() || null,
+            section: sectionInput.trim() || null,
           },
         });
       }
@@ -136,6 +150,53 @@ export const StudentsScreen: React.FC<StudentsScreenProps> = ({ route }) => {
       Alert.alert("Error", err.message || "Failed to save student");
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Excel import: columns Name, Roll Number, Registration Number, Class, Section
+  const handleImport = async () => {
+    try {
+      const res = await DocumentPicker.getDocumentAsync({
+        type: ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+        copyToCacheDirectory: true,
+      });
+      if (res.canceled || !res.assets?.length) return;
+      const file = res.assets[0];
+      if (!file.name.toLowerCase().endsWith(".xlsx")) {
+        Alert.alert("Excel Only", "Import accepts Excel files (.xlsx) only.");
+        return;
+      }
+      setTransferBusy("import");
+      const summary = await uploadFileNative<ImportSummary>("/students/import", file.uri, {
+        fileName: file.name,
+        mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        params: selectedClassId ? { class_id: selectedClassId } : undefined,
+      });
+      const skipped = summary.errors.slice(0, 8).map((e) => `Row ${e.row}: ${e.reason}`).join("\n");
+      Alert.alert(
+        "Import Finished",
+        `${summary.created} added, ${summary.updated} updated` +
+          (summary.errors.length ? `, ${summary.errors.length} skipped.\n\n${skipped}` : ".")
+      );
+      fetchData();
+    } catch (err: any) {
+      Alert.alert("Import Failed", err.message || "Could not import the Excel file.");
+    } finally {
+      setTransferBusy(null);
+    }
+  };
+
+  const handleExport = async (format: "xlsx" | "pdf") => {
+    try {
+      setTransferBusy(format);
+      await downloadAndShareFile(
+        `/students/export?format=${format}${selectedClassId ? `&class_id=${selectedClassId}` : ""}`,
+        `students.${format}`
+      );
+    } catch (err: any) {
+      Alert.alert("Export Failed", err.message || "Could not export the student list.");
+    } finally {
+      setTransferBusy(null);
     }
   };
 
@@ -174,7 +235,8 @@ export const StudentsScreen: React.FC<StudentsScreenProps> = ({ route }) => {
     let result = students.filter((s) => {
       const matchSearch =
         s.name.toLowerCase().includes(search.toLowerCase()) ||
-        s.roll_number.toLowerCase().includes(search.toLowerCase());
+        s.roll_number.toLowerCase().includes(search.toLowerCase()) ||
+        (s.registration_number || "").toLowerCase().includes(search.toLowerCase());
       const matchClass = selectedClassId ? s.class_id === selectedClassId : true;
       return matchSearch && matchClass;
     });
@@ -328,6 +390,38 @@ export const StudentsScreen: React.FC<StudentsScreenProps> = ({ route }) => {
             onPress={handleOpenAdd}
           />
         </View>
+        <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+          <Button
+            title="Import Excel"
+            icon={<Ionicons name="cloud-upload-outline" size={15} color={colors.text} />}
+            variant="secondary"
+            size="small"
+            loading={transferBusy === "import"}
+            disabled={!!transferBusy}
+            onPress={handleImport}
+            style={{ flex: 1 }}
+          />
+          <Button
+            title="Excel"
+            icon={<Ionicons name="download-outline" size={15} color={colors.text} />}
+            variant="secondary"
+            size="small"
+            loading={transferBusy === "xlsx"}
+            disabled={!!transferBusy || students.length === 0}
+            onPress={() => handleExport("xlsx")}
+            style={{ flex: 1 }}
+          />
+          <Button
+            title="PDF"
+            icon={<Ionicons name="document-text-outline" size={15} color={colors.text} />}
+            variant="secondary"
+            size="small"
+            loading={transferBusy === "pdf"}
+            disabled={!!transferBusy || students.length === 0}
+            onPress={() => handleExport("pdf")}
+            style={{ flex: 1 }}
+          />
+        </View>
       </View>
 
       <FlatList
@@ -378,14 +472,23 @@ export const StudentsScreen: React.FC<StudentsScreenProps> = ({ route }) => {
                   </Text>
                   <Text style={[styles.metaText, { color: colors.textSecondary }]}>
                     Roll No: <Text style={{ color: colors.text, fontWeight: "600" }}>{item.roll_number}</Text>
+                    {item.section ? <Text>  •  Sec {item.section}</Text> : null}
                   </Text>
+                  {item.registration_number ? (
+                    <Text style={[styles.metaText, { color: colors.textSecondary }]}>
+                      Reg No: <Text style={{ color: colors.text, fontWeight: "600" }}>{item.registration_number}</Text>
+                    </Text>
+                  ) : null}
                 </View>
                 <Badge
                   label={item.class_name || "Unassigned"}
                   variant={item.class_name ? "teal" : "muted"}
                 />
+                <TouchableOpacity style={{ padding: 6, marginLeft: 6 }} onPress={() => setCardFor(item)}>
+                  <Ionicons name="document-text-outline" size={17} color={colors.primary} />
+                </TouchableOpacity>
                 <TouchableOpacity
-                  style={{ padding: 6, marginLeft: 6 }}
+                  style={{ padding: 6, marginLeft: 2 }}
                   onPress={() => handleOpenEdit(item)}
                 >
                   <Ionicons name="pencil-outline" size={17} color={colors.primary} />
@@ -404,6 +507,14 @@ export const StudentsScreen: React.FC<StudentsScreenProps> = ({ route }) => {
         }
       />
 
+      <ReportCardModal
+        visible={!!cardFor}
+        classId={cardFor?.class_id ?? null}
+        studentId={cardFor?.id}
+        title={`Report card · ${cardFor?.name ?? ""}`}
+        onClose={() => setCardFor(null)}
+      />
+
       <ModalDialog
         visible={modalVisible}
         onClose={() => {
@@ -413,8 +524,8 @@ export const StudentsScreen: React.FC<StudentsScreenProps> = ({ route }) => {
         title={editingStudent ? "Edit Student Details" : "Add New Student"}
         subtitle={
           editingStudent
-            ? "Update student name, roll number, or assigned class"
-            : "Enroll student with their name and roll number"
+            ? "Update the student's details or assigned class"
+            : "Answer sheets are matched to students by registration number or roll number"
         }
       >
         <Input
@@ -429,6 +540,20 @@ export const StudentsScreen: React.FC<StudentsScreenProps> = ({ route }) => {
           placeholder="e.g. 101, A-12"
           value={rollInput}
           onChangeText={setRollInput}
+        />
+        <Input
+          label="Registration Number (recommended)"
+          placeholder="e.g. 2026BIO0142"
+          value={regInput}
+          onChangeText={setRegInput}
+          autoCapitalize="characters"
+        />
+        <Input
+          label="Section (optional)"
+          placeholder="e.g. A"
+          value={sectionInput}
+          onChangeText={setSectionInput}
+          autoCapitalize="characters"
         />
 
         <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>

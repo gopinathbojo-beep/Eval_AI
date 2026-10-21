@@ -1,7 +1,8 @@
 from __future__ import annotations
 from pathlib import Path
 import uuid
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
+from pydantic import BaseModel
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from ..database import get_db
@@ -14,13 +15,14 @@ from ..serializers import doc_view, evaluation_view
 from ..services.audit import audit
 from ..services.pipeline import KINDS, process_document
 from ..services.state import set_state
+from ..services.student_identity import assign_student, identify_sheets, run_sheet
 
 router = APIRouter(prefix="/api")
-BUSY = {"UPLOADED", "RENDERING", "OCR_PROCESSING", "EXTRACTING"}
+BUSY = {"UPLOADED", "RENDERING", "OCR_PROCESSING", "EXTRACTING", "IDENTIFYING"}
 EXT = {
     "question-paper": {"pdf", "png", "jpg", "jpeg", "docx"},
     "answer-key": {"pdf", "docx", "png", "jpg", "jpeg"},
-    "answer-sheet": {"pdf", "png", "jpg", "jpeg"},
+    "answer-sheet": {"pdf", "png", "jpg", "jpeg", "docx"},
 }
 
 
@@ -147,11 +149,9 @@ def download_question_paper_pdf(exam_id: str, db: Session = Depends(get_db), t: 
 async def upload_answer_key(exam_id: str, bg: BackgroundTasks, file: UploadFile = File(...),
                             db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     exam = get_exam(db, t, exam_id)
-    if exam.status not in ("QUESTIONS_VERIFIED", "ANSWER_KEY_UPLOADED", "ANSWER_KEY_VERIFIED", "READY_FOR_EVALUATION"):
-        raise err(409, "QUESTIONS_NOT_VERIFIED" if exam.status in ("DRAFT", "QUESTION_PAPER_UPLOADED", "QUESTIONS_EXTRACTED")
-                  else "ANSWER_KEY_LOCKED",
-                  "Verify the questions before uploading the answer key." if exam.status in ("DRAFT", "QUESTION_PAPER_UPLOADED", "QUESTIONS_EXTRACTED")
-                  else "Evaluation has started, so the answer key can no longer be replaced.")
+    early = exam.status in EARLY_KEY_STATES
+    if not early and exam.status not in ("QUESTIONS_VERIFIED", "ANSWER_KEY_UPLOADED", "ANSWER_KEY_VERIFIED", "READY_FOR_EVALUATION"):
+        raise err(409, "ANSWER_KEY_LOCKED", "Evaluation has started, so the answer key can no longer be replaced.")
     if db.query(EvaluationItem).join(Evaluation, Evaluation.id == EvaluationItem.evaluation_id).filter(Evaluation.exam_id == exam.id).first():
         raise err(409, "ANSWER_KEY_LOCKED", "Evaluation has started, so the answer key can no longer be replaced.")
     _busy_check(db, AnswerKeyDocument, exam_id=exam.id)
@@ -161,13 +161,33 @@ async def upload_answer_key(exam_id: str, bg: BackgroundTasks, file: UploadFile 
     for k in db.query(AnswerKey).filter_by(exam_id=exam.id, is_active=True):
         k.is_active = False
     doc = _save(db, "answer-key", exam.id, data, ext, mime, file.filename or "upload")
-    set_state(exam, "ANSWER_KEY_UPLOADED")
+    if early:
+        # read it only once the question list is final, so it maps onto verified questions (see release_waiting_key)
+        doc.status, doc.stage = "WAITING", "Waiting for verified questions"
+    else:
+        set_state(exam, "ANSWER_KEY_UPLOADED")
     db.flush()
     audit(db, exam_id=exam.id, teacher_id=t.id, entity_type="answer_key", entity_id=doc.id, action="answer_key_uploaded",
           new=doc.original_filename)
     db.commit()
-    bg.add_task(process_document, "answer-key", doc.id)
+    if not early:
+        bg.add_task(process_document, "answer-key", doc.id)
     return doc_view(doc, "answer-key")
+
+
+EARLY_KEY_STATES = ("DRAFT", "QUESTION_PAPER_UPLOADED", "QUESTIONS_EXTRACTED")
+
+
+def release_waiting_key(db: Session, exam, bg: BackgroundTasks) -> bool:
+    """Called once questions are verified: start reading an answer key that was uploaded early."""
+    doc = db.query(AnswerKeyDocument).filter_by(exam_id=exam.id, is_active=True, status="WAITING").first()
+    if doc is None:
+        return False
+    set_state(exam, "ANSWER_KEY_UPLOADED")
+    doc.status, doc.stage = "UPLOADED", "Queued"
+    db.commit()
+    bg.add_task(process_document, "answer-key", doc.id)
+    return True
 
 
 @router.get("/exams/{exam_id}/answer-key")
@@ -185,10 +205,11 @@ async def upload_answer_sheet(exam_id: str, bg: BackgroundTasks, file: UploadFil
                               roll_number: str | None = Form(None),
                               db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     exam = get_exam(db, t, exam_id)
-    if exam.status not in ("ANSWER_KEY_VERIFIED", "READY_FOR_EVALUATION", "EVALUATING", "REVIEW_REQUIRED"):
-        raise err(409, "ANSWER_KEY_NOT_VERIFIED",
-                  "Verify the answer key before uploading student answer sheets."
-                  if exam.status != "FINALIZED" else "This exam is finalized.")
+    _require_sheet_state(exam)
+    if not (student_id or student_name or roll_number):
+        docs = await _save_unassigned(db, t, exam, [file])
+        bg.add_task(identify_sheets, [d.id for d in docs], t.id)
+        return _unassigned_view(db, docs[0])
     if student_id:
         st = db.get(Student, student_id)
         if not st or st.class_id != exam.class_id:
@@ -216,6 +237,129 @@ async def upload_answer_sheet(exam_id: str, bg: BackgroundTasks, file: UploadFil
     bg.add_task(process_document, "answer-sheet", doc.id)
     db.refresh(ev)
     return {**evaluation_view(ev), "document": doc_view(doc, "answer-sheet")}
+
+
+SHEET_STATES = ("ANSWER_KEY_VERIFIED", "READY_FOR_EVALUATION", "EVALUATING", "REVIEW_REQUIRED")
+MAX_BULK_FILES = 200
+
+
+def _require_sheet_state(exam) -> None:
+    if exam.status not in SHEET_STATES:
+        raise err(409, "ANSWER_KEY_NOT_VERIFIED",
+                  "Verify the answer key before uploading student answer sheets."
+                  if exam.status != "FINALIZED" else "This exam is finalized.")
+
+
+async def _save_unassigned(db: Session, t: Teacher, exam, files: list[UploadFile]) -> list:
+    _require_sheet_state(exam)
+    if not files:
+        raise err(400, "NO_FILES", "Choose at least one answer sheet.")
+    if len(files) > MAX_BULK_FILES:
+        raise err(400, "TOO_MANY_FILES", f"Upload at most {MAX_BULK_FILES} answer sheets at a time.")
+    validated = []
+    for f in files:  # validate every file first, so one bad file rejects the batch before anything is stored
+        try:
+            validated.append((f.filename or "upload", *await read_validated_upload(f, EXT["answer-sheet"])))
+        except HTTPException as e:
+            msg = e.detail.get("message") if isinstance(e.detail, dict) else e.detail
+            raise err(400, "INVALID_FILE", f"{f.filename}: {msg}")
+    docs = []
+    for name, data, ext, mime in validated:
+        doc = _save(db, "answer-sheet", exam.id, data, ext, mime, name)
+        doc.stage = "Waiting to read student details"
+        docs.append(doc)
+    db.flush()
+    audit(db, exam_id=exam.id, teacher_id=t.id, entity_type="exam", entity_id=exam.id, action="answer_sheets_bulk_uploaded",
+          new=[d.original_filename for d in docs])
+    db.commit()
+    return docs
+
+
+def _unassigned_view(db: Session, doc) -> dict:
+    ident = doc.identity or {}
+    cands = [db.get(Student, sid) for sid in ident.get("candidates") or []]
+    return {**doc_view(doc, "answer-sheet"), "identity": ident,
+            "candidates": [{"id": s.id, "name": s.name, "roll_number": s.roll_number,
+                            "registration_number": s.registration_number, "section": s.section} for s in cands if s]}
+
+
+@router.post("/exams/{exam_id}/answer-sheets/bulk", status_code=202)
+async def upload_answer_sheets_bulk(exam_id: str, bg: BackgroundTasks, files: list[UploadFile] = File(...),
+                                    db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    """Many sheets at once. Each is matched to its student from the details written on it, then read as usual."""
+    exam = get_exam(db, t, exam_id)
+    docs = await _save_unassigned(db, t, exam, files)
+    bg.add_task(identify_sheets, [d.id for d in docs], t.id)
+    return {"uploaded": len(docs), "documents": [_unassigned_view(db, d) for d in docs]}
+
+
+@router.get("/exams/{exam_id}/answer-sheets/unassigned")
+def list_unassigned_sheets(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    """Sheets not yet linked to a student: being identified, held for the teacher, or unreadable."""
+    exam = get_exam(db, t, exam_id)
+    docs = (db.query(AnswerSheetDocument).filter_by(exam_id=exam.id, is_active=True, student_id=None)
+            .order_by(AnswerSheetDocument.uploaded_at).all())
+    return [_unassigned_view(db, d) for d in docs]
+
+
+def _unassigned_doc(db: Session, t: Teacher, doc_id: str):
+    doc = db.get(AnswerSheetDocument, doc_id)
+    if doc is None or not doc.is_active:
+        raise err(404, "NOT_FOUND", "Answer sheet not found.")
+    exam = get_exam(db, t, doc.exam_id)
+    if doc.student_id is not None:
+        raise err(409, "ALREADY_ASSIGNED", "This answer sheet is already linked to a student.")
+    return doc, exam
+
+
+class AssignBody(BaseModel):
+    student_id: str
+
+
+@router.post("/answer-sheets/{doc_id}/assign")
+def assign_sheet_student(doc_id: str, body: AssignBody, bg: BackgroundTasks,
+                         db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    doc, exam = _unassigned_doc(db, t, doc_id)
+    _require_sheet_state(exam)
+    if doc.status in BUSY:
+        raise err(409, "PROCESSING_IN_PROGRESS", "The student details are still being read. Wait a moment.")
+    if not doc.pages:
+        raise err(409, "SHEET_UNREADABLE", "This file could not be opened. Delete it and upload it again.")
+    st = db.get(Student, body.student_id)
+    if not st or st.class_id != exam.class_id:
+        raise err(400, "INVALID_STUDENT", "Choose a student from this exam's class.")
+    if db.query(Evaluation).filter_by(exam_id=exam.id, student_id=st.id).first():
+        raise err(409, "ANSWER_SHEET_EXISTS",
+                  f"{st.name} ({st.roll_number}) already has an answer sheet for this exam. Delete it first to assign this one.")
+    ev = assign_student(db, doc, st, t.id, "Picked by teacher")
+    db.commit()
+    bg.add_task(run_sheet, doc.id)
+    db.refresh(ev)
+    return {**evaluation_view(ev), "document": doc_view(doc, "answer-sheet")}
+
+
+@router.post("/answer-sheets/{doc_id}/identify", status_code=202)
+def retry_identify(doc_id: str, bg: BackgroundTasks, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    doc, exam = _unassigned_doc(db, t, doc_id)
+    _require_sheet_state(exam)
+    if doc.status in BUSY:
+        raise err(409, "PROCESSING_IN_PROGRESS", "This answer sheet is already being processed.")
+    doc.status, doc.stage, doc.error_message = "UPLOADED", "Waiting to read student details", None
+    db.commit()
+    bg.add_task(identify_sheets, [doc.id], t.id)
+    return _unassigned_view(db, doc)
+
+
+@router.delete("/answer-sheets/{doc_id}")
+def delete_unassigned_sheet(doc_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    doc, exam = _unassigned_doc(db, t, doc_id)
+    if doc.status == "IDENTIFYING":
+        raise err(409, "PROCESSING_IN_PROGRESS", "Wait for the student details to be read before deleting.")
+    doc.is_active = False  # original file stays on disk
+    audit(db, exam_id=exam.id, teacher_id=t.id, entity_type="answer_sheet", entity_id=doc.id,
+          action="unassigned_answer_sheet_deleted", old=doc.original_filename)
+    db.commit()
+    return {"ok": True}
 
 
 @router.get("/exams/{exam_id}/answer-sheets")
@@ -279,8 +423,10 @@ def page_image(kind: str, doc_id: str, page: int, db: Session = Depends(get_db),
     doc = _doc(db, t, kind, doc_id)
     for p in doc.pages:
         if p["page_number"] == page:
-            return FileResponse(abs_path(p["source_file"]), media_type="image/png",
-                                headers={"Cache-Control": "private, max-age=3600"})
+            f = abs_path(p["source_file"])
+            if not f.is_file():
+                raise err(404, "FILES_DELETED", "This page image is no longer stored (exam files are deleted after finalization).")
+            return FileResponse(f, media_type="image/png", headers={"Cache-Control": "private, max-age=3600"})
     raise err(404, "NOT_FOUND", "Page not found.")
 
 
@@ -290,11 +436,11 @@ def page_ocr_diagnostic(kind: str, doc_id: str, page: int, db: Session = Depends
     import json
     doc = _doc(db, t, kind, doc_id)
     for p in doc.pages:
-        if p["page_number"] == page and p.get("ocr_file"):
+        if p["page_number"] == page and p.get("ocr_file") and abs_path(p["ocr_file"]).is_file():
             d = json.loads(abs_path(p["ocr_file"]).read_text(encoding="utf-8"))
             return {"page_number": page, "status": d.get("status"), "error": d.get("error"),
                     "raw": (d.get("raw") or "")[:20000]}
-    raise err(404, "NOT_FOUND", "No OCR output stored for this page.")
+    raise err(404, "NOT_FOUND", "No reading output stored for this page.")
 
 
 @router.post("/documents/{kind}/{doc_id}/reprocess", status_code=202)
@@ -334,7 +480,7 @@ def cancel_processing(kind: str, doc_id: str, db: Session = Depends(get_db), t: 
     request_cancellation(doc.id)
     doc.status = "CANCELLED"
     doc.stage = "Cancelled by user"
-    doc.error_message = "OCR processing was stopped by user."
+    doc.error_message = "Reading was stopped by the user."
     db.commit()
     return doc_view(doc, kind)
 
@@ -356,4 +502,4 @@ def crop(entity: str, entity_id: str, db: Session = Depends(get_db), t: Teacher 
     p = abs_path(row.crop_file)
     if not p.exists():
         raise err(404, "NOT_FOUND", "No crop image found on disk.")
-    return FileResponse(p, media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
+    return FileResponse(p, media_type="image/png", headers={"Cache-Control": "private, max-age=86400"})

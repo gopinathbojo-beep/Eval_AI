@@ -1,5 +1,5 @@
 @echo off
-git title ADEM - Start All Services
+title ADEM - Start All Services
 echo ========================================================
 echo                 Starting ADEM Services
 echo   Backend (FastAPI) + Web (Vite) + Mobile (Expo) + Ollama
@@ -15,7 +15,6 @@ timeout /t 2 /nobreak >nul
 
 echo [2/4] Starting Web Frontend on http://localhost:5173 ...
 start "ADEM - Web Frontend (Vite :5173)" cmd /k "cd /d "%~dp0frontend" && npm.cmd run dev"
-.\star
 timeout /t 2 /nobreak >nul
 
 echo [3/4] Starting Mobile App (Expo)...

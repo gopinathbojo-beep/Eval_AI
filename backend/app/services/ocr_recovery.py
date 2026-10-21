@@ -153,7 +153,7 @@ def find_recovery_candidates(
                         continue
 
                 score = 0.70
-                reasons = [f"OCR digit misread: '{norm}' is commonly misread for '{alt}'"]
+                reasons = [f"Digit misread: '{norm}' is commonly misread for '{alt}'"]
 
                 # If sequential position also matches the alternative's position
                 q_pos = getattr(target_q, "position", None)

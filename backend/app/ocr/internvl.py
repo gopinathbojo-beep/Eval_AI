@@ -101,6 +101,10 @@ def enhance_contrast(image_path: Path) -> Path:
         return image_path
 
 
+# Regex-recovered labels are guesses: keep them below the review thresholds so a teacher always checks them.
+_FALLBACK_CONFIDENCE = 0.3
+
+
 def fallback_parse_plain_text(raw_text: str, schema: Type[T]) -> T | None:
     """Attempt deterministic extraction from unstructured Markdown/plain text when structured JSON fails."""
     import re
@@ -145,8 +149,8 @@ def fallback_parse_plain_text(raw_text: str, schema: Type[T]) -> T | None:
                     question_number=f"Q{lbl}" if lbl.isdigit() else lbl,
                     raw_question_label=lbl,
                     answer_text=content,
-                    mapping_status="MAPPED" if lbl else "UNMAPPED",
-                    ocr_confidence=0.85,
+                    mapping_status="UNMAPPED",
+                    ocr_confidence=_FALLBACK_CONFIDENCE,
                 )
                 for lbl, content in chunks
             ]
@@ -157,7 +161,7 @@ def fallback_parse_plain_text(raw_text: str, schema: Type[T]) -> T | None:
                 QuestionItem(
                     raw_question_number=f"Q{lbl}" if lbl.isdigit() else lbl,
                     question_text=content,
-                    confidence=0.85,
+                    confidence=_FALLBACK_CONFIDENCE,
                 )
                 for lbl, content in chunks
             ]
@@ -168,6 +172,7 @@ def fallback_parse_plain_text(raw_text: str, schema: Type[T]) -> T | None:
                 AnswerKeyItem(
                     question_number=f"Q{lbl}" if lbl.isdigit() else lbl,
                     answer_text=content,
+                    confidence=_FALLBACK_CONFIDENCE,
                 )
                 for lbl, content in chunks
             ]

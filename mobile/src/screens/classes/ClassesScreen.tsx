@@ -21,6 +21,7 @@ import { ModalDialog } from "../../components/ModalDialog";
 import { Loading } from "../../components/Loading";
 import { Empty } from "../../components/Empty";
 import { Badge } from "../../components/Badge";
+import { ReportCardModal } from "../../components/SchoolReports";
 
 interface ClassesScreenProps {
   navigation: any;
@@ -41,6 +42,7 @@ export const ClassesScreen: React.FC<ClassesScreenProps> = ({ navigation }) => {
 
   // Modal State
   const [modalVisible, setModalVisible] = useState(false);
+  const [cardsFor, setCardsFor] = useState<ClassRow | null>(null);
   const [editingClass, setEditingClass] = useState<ClassRow | null>(null);
   const [classNameInput, setClassNameInput] = useState("");
   const [saving, setSaving] = useState(false);
@@ -308,8 +310,11 @@ export const ClassesScreen: React.FC<ClassesScreenProps> = ({ navigation }) => {
                 label={`${item.student_count} Students`}
                 variant={item.student_count > 0 ? "teal" : "muted"}
               />
+              <TouchableOpacity style={{ padding: 6, marginLeft: 6 }} onPress={() => setCardsFor(item)}>
+                <Ionicons name="document-text-outline" size={17} color={colors.primary} />
+              </TouchableOpacity>
               <TouchableOpacity
-                style={{ padding: 6, marginLeft: 6 }}
+                style={{ padding: 6, marginLeft: 2 }}
                 onPress={() => handleOpenEdit(item)}
               >
                 <Ionicons name="pencil-outline" size={17} color={colors.primary} />
@@ -343,6 +348,13 @@ export const ClassesScreen: React.FC<ClassesScreenProps> = ({ navigation }) => {
             totalItems={filteredAndSorted.length}
           />
         }
+      />
+
+      <ReportCardModal
+        visible={!!cardsFor}
+        classId={cardsFor?.id ?? null}
+        title={`Report cards · ${cardsFor?.name ?? ""}`}
+        onClose={() => setCardsFor(null)}
       />
 
       <ModalDialog

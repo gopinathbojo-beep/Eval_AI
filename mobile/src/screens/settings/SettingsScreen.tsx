@@ -15,6 +15,7 @@ import { Card } from "../../components/Card";
 import { Button } from "../../components/Button";
 import { Input } from "../../components/Input";
 import { Badge } from "../../components/Badge";
+import { SchoolDetailsCard } from "../../components/SchoolReports";
 
 export const SettingsScreen: React.FC<{ navigation?: any }> = ({ navigation }) => {
   const { teacher, logout } = useAuth();
@@ -230,8 +231,25 @@ export const SettingsScreen: React.FC<{ navigation?: any }> = ({ navigation }) =
         <Text style={[styles.cardDesc, { color: colors.textSecondary }]}>
           • Original handwritten answer sheet images: Retained on disk for 24 hours, then automatically purged per policy.
           {"\n"}• Question papers and official answer keys: Stored permanently as master examination records.
-          {"\n"}• OCR transcripts, AI scores, teacher overrides, marks, and audit logs: Stored securely in the local SQLite database.
+          {"\n"}• Transcripts, AI scores, teacher overrides, marks, and audit logs: Stored securely in the local SQLite database.
         </Text>
+      </Card>
+
+      <SchoolDetailsCard />
+
+      <Card style={styles.card}>
+        <Text style={[styles.cardTitle, { color: colors.text }]}>Report Templates</Text>
+        <Text style={[styles.cardDesc, { color: colors.textSecondary }]}>
+          Choose and edit how reports and report cards look.
+        </Text>
+        <View style={{ flexDirection: "row", gap: 10 }}>
+          <Button title="Exam report" icon={<Ionicons name="document-text-outline" size={16} color={colors.text} />}
+            variant="secondary" size="small" style={{ flex: 1 }}
+            onPress={() => (navigation as any)?.navigate?.("TemplateEditor", { kind: "report" })} />
+          <Button title="Report card" icon={<Ionicons name="ribbon-outline" size={16} color={colors.text} />}
+            variant="secondary" size="small" style={{ flex: 1 }}
+            onPress={() => (navigation as any)?.navigate?.("TemplateEditor", { kind: "report_card" })} />
+        </View>
       </Card>
 
       {/* System Diagnostics & Links */}

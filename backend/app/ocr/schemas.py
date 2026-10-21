@@ -249,3 +249,15 @@ class EvaluationResult(_Base):
         if isinstance(v, str):
             return [v]
         return [str(x) for x in v]
+
+
+class StudentIdentityResult(_Base):
+    """Student details written in the header of an answer sheet. Every field is null when not clearly legible."""
+    name: str | None = None
+    roll_number: str | None = None
+    registration_number: str | None = None
+    class_name: str | None = None
+    section: str | None = None
+
+    _s = field_validator("name", "roll_number", "registration_number", "class_name", "section",
+                         mode="before")(lambda cls, v: (_str(v) or "").strip() or None)

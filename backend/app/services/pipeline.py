@@ -74,7 +74,7 @@ def _handle_cancel(db: Session, doc, doc_id: str) -> None:
     _CANCEL_REQUESTED.discard(doc_id)
     doc.status = "CANCELLED"
     doc.stage = "Cancelled by user"
-    doc.error_message = "OCR processing was stopped by user."
+    doc.error_message = "git Reading was stopped by the user."
     db.commit()
 
 
@@ -133,7 +133,7 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
 
     (wd / "ocr").mkdir(exist_ok=True)
     total = len(doc.pages)
-    _progress(db, doc, f"OCR: page 1 of {total}", 0, total, "OCR_PROCESSING")
+    _progress(db, doc, f"Reading page 1 of {total}", 0, total, "OCR_PROCESSING")
     for i, p in enumerate(list(doc.pages)):
         if is_cancelled(doc_id, db, doc):
             _handle_cancel(db, doc, doc_id)
@@ -141,7 +141,7 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
 
         if only_failed and p.get("ocr_status") == "OK":
             continue
-        _progress(db, doc, f"OCR: processing page {p['page_number']} of {total}", i)
+        _progress(db, doc, f"Reading page {p['page_number']} of {total}", i)
         img = abs_path(p["processed_file"])
         out = wd / "ocr" / f"page-{p['page_number']:03d}.json"
         prompt_kwargs = {}

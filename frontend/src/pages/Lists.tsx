@@ -17,7 +17,8 @@ import {
 } from "../components/ui";
 import { useApi } from "../hooks/useApi";
 import { useTableState } from "../hooks/useTableState";
-import type { ClassRow, Student, Subject } from "../types";
+import type { ClassRow, ImportSummary, Student, Subject } from "../types";
+import { ReportCardDialog, ReportTemplatesCard, SchoolDetailsCard } from "../components/SchoolSettings";
 
 function SimpleForm({
   title,
@@ -67,6 +68,7 @@ export function Classes() {
   const [open, setOpen] = useState(false);
   const [editingClass, setEditingClass] = useState<ClassRow | null>(null);
   const [deletingClass, setDeletingClass] = useState<ClassRow | null>(null);
+  const [cardsFor, setCardsFor] = useState<ClassRow | null>(null);
   const [downloading, setDownloading] = useState(false);
 
   const handleDownloadMarksheet = async () => {
@@ -108,7 +110,7 @@ export function Classes() {
     <div className="space-y-4">
       <PageHeader
         title="Classes Roster"
-        sub="Manage class cohorts, student enrollment, and export complete marksheets."
+        sub="Your classes and marksheets."
         actions={
           <div className="flex items-center gap-2">
             <Button variant="soft" busy={downloading} onClick={handleDownloadMarksheet}>
@@ -132,7 +134,7 @@ export function Classes() {
       ) : !data?.length ? (
         <Empty
           title="No classes added yet"
-          hint="Create a class (such as 10-A or Grade 12-Science) before setting up exams."
+          hint="Add a class (e.g. 10-A) before creating exams."
           action={<Button variant="primary" onClick={() => setOpen(true)}>Add Class</Button>}
         />
       ) : (
@@ -171,11 +173,14 @@ export function Classes() {
                 </thead>
                 <tbody className="divide-y divide-line text-sm">
                   {table.paginatedData.map((c) => (
-                    <tr key={c.id} className="hover:bg-sunken/40">
+                    <tr key={c.id} className="hover:bg-hover">
                       <td className="px-4 py-3 font-semibold text-ink">{c.name}</td>
                       <td className="px-4 py-3 font-mono text-mute">{c.student_count ?? 0} students</td>
                       <td className="px-4 py-3 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1.5">
+                          <Button small variant="soft" onClick={() => setCardsFor(c)}>
+                            Report cards
+                          </Button>
                           <Button
                             small
                             variant="soft"
@@ -217,6 +222,9 @@ export function Classes() {
           done={reload}
           close={() => setEditingClass(null)}
         />
+      )}
+      {cardsFor && (
+        <ReportCardDialog classId={cardsFor.id} title={`Report cards · ${cardsFor.name}`} onClose={() => setCardsFor(null)} />
       )}
       {deletingClass && (
         <Confirm
@@ -324,7 +332,7 @@ export function Subjects() {
     <div className="space-y-4">
       <PageHeader
         title="Subjects Directory"
-        sub="Manage curriculum subjects and subject codes for question papers and evaluation."
+        sub="Subjects you set exams for."
         actions={
           <Button variant="primary" onClick={() => setOpen(true)} className="shadow-xs">
             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -340,7 +348,7 @@ export function Subjects() {
       ) : !data?.length ? (
         <Empty
           title="No subjects added yet"
-          hint="Add the subjects you conduct examinations for (e.g. Physics, Chemistry, Mathematics)."
+          hint="Add a subject, e.g. Physics."
           action={<Button variant="primary" onClick={() => setOpen(true)}>Add Subject</Button>}
         />
       ) : (
@@ -379,7 +387,7 @@ export function Subjects() {
                 </thead>
                 <tbody className="divide-y divide-line text-sm">
                   {table.paginatedData.map((s) => (
-                    <tr key={s.id} className="hover:bg-sunken/40">
+                    <tr key={s.id} className="hover:bg-hover">
                       <td className="px-4 py-3 font-semibold text-ink">{s.name}</td>
                       <td className="px-4 py-3 font-mono text-mute">{s.code ?? "–"}</td>
                       <td className="px-4 py-3 text-right whitespace-nowrap">
@@ -502,6 +510,10 @@ export function Students() {
   const [open, setOpen] = useState(false);
   const [editingStudent, setEditingStudent] = useState<Student | null>(null);
   const [deletingStudent, setDeletingStudent] = useState<Student | null>(null);
+  const [cardFor, setCardFor] = useState<Student | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [exporting, setExporting] = useState<"xlsx" | "pdf" | null>(null);
+  const [exportErr, setExportErr] = useState<unknown>(null);
 
   const classOptions = useMemo(() => {
     if (!data) return [];
@@ -519,7 +531,8 @@ export function Students() {
     data,
     searchFilter: (s, q) =>
       s.name.toLowerCase().includes(q) ||
-      s.roll_number.toLowerCase().includes(q),
+      s.roll_number.toLowerCase().includes(q) ||
+      (s.registration_number || "").toLowerCase().includes(q),
 
     filters: {
       class: (s, val) => (s.class_name || s.class_id) === val,
@@ -567,33 +580,63 @@ export function Students() {
     },
   ];
 
+  const exportAs = async (format: "xlsx" | "pdf") => {
+    // export follows the class filter when one is chosen
+    const classId = data?.find((s) => s.class_name === table.activeFilters.class)?.class_id;
+    setExporting(format);
+    setExportErr(null);
+    try {
+      await downloadFile(`/students/export?format=${format}${classId ? `&class_id=${classId}` : ""}`, `students.${format}`);
+    } catch (e) {
+      setExportErr(e);
+    } finally {
+      setExporting(null);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <PageHeader
-        title="Student Roster"
-        sub="Enroll and manage student records and roll numbers across all classes."
+        title="Students"
+        sub="Answer sheets are matched to students by registration or roll number."
         actions={
-          <Button variant="primary" onClick={() => setOpen(true)} className="shadow-xs">
-            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-            <span>Add Student</span>
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="soft" onClick={() => setImporting(true)} title="Import students from an Excel sheet">
+              <span>Import Excel</span>
+            </Button>
+            <Button variant="soft" busy={exporting === "xlsx"} disabled={!data?.length} onClick={() => exportAs("xlsx")}>
+              <span>Export Excel</span>
+            </Button>
+            <Button variant="soft" busy={exporting === "pdf"} disabled={!data?.length} onClick={() => exportAs("pdf")}>
+              <span>Export PDF</span>
+            </Button>
+            <Button variant="primary" onClick={() => setOpen(true)} className="shadow-xs">
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              <span>Add Student</span>
+            </Button>
+          </div>
         }
       />
-      <ErrorPanel error={error} />
+      <ErrorPanel error={error || exportErr} />
       {loading ? (
         <Loading />
       ) : !data?.length ? (
         <Empty
           title="No students enrolled yet"
-          hint="Add students manually, or upload their answer sheets during examinations to enroll them automatically."
-          action={<Button variant="primary" onClick={() => setOpen(true)}>Add Student</Button>}
+          hint="Add students one by one or import an Excel sheet."
+          action={
+            <div className="flex gap-2">
+              <Button variant="soft" onClick={() => setImporting(true)}>Import Excel</Button>
+              <Button variant="primary" onClick={() => setOpen(true)}>Add Student</Button>
+            </div>
+          }
         />
       ) : (
         <>
           <TableToolbar
-            searchPlaceholder="Search by student name or roll number..."
+            searchPlaceholder="Search by name, roll number or registration number..."
             searchValue={table.search}
             onSearchChange={table.setSearch}
             filters={filterConfigs}
@@ -622,18 +665,25 @@ export function Students() {
                   <tr>
                     <th className="px-4 py-3">Roll No.</th>
                     <th className="px-4 py-3">Student Name</th>
+                    <th className="px-4 py-3">Reg. No.</th>
                     <th className="px-4 py-3">Class</th>
+                    <th className="px-4 py-3">Section</th>
                     <th className="px-4 py-3 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-line text-sm">
                   {table.paginatedData.map((s) => (
-                    <tr key={s.id} className="hover:bg-sunken/40">
+                    <tr key={s.id} className="hover:bg-hover">
                       <td className="px-4 py-3 font-mono font-medium text-ink">{s.roll_number}</td>
                       <td className="px-4 py-3 font-semibold text-ink">{s.name}</td>
+                      <td className="px-4 py-3 font-mono text-ink">{s.registration_number || "–"}</td>
                       <td className="px-4 py-3 font-medium text-mute">{s.class_name ?? "–"}</td>
+                      <td className="px-4 py-3 font-medium text-mute">{s.section || "–"}</td>
                       <td className="px-4 py-3 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1.5">
+                          <Button small variant="soft" onClick={() => setCardFor(s)}>
+                            Report card
+                          </Button>
                           <Button
                             small
                             variant="soft"
@@ -669,6 +719,11 @@ export function Students() {
         </>
       )}
       {open && <StudentForm done={reload} close={() => setOpen(false)} />}
+      {importing && <ImportStudents done={reload} close={() => setImporting(false)} />}
+      {cardFor && (
+        <ReportCardDialog classId={cardFor.class_id} studentId={cardFor.id} title={`Report card · ${cardFor.name}`}
+          onClose={() => setCardFor(null)} />
+      )}
       {editingStudent && (
         <EditStudentForm
           student={editingStudent}
@@ -708,6 +763,8 @@ function StudentForm({ done, close }: { done: () => void; close: () => void }) {
   const [name, setName] = useState("");
   const [roll, setRoll] = useState("");
   const [cls, setCls] = useState("");
+  const [reg, setReg] = useState("");
+  const [section, setSection] = useState("");
   return (
     <SimpleForm
       title="Add New Student"
@@ -715,7 +772,7 @@ function StudentForm({ done, close }: { done: () => void; close: () => void }) {
       onSubmit={async () => {
         await api("/students", {
           method: "POST",
-          json: { name, roll_number: roll, class_id: cls },
+          json: { name, roll_number: roll, class_id: cls, registration_number: reg || null, section: section || null },
         });
         done();
       }}
@@ -723,8 +780,16 @@ function StudentForm({ done, close }: { done: () => void; close: () => void }) {
       <Field label="Student Full Name">
         {(id) => <Input id={id} required placeholder="e.g. Priya Patel" value={name} onChange={(e) => setName(e.target.value)} />}
       </Field>
-      <Field label="Roll Number">
-        {(id) => <Input id={id} required placeholder="e.g. 101" value={roll} onChange={(e) => setRoll(e.target.value)} />}
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="Roll Number">
+          {(id) => <Input id={id} required placeholder="e.g. 101" value={roll} onChange={(e) => setRoll(e.target.value)} />}
+        </Field>
+        <Field label="Registration Number" hint="Recommended: the most reliable way to match answer sheets.">
+          {(id) => <Input id={id} placeholder="e.g. 2026BIO0142" value={reg} onChange={(e) => setReg(e.target.value)} />}
+        </Field>
+      </div>
+      <Field label="Section (optional)">
+        {(id) => <Input id={id} placeholder="e.g. A" value={section} onChange={(e) => setSection(e.target.value)} />}
       </Field>
       <Field label="Class">
         {(id) => (
@@ -747,6 +812,8 @@ function EditStudentForm({ student, done, close }: { student: Student; done: () 
   const [name, setName] = useState(student.name);
   const [roll, setRoll] = useState(student.roll_number);
   const [cls, setCls] = useState(student.class_id);
+  const [reg, setReg] = useState(student.registration_number || "");
+  const [section, setSection] = useState(student.section || "");
   return (
     <SimpleForm
       title={`Edit Student (${student.name})`}
@@ -754,7 +821,7 @@ function EditStudentForm({ student, done, close }: { student: Student; done: () 
       onSubmit={async () => {
         await api(`/students/${student.id}`, {
           method: "PATCH",
-          json: { name, roll_number: roll, class_id: cls },
+          json: { name, roll_number: roll, class_id: cls, registration_number: reg || null, section: section || null },
         });
         done();
       }}
@@ -762,8 +829,16 @@ function EditStudentForm({ student, done, close }: { student: Student; done: () 
       <Field label="Student Full Name">
         {(id) => <Input id={id} required value={name} onChange={(e) => setName(e.target.value)} />}
       </Field>
-      <Field label="Roll Number">
-        {(id) => <Input id={id} required value={roll} onChange={(e) => setRoll(e.target.value)} />}
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="Roll Number">
+          {(id) => <Input id={id} required value={roll} onChange={(e) => setRoll(e.target.value)} />}
+        </Field>
+        <Field label="Registration Number">
+          {(id) => <Input id={id} value={reg} onChange={(e) => setReg(e.target.value)} />}
+        </Field>
+      </div>
+      <Field label="Section (optional)">
+        {(id) => <Input id={id} value={section} onChange={(e) => setSection(e.target.value)} />}
       </Field>
       <Field label="Class">
         {(id) => (
@@ -780,6 +855,89 @@ function EditStudentForm({ student, done, close }: { student: Student; done: () 
   );
 }
 
+function ImportStudents({ done, close }: { done: () => void; close: () => void }) {
+  const classes = useApi<ClassRow[]>("/classes");
+  const [file, setFile] = useState<File | null>(null);
+  const [cls, setCls] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<unknown>(null);
+  const [result, setResult] = useState<ImportSummary | null>(null);
+
+  const go = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!file) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      if (cls) form.append("class_id", cls);
+      setResult(await api<ImportSummary>("/students/import", { method: "POST", form }));
+      done();
+    } catch (x) {
+      setErr(x);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal title="Import Students from Excel" onClose={close}>
+      {result ? (
+        <div className="space-y-4 text-sm">
+          <p className="text-ink">
+            <b>{result.created}</b> added, <b>{result.updated}</b> updated
+            {result.errors.length > 0 && <>, <b className="text-mark">{result.errors.length}</b> row(s) skipped</>}.
+          </p>
+          {result.errors.length > 0 && (
+            <ul className="max-h-60 space-y-1 overflow-auto rounded-lg border border-line bg-sunken/50 p-3 text-xs">
+              {result.errors.map((x) => (
+                <li key={x.row}><span className="font-mono font-semibold">Row {x.row}:</span> {x.reason}</li>
+              ))}
+            </ul>
+          )}
+          <div className="flex justify-end border-t border-line/60 pt-3">
+            <Button variant="primary" onClick={close}>Done</Button>
+          </div>
+        </div>
+      ) : (
+        <form onSubmit={go} className="space-y-4">
+          <div className="rounded-lg border border-line bg-sunken/50 p-3 text-xs text-mute space-y-1">
+            <p>The first sheet needs a header row with these columns (any order):</p>
+            <p className="font-mono text-ink">Name · Roll Number · Registration Number · Class · Section</p>
+            <p>
+              Each class + section becomes its own class (Class 10, Section A → 10-A) and is created if it doesn't exist.
+              Name and Roll Number are required. Existing students are updated (matched by registration number, or class +
+              roll number). Classes that don't exist yet are created. Tip: export your current list to get a ready template.
+            </p>
+          </div>
+          <Field label="Excel file (.xlsx)">
+            {(id) => (
+              <Input id={id} type="file" required accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+            )}
+          </Field>
+          <Field label="Class for rows without a Class column (optional)">
+            {(id) => (
+              <Select id={id} value={cls} onChange={(e) => setCls(e.target.value)}>
+                <option value="">Use the Class column in the sheet</option>
+                {classes.data?.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </Select>
+            )}
+          </Field>
+          <ErrorPanel error={err} />
+          <div className="flex justify-end gap-2 border-t border-line/60 pt-3">
+            <Button type="button" variant="ghost" onClick={close}>Cancel</Button>
+            <Button type="submit" variant="primary" busy={busy} disabled={!file}>Import</Button>
+          </div>
+        </form>
+      )}
+    </Modal>
+  );
+}
+
 export function SettingsPage() {
   const { data, loading, reload } = useApi<{
     available: boolean;
@@ -792,12 +950,14 @@ export function SettingsPage() {
   return (
     <div className="space-y-4 max-w-2xl">
       <PageHeader
-        title="System Settings"
-        sub="Monitor local Ollama AI model connectivity and application status."
+        title="Settings"
+        sub="School details, report templates and AI model status."
       />
+      <SchoolDetailsCard />
+      <ReportTemplatesCard />
       <Card className="p-6 shadow-soft space-y-4">
         <div className="flex items-center justify-between border-b border-line pb-3">
-          <h2 className="text-base font-semibold text-ink">Local AI Service Health</h2>
+          <h2 className="text-lg font-semibold text-ink">Local AI Service Health</h2>
           {data && <StatusBadge status={data.available ? "READY" : "AI_ERROR"} />}
         </div>
         {loading || !data ? (

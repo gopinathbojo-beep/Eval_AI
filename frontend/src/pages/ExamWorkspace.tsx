@@ -3,17 +3,17 @@ import { NavLink, Outlet, useLocation, useNavigate, useOutletContext, useParams 
 import { api } from "../api/client";
 import { useApi } from "../hooks/useApi";
 import type { ExamDetail } from "../types";
-import { BUSY_DOC, EXAM_STEPS } from "../utils/format";
-import { Button, Confirm, ErrorPanel, Loading, PageHeader, StatusBadge } from "../components/ui";
+import { BUSY_DOC } from "../utils/format";
+import { Button, Confirm, ErrorPanel, Loading, PageHeader } from "../components/ui";
 
 export interface ExamCtx { exam: ExamDetail; reload: () => Promise<void> }
 export const useExam = () => useOutletContext<ExamCtx>();
 
 const TABS: [string, string][] = [
-  ["", "1. Content & Key"],
-  ["submissions", "2. Submissions"],
-  ["evaluation", "3. Evaluation"],
-  ["results", "4. Results & Marksheet"],
+  ["", "Setup"],
+  ["submissions", "Answer Sheets"],
+  ["evaluation", "Evaluation"],
+  ["results", "Results"],
 ];
 
 export default function ExamWorkspace() {
@@ -27,8 +27,6 @@ export default function ExamWorkspace() {
 
   if (loading) return <Loading />;
   if (error || !data) return <ErrorPanel error={error} />;
-
-  const idx = EXAM_STEPS.findIndex((s) => s.key === data.status);
 
   return (
     <div className="space-y-5">
@@ -44,7 +42,6 @@ export default function ExamWorkspace() {
         ].filter(Boolean).join(" · ")}
         actions={
           <div className="flex items-center gap-2.5">
-            <StatusBadge status={data.status} />
             <Button
               small
               variant="ghost"
@@ -61,50 +58,9 @@ export default function ExamWorkspace() {
         }
       />
 
-      {/* Modern Academic Step Stepper */}
-      <div className="rounded-xl border border-line bg-surface p-3.5 shadow-soft">
-        <div className="mb-2 flex items-center justify-between">
-          <span className="text-xs font-semibold uppercase tracking-wider text-mute">Workflow Progress</span>
-          <span className="text-xs font-medium text-ink">
-            Step {Math.max(1, idx + 1)} of {EXAM_STEPS.length}
-          </span>
-        </div>
-        <ol className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs" aria-label="Exam progress steps">
-          {EXAM_STEPS.map((s, i) => {
-            const isDone = i < idx;
-            const isCurrent = i === idx;
-            return (
-              <li
-                key={s.key}
-                className={`flex flex-shrink-0 items-center gap-1.5 rounded-lg px-2.5 py-1.5 transition-colors ${
-                  isDone
-                    ? "bg-ok-soft/60 text-ok font-medium"
-                    : isCurrent
-                    ? "bg-pen text-surface font-semibold shadow-xs"
-                    : "bg-sunken text-mute"
-                }`}
-              >
-                <span
-                  className={`flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-bold ${
-                    isDone
-                      ? "bg-ok text-surface"
-                      : isCurrent
-                      ? "bg-surface text-pen"
-                      : "bg-line text-mute"
-                  }`}
-                >
-                  {isDone ? "✓" : i + 1}
-                </span>
-                <span className="whitespace-nowrap">{s.label}</span>
-              </li>
-            );
-          })}
-        </ol>
-      </div>
-
       {/* Tabs Navigation */}
-      <nav className="flex gap-1 overflow-x-auto border-b border-line pb-px" aria-label="Exam sections">
-        {TABS.map(([to, text]) => {
+      <nav className="-mb-5 flex items-end gap-1.5 overflow-x-auto border-b border-line px-1" aria-label="Exam sections">
+        {TABS.map(([to, text], step) => {
           const tabPath = to ? `/exams/${id}/${to}` : `/exams/${id}`;
           const isTabActive = (() => {
             if (to === "") {
@@ -131,23 +87,27 @@ export default function ExamWorkspace() {
             <NavLink
               key={to}
               to={tabPath}
-              className={`group relative flex items-center gap-2 whitespace-nowrap px-4 py-2.5 text-sm font-medium transition-colors ${
+              className={`group relative -mb-px flex items-center gap-2 whitespace-nowrap rounded-t-md border px-4 py-2.5 text-sm font-medium transition-ui ${
                 isTabActive
-                  ? "text-pen"
-                  : "text-mute hover:text-ink hover:bg-sunken/60 rounded-t-lg"
+                  ? "border-line border-b-surface border-t-2 border-t-pen bg-surface text-ink"
+                  : "border-transparent text-mute hover:bg-hover hover:text-brown"
               }`}
             >
+              <span
+                className={`flex h-5 w-5 items-center justify-center rounded-full border font-display text-[11px] font-semibold ${
+                  isTabActive ? "border-mark text-mark" : "border-line text-mute group-hover:border-ink/30"
+                }`}
+              >
+                {step + 1}
+              </span>
               <span>{text}</span>
-              {isTabActive && (
-                <span className="absolute bottom-0 left-0 right-0 h-0.5 rounded-t bg-pen" />
-              )}
             </NavLink>
           );
         })}
       </nav>
 
       {/* Tab Content */}
-      <div className="pt-1">
+      <div className="rounded-b-lg border border-t-0 border-line bg-surface/60 p-4 pt-6 sm:p-6 sm:pt-7">
         <Outlet context={{ exam: data, reload: async () => { await reload(); } } satisfies ExamCtx} />
       </div>
 

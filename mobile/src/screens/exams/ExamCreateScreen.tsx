@@ -324,7 +324,7 @@ export const ExamCreateScreen: React.FC<ExamCreateScreenProps> = ({ navigation }
             </View>
           </View>
           <Text style={[styles.helperNote, { color: colors.primary }]}>
-            💡 Note: Total marks will also be auto-detected and confirmed from your Question Paper during upload.
+            Total marks are also checked against the question paper.
           </Text>
 
           {/* Examination Date (Calendar Picker Type) */}

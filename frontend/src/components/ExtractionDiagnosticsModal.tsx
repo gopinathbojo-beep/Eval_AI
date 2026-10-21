@@ -56,7 +56,7 @@ export function ExtractionDiagnosticsModal({ onClose }: { onClose: () => void })
   }, []);
 
   return (
-    <Modal title="OCR & Extraction Diagnostics (Verified Reference Benchmarks)" wide onClose={onClose}
+    <Modal title="Extraction Diagnostics (Verified Reference Benchmarks)" wide onClose={onClose}
       footer={<Button variant="primary" onClick={onClose}>Close</Button>}>
       {loading ? (
         <Loading />
@@ -151,7 +151,7 @@ export function ExtractionDiagnosticsModal({ onClose }: { onClose: () => void })
                 {["ALL", "Chemistry", "English", "Mathematics"].map((s) => (
                   <button
                     key={s}
-                    className={`px-2 py-0.5 rounded text-xs transition ${filterSubject === s ? "bg-pen text-white font-medium" : "bg-sunken text-mute hover:text-ink"}`}
+                    className={`px-2 py-0.5 rounded text-xs transition ${filterSubject === s ? "bg-pen text-surface font-medium" : "bg-sunken text-mute hover:text-brown"}`}
                     onClick={() => setFilterSubject(s)}
                   >
                     {s}
@@ -166,7 +166,7 @@ export function ExtractionDiagnosticsModal({ onClose }: { onClose: () => void })
                 .map((ex) => (
                   <div
                     key={ex.id}
-                    className={`p-2.5 rounded-lg border text-xs cursor-pointer transition ${selectedEx?.id === ex.id ? "border-pen bg-pen/5" : "border-line bg-surface hover:bg-sunken/40"}`}
+                    className={`p-2.5 rounded-lg border text-xs cursor-pointer transition ${selectedEx?.id === ex.id ? "border-pen bg-pen/5" : "border-line bg-surface hover:bg-hover"}`}
                     onClick={() => setSelectedEx(selectedEx?.id === ex.id ? null : ex)}
                   >
                     <div className="flex items-center justify-between gap-2">
@@ -182,7 +182,7 @@ export function ExtractionDiagnosticsModal({ onClose }: { onClose: () => void })
                     {selectedEx?.id === ex.id && (
                       <div className="mt-3 pt-2.5 border-t border-line grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
                         <div className="rounded bg-sunken p-2.5">
-                          <span className="block font-semibold text-mute mb-1">Original Model OCR:</span>
+                          <span className="block font-semibold text-mute mb-1">Original Model Reading:</span>
                           <pre className="whitespace-pre-wrap font-doc text-ink text-[11px] leading-relaxed max-h-40 overflow-y-auto">{ex.original_ocr || "(empty)"}</pre>
                         </div>
                         <div className="rounded bg-ok-soft/30 p-2.5 border border-ok/30">

@@ -45,6 +45,7 @@ def question_view(q: ExamQuestion) -> dict:
                 q_text = subparts[1].strip()
 
     return {
+        "k_level": q.k_level, "k_level_source": q.k_level_source, "course_outcome": q.course_outcome,
         "id": q.id, "exam_id": q.exam_id, "display_number": q.display_number,
         "normalized_number": q.normalized_number, "question_text": q_text,
         "clean_question_text": q_text, "passage_text": passage_text,
@@ -93,6 +94,7 @@ def item_view(i: EvaluationItem) -> dict:
 
 def student_view(s: Student) -> dict:
     return {"id": s.id, "name": s.name, "roll_number": s.roll_number, "class_id": s.class_id,
+            "registration_number": s.registration_number, "section": s.section,
             "class_name": s.school_class.name if s.school_class else None}
 
 

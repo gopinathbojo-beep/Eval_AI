@@ -21,21 +21,21 @@ export default function Submissions({ defaultSubTab = "sheets" }: SubmissionsPro
   return (
     <div className="space-y-5">
       {/* Sub-navigation & Metrics Bar */}
-      <div className="flex flex-col gap-3 rounded-xl border border-line bg-surface p-2 sm:flex-row sm:items-center sm:justify-between shadow-xs">
+      <div className="flex flex-col gap-3 rounded-lg border border-line bg-surface p-2 sm:flex-row sm:items-center sm:justify-between shadow-xs">
         <div className="flex items-center gap-1.5">
           <button
             onClick={() => setActiveTab("sheets")}
             className={`flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition-all ${
               activeTab === "sheets"
-                ? "bg-pen text-white shadow-xs"
-                : "text-ink/80 hover:bg-sunken hover:text-ink"
+                ? "bg-pen text-surface shadow-xs"
+                : "text-ink/80 hover:bg-hover hover:text-brown"
             }`}
           >
             <span>Student Answer Sheets</span>
             <span
               className={`rounded-full px-2 py-0.2 text-[10px] font-bold ${
                 activeTab === "sheets"
-                  ? "bg-white/20 text-white"
+                  ? "bg-surface/20 text-surface"
                   : "bg-line/60 text-mute"
               }`}
             >
@@ -47,15 +47,15 @@ export default function Submissions({ defaultSubTab = "sheets" }: SubmissionsPro
             onClick={() => setActiveTab("roster")}
             className={`flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition-all ${
               activeTab === "roster"
-                ? "bg-pen text-white shadow-xs"
-                : "text-ink/80 hover:bg-sunken hover:text-ink"
+                ? "bg-pen text-surface shadow-xs"
+                : "text-ink/80 hover:bg-hover hover:text-brown"
             }`}
           >
-            <span>Class Student Roster</span>
+            <span>Class Students</span>
             <span
               className={`rounded-full px-2 py-0.2 text-[10px] font-bold ${
                 activeTab === "roster"
-                  ? "bg-white/20 text-white"
+                  ? "bg-surface/20 text-surface"
                   : "bg-line/60 text-mute"
               }`}
             >

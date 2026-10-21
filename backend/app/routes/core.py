@@ -1,5 +1,5 @@
 from __future__ import annotations
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -15,6 +15,7 @@ from ..ocr.internvl import AIUnavailable, check_model
 from ..security import create_token, current_teacher, verify_password
 from ..serializers import doc_view, evaluation_view, student_view
 from ..services.audit import audit
+from ..services.student_io import export_pdf, export_xlsx, import_students, reg_taken
 
 router = APIRouter(prefix="/api")
 
@@ -211,12 +212,22 @@ class StudentIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     roll_number: str = Field(min_length=1, max_length=50)
     class_id: str
+    registration_number: str | None = Field(None, max_length=50)
+    section: str | None = Field(None, max_length=20)
 
 
 class StudentPatch(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=200)
     roll_number: str | None = Field(None, min_length=1, max_length=50)
     class_id: str | None = None
+    registration_number: str | None = Field(None, max_length=50)
+    section: str | None = Field(None, max_length=20)
+
+
+def _check_reg(db: Session, t: Teacher, reg: str | None, exclude_id: str | None = None) -> None:
+    other = reg_taken(db, t.id, reg, exclude_id)
+    if other:
+        raise err(409, "DUPLICATE_REG", f"Registration number {reg} already belongs to {other.name} ({other.roll_number}).")
 
 
 @router.get("/students")
@@ -234,7 +245,10 @@ def create_student(body: StudentIn, db: Session = Depends(get_db), t: Teacher = 
     c = db.get(SchoolClass, body.class_id)
     if not c or c.teacher_id != t.id:
         raise err(404, "NOT_FOUND", "Class not found.")
-    s = Student(class_id=c.id, name=body.name.strip(), roll_number=body.roll_number.strip())
+    reg = (body.registration_number or "").strip() or None
+    _check_reg(db, t, reg)
+    s = Student(class_id=c.id, name=body.name.strip(), roll_number=body.roll_number.strip(),
+                registration_number=reg, section=(body.section or "").strip() or None)
     db.add(s)
     try:
         db.commit()
@@ -266,6 +280,13 @@ def update_student(student_id: str, body: StudentPatch, db: Session = Depends(ge
         s.name = body.name.strip()
     if body.roll_number is not None and body.roll_number.strip():
         s.roll_number = body.roll_number.strip()
+    fields = body.model_dump(exclude_unset=True)
+    if "registration_number" in fields:
+        reg = (body.registration_number or "").strip() or None
+        _check_reg(db, t, reg, exclude_id=s.id)
+        s.registration_number = reg
+    if "section" in fields:
+        s.section = (body.section or "").strip() or None
 
     try:
         db.commit()
@@ -275,6 +296,47 @@ def update_student(student_id: str, body: StudentPatch, db: Session = Depends(ge
         raise err(409, "DUPLICATE_ROLL", f"Roll number {s.roll_number} already exists in {target_c_name}.")
     db.refresh(s)
     return student_view(s)
+
+
+@router.get("/students/export")
+def export_students(format: str = Query("xlsx", pattern="^(xlsx|pdf)$"), class_id: str | None = Query(None),
+                    db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    classes = {c.id: c for c in db.query(SchoolClass).filter_by(teacher_id=t.id)}
+    if class_id and class_id not in classes:
+        raise err(404, "NOT_FOUND", "Class not found.")
+    ids = [class_id] if class_id else list(classes)
+    students = db.query(Student).filter(Student.class_id.in_(ids or [""])).all()
+    students.sort(key=lambda s: (classes[s.class_id].name, s.section or "", s.roll_number.zfill(12)))
+    label = classes[class_id].name if class_id else "All classes"
+    fname = f"students-{label.replace(' ', '-').lower()}.{format}"
+    if format == "pdf":
+        body, media = export_pdf(students, f"Students - {label}"), "application/pdf"
+    else:
+        body, media = export_xlsx(students), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    return Response(body, media_type=media, headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
+@router.post("/students/import")
+async def import_students_xlsx(file: UploadFile = File(...), class_id: str | None = Form(None),
+                               db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    """Excel only. Updates students matched by registration number or class + roll number; creates the rest."""
+    if not (file.filename or "").lower().endswith(".xlsx"):
+        raise err(400, "INVALID_FILE", "Import accepts Excel files (.xlsx) only.")
+    default_class = None
+    if class_id:
+        default_class = db.get(SchoolClass, class_id)
+        if not default_class or default_class.teacher_id != t.id:
+            raise err(404, "NOT_FOUND", "Class not found.")
+    data = await file.read()
+    if len(data) > get_settings().max_upload_mb * 1024 * 1024:
+        raise err(413, "FILE_TOO_LARGE", "The file is too large.")
+    try:
+        summary = import_students(db, t.id, data, default_class)
+    except ValueError as e:
+        db.rollback()
+        raise err(400, "IMPORT_FAILED", str(e))
+    db.commit()
+    return summary
 
 
 @router.delete("/students/{student_id}")
@@ -342,6 +404,8 @@ def exam_view(e: Exam) -> dict:
             "class_name": e.school_class.name, "subject_id": e.subject_id, "subject_name": e.subject.name,
             "exam_type": e.exam_type, "exam_date": e.exam_date, "duration_minutes": e.duration_minutes,
             "total_marks": e.total_marks, "instructions": e.instructions, "status": e.status,
+            "files_purge_at": e.files_purge_at.isoformat() if e.files_purge_at else None,
+            "files_purged_at": e.files_purged_at.isoformat() if e.files_purged_at else None,
             "created_at": e.created_at.isoformat()}
 
 

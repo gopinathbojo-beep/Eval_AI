@@ -218,7 +218,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({ navigation }) 
       {(!data?.recent_exams || data.recent_exams.length === 0) ? (
         <Empty
           title="No exams created yet"
-          description="Create your first examination to upload question papers and evaluate student answer sheets."
+          description="Create your first exam to get started."
           actionTitle="Create Exam"
           onAction={() => navigation.navigate("ExamCreate")}
         />
@@ -266,7 +266,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({ navigation }) 
       {(!data?.recent_evaluations || data.recent_evaluations.length === 0) ? (
         <Empty
           title="No evaluations yet"
-          description="Uploaded student answer sheets will appear here once processed."
+          description="Answer sheets appear here once read."
         />
       ) : (
         data.recent_evaluations.map((ev: Evaluation) => (

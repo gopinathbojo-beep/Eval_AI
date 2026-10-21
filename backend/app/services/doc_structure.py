@@ -1006,7 +1006,7 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
             if not full_text.strip():
                 reasons.append("Empty question text")
             if q.confidence is not None and q.confidence < 0.6:
-                reasons.append("Low OCR confidence")
+                reasons.append("Low reading confidence")
 
             if is_heading_or_title(display_num) or is_heading_or_title(raw_label or ""):
                 continue

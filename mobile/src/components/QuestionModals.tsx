@@ -165,7 +165,7 @@ export const EditQuestionModal: React.FC<EditQuestionModalProps> = ({
                   style={[modalStyles.input, { backgroundColor: colors.background, color: colors.text, borderColor: colors.border }]}
                   value={reason}
                   onChangeText={setReason}
-                  placeholder="e.g. Fixed OCR typo in formula"
+                  placeholder="e.g. Fixed typo in formula"
                   placeholderTextColor={colors.textSecondary}
                 />
               </View>

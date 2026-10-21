@@ -2,8 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { api, downloadFile } from "../../api/client";
 import { useApi } from "../../hooks/useApi";
 import type { Question, QuestionsResponse } from "../../types";
-import { BUSY_DOC, fmt, pct } from "../../utils/format";
-import { Badge, Button, Card, Confirm, Empty, ErrorPanel, Field, Input, Loading, MathTextarea, MathView, Modal, Select, StatusBadge } from "../../components/ui";
+import { BUSY_DOC, K_LEVELS, fmt, pct } from "../../utils/format";
+import { Badge, Button, Card, Confirm, Empty, ErrorPanel, Field, Input, Loading, MathTextarea, MathView, Modal, MoreMenu, Select, StatusBadge } from "../../components/ui";
 import { PageViewer } from "../../components/PageViewer";
 import { AuthImage } from "../../components/AuthImage";
 import { ExtractionDiagnosticsModal } from "../../components/ExtractionDiagnosticsModal";
@@ -123,7 +123,7 @@ export default function Questions() {
   return (
     <div className="space-y-4">
       {/* Sticky Verification Action Bar */}
-      <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-surface/95 p-3.5 shadow-soft backdrop-blur">
+      <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-surface/95 p-3.5 shadow-soft backdrop-blur">
         <div className="flex flex-wrap items-center gap-3 text-xs sm:text-sm">
           <div className="inline-flex items-center gap-1.5 font-medium text-ink">
             <span className="flex h-2 w-2 rounded-full bg-ok" />
@@ -171,6 +171,18 @@ export default function Questions() {
             Diagnostics
           </Button>
 
+          {exam.status !== "FINALIZED" && qs.some((q) => q.k_level_source === "SUGGESTED") && (
+            <Button
+              small
+              variant="soft"
+              busy={busy === "k-levels"}
+              title="Accept every suggested K level as correct"
+              onClick={() => run("k-levels", () => api(`/exams/${exam.id}/questions/confirm-k-levels`, { method: "POST" }))}
+            >
+              Confirm Suggested K Levels
+            </Button>
+          )}
+
           {!data.locked && (
             <>
               <Button small onClick={() => setDlg({ kind: "add" })} disabled={isExtracting}>
@@ -210,7 +222,7 @@ export default function Questions() {
       </div>
 
       {isExtracting && (
-        <div className="flex items-center gap-3 rounded-xl border border-pen/30 bg-pen-soft/40 p-3 text-xs sm:text-sm text-pen">
+        <div className="flex items-center gap-3 rounded-lg border border-pen/30 bg-pen-soft/40 p-3 text-xs sm:text-sm text-pen">
           <svg className="h-4 w-4 animate-spin shrink-0 text-pen" fill="none" viewBox="0 0 24 24">
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
@@ -224,20 +236,19 @@ export default function Questions() {
       )}
 
       {data.marks_warning && (
-        <div className="rounded-xl border border-warn/40 bg-warn-soft p-3 text-xs sm:text-sm text-ink flex items-start gap-2.5">
-          <span className="text-warn font-bold">⚠</span>
-          <span>{data.marks_warning} Note: some question papers allow optional choices.</span>
+        <div className="rounded-lg border border-warn/40 bg-warn-soft p-3 text-xs sm:text-sm text-ink flex items-start gap-2.5">
+          <span>{data.marks_warning} Some papers allow optional choices.</span>
         </div>
       )}
       <ErrorPanel error={actionErr} />
       {data.locked && (
-        <div className="rounded-xl border border-ok/40 bg-ok-soft p-3 text-xs sm:text-sm text-ok font-medium flex items-center gap-2">
+        <div className="rounded-lg border border-ok/40 bg-ok-soft p-3 text-xs sm:text-sm text-ok font-medium flex items-center gap-2">
           <span>✓</span>
           <span>Questions are verified and locked for this exam.</span>
         </div>
       )}
 
-      {/* CBSE Document Information & Specification Header */}
+      {/* Question paper information header */}
       <Card className="p-4 shadow-soft border-line/80 bg-surface/90">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line/60 pb-3">
           <div className="flex items-center gap-2.5">
@@ -247,7 +258,7 @@ export default function Questions() {
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="text-sm sm:text-base font-bold text-ink">
-                  {data.exam_subject || exam.subject_name || "English Language and Literature"}
+                  {data.exam_subject || exam.subject_name}
                 </h3>
                 {data.qp_code && (
                   <Badge tone="pen" className="font-mono font-semibold">
@@ -255,24 +266,32 @@ export default function Questions() {
                   </Badge>
                 )}
               </div>
-              <p className="text-xs text-mute mt-0.5">
-                CBSE Secondary School Examination · Question Paper Document Structure
-              </p>
+              <p className="text-xs text-mute mt-0.5">Question paper structure</p>
             </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            <div className="flex items-center gap-1.5 rounded-lg border border-line bg-sunken px-2.5 py-1 text-ink font-medium">
-              <span className="text-mute">Time:</span>
-              <b>{data.exam_duration_minutes ? `${Math.floor(data.exam_duration_minutes / 60)}h ${data.exam_duration_minutes % 60 ? `${data.exam_duration_minutes % 60}m` : ""}` : "3 hours"}</b>
-            </div>
+            {!!data.exam_duration_minutes && (
+              <div className="flex items-center gap-1.5 rounded-lg border border-line bg-sunken px-2.5 py-1 text-ink font-medium">
+                <span className="text-mute">Time:</span>
+                <b>{`${Math.floor(data.exam_duration_minutes / 60)}h ${data.exam_duration_minutes % 60 ? `${data.exam_duration_minutes % 60}m` : ""}`}</b>
+              </div>
+            )}
             <div className="flex items-center gap-1.5 rounded-lg border border-line bg-sunken px-2.5 py-1 text-ink font-medium">
               <span className="text-mute">Max Marks:</span>
-              <b className="text-pen">{fmt(data.exam_total_marks || 80)}</b>
+              <b className="text-pen">{fmt(data.exam_total_marks)}</b>
             </div>
-            <div className="flex items-center gap-1.5 rounded-lg border border-ok/30 bg-ok-soft/30 px-2.5 py-1 text-ok font-semibold">
-              <span>✓</span>
-              <span>{qs.length} of {data.stated_question_count || 11} Questions Detected</span>
+            {/* the count printed on the paper is only known when it was read from it */}
+            <div className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 font-semibold ${
+              data.stated_question_count && data.stated_question_count !== qs.length
+                ? "border-warn/30 bg-warn-soft/40 text-warn"
+                : "border-line bg-sunken text-ink"
+            }`}>
+              <span>
+                {data.stated_question_count
+                  ? `${qs.length} of ${data.stated_question_count} questions detected`
+                  : `${qs.length} questions detected`}
+              </span>
             </div>
           </div>
         </div>
@@ -355,7 +374,7 @@ export default function Questions() {
               return (
                 <div key={secName} className="space-y-3">
                   {/* Sticky Section Header */}
-                  <div className="sticky top-0 z-[5] rounded-xl border border-line/70 bg-sunken/95 px-3.5 py-2.5 shadow-xs backdrop-blur flex items-center justify-between">
+                  <div className="sticky top-0 z-[5] rounded-lg border border-line/70 bg-sunken/95 px-3.5 py-2.5 shadow-xs backdrop-blur flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <span className="h-2 w-2 rounded-full bg-pen" />
                       <span className="text-xs font-bold uppercase tracking-wider text-ink">{secName}</span>
@@ -368,14 +387,13 @@ export default function Questions() {
 
                   {/* Collapsible Shared Reading Passage Container for Section A */}
                   {hasPassages && (
-                    <div className="rounded-xl border border-line bg-surface p-3.5 shadow-soft">
+                    <div className="rounded-lg border border-line bg-surface p-3.5 shadow-soft">
                       <button
                         type="button"
                         onClick={() => toggleSectionPassage(secName)}
                         className="flex w-full items-center justify-between text-left cursor-pointer"
                       >
                         <div className="flex items-center gap-2">
-                          <span className="text-base">📖</span>
                           <div>
                             <span className="text-xs sm:text-sm font-bold text-ink">
                               Shared Reading Passages ({secQuestions.filter((q) => !!q.passage_text).length} passages linked)
@@ -440,13 +458,15 @@ export default function Questions() {
                             </span>
                             <div className="flex items-center gap-1.5">
                               <Badge tone="pen">{fmt(q.max_marks)} marks</Badge>
-                              <Badge tone="mute">conf. {pct(q.ocr_confidence)}</Badge>
+                              {q.ocr_confidence !== null && q.ocr_confidence < 0.6 && (
+                                <Badge tone="warn">Low confidence {pct(q.ocr_confidence)}</Badge>
+                              )}
                               <StatusBadge status={q.verification_status} />
                             </div>
                           </div>
                           {q.review_reason && (
                             <p className="mt-1.5 text-xs font-semibold text-mark">
-                              ⚠️ {q.review_reason}
+                              {q.review_reason}
                             </p>
                           )}
 
@@ -460,10 +480,7 @@ export default function Questions() {
                                 }}
                                 className="flex w-full items-center justify-between text-left cursor-pointer font-semibold text-pen"
                               >
-                                <span className="flex items-center gap-1.5">
-                                  <span>📖</span>
-                                  <span>Reading Passage Context</span>
-                                </span>
+                                <span>Reading passage</span>
                                 <span className="text-[11px]">{isPassageExpanded ? "Collapse ▲" : "Expand ▼"}</span>
                               </div>
                               {isPassageExpanded && (
@@ -483,10 +500,12 @@ export default function Questions() {
                           </div>
                         </button>
 
+                        <OutcomeTags q={q} disabled={exam.status === "FINALIZED"} onSaved={reload} onError={setActionErr} />
+
                         {/* Show OCR image crop if selected and available */}
                         {isSelected && q.has_crop && (
                           <div className="mt-3 rounded-lg border border-line bg-sunken p-2.5">
-                            <p className="mb-1 text-xs font-medium text-mute">What the OCR detected (source crop)</p>
+                            <p className="mb-1 text-xs font-medium text-mute">What was detected (source crop)</p>
                             <AuthImage
                               path={`/crops/question/${q.id}`}
                               alt={`Crop of question ${q.display_number}`}
@@ -518,33 +537,19 @@ export default function Questions() {
                               <Button small onClick={() => setDlg({ kind: "edit", q })}>
                                 Edit
                               </Button>
-                              <Button small onClick={() => setDlg({ kind: "split", q })}>
-                                Split
-                              </Button>
-                              <Button small onClick={() => setDlg({ kind: "merge", q })}>
-                                Merge
-                              </Button>
-                              <Button small onClick={() => setDlg({ kind: "review", q })}>
-                                Flag Review
-                              </Button>
-                              <Button
-                                small
-                                variant="ghost"
-                                className="text-mark hover:bg-mark-soft hover:text-mark"
-                                onClick={() => setDlg({ kind: "delete", q })}
-                              >
-                                Delete
-                              </Button>
                             </>
                           )}
-                          <Button
-                            small
-                            variant="soft"
-                            onClick={() => setReferenceTarget(q)}
-                            title="Add to verified local reference collection"
-                          >
-                            Save as Reference
-                          </Button>
+                          <div className="ml-auto">
+                            <MoreMenu
+                              items={[
+                                { label: "Split", onClick: () => setDlg({ kind: "split", q }), hidden: data.locked },
+                                { label: "Merge", onClick: () => setDlg({ kind: "merge", q }), hidden: data.locked },
+                                { label: "Flag for review", onClick: () => setDlg({ kind: "review", q }), hidden: data.locked },
+                                { label: "Save as reference", onClick: () => setReferenceTarget(q) },
+                                { label: "Delete", onClick: () => setDlg({ kind: "delete", q }), danger: true, hidden: data.locked },
+                              ]}
+                            />
+                          </div>
                         </div>
                       </Card>
                     );
@@ -556,7 +561,7 @@ export default function Questions() {
 
           {/* Unclassified Content for Review */}
           {data.unclassified_blocks && data.unclassified_blocks.length > 0 && (
-            <div className="rounded-xl border border-line bg-surface p-4 shadow-soft space-y-3 mt-4">
+            <div className="rounded-lg border border-line bg-surface p-4 shadow-soft space-y-3 mt-4">
               <div className="flex items-center justify-between border-b border-line pb-2.5">
                 <div className="flex items-center gap-2">
                   <span className="flex h-5 w-5 items-center justify-center rounded-full bg-mark-soft text-mark text-xs font-bold">
@@ -759,12 +764,12 @@ function EditDlg({ q, examId, onClose, onDone }: { q?: Question; examId?: string
         </Field>
         {q && q.raw_ocr_text && q.raw_ocr_text !== text && (
           <p className="text-xs text-mute">
-            Original OCR text is stored securely and never overwritten.
+            Original extracted text is stored securely and never overwritten.
           </p>
         )}
         {q && (
           <Field label="Reason for Change (audit trail)">
-            {(id) => <Input id={id} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Fixed OCR typo in question stem" />}
+            {(id) => <Input id={id} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Fixed typo in question stem" />}
           </Field>
         )}
         <ErrorPanel error={err} />
@@ -919,5 +924,67 @@ function ReviewDlg({ q, onClose, onDone }: { q: Question; onClose: () => void; o
         <ErrorPanel error={err} />
       </div>
     </Modal>
+  );
+}
+
+/** Bloom's K level and course outcome for one question. Suggested levels stay marked until the teacher confirms them. */
+function OutcomeTags({
+  q, disabled, onSaved, onError,
+}: {
+  q: Question; disabled: boolean; onSaved: () => Promise<void>; onError: (e: unknown) => void;
+}) {
+  const [co, setCo] = useState(q.course_outcome || "");
+  useEffect(() => setCo(q.course_outcome || ""), [q.course_outcome]);
+  const save = async (json: { k_level?: string | null; course_outcome?: string | null }) => {
+    try {
+      await api(`/exam-questions/${q.id}/outcome`, { method: "PATCH", json });
+      await onSaved();
+    } catch (e) {
+      onError(e);
+    }
+  };
+  const suggested = q.k_level_source === "SUGGESTED";
+  return (
+    <div className="mt-2.5 flex flex-wrap items-center gap-2 text-xs">
+      <label className="flex items-center gap-1.5">
+        <span className="font-semibold text-mute">K level</span>
+        <select
+          aria-label={`K level for question ${q.display_number}`}
+          className={`rounded-md border bg-surface px-1.5 py-0.5 text-xs ${suggested ? "border-warn/60" : "border-line"}`}
+          value={q.k_level || ""}
+          disabled={disabled}
+          onChange={(e) => save({ k_level: e.target.value || null })}
+        >
+          <option value="">–</option>
+          {K_LEVELS.map((k) => (
+            <option key={k.key} value={k.key}>{k.key} · {k.label}</option>
+          ))}
+        </select>
+      </label>
+      {suggested && (
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => save({ k_level: q.k_level })}
+          className="rounded-full border border-warn/40 bg-warn-soft px-2 py-0.5 font-medium text-warn hover:bg-warn-soft/70"
+          title="Suggested from the question's wording. Click to confirm."
+        >
+          Suggested · confirm
+        </button>
+      )}
+      <label className="flex items-center gap-1.5">
+        <span className="font-semibold text-mute">CO</span>
+        <input
+          aria-label={`Course outcome for question ${q.display_number}`}
+          className="w-20 rounded-md border border-line bg-surface px-1.5 py-0.5 text-xs uppercase"
+          placeholder="e.g. CO1"
+          value={co}
+          disabled={disabled}
+          onChange={(e) => setCo(e.target.value)}
+          onBlur={() => co !== (q.course_outcome || "") && save({ course_outcome: co || null })}
+          onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
+        />
+      </label>
+    </div>
   );
 }

@@ -86,7 +86,7 @@ export function TableToolbar({
               type="button"
               onClick={() => onSearchChange("")}
               aria-label="Clear search"
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-mute hover:text-ink"
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-mute hover:text-brown"
             >
               <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -143,7 +143,7 @@ export function TableToolbar({
               onClick={onSortOrderToggle}
               title={`Sorting ${sortOrder === "asc" ? "Ascending" : "Descending"}. Click to toggle.`}
               aria-label={`Sorting ${sortOrder === "asc" ? "Ascending" : "Descending"}. Click to toggle.`}
-              className="inline-flex h-9 items-center gap-1 rounded-md border border-line bg-surface px-2.5 text-xs font-medium text-ink hover:bg-sunken focus:border-pen focus:outline-none"
+              className="inline-flex h-9 items-center gap-1 rounded-md border border-line bg-surface px-2.5 text-xs font-medium text-ink hover:bg-hover focus:border-pen focus:outline-none"
             >
               <svg
                 className={`h-4 w-4 transition-transform ${sortOrder === "desc" ? "rotate-180" : ""}`}
@@ -163,7 +163,7 @@ export function TableToolbar({
               type="button"
               onClick={onClearFilters}
               aria-label="Clear all active filters and search"
-              className="inline-flex h-9 items-center gap-1.5 rounded-md border border-line bg-sunken px-2.5 text-xs font-medium text-mute hover:bg-line hover:text-ink focus:border-pen focus:outline-none transition-colors"
+              className="inline-flex h-9 items-center gap-1.5 rounded-md border border-line bg-sunken px-2.5 text-xs font-medium text-mute hover:bg-hover hover:text-brown focus:border-pen focus:outline-none transition-colors"
             >
               <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -294,7 +294,7 @@ export function TablePagination({
             disabled={currentPage <= 1}
             onClick={() => onPageChange(currentPage - 1)}
             aria-label="Previous page"
-            className="rounded border border-line bg-surface p-1 text-ink hover:bg-sunken disabled:opacity-40 disabled:hover:bg-surface"
+            className="rounded border border-line bg-surface p-1 text-ink hover:bg-hover disabled:opacity-40 disabled:hover:bg-surface"
           >
             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
@@ -310,7 +310,7 @@ export function TablePagination({
             disabled={currentPage >= totalPages}
             onClick={() => onPageChange(currentPage + 1)}
             aria-label="Next page"
-            className="rounded border border-line bg-surface p-1 text-ink hover:bg-sunken disabled:opacity-40 disabled:hover:bg-surface"
+            className="rounded border border-line bg-surface p-1 text-ink hover:bg-hover disabled:opacity-40 disabled:hover:bg-surface"
           >
             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />

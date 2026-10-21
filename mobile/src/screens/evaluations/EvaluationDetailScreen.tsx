@@ -59,7 +59,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
   // Tab State: Mapping Review vs Marks & Finalize
   const [activeTab, setActiveTab] = useState<"mapping" | "marks">("mapping");
   const [mappingFilter, setMappingFilter] = useState<
-    "All" | "Mapped" | "Suggested" | "Needs review" | "Unmapped" | "Missing" | "OCR error"
+    "All" | "Mapped" | "Suggested" | "Needs review" | "Unmapped" | "Missing" | "Read error"
   >("All");
   const [activeSheetPage, setActiveSheetPage] = useState(1);
   const [showDocViewer, setShowDocViewer] = useState(true);
@@ -445,7 +445,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
     if (!transcriptionReason.trim()) {
       Alert.alert(
         "Reason Required",
-        "Please enter a reason for the transcription correction (e.g. OCR misread handwriting, Tamil script, or missing mathematical steps)."
+        "Please enter a reason for the transcription correction (e.g. misread handwriting, Tamil script, or missing mathematical steps)."
       );
       return;
     }
@@ -728,7 +728,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
   let evalBlockReason = "";
   if (document?.status !== "READY" && document?.status !== "NEEDS_ATTENTION") {
     isEvalBlocked = true;
-    evalBlockReason = "Answer sheet is still undergoing OCR reading. Please wait for OCR to complete.";
+    evalBlockReason = "Answer sheet is still being read. Please wait for reading to complete.";
   } else if (!isExamReady) {
     isEvalBlocked = true;
     evalBlockReason = "Question paper and answer key must be verified in Exam Workspace before evaluation.";
@@ -737,7 +737,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
     evalBlockReason = `${mappingIssuesCount} student answer(s) are unmapped or need mapping review before running evaluation.`;
   } else if (ocrFailedCount > 0) {
     isEvalBlocked = true;
-    evalBlockReason = `${ocrFailedCount} answer sheet page(s) failed OCR. Retry page reading before evaluating.`;
+    evalBlockReason = `${ocrFailedCount} answer sheet page(s) could not be read. Retry page reading before evaluating.`;
   }
 
   // Mapping review data derived
@@ -766,7 +766,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
       case "Needs review":
         return a.status === "NEEDS_REVIEW";
       case "Missing":
-      case "OCR error":
+      case "Read error":
         return false;
       default:
         return true;
@@ -789,6 +789,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
     <View style={[styles.container, { backgroundColor: colors.background }]}>
       <ScrollView
         contentContainerStyle={styles.scrollContent}
+        stickyHeaderIndices={[1]} // the Mapping Review / Marks & Finalize tab bar stays on top while scrolling
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -957,7 +958,8 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
           )}
         </Card>
 
-        {/* Module Tab Selector: Mapping Review vs Marks & Finalize */}
+        {/* Module Tab Selector: Mapping Review vs Marks & Finalize (sticky: must stay the ScrollView's 2nd child) */}
+        <View style={{ backgroundColor: colors.background, paddingVertical: 6 }}>
         <View style={[styles.tabBarContainer, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}>
           <TouchableOpacity
             style={[styles.tabButton, activeTab === "mapping" && { backgroundColor: colors.primary }]}
@@ -1007,6 +1009,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
             )}
           </TouchableOpacity>
         </View>
+        </View>
 
         {/* Tab 1: Mapping Review */}
         {activeTab === "mapping" ? (
@@ -1037,13 +1040,13 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
                 <Text style={[styles.statBoxNumber, { color: ocrErrorPages.length > 0 ? colors.error : colors.textSecondary }]}>
                   {ocrErrorPages.length}
                 </Text>
-                <Text style={[styles.statBoxLabel, { color: colors.textSecondary }]}>OCR Errors</Text>
+                <Text style={[styles.statBoxLabel, { color: colors.textSecondary }]}>Read Errors</Text>
               </View>
             </View>
 
             {/* Filter Pills */}
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterPillsRow}>
-              {(["All", "Mapped", "Suggested", "Needs review", "Unmapped", "Missing", "OCR error"] as const).map((f) => (
+              {(["All", "Mapped", "Suggested", "Needs review", "Unmapped", "Missing", "Read error"] as const).map((f) => (
                 <TouchableOpacity
                   key={f}
                   onPress={() => setMappingFilter(f)}
@@ -1232,7 +1235,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
               ) : (
                 <Empty title="No Missing Questions" description="Every exam question has at least one mapped student answer." />
               )
-            ) : mappingFilter === "OCR error" ? (
+            ) : mappingFilter === "Read error" ? (
               ocrErrorPages.length > 0 ? (
                 ocrErrorPages.map((p) => (
                   <Card key={p.page_number} style={[styles.mappingCard, { borderColor: colors.error }]}>
@@ -1240,12 +1243,12 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
                       Page {p.page_number}: {p.ocr_status}
                     </Text>
                     <Text style={[styles.mappingCardSub, { color: colors.textSecondary }]}>
-                      {p.ocr_error || "OCR failed on this page."}
+                      {p.ocr_error || "Could not read this page."}
                     </Text>
                   </Card>
                 ))
               ) : (
-                <Empty title="No OCR Errors" description="All pages were processed cleanly." />
+                <Empty title="No Read Errors" description="All pages were processed cleanly." />
               )
             ) : mappingRows.length === 0 ? (
               <Empty title="No Answers Found" description="No student responses match the current filter." />
@@ -1272,7 +1275,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
                         </Text>
                         <Badge label={`Page ${a.page_number || 1}`} variant="muted" size="small" />
                         {a.ocr_confidence !== null && (
-                          <Badge label={`${Math.round(a.ocr_confidence * 100)}% OCR`} variant="muted" size="small" />
+                          <Badge label={`${Math.round(a.ocr_confidence * 100)}% confidence`} variant="muted" size="small" />
                         )}
                       </View>
                       <StatusBadge status={a.status} />
@@ -1309,7 +1312,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
 
                     {a.edited && (
                       <Text style={{ fontSize: 11, fontStyle: "italic", color: colors.brandGreen, marginTop: 4 }}>
-                        ✓ Edited by teacher. Original OCR preserved in audit.
+                        ✓ Edited by teacher. Original transcription preserved in audit.
                       </Text>
                     )}
 
@@ -1353,19 +1356,8 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
                                   style={{ flex: 1.2 }}
                                 />
                               )}
-                              {a.status === "MAPPED" && (
-                                <Button
-                                  title="Confirm"
-                                  icon={<Ionicons name="checkmark-circle-outline" size={14} color="#FFFFFF" />}
-                                  variant="primary"
-                                  size="small"
-                                  onPress={() => handleMappingAction(a, { confirm: true }, "confirm mapping")}
-                                  loading={actionLoading}
-                                  style={{ flex: 1 }}
-                                />
-                              )}
                               <Button
-                                title="Edit OCR"
+                                title="Edit Text"
                                 icon={<Ionicons name="pencil" size={13} color={colors.primary} />}
                                 variant="outline"
                                 size="small"
@@ -1471,7 +1463,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
                   </Text>
                 </View>
                 <Text style={[styles.errorDesc, { color: colors.text }]}>
-                  InternVL3.5 4B was unavailable or returned an error. Ensure Ollama is running with blaifa/InternVL3_5:4B, then retry evaluation.
+                  The AI model is not running or failed. Start Ollama, then retry.
                 </Text>
                 <Button
                   title="Retry Evaluation"
@@ -1515,7 +1507,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
                     Evaluation Finalized (Read-Only)
                   </Text>
                   <Text style={[styles.finalizedNoticeDesc, { color: colors.textSecondary }]}>
-                    This evaluation is approved and finalized. All marks, feedback, and student responses are locked and cannot be edited.
+                    Finalized. Marks and answers are locked.
                   </Text>
                 </View>
               </View>
@@ -1682,7 +1674,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
                   <View style={{ flexDirection: "row", alignItems: "center", gap: 4, marginTop: 4 }}>
                     <Ionicons name="create" size={12} color={colors.brandGreen} />
                     <Text style={{ fontSize: 11, fontStyle: "italic", color: colors.brandGreen }}>
-                      Corrected by teacher (OCR audit record preserved)
+                      Corrected by teacher (original transcription preserved)
                     </Text>
                   </View>
                 )}
@@ -2202,7 +2194,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
             }}
           >
             <Text style={{ fontSize: 10, fontWeight: "700", color: colors.textSecondary, textTransform: "uppercase" }}>
-              Original OCR Transcription (Audit Preserved):
+              Original Transcription (Audit Preserved):
             </Text>
             <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 3, fontStyle: "italic" }} numberOfLines={2}>
               "{activeAnswer.raw_ocr_text}"
@@ -2223,7 +2215,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
         {/* Mandatory correction reason */}
         <Input
           label="Correction Reason *"
-          placeholder="e.g. OCR misread handwriting; corrected Tamil/math script"
+          placeholder="e.g. Misread handwriting; corrected Tamil/math script"
           value={transcriptionReason}
           onChangeText={setTranscriptionReason}
         />

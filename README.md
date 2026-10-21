@@ -62,7 +62,7 @@ Production-style: `npm run build`, then `npm run preview` (proxy target is set i
 
 ## Run the tests
 ```bash
-cd backend && pytest -q            # 62 tests, ~5 s
+cd backend && pytest -q            # 111 tests, ~20 s
 cd frontend && npm run build       # type-check + production build
 ```
 The API tests run the **real** HTTP client against a small stand-in for the Ollama server that lives only in `tests/conftest.py`.

@@ -9,11 +9,13 @@ from ..models import (AnswerKey, AnswerSheetDocument, AuditLog, Evaluation, Eval
 from ..security import current_teacher
 from ..serializers import answer_view, doc_view, evaluation_view, item_view, question_view
 from ..services.audit import audit
+from ..services.exam_files import purge_exam_files, save_reports_and_schedule, stored_report
 from ..services.evaluation_service import (finalize, finalize_issues, refresh_evaluation_status, run_evaluation)
+from ..services.k_level import summarize as summarize_outcomes
 from ..services.mapping import map_label
 from ..services.mapping_service import apply_student_mapping, exam_questions, mapping_summary
 from ..services.numbering import normalize_question_number
-from ..services.report_generator import build_evaluation_pdf_report
+from ..services.school_reports import build_evaluation_pdf_report
 from ..services.state import set_state
 from ..config import get_settings
 
@@ -52,6 +54,7 @@ def evaluation_detail(ev_id: str, db: Session = Depends(get_db), t: Teacher = De
         "items": [item_view(i) for i in items],
         "summary": mapping_summary(db, ev),
         "issues": [] if ev.status == "FINALIZED" else finalize_issues(db, ev),
+        "outcomes": summarize_outcomes(qs, {i.exam_question_id: i.final_marks for i in items}),
     }
 
 
@@ -301,7 +304,7 @@ def run(ev_id: str, bg: BackgroundTasks, db: Session = Depends(get_db), t: Teach
                    "reason": "Student answer is unmapped" if a.status == "UNMAPPED" else (a.mapping_note or "Needs mapping review")}
                   for a in unresolved]
         if doc.status == "NEEDS_ATTENTION":
-            issues.append({"question": "Answer sheet", "reason": "Some pages failed OCR. Retry them first."})
+            issues.append({"question": "Answer sheet", "reason": "Some pages could not be read. Retry them first."})
         raise err(400, "MAPPING_INCOMPLETE", f"{len(issues)} issue(s) must be resolved before evaluation can run.", issues)
     ev.run_status, ev.run_progress = "RUNNING", 0
     db.commit()
@@ -458,7 +461,8 @@ def result(ev_id: str, db: Session = Depends(get_db), t: Teacher = Depends(curre
     items = {i.exam_question_id: i for i in db.query(EvaluationItem).filter_by(evaluation_id=ev.id)}
     answers = {a.id: a for a in db.query(StudentAnswer).filter_by(evaluation_id=ev.id)}
     rows, total, maxm = [], 0.0, 0.0
-    for q in exam_questions(db, ev.exam_id):
+    qs = exam_questions(db, ev.exam_id)
+    for q in qs:
         it = items.get(q.id)
         a = answers.get(it.student_answer_id) if it and it.student_answer_id else None
         fm = it.final_marks if it else None
@@ -466,6 +470,7 @@ def result(ev_id: str, db: Session = Depends(get_db), t: Teacher = Depends(curre
         maxm += q.max_marks or 0
         rows.append({"question_id": q.id, "question": q.display_number, "question_text": q.question_text,
                      "max_marks": q.max_marks, "final_marks": fm, "ai_marks": it.ai_marks if it else None,
+                     "k_level": q.k_level, "course_outcome": q.course_outcome,
                      "teacher_overridden": bool(it and it.teacher_overridden),
                      "student_answer": a.answer_text if a else None,
                      "official_answer": keys[q.id].answer_text if q.id in keys else None,
@@ -476,13 +481,18 @@ def result(ev_id: str, db: Session = Depends(get_db), t: Teacher = Depends(curre
             "total_marks": ev.total_marks if ev.status == "FINALIZED" else total,
             "maximum_marks": ev.maximum_marks if ev.status == "FINALIZED" else maxm,
             "percentage": ev.percentage if ev.status == "FINALIZED" else (round(100 * total / maxm, 2) if maxm else 0),
-            "questions": rows}
+            "questions": rows,
+            "outcomes": summarize_outcomes(qs, {qid: it.final_marks for qid, it in items.items()})}
 
 
 @router.get("/evaluations/{ev_id}/report.pdf")
 @router.get("/evaluations/{ev_id}/report")
 def download_evaluation_report(ev_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
-    pdf_bytes, filename = build_evaluation_pdf_report(db, t, ev_id)
+    saved = stored_report(get_evaluation(db, t, ev_id))
+    if saved:  # the official copy kept when the exam was finalized
+        pdf_bytes, filename = saved.read_bytes(), saved.name.split("__", 1)[1]
+    else:
+        pdf_bytes, filename = build_evaluation_pdf_report(db, t, ev_id)
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
@@ -506,6 +516,37 @@ def exam_results(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depen
     return [evaluation_view(e) for e in db.query(Evaluation).filter_by(exam_id=exam.id).order_by(Evaluation.created_at)]
 
 
+@router.get("/exams/{exam_id}/outcome-summary")
+def exam_outcome_summary(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    """Class performance per Bloom's K level and course outcome, over evaluations with finalized marks."""
+    exam = get_exam(db, t, exam_id)
+    qs = exam_questions(db, exam.id)
+    evs = db.query(Evaluation).filter_by(exam_id=exam.id, status="FINALIZED").all()
+    students = []
+    for ev in evs:
+        marks = {i.exam_question_id: i.final_marks for i in db.query(EvaluationItem).filter_by(evaluation_id=ev.id)}
+        students.append({"evaluation_id": ev.id, "student_id": ev.student_id, "name": ev.student.name,
+                         "roll_number": ev.student.roll_number, **summarize_outcomes(qs, marks)})
+
+    def overall(key: str) -> list[dict]:
+        if not students:
+            return summarize_outcomes(qs, {})[key]
+        rows = {}
+        for s in students:
+            for r in s[key]:
+                a = rows.setdefault(r["key"], {**r, "scored": 0.0, "max_marks": 0.0})
+                a["scored"] += r["scored"]
+                a["max_marks"] += r["max_marks"]
+        for a in rows.values():
+            a["average_scored"] = round(a["scored"] / len(students), 2)
+            a["max_marks"] = a["max_marks"] / len(students)
+            a["percentage"] = round(100.0 * a["average_scored"] / a["max_marks"], 1) if a["max_marks"] else None
+            del a["scored"]
+        return list(rows.values())
+    return {"finalized_students": len(students), "k_levels": overall("k_levels"),
+            "course_outcomes": overall("course_outcomes"), "students": students}
+
+
 @router.post("/exams/{exam_id}/finalize")
 def finalize_exam(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     exam = get_exam(db, t, exam_id)
@@ -519,7 +560,23 @@ def finalize_exam(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depe
     set_state(exam, "FINALIZED")
     audit(db, exam_id=exam.id, teacher_id=t.id, entity_type="exam", entity_id=exam.id, action="exam_finalized")
     db.commit()
-    return {"status": exam.status}
+    reports = 0
+    if exam.files_purge_at is None:  # finalizing again must not restart the 24-hour clock
+        reports = save_reports_and_schedule(db, t, exam)
+        db.commit()
+    return {"status": exam.status, "reports_saved": reports, "files_purge_at": exam.files_purge_at.isoformat()}
+
+
+@router.post("/exams/{exam_id}/purge-files")
+def purge_files_now(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    """Delete a finalized exam's uploaded and generated files now instead of waiting for the 24-hour deadline."""
+    exam = get_exam(db, t, exam_id)
+    if exam.status != "FINALIZED":
+        raise err(409, "EXAM_NOT_FINALIZED", "Files can only be deleted after the exam is finalized.")
+    if exam.files_purged_at is None:
+        purge_exam_files(db, exam, t.id)
+        db.commit()
+    return {"files_purged_at": exam.files_purged_at.isoformat()}
 
 
 @router.get("/exams/{exam_id}/audit-logs")

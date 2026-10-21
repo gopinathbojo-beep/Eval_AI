@@ -8,7 +8,9 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from .config import get_settings
 from .database import init_db
-from .routes import answer_keys, core, documents, evaluations, questions, reference_collection
+from .routes import answer_keys, core, documents, evaluations, questions, reference_collection, school
+from .services.exam_files import start_purge_scheduler
+from .services.recovery import recover_interrupted_jobs
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -16,6 +18,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
+    recover_interrupted_jobs()
+    start_purge_scheduler()
     yield
 
 
@@ -43,7 +47,8 @@ def create_app() -> FastAPI:
         return JSONResponse({"code": "SERVER_ERROR", "message": "Something went wrong on the server. Details are in the server log."},
                             status_code=500)
 
-    for r in (core.router, documents.router, questions.router, answer_keys.router, evaluations.router, reference_collection.router):
+    for r in (core.router, documents.router, questions.router, answer_keys.router, evaluations.router, reference_collection.router,
+              school.router):
         app.include_router(r)
 
     @app.get("/api/health")

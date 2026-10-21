@@ -1361,7 +1361,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
             Camera Access Required
           </Text>
           <Text style={[styles.permissionText, { color: colors.textSecondary }]}>
-            Eval AI uses your camera to automatically detect answer sheet pages, verify image quality, and crop paper boundaries for handwriting evaluation.
+            The camera is used to find and crop each page.
           </Text>
           <Button
             title="Enable Camera Access"
@@ -2162,7 +2162,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                 Compiling & Aligning Answer Sheet
               </Text>
               <Text style={[styles.compilingSubtitle, { color: colors.textSecondary }]}>
-                Processing {scannedPages.length} {scannedPages.length === 1 ? "page" : "pages"} with margin preservation and OCR-ready resolution...
+                Processing {scannedPages.length} {scannedPages.length === 1 ? "page" : "pages"} with margin preservation and high-resolution capture...
               </Text>
             </View>
           </View>

@@ -15,7 +15,7 @@ export const Badge: React.FC<BadgeProps> = ({
   variant = "default",
   size = "medium",
   style,
-  withDot = true,
+  withDot = false,
 }) => {
   const { colors, isDark } = useTheme();
 
@@ -109,6 +109,12 @@ export const Badge: React.FC<BadgeProps> = ({
   );
 };
 
+// status codes keep their names; only the words shown to teachers change
+const STATUS_LABELS: Record<string, string> = {
+  OCR_PROCESSING: "READING PAGES", OCR_REVIEW: "TRANSCRIPTION REVIEW", WAITING: "WAITING FOR VERIFIED QUESTIONS",
+  IDENTIFYING: "IDENTIFYING STUDENT", NEEDS_STUDENT: "NEEDS STUDENT", AI_EVALUATED: "EVALUATED",
+};
+
 export const StatusBadge: React.FC<{
   status?: string | null;
   style?: ViewStyle;
@@ -116,7 +122,7 @@ export const StatusBadge: React.FC<{
 }> = ({ status = "DRAFT", style, size = "medium" }) => {
   const rawStatus = (status || "").toUpperCase();
   let variant: "default" | "success" | "warning" | "danger" | "teal" | "muted" | "navy" = "default";
-  let label = (status || "").replace(/_/g, " ");
+  let label = (STATUS_LABELS[rawStatus] || status || "").replace(/_/g, " ");
 
   switch (rawStatus) {
     case "FINALIZED":
@@ -135,6 +141,7 @@ export const StatusBadge: React.FC<{
     case "PENDING":
     case "MAPPING_REVIEW":
     case "OCR_REVIEW":
+    case "NEEDS_STUDENT":
       variant = "warning";
       break;
     case "AI_ERROR":
@@ -149,6 +156,7 @@ export const StatusBadge: React.FC<{
     case "EXTRACTING":
     case "RENDERING":
     case "OCR_PROCESSING":
+    case "IDENTIFYING":
       variant = "navy";
       break;
     case "DRAFT":
@@ -156,6 +164,7 @@ export const StatusBadge: React.FC<{
     case "UPLOADED":
     case "IDLE":
     case "IGNORED":
+    case "WAITING":
       variant = "muted";
       break;
     default:

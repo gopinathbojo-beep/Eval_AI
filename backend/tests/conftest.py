@@ -14,7 +14,7 @@ import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 MODEL = "blaifa/InternVL3_5:4B"
-BEHAVIOUR = {"garbage_pages": set(), "sheet": "main"}   # tweakable per test
+BEHAVIOUR = {"garbage_pages": set(), "sheet": "main", "identities": []}   # tweakable per test
 
 
 def _page(prompt: str) -> int:
@@ -23,6 +23,8 @@ def _page(prompt: str) -> int:
 
 
 def _reply(system: str, user: str) -> str:
+    if system.startswith("You read the student details box"):   # answer-sheet header; one queued reply per call
+        return json.dumps(BEHAVIOUR["identities"].pop(0) if BEHAVIOUR["identities"] else {})
     if "Generating reference answer key" in user or "generate suggested answers" in user:
         q_matches = re.findall(r"QUESTION ([\w\(\)\.\-]+) \(ID: ([^,\)]+), max marks: ([\d\.]+)\)", user)
         answers = []

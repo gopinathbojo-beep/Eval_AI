@@ -316,7 +316,7 @@ export const EditAnswerKeyModal: React.FC<EditAnswerKeyModalProps> = ({
                   ]}
                   value={reason}
                   onChangeText={setReason}
-                  placeholder="e.g. Corrected OCR typo / aligned marks with scheme"
+                  placeholder="e.g. Corrected typo / aligned marks with scheme"
                   placeholderTextColor={colors.mutedText}
                 />
               </View>
@@ -624,7 +624,7 @@ export const ResolveAnswerKeyModal: React.FC<ResolveAnswerKeyModalProps> = ({
                     <Text style={[modalStyles.issueTitle, { color: colors.error }]}>Missing Solution Text</Text>
                   </View>
                   <Text style={[modalStyles.issueDesc, { color: colors.text }]}>
-                    Official evaluation requires reference solution text. Please enter the model answer below.
+                    Enter the model answer below.
                   </Text>
 
                   <TextInput

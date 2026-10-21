@@ -202,9 +202,9 @@ def map_label(
                 status=NEEDS_REVIEW,
                 question_id=None,
                 normalized_number=norm,
-                note=f"Exact label match but OCR confidence {ocr_confidence:.2f} is below threshold",
+                note=f"Exact label match but reading confidence {ocr_confidence:.2f} is below threshold",
                 candidates=[matched_q.id],
-                candidate_details=[{"id": matched_q.id, "num": norm, "score": ocr_confidence, "reason": "Low OCR confidence"}],
+                candidate_details=[{"id": matched_q.id, "num": norm, "score": ocr_confidence, "reason": "Low reading confidence"}],
                 evidence_tier="TIER_1_EXACT_LABEL_LOW_CONFIDENCE",
             )
 

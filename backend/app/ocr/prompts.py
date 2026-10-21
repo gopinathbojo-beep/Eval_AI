@@ -401,3 +401,24 @@ RULES:
 Return JSON in exactly this shape:
 {{"answers": [{{"exam_question_id": "...", "question_number": "1", "answer_text": "...", "marks": 2.0, "criteria": ["..."], "keywords": ["..."], "accepted_answers": ["..."]}}]}}"""
 
+
+
+IDENTITY_SYSTEM = (
+    "You read the student details box on the first page of a handwritten examination answer sheet. "
+    "Transcribe only what is written; never guess a character you cannot read. Reply with a single valid JSON object and nothing else."
+)
+
+
+def student_identity_prompt() -> str:
+    return """This image is the top of the first page of a student's answer sheet.
+Find the student's details, usually written in a header box or on labelled lines such as
+"Name", "Roll No", "Roll Number", "Reg No", "Register Number", "Registration No", "Class", "Std", "Section", "Sec".
+
+RULES:
+- Copy each value exactly as written (keep letters, digits, slashes and dashes). Do not reformat or complete it.
+- A roll number and a registration number are different fields; only fill each from its own label.
+- If a value is missing, crossed out or not clearly legible, use null.
+- Ignore the exam name, subject, date, school name and any printed instructions.
+
+Return JSON in exactly this shape:
+{"name": "...", "roll_number": "...", "registration_number": "...", "class_name": "...", "section": "..."}"""

@@ -47,6 +47,8 @@ class Student(Base):
     class_id: Mapped[str] = mapped_column(ForeignKey("classes.id"), index=True)
     name: Mapped[str] = mapped_column(String(200))
     roll_number: Mapped[str] = mapped_column(String(50))
+    registration_number: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
+    section: Mapped[str | None] = mapped_column(String(20), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     school_class: Mapped[SchoolClass] = relationship()
 
@@ -65,6 +67,9 @@ class Exam(Base):
     total_marks: Mapped[float] = mapped_column(Float)
     instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(40), default="DRAFT")
+    # after finalization the exam's files are deleted from disk at files_purge_at (reports are kept)
+    files_purge_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    files_purged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     school_class: Mapped[SchoolClass] = relationship()
     subject: Mapped[Subject] = relationship()
@@ -91,6 +96,9 @@ class ExamQuestion(Base):
     ocr_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     verification_status: Mapped[str] = mapped_column(String(20), default="UNVERIFIED")
     review_reason: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    k_level: Mapped[str | None] = mapped_column(String(2), nullable=True)            # Bloom's K1..K6
+    k_level_source: Mapped[str | None] = mapped_column(String(10), nullable=True)    # SUGGESTED | TEACHER
+    course_outcome: Mapped[str | None] = mapped_column(String(20), nullable=True)    # CO1, CO2, ...
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
@@ -124,7 +132,10 @@ class AnswerKeyDocument(_DocMixin, Base):
 class AnswerSheetDocument(_DocMixin, Base):
     __tablename__ = "answer_sheet_documents"
     exam_id: Mapped[str] = mapped_column(ForeignKey("exams.id"), index=True)
-    student_id: Mapped[str] = mapped_column(ForeignKey("students.id"), index=True)
+    # null until the student is identified from the sheet (or picked by the teacher)
+    student_id: Mapped[str | None] = mapped_column(ForeignKey("students.id"), index=True, nullable=True)
+    # what was read from the sheet header and how it was matched: {read, match, note, candidates}
+    identity: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 class AnswerKey(Base):
@@ -255,3 +266,30 @@ class VerifiedReferenceExample(Base):
     verification_status: Mapped[str] = mapped_column(String(30), default="APPROVED")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
+
+
+class SchoolProfile(Base):
+    """School details printed on reports and report cards (one per teacher)."""
+    __tablename__ = "school_profiles"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+    teacher_id: Mapped[str] = mapped_column(ForeignKey("teachers.id"), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(200), default="")
+    address: Mapped[str] = mapped_column(Text, default="")
+    principal_name: Mapped[str] = mapped_column(String(200), default="")
+    logo_file: Mapped[str | None] = mapped_column(String(500), nullable=True)   # path relative to data dir
+    # active template per document: "preset:<id>" or a ReportTemplate id
+    active_report_template: Mapped[str] = mapped_column(String(60), default="preset:classic")
+    active_card_template: Mapped[str] = mapped_column(String(60), default="preset:classic")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class ReportTemplate(Base):
+    """A teacher's saved layout for the exam report ("report") or the report card ("report_card")."""
+    __tablename__ = "report_templates"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+    teacher_id: Mapped[str] = mapped_column(ForeignKey("teachers.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(20))
+    name: Mapped[str] = mapped_column(String(100))
+    config: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)

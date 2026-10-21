@@ -95,7 +95,7 @@ export function MathTextarea({
                   type="button"
                   onClick={() => insertTemplate(s)}
                   title={s.title}
-                  className="rounded border border-line bg-surface px-1.5 py-0.5 text-[11px] font-medium text-ink transition hover:border-pen hover:bg-pen-soft/40 hover:text-pen"
+                  className="rounded border border-line bg-surface px-1.5 py-0.5 text-[11px] font-medium text-ink transition hover:border-pen hover:bg-hover hover:text-brown"
                 >
                   {s.label}
                 </button>
@@ -116,10 +116,10 @@ export function MathTextarea({
             className={`rounded px-2.5 py-0.5 font-medium transition ${
               tab === "edit"
                 ? "bg-surface text-pen font-semibold shadow-xs"
-                : "text-mute hover:text-ink"
+                : "text-mute hover:text-brown"
             }`}
           >
-            ✏️ Edit
+            Edit
           </button>
           <button
             type="button"
@@ -127,10 +127,10 @@ export function MathTextarea({
             className={`rounded px-2.5 py-0.5 font-medium transition ${
               tab === "preview"
                 ? "bg-surface text-pen font-semibold shadow-xs"
-                : "text-mute hover:text-ink"
+                : "text-mute hover:text-brown"
             }`}
           >
-            👁️ Preview Math
+            Preview
           </button>
         </div>
       </div>

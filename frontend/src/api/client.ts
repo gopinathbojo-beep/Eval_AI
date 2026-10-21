@@ -75,3 +75,13 @@ export async function downloadFile(path: string, fallbackFilename = "download.pd
   a.remove();
   setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
 }
+
+/** POST JSON and get the response file (e.g. a PDF preview) as an object URL. */
+export async function postBlobUrl(path: string, json: unknown, signal?: AbortSignal): Promise<string> {
+  const t = getToken();
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (t) headers.Authorization = `Bearer ${t}`;
+  const res = await fetch(`/api${path}`, { method: "POST", headers, body: JSON.stringify(json), signal });
+  if (!res.ok) throw await toError(res);
+  return URL.createObjectURL(await res.blob());
+}

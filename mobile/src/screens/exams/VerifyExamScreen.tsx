@@ -99,11 +99,11 @@ export const VerifyExamScreen: React.FC<VerifyExamScreenProps> = ({
       issues.push({
         id: "qp_ocr_failed",
         category: "question_paper",
-        title: "Question Paper OCR Incomplete",
-        description: "One or more pages failed OCR processing with InternVL3.5. Retry failed pages.",
+        title: "Question Paper Reading Incomplete",
+        description: "One or more pages could not be read by InternVL3.5. Retry failed pages.",
         severity: "critical",
         resolved: false,
-        actionTitle: "Retry OCR",
+        actionTitle: "Retry Reading",
         onAction: () => navigation.navigate("ExamWorkspace", { examId, initialTab: "paper" }),
       });
     }
@@ -387,24 +387,28 @@ export const VerifyExamScreen: React.FC<VerifyExamScreenProps> = ({
             </View>
 
             <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 10 }}>
-              <View style={{ backgroundColor: colors.surfaceElevated, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, borderWidth: 1, borderColor: colors.border }}>
-                <Text style={{ fontSize: 11, color: colors.textSecondary }}>Time Allowed</Text>
-                <Text style={{ fontSize: 12, fontWeight: "700", color: colors.text, marginTop: 2 }}>
-                  {questionsData.exam_duration_minutes ? `${Math.floor(questionsData.exam_duration_minutes / 60)}h ${questionsData.exam_duration_minutes % 60 ? `${questionsData.exam_duration_minutes % 60}m` : ""}` : "3 hours"}
-                </Text>
-              </View>
+              {!!questionsData.exam_duration_minutes && (
+                <View style={{ backgroundColor: colors.surfaceElevated, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, borderWidth: 1, borderColor: colors.border }}>
+                  <Text style={{ fontSize: 11, color: colors.textSecondary }}>Time Allowed</Text>
+                  <Text style={{ fontSize: 12, fontWeight: "700", color: colors.text, marginTop: 2 }}>
+                    {`${Math.floor(questionsData.exam_duration_minutes / 60)}h ${questionsData.exam_duration_minutes % 60 ? `${questionsData.exam_duration_minutes % 60}m` : ""}`}
+                  </Text>
+                </View>
+              )}
 
               <View style={{ backgroundColor: colors.surfaceElevated, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, borderWidth: 1, borderColor: colors.border }}>
                 <Text style={{ fontSize: 11, color: colors.textSecondary }}>Maximum Marks</Text>
                 <Text style={{ fontSize: 12, fontWeight: "700", color: colors.primary, marginTop: 2 }}>
-                  {questionsData.exam_total_marks || 80} Marks
+                  {questionsData.exam_total_marks} Marks
                 </Text>
               </View>
 
               <View style={{ backgroundColor: colors.successSoft, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8, borderWidth: 1, borderColor: colors.success }}>
                 <Text style={{ fontSize: 11, color: colors.success }}>Detected Count</Text>
                 <Text style={{ fontSize: 12, fontWeight: "700", color: colors.success, marginTop: 2 }}>
-                  {questionsData.questions.length} of {questionsData.stated_question_count || 11} Questions ✓
+                  {questionsData.stated_question_count
+                    ? `${questionsData.questions.length} of ${questionsData.stated_question_count} Questions`
+                    : `${questionsData.questions.length} Questions`}
                 </Text>
               </View>
             </View>

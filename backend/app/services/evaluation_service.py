@@ -26,6 +26,15 @@ STUDENT_ANSWER_MAPPING_REVIEW = "STUDENT_ANSWER_MAPPING_REVIEW"
 STUDENT_ANSWER_GROUPING_ERROR = "STUDENT_ANSWER_GROUPING_ERROR"
 STUDENT_ANSWER_RELATIONSHIP_ERROR = "STUDENT_ANSWER_RELATIONSHIP_ERROR"
 DATA_INTEGRITY_ERROR = "DATA_INTEGRITY_ERROR"
+# how each unresolved state is worded in the error shown to teachers (the codes themselves stay as they are)
+_RESOLUTION_TEXT = {
+    STUDENT_ANSWER_UNMAPPED: "Answer not mapped",
+    STUDENT_ANSWER_OCR_FAILED: "Answer sheet could not be read",
+    STUDENT_ANSWER_MAPPING_REVIEW: "Answer mapping needs review",
+    STUDENT_ANSWER_GROUPING_ERROR: "Answer grouping problem",
+    STUDENT_ANSWER_RELATIONSHIP_ERROR: "Answer record problem",
+    DATA_INTEGRITY_ERROR: "Data integrity problem",
+}
 
 
 @dataclass
@@ -153,7 +162,7 @@ def resolve_student_answer(db: Session, ev: Evaluation, q: ExamQuestion) -> Reso
         if failed_pages:
             return ResolvedAnswer(
                 status=STUDENT_ANSWER_OCR_FAILED,
-                reason=f"Student answer sheet OCR failed on page(s): {', '.join(map(str, failed_pages))}.",
+                reason=f"Student answer sheet could not be read on page(s): {', '.join(map(str, failed_pages))}.",
             )
 
     # Truly not attempted
@@ -245,7 +254,7 @@ def evaluate_item(db: Session, ev: Evaluation, q: ExamQuestion, item: Evaluation
 
     else:
         item.status = "EVALUATION_ERROR"
-        item.error = f"{resolved.status}: {resolved.reason}"
+        item.error = f"{_RESOLUTION_TEXT.get(resolved.status, resolved.status)}: {resolved.reason}"
         db.commit()
         return
 
@@ -297,7 +306,21 @@ def run_evaluation(ev_id: str, only_question_ids: list[str] | None = None) -> No
         db.close()
 
 
+def confirm_not_attempted(db: Session, ev: Evaluation) -> None:
+    """Once every student answer is mapped, a MISSING question with no answer on the sheet is not attempted: 0 marks."""
+    if any(a.status in ("UNMAPPED", "NEEDS_REVIEW") for a in db.query(StudentAnswer).filter_by(evaluation_id=ev.id).all()):
+        return
+    qs = {q.id: q for q in exam_questions(db, ev.exam_id)}
+    for it in db.query(EvaluationItem).filter_by(evaluation_id=ev.id, status="MISSING", not_attempted_confirmed=False).all():
+        q = qs.get(it.exam_question_id)
+        if q is not None and resolve_student_answer(db, ev, q).status == STUDENT_ANSWER_NOT_ATTEMPTED:
+            it.not_attempted_confirmed = True
+            if it.final_marks is None:
+                it.final_marks = 0.0
+
+
 def finalize_issues(db: Session, ev: Evaluation) -> list[dict]:
+    """Read-only: lists what still blocks finalizing. Call confirm_not_attempted() first to settle unanswered items."""
     exam = db.get(Exam, ev.exam_id)
     qs = exam_questions(db, ev.exam_id)
     issues: list[dict] = []
@@ -334,18 +357,15 @@ def finalize_issues(db: Session, ev: Evaluation) -> list[dict]:
                         a.status in ("UNMAPPED", "NEEDS_REVIEW")
                         for a in db.query(StudentAnswer).filter_by(evaluation_id=ev.id).all()
                     )
-                    if not has_unresolved:
-                        it.not_attempted_confirmed = True
-                        if it.final_marks is None:
-                            it.final_marks = 0.0
-                    else:
+                    # with nothing left to map, confirm_not_attempted() settles this item; only report it otherwise
+                    if has_unresolved:
                         add(q.display_number, "No student answer found. Map an answer or confirm it was not attempted")
                 elif res.status == STUDENT_ANSWER_MAPPING_REVIEW:
                     add(q.display_number, f"Student answer detected but mapping needs review: {res.reason}")
                 elif res.status == STUDENT_ANSWER_UNMAPPED:
                     add(q.display_number, f"Student answer detected on page but remains unmapped: {res.reason}")
                 elif res.status == STUDENT_ANSWER_OCR_FAILED:
-                    add(q.display_number, f"Answer sheet OCR failed: {res.reason}")
+                    add(q.display_number, f"Answer sheet could not be read: {res.reason}")
                 elif res.status in (STUDENT_ANSWER_RELATIONSHIP_ERROR, DATA_INTEGRITY_ERROR):
                     add(q.display_number, f"Database relationship error: {res.reason}")
                 else:
@@ -360,6 +380,7 @@ def finalize_issues(db: Session, ev: Evaluation) -> list[dict]:
 def refresh_evaluation_status(db: Session, ev: Evaluation) -> None:
     if ev.status == "FINALIZED":
         return
+    confirm_not_attempted(db, ev)
     answers = db.query(StudentAnswer).filter_by(evaluation_id=ev.id).all()
     items = db.query(EvaluationItem).filter_by(evaluation_id=ev.id).all()
     if any(a.status in ("UNMAPPED", "NEEDS_REVIEW") for a in answers):

@@ -18,6 +18,7 @@ import { Badge, StatusBadge } from "../../components/Badge";
 import { PenScore } from "../../components/PenScore";
 import { Loading } from "../../components/Loading";
 import { Empty } from "../../components/Empty";
+import { OutcomeTables } from "../../components/OutcomeTables";
 
 interface ResultDetailScreenProps {
   route: any;
@@ -143,6 +144,8 @@ export const ResultDetailScreen: React.FC<ResultDetailScreenProps> = ({ route })
           />
         </Card>
 
+        {data.outcomes && <OutcomeTables outcomes={data.outcomes} />}
+
         {/* Section Heading */}
         <Text style={[styles.sectionTitle, { color: colors.text }]}>
           Question-Wise Performance Breakdown ({questions.length})
@@ -153,6 +156,8 @@ export const ResultDetailScreen: React.FC<ResultDetailScreenProps> = ({ route })
             <View style={styles.rowHeader}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
                 <Badge label={`Q${row.question}`} variant="teal" />
+                {row.k_level && <Badge label={row.k_level} variant="muted" size="small" />}
+                {row.course_outcome && <Badge label={row.course_outcome} variant="muted" size="small" />}
                 {row.teacher_overridden && (
                   <Badge label="Teacher Overridden" variant="warning" />
                 )}

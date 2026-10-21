@@ -1,5 +1,5 @@
 from __future__ import annotations
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from ..database import get_db
@@ -8,6 +8,8 @@ from ..models import Exam, ExamQuestion, QuestionPaperDocument, Teacher
 from ..security import current_teacher
 from ..serializers import question_view
 from ..services.audit import audit
+from ..services.k_level import K_LEVELS, normalize_course_outcome
+from ..services.k_level import apply_suggestions as apply_k_suggestions
 from ..services.numbering import normalize_question_number
 from ..services.state import set_state
 
@@ -56,6 +58,8 @@ def list_questions(exam_id: str, db: Session = Depends(get_db), t: Teacher = Dep
     exam = get_exam(db, t, exam_id)
     qs = db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all()
     doc = db.query(QuestionPaperDocument).filter_by(exam_id=exam.id, is_active=True).order_by(QuestionPaperDocument.uploaded_at.desc()).first()
+    if exam.status != "FINALIZED" and apply_k_suggestions(qs):
+        db.commit()
     # Reconcile state if extraction completed and questions exist but exam status is still QUESTION_PAPER_UPLOADED
     if exam.status == "QUESTION_PAPER_UPLOADED" and qs and (not doc or doc.status in ("READY", "NEEDS_ATTENTION")):
         set_state(exam, "QUESTIONS_EXTRACTED")
@@ -84,9 +88,6 @@ def list_questions(exam_id: str, db: Session = Depends(get_db), t: Teacher = Dep
         sections_summary[sec]["marks"] += (q.max_marks or 0.0)
 
     stated_qc = struct_info.get("stated_question_count")
-    # If 11 CBSE questions detected and stated_question_count not in file, default to 11
-    if not stated_qc and len(qs) == 11 and any(q.section and "Section" in q.section for q in qs):
-        stated_qc = 11
 
     return {
         "questions": [question_view(q) for q in qs],
@@ -165,6 +166,53 @@ def patch_question(qid: str, body: QuestionPatch, db: Session = Depends(get_db),
         set_state(exam, "QUESTIONS_EXTRACTED")
     db.commit()
     return question_view(q)
+
+
+class OutcomePatch(BaseModel):
+    k_level: str | None = None
+    course_outcome: str | None = None
+
+
+@router.patch("/exam-questions/{qid}/outcome")
+def patch_question_outcome(qid: str, body: OutcomePatch, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    """K level / course outcome tags. They never change marks, so they stay editable until the exam is finalized."""
+    q = _get_q(db, t, qid)
+    exam = get_exam(db, t, q.exam_id)
+    if exam.status == "FINALIZED":
+        raise err(409, "EXAM_FINALIZED", "This exam is finalized.")
+    data = body.model_dump(exclude_unset=True)
+    if "k_level" in data:
+        k = (data["k_level"] or "").strip().upper() or None
+        if k is not None and k not in K_LEVELS:
+            raise err(400, "INVALID_K_LEVEL", "K level must be one of K1 to K6.")
+        if k != q.k_level or q.k_level_source != "TEACHER":
+            audit(db, exam_id=exam.id, teacher_id=t.id, entity_type="exam_question", entity_id=q.id,
+                  action="question_k_level_set", old=q.k_level, new=k)
+        q.k_level, q.k_level_source = k, "TEACHER"
+    if "course_outcome" in data:
+        co = normalize_course_outcome(data["course_outcome"])
+        if co != q.course_outcome:
+            audit(db, exam_id=exam.id, teacher_id=t.id, entity_type="exam_question", entity_id=q.id,
+                  action="question_course_outcome_set", old=q.course_outcome, new=co)
+        q.course_outcome = co
+    db.commit()
+    return question_view(q)
+
+
+@router.post("/exams/{exam_id}/questions/confirm-k-levels")
+def confirm_k_levels(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    """Accept every suggested K level as the teacher's own."""
+    exam = get_exam(db, t, exam_id)
+    if exam.status == "FINALIZED":
+        raise err(409, "EXAM_FINALIZED", "This exam is finalized.")
+    qs = db.query(ExamQuestion).filter_by(exam_id=exam.id, k_level_source="SUGGESTED").all()
+    for q in qs:
+        q.k_level_source = "TEACHER"
+    if qs:
+        audit(db, exam_id=exam.id, teacher_id=t.id, entity_type="exam", entity_id=exam.id,
+              action="k_levels_confirmed", new=len(qs))
+    db.commit()
+    return {"confirmed": len(qs)}
 
 
 class QuestionCreate(BaseModel):
@@ -288,7 +336,7 @@ def accept_valid(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depen
 
 
 @router.post("/exams/{exam_id}/questions/verify")
-def verify_questions(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+def verify_questions(exam_id: str, bg: BackgroundTasks, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     exam = get_exam(db, t, exam_id)
     doc = db.query(QuestionPaperDocument).filter_by(exam_id=exam.id, is_active=True).order_by(QuestionPaperDocument.uploaded_at.desc()).first()
     qs = db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all()
@@ -324,7 +372,7 @@ def verify_questions(exam_id: str, db: Session = Depends(get_db), t: Teacher = D
     # 7. Collect validation issues
     issues = []
     if doc is None or doc.status != "READY":
-        issues.append({"question": "Question paper", "reason": "Some pages failed OCR. Retry them before verifying."})
+        issues.append({"question": "Question paper", "reason": "Some pages could not be read. Retry them before verifying."})
     for q in qs:
         for p in _validate_for_verified(q, qs):
             issues.append({"question": q.display_number, "reason": p})
@@ -336,8 +384,10 @@ def verify_questions(exam_id: str, db: Session = Depends(get_db), t: Teacher = D
     set_state(exam, "QUESTIONS_VERIFIED")
     audit(db, exam_id=exam.id, teacher_id=t.id, entity_type="exam", entity_id=exam.id, action="questions_verified", new=len(qs))
     db.commit()
+    from .documents import release_waiting_key
+    key_started = release_waiting_key(db, exam, bg)
     total = sum(q.max_marks or 0 for q in qs)
-    return {"verified": len(qs), "sum_of_marks": total,
+    return {"verified": len(qs), "sum_of_marks": total, "answer_key_started": key_started,
             "marks_warning": (f"Questions add up to {total:g} marks but the exam total is {exam.total_marks:g}."
                               if abs(total - exam.total_marks) > 1e-9 else None)}
 

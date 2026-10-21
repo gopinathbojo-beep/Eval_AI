@@ -27,7 +27,10 @@ import type {
   VerifyAllResponse,
   Evaluation,
   Student,
+  UnassignedSheet,
+  Outcomes,
 } from "../../types";
+import { OutcomeTables } from "../../components/OutcomeTables";
 import { Card } from "../../components/Card";
 import { Button } from "../../components/Button";
 import { StatusBadge, Badge } from "../../components/Badge";
@@ -183,6 +186,10 @@ interface ExamWorkspaceScreenProps {
   navigation: any;
 }
 
+const K_LEVEL_NAMES: Record<string, string> = {
+  K1: "Remember", K2: "Understand", K3: "Apply", K4: "Analyse", K5: "Evaluate", K6: "Create",
+};
+
 type TabType = "overview" | "paper" | "questions" | "answerKey" | "students" | "submissions" | "evaluations" | "results";
 
 export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
@@ -246,10 +253,14 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
   const [validationResult, setValidationResult] = useState<AnswerKeyValidationResponse | null>(null);
 
   const [uploadSheetModal, setUploadSheetModal] = useState(false);
+  const [unassigned, setUnassigned] = useState<UnassignedSheet[]>([]);
+  const [assignTarget, setAssignTarget] = useState<UnassignedSheet | null>(null);
+  const [outcomeTarget, setOutcomeTarget] = useState<Question | null>(null);
+  const [moreTarget, setMoreTarget] = useState<Question | null>(null);
+  const [classOutcomes, setClassOutcomes] = useState<(Outcomes & { finalized_students: number }) | null>(null);
+  const [coInput, setCoInput] = useState("");
+  const [bulkProgress, setBulkProgress] = useState<string | null>(null);
   const [uploadingSheet, setUploadingSheet] = useState(false);
-  const [studentMode, setStudentMode] = useState<"existing" | "new">("existing");
-  const [newStudentName, setNewStudentName] = useState("");
-  const [newStudentRoll, setNewStudentRoll] = useState("");
   const [compilingPages, setCompilingPages] = useState(false);
   const [selectedStudentId, setSelectedStudentId] = useState("");
   const [attachedPages, setAttachedPages] = useState<
@@ -325,8 +336,12 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
         const k = await api<KeysResponse>(`/exams/${examId}/answer-keys`);
         setKeysData(k);
       } else if (tab === "submissions" || tab === "students") {
-        const sheets = await api<Evaluation[]>(`/exams/${examId}/answer-sheets`);
+        const [sheets, held] = await Promise.all([
+          api<Evaluation[]>(`/exams/${examId}/answer-sheets`),
+          api<UnassignedSheet[]>(`/exams/${examId}/answer-sheets/unassigned`),
+        ]);
         setEvaluations(sheets);
+        setUnassigned(held);
         if (exam?.class_id) {
           const studs = await api<Student[]>(`/students?class_id=${exam.class_id}`);
           setStudents(studs);
@@ -335,8 +350,12 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
         const evs = await api<Evaluation[]>(`/exams/${examId}/answer-sheets`);
         setEvaluations(evs);
       } else if (tab === "results") {
-        const res = await api<Evaluation[]>(`/exams/${examId}/results`);
+        const [res, summary] = await Promise.all([
+          api<Evaluation[]>(`/exams/${examId}/results`),
+          api<Outcomes & { finalized_students: number }>(`/exams/${examId}/outcome-summary`),
+        ]);
         setResults(res);
+        setClassOutcomes(summary);
       }
     } catch (err: any) {
       console.warn("Tab load error:", err);
@@ -368,12 +387,12 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
   }, [questionsData, exam]);
 
   // Active polling while question paper, answer key, or any student sheet is running OCR or extraction
-  const BUSY_DOC = ["UPLOADED", "RENDERING", "OCR_PROCESSING", "EXTRACTING"];
+  const BUSY_DOC = ["UPLOADED", "RENDERING", "OCR_PROCESSING", "EXTRACTING", "IDENTIFYING"];
   const isPaperBusy = !!(exam?.question_paper && BUSY_DOC.includes(exam.question_paper.status));
   const isKeyBusy = !!(exam?.answer_key_document && BUSY_DOC.includes(exam.answer_key_document.status));
-  const hasBusySheet = evaluations.some(
-    (e) => (e.document && BUSY_DOC.includes(e.document.status)) || e.run_status === "RUNNING"
-  );
+  const hasBusySheet =
+    evaluations.some((e) => (e.document && BUSY_DOC.includes(e.document.status)) || e.run_status === "RUNNING") ||
+    unassigned.some((d) => BUSY_DOC.includes(d.status));
 
   useEffect(() => {
     if (!isPaperBusy && !isKeyBusy && !hasBusySheet && exam?.status !== "QUESTION_PAPER_UPLOADED") {
@@ -477,7 +496,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
         mimeType: file.mimeType,
       });
 
-      Alert.alert("Success", "Question paper uploaded! OCR extraction started.");
+      Alert.alert("Success", "Question paper uploaded! Extraction started.");
       setActiveTab("questions");
       fetchExamDetail();
       loadTabData("questions");
@@ -547,7 +566,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
         mimeType: file.mimeType,
       });
 
-      Alert.alert("Success", "Answer key uploaded! OCR extraction started.");
+      Alert.alert("Success", "Answer key uploaded! Extraction started.");
       fetchExamDetail();
       loadTabData("answerKey");
     } catch (err: any) {
@@ -962,14 +981,10 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
     nextStudentId?: string
   ) => {
     try {
-      const student = students.find((s) => s.id === currentStudentId);
-      const params = { student_id: currentStudentId };
-
-      // Dispatch non-blocking background upload
+      // Dispatch non-blocking background upload; the student is identified from the sheet itself
       uploadFileNative(`/exams/${examId}/answer-sheets`, file.uri, {
         fileName: file.name,
         mimeType: file.type || "application/pdf",
-        params,
       })
         .then(() => {
           fetchExamDetail();
@@ -981,9 +996,9 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
             ...prev,
             {
               id: `failed_${Date.now()}`,
-              studentId: currentStudentId,
-              studentName: student?.name || "Student",
-              rollNumber: student?.roll_number || "",
+              studentId: "",
+              studentName: file.name || "Answer sheet",
+              rollNumber: "",
               fileUri: file.uri,
               fileName: file.name,
               error: err.message || "Network upload error",
@@ -1004,11 +1019,11 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
       await uploadFileNative(`/exams/${examId}/answer-sheets`, item.fileUri, {
         fileName: item.fileName,
         mimeType: "application/pdf",
-        params: { student_id: item.studentId },
+        params: item.studentId ? { student_id: item.studentId } : undefined,
       });
       setFailedUploads((prev) => prev.filter((f) => f.id !== item.id));
       await Promise.all([fetchExamDetail(), loadTabData("submissions")]);
-      Alert.alert("Upload Succeeded", `Answer sheet for ${item.studentName} uploaded successfully.`);
+      Alert.alert("Upload Succeeded", `${item.studentName} uploaded successfully.`);
     } catch (err: any) {
       Alert.alert("Retry Failed", err.message || "Could not upload answer sheet. Please try again.");
     }
@@ -1016,19 +1031,6 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
 
   const handleSubmitStudentSheet = async () => {
     if (uploadingSheet || compilingPages) return;
-
-    const isNew = studentMode === "new";
-    if (isNew) {
-      if (!newStudentName.trim() || !newStudentRoll.trim()) {
-        Alert.alert("Student Details Required", "Please enter both the student's name and roll number.");
-        return;
-      }
-    } else {
-      if (!selectedStudentId) {
-        Alert.alert("Student Required", "Please select an enrolled student.");
-        return;
-      }
-    }
 
     if (attachedPages.length === 0) {
       Alert.alert("Answer Sheet Required", "Please attach or scan at least one page for the student's answer sheet.");
@@ -1049,12 +1051,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
         };
       } else {
         setCompilingPages(true);
-        const compiled = await compileAssetsToMultiPagePdf(
-          attachedPages,
-          isNew
-            ? `AnswerSheet_${newStudentRoll.trim()}_${newStudentName.trim()}`
-            : `AnswerSheet_Student_${selectedStudentId}`
-        );
+        const compiled = await compileAssetsToMultiPagePdf(attachedPages, `AnswerSheet_${Date.now()}`);
         finalUpload = {
           uri: compiled.uri,
           name: compiled.name,
@@ -1064,28 +1061,20 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
       }
 
       setUploadingSheet(true);
-      const params: Record<string, string> = isNew
-        ? { student_name: newStudentName.trim(), roll_number: newStudentRoll.trim() }
-        : { student_id: selectedStudentId };
-
-      const uploadRes: any = await uploadFileNative(`/exams/${examId}/answer-sheets`, finalUpload.uri, {
+      // no student is sent: it is identified from the details written on the sheet
+      await uploadFileNative(`/exams/${examId}/answer-sheets`, finalUpload.uri, {
         fileName: finalUpload.name,
         mimeType: finalUpload.mimeType || "application/pdf",
-        params,
       });
-
-      const actualPageCount = uploadRes?.document?.page_count ?? attachedPages.length;
-      const docStatus = uploadRes?.document?.status ?? "OCR_PROCESSING";
+      const actualPageCount = attachedPages.length;
 
       // Only clear state and dismiss modal on verified upload success
       setUploadSheetModal(false);
       setAttachedPages([]);
-      setNewStudentName("");
-      setNewStudentRoll("");
 
       Alert.alert(
         "Upload Confirmed",
-        `Student answer sheet (${actualPageCount} page${actualPageCount === 1 ? "" : "s"}) uploaded and confirmed by backend!\nStatus: ${docStatus}. OCR analysis in progress.`
+        `Answer sheet (${actualPageCount} page${actualPageCount === 1 ? "" : "s"}) uploaded. The student is identified from the sheet, then it is read.`
       );
       fetchExamDetail();
       loadTabData("submissions");
@@ -1102,6 +1091,98 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
       setCompilingPages(false);
       setUploadingSheet(false);
     }
+  };
+
+  // Bloom's K level / course outcome tags; they never change marks, so they stay editable until finalized
+  const saveOutcome = async (q: Question, json: { k_level?: string | null; course_outcome?: string | null }) => {
+    try {
+      const updated = await api<Question>(`/exam-questions/${q.id}/outcome`, { method: "PATCH", json });
+      setOutcomeTarget((cur) => (cur && cur.id === q.id ? updated : cur));
+      await loadTabData("questions");
+    } catch (err: any) {
+      Alert.alert("Could Not Save", err.message || "Failed to save the K level / course outcome.");
+    }
+  };
+
+  // Many answer sheets at once: one file per student, matched to the student from the sheet itself
+  const handleBulkUploadSheets = async () => {
+    let assets: DocumentPicker.DocumentPickerAsset[] = [];
+    try {
+      const res = await DocumentPicker.getDocumentAsync({
+        type: [
+          "application/pdf",
+          "image/*",
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ],
+        multiple: true,
+        copyToCacheDirectory: true,
+      });
+      if (res.canceled || !res.assets?.length) return;
+      assets = res.assets;
+    } catch (err: any) {
+      Alert.alert("File Selection Failed", err.message || "Failed to select answer sheets.");
+      return;
+    }
+    const failed: string[] = [];
+    for (let i = 0; i < assets.length; i++) {
+      setBulkProgress(`Uploading ${i + 1} of ${assets.length}…`);
+      try {
+        await uploadFileNative(`/exams/${examId}/answer-sheets`, assets[i].uri, {
+          fileName: assets[i].name,
+          mimeType: assets[i].mimeType,
+        });
+      } catch (err: any) {
+        failed.push(`${assets[i].name}: ${err.message || "upload failed"}`);
+      }
+    }
+    setBulkProgress(null);
+    await Promise.all([fetchExamDetail(), loadTabData("submissions")]);
+    Alert.alert(
+      failed.length ? "Some Uploads Failed" : "Answer Sheets Uploaded",
+      failed.length
+        ? `${assets.length - failed.length} of ${assets.length} uploaded.\n\n${failed.join("\n")}`
+        : `${assets.length} sheet(s) uploaded. Each is matched to its student, then read one after another.`
+    );
+  };
+
+  const handleAssignSheet = async (doc: UnassignedSheet, studentId: string) => {
+    try {
+      setActionLoading(true);
+      await api(`/answer-sheets/${doc.id}/assign`, { method: "POST", json: { student_id: studentId } });
+      setAssignTarget(null);
+      await Promise.all([fetchExamDetail(), loadTabData("submissions")]);
+    } catch (err: any) {
+      Alert.alert("Could Not Assign", err.message || "Failed to assign the student.");
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleRetryIdentify = async (doc: UnassignedSheet) => {
+    try {
+      await api(`/answer-sheets/${doc.id}/identify`, { method: "POST" });
+      await loadTabData("submissions");
+    } catch (err: any) {
+      Alert.alert("Retry Failed", err.message || "Could not read the student details again.");
+    }
+  };
+
+  const handleDeleteUnassigned = (doc: UnassignedSheet) => {
+    Alert.alert("Delete Answer Sheet", `Remove ${doc.original_filename}? The original file is retained in storage.`, [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Delete",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            await api(`/answer-sheets/${doc.id}`, { method: "DELETE" });
+            await loadTabData("submissions");
+          } catch (err: any) {
+            Alert.alert("Delete Failed", err.message || "Failed to delete the answer sheet.");
+          }
+        },
+      },
+    ]);
   };
 
   // Run AI Evaluation with precise status handling and guidance
@@ -1137,7 +1218,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
     if (targetEv?.document && BUSY_DOC.includes(targetEv.document.status)) {
       Alert.alert(
         "Processing in Progress",
-        `The student's answer sheet is currently ${targetEv.document.stage || "being processed by OCR"}. Please wait until reading finishes.`
+        `The student's answer sheet is currently ${targetEv.document.stage || "being read"}. Please wait until reading finishes.`
       );
       return;
     }
@@ -1174,7 +1255,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
       } else if (err.code === "OCR_NOT_FINISHED") {
         Alert.alert(
           "Processing in Progress",
-          "The answer sheet is still being read and processed by OCR. Please wait a few seconds and try again."
+          "The answer sheet is still being read. Please wait a few seconds and try again."
         );
       } else if (err.code === "ALREADY_RUNNING") {
         Alert.alert("Already Running", "AI evaluation is already in progress for this student.");
@@ -1200,6 +1281,28 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
   };
 
   // Finalize Whole Exam (Laptop parity)
+  const handlePurgeFilesNow = () => {
+    Alert.alert(
+      "Delete Exam Files Now?",
+      "This permanently removes the uploaded documents and page images for this exam. Marks, results and the saved PDF reports stay.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete Files",
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await api(`/exams/${examId}/purge-files`, { method: "POST" });
+              fetchExamDetail();
+            } catch (err: any) {
+              Alert.alert("Delete Failed", err.message || "Failed to delete the exam files.");
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const handleFinalizeExam = () => {
     if (finalizingExam) return;
     const pending = evaluations.filter((e) => e.status !== "FINALIZED");
@@ -1213,7 +1316,8 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
 
     Alert.alert(
       "Finalize Exam",
-      "This closes the exam and locks all student marks permanently. No more answer sheets can be uploaded or modified.\n\nDo you want to finalize this exam?",
+      "This closes the exam and locks all student marks permanently. No more answer sheets can be uploaded or modified.\n\n" +
+        "Each student's PDF report is saved. 24 hours later the uploaded files, page images and raw AI output are permanently deleted from the computer. Marks and results stay.\n\nDo you want to finalize this exam?",
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -1223,7 +1327,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
             try {
               setFinalizingExam(true);
               await api(`/exams/${examId}/finalize`, { method: "POST" });
-              Alert.alert("Exam Finalized", "The exam has been successfully closed and finalized.");
+              Alert.alert("Exam Finalized", "The exam is finalized and every student's report is saved. Uploaded files will be deleted in 24 hours.");
               fetchExamDetail();
               loadTabData("results");
             } catch (err: any) {
@@ -1282,11 +1386,11 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
 
   const tabs: { key: TabType; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
     { key: "overview", label: "Overview", icon: "information-circle-outline" },
-    { key: "paper", label: "Question Paper", icon: "document-text-outline" },
+    { key: "paper", label: "Paper & Key", icon: "document-text-outline" },
     { key: "questions", label: "Questions", icon: "list-outline" },
     { key: "answerKey", label: "Answer Key", icon: "key-outline" },
     { key: "students", label: "Students", icon: "people-outline" },
-    { key: "submissions", label: "Submissions", icon: "cloud-upload-outline" },
+    { key: "submissions", label: "Answer Sheets", icon: "cloud-upload-outline" },
     { key: "evaluations", label: "Evaluations", icon: "checkbox-outline" },
     { key: "results", label: "Results", icon: "trophy-outline" },
   ];
@@ -1421,7 +1525,6 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
             </Card>
 
             <Card style={styles.sectionCard}>
-              <Text style={[styles.cardTitle, { color: colors.text }]}>Workflow Progress</Text>
               <View style={styles.workflowRow}>
                 <View style={styles.wfStep}>
                   <Ionicons
@@ -1579,7 +1682,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                     Capture Question Paper
                   </Text>
                   <Text style={[styles.scannerPromptDesc, { color: colors.textSecondary }]}>
-                    Use the document scanner camera to automatically detect paper edges, crop out background clutter, straighten, and scan multiple pages in sequence.
+                    Scan pages with the camera, or upload a file.
                   </Text>
 
                   <Button
@@ -1679,6 +1782,53 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                 )}
               </Card>
             )}
+            {/* Answer key can be uploaded together with the paper; it is read once questions are verified */}
+            <Card style={styles.sectionCard}>
+              <Text style={[styles.cardTitle, { color: colors.text }]}>Answer Key Document</Text>
+              {exam.answer_key_document ? (
+                <View style={styles.docInfoRow}>
+                  <Ionicons name="key-outline" size={28} color={colors.primary} />
+                  <View style={{ flex: 1, marginLeft: 12 }}>
+                    <Text style={[styles.docName, { color: colors.text }]}>{exam.answer_key_document.original_filename}</Text>
+                    <Text style={[styles.docMeta, { color: colors.textSecondary }]}>
+                      {exam.answer_key_document.status === "WAITING"
+                        ? "Reading starts automatically when you verify the questions."
+                        : exam.answer_key_document.stage || `Uploaded: ${new Date(exam.answer_key_document.uploaded_at).toLocaleString()}`}
+                    </Text>
+                  </View>
+                  <StatusBadge status={exam.answer_key_document.status} size="small" />
+                </View>
+              ) : (
+                <Text style={{ fontSize: 12, color: colors.textSecondary, marginBottom: 10 }}>
+                  Upload now or later. It is read once the questions are verified.
+                </Text>
+              )}
+              {["DRAFT", "QUESTION_PAPER_UPLOADED", "QUESTIONS_EXTRACTED", "QUESTIONS_VERIFIED", "ANSWER_KEY_UPLOADED"].includes(exam.status) &&
+                !isKeyBusy && (
+                  <View style={{ flexDirection: "row", gap: 8, marginTop: 10 }}>
+                    <Button
+                      title="Scan Key"
+                      icon={<Ionicons name="camera-outline" size={15} color="#FFFFFF" />}
+                      variant="gradient"
+                      size="small"
+                      onPress={() => {
+                        setScannerTarget("answer_key");
+                        setCameraScannerVisible(true);
+                      }}
+                      style={{ flex: 1 }}
+                    />
+                    <Button
+                      title={exam.answer_key_document ? "Replace Key" : "Upload Key"}
+                      icon={<Ionicons name="cloud-upload-outline" size={15} color={colors.text} />}
+                      variant="secondary"
+                      size="small"
+                      onPress={handleUploadAnswerKeyDoc}
+                      loading={actionLoading}
+                      style={{ flex: 1 }}
+                    />
+                  </View>
+                )}
+            </Card>
           </View>
         )}
 
@@ -1853,7 +2003,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                   <Empty
                     icon="list-outline"
                     title="No Questions Extracted Yet"
-                    description="Upload the question paper in the 'Paper' tab, or manually add questions."
+                    description="Upload the question paper, or add questions by hand."
                     actionTitle="+ Add Question"
                     onAction={() => {
                       setSelectedQuestionForEdit(null);
@@ -1904,15 +2054,32 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                             label={`${q.max_marks !== null ? q.max_marks : "–"} Marks`}
                             variant="muted"
                           />
-                          {q.ocr_confidence !== null && (
-                            <Badge
-                              label={`conf. ${Math.round(q.ocr_confidence * 100)}%`}
-                              variant="muted"
-                            />
+                          {q.ocr_confidence !== null && q.ocr_confidence < 0.6 && (
+                            <Badge label={`Low confidence ${Math.round(q.ocr_confidence * 100)}%`} variant="warning" />
                           )}
                           <StatusBadge status={q.verification_status} />
                         </View>
                       </View>
+
+                      <TouchableOpacity
+                        disabled={exam.status === "FINALIZED"}
+                        onPress={() => {
+                          setCoInput(q.course_outcome || "");
+                          setOutcomeTarget(q);
+                        }}
+                        style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 6 }}
+                      >
+                        <Badge
+                          label={q.k_level ? `${q.k_level} ${K_LEVEL_NAMES[q.k_level] || ""}` : "K level –"}
+                          variant={q.k_level_source === "SUGGESTED" ? "warning" : q.k_level ? "teal" : "muted"}
+                          size="small"
+                        />
+                        {q.k_level_source === "SUGGESTED" && (
+                          <Text style={{ fontSize: 11, color: colors.warning }}>Suggested</Text>
+                        )}
+                        <Badge label={q.course_outcome || "CO –"} variant={q.course_outcome ? "teal" : "muted"} size="small" />
+                        {exam.status !== "FINALIZED" && <Ionicons name="pencil-outline" size={13} color={colors.primary} />}
+                      </TouchableOpacity>
 
                       {/* Review Reason Highlight */}
                       {q.review_reason ? (
@@ -1935,7 +2102,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                           <View style={styles.cropBoxHeader}>
                             <Ionicons name="scan-outline" size={14} color={colors.primary} />
                             <Text style={[styles.cropBoxLabel, { color: colors.textSecondary }]}>
-                              What the model read (approximate crop):
+                              Detected area
                             </Text>
                           </View>
                           <AuthImage
@@ -1980,43 +2147,11 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                           </TouchableOpacity>
 
                           <TouchableOpacity
-                            onPress={() => {
-                              setSelectedQuestionForSplit(q);
-                              setSplitModalVisible(true);
-                            }}
+                            onPress={() => setMoreTarget(q)}
                             style={[styles.actionPillSec, { borderColor: colors.border }]}
                           >
-                            <Ionicons name="cut-outline" size={14} color={colors.text} />
-                            <Text style={[styles.actionPillText, { color: colors.text }]}>Split</Text>
-                          </TouchableOpacity>
-
-                          <TouchableOpacity
-                            onPress={() => {
-                              setSelectedQuestionForMerge(q);
-                              setMergeModalVisible(true);
-                            }}
-                            style={[styles.actionPillSec, { borderColor: colors.border }]}
-                          >
-                            <Ionicons name="git-merge-outline" size={14} color={colors.text} />
-                            <Text style={[styles.actionPillText, { color: colors.text }]}>Merge</Text>
-                          </TouchableOpacity>
-
-                          <TouchableOpacity
-                            onPress={() => {
-                              setSelectedQuestionForReview(q);
-                              setReviewModalVisible(true);
-                            }}
-                            style={[styles.actionPillSec, { borderColor: colors.border }]}
-                          >
-                            <Ionicons name="flag-outline" size={14} color={colors.warning} />
-                            <Text style={[styles.actionPillText, { color: colors.warning }]}>Review</Text>
-                          </TouchableOpacity>
-
-                          <TouchableOpacity
-                            onPress={() => handleDeleteQuestion(q)}
-                            style={styles.actionPillGhost}
-                          >
-                            <Ionicons name="trash-outline" size={14} color={colors.error} />
+                            <Ionicons name="ellipsis-horizontal" size={14} color={colors.text} />
+                            <Text style={[styles.actionPillText, { color: colors.text }]}>More</Text>
                           </TouchableOpacity>
                         </View>
                       )}
@@ -2188,7 +2323,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                   </Text>
                 </View>
                 <Text style={[styles.ocrHintText, { color: colors.textSecondary }]}>
-                  Generating standard solutions, criteria, and marking schemes for all verified questions. Please allow 20–40 seconds.
+                  Generating answers. This can take up to a minute.
                 </Text>
               </Card>
             )}
@@ -2202,7 +2337,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                   Capture / Create Answer Key
                 </Text>
                 <Text style={[styles.scannerPromptDesc, { color: colors.textSecondary }]}>
-                  Scan official answer sheets with the camera across multiple pages with auto edge detection, upload an existing PDF / Image file, or generate solutions automatically with Ollama AI.
+                  Scan or upload the answer key, or generate it with AI.
                 </Text>
 
                 <Button
@@ -2466,7 +2601,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
               <Empty
                 icon="people-outline"
                 title="No Students Enrolled"
-                description="Students enrolled in this class or added during answer sheet uploads will appear here."
+                description="Add or import students in the Students section."
               />
             ) : (
               students.map((st) => {
@@ -2522,7 +2657,6 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                           icon={<Ionicons name="cloud-upload" size={13} color="#FFFFFF" />}
                           onPress={() => {
                             setSelectedStudentId(st.id);
-                            setStudentMode("existing");
                             setAttachedPages([]);
                             setUploadSheetModal(true);
                           }}
@@ -2561,8 +2695,66 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                   size="small"
                   onPress={() => setUploadSheetModal(true)}
                 />
+                <Button
+                  title={bulkProgress || "Many Files"}
+                  icon={<Ionicons name="documents-outline" size={15} color={colors.text} />}
+                  variant="secondary"
+                  size="small"
+                  loading={!!bulkProgress}
+                  disabled={!!bulkProgress}
+                  onPress={handleBulkUploadSheets}
+                />
               </View>
             </View>
+
+            {/* Sheets not yet linked to a student: being identified, or held for the teacher */}
+            {unassigned.length > 0 && (
+              <Card style={styles.sectionCard}>
+                <Text style={[styles.cardTitle, { color: colors.text }]}>Unidentified Answer Sheets ({unassigned.length})</Text>
+                <Text style={{ fontSize: 12, color: colors.textSecondary, marginBottom: 8 }}>
+                  Pick the student for each sheet to continue.
+                </Text>
+                {unassigned.map((d) => {
+                  const working = BUSY_DOC.includes(d.status);
+                  const read = d.identity?.read || {};
+                  const details = [
+                    read.name && `Name: ${read.name}`,
+                    read.roll_number && `Roll: ${read.roll_number}`,
+                    read.registration_number && `Reg: ${read.registration_number}`,
+                    read.section && `Sec: ${read.section}`,
+                  ].filter(Boolean).join("  •  ");
+                  return (
+                    <View
+                      key={d.id}
+                      style={{ paddingVertical: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border, gap: 6 }}
+                    >
+                      <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                        <Text style={{ flex: 1, fontSize: 13, fontWeight: "700", color: colors.text }} numberOfLines={1}>
+                          {d.original_filename}
+                        </Text>
+                        <StatusBadge status={d.status} size="small" />
+                      </View>
+                      {working ? (
+                        <Text style={{ fontSize: 12, color: colors.primary }}>{d.stage || "Reading student details..."}</Text>
+                      ) : (
+                        <>
+                          <Text style={{ fontSize: 12, color: colors.text }}>{details || "Nothing legible"}</Text>
+                          {!!d.identity?.note && <Text style={{ fontSize: 12, color: colors.warning }}>{d.identity.note}</Text>}
+                          {!!d.error_message && <Text style={{ fontSize: 12, color: colors.error }}>{d.error_message}</Text>}
+                          <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap" }}>
+                            {d.pages.length > 0 && (
+                              <Button title="Pick Student" variant="gradient" size="small" onPress={() => setAssignTarget(d)} />
+                            )}
+                            <Button title="Retry" variant="secondary" size="small" onPress={() => handleRetryIdentify(d)} />
+                            <Button title="Delete" variant="secondary" size="small" onPress={() => handleDeleteUnassigned(d)} />
+                          </View>
+                        </>
+                      )}
+                    </View>
+                  );
+                })}
+              </Card>
+            )}
 
             {/* Failed uploads retry queue banner for network resilience */}
             {failedUploads.length > 0 && (
@@ -2631,7 +2823,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                   No Answer Sheets Uploaded
                 </Text>
                 <Text style={[styles.scannerPromptDesc, { color: colors.textSecondary }]}>
-                  Scan multiple handwritten pages using the camera with edge detection or upload digital answer sheets (PDF / Image) to begin evaluation.
+                  Scan with the camera or upload files. Students are matched automatically.
                 </Text>
 
                 <Button
@@ -2721,7 +2913,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                       >
                         <ActivityIndicator size="small" color={colors.primary} />
                         <Text style={[styles.docBusyBannerText, { color: colors.primary }]} numberOfLines={1}>
-                          {ev.document?.stage || "Reading student paper with OCR..."}
+                          {ev.document?.stage || "Reading student paper..."}
                         </Text>
                       </View>
                     )}
@@ -2848,7 +3040,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
               <Empty
                 icon="checkbox-outline"
                 title="No Evaluations Completed"
-                description="Upload student answer sheets and run evaluation to see scores and grading breakdown."
+                description="Upload answer sheets and run evaluation."
               />
             ) : (
               evaluations.map((ev) => (
@@ -2953,7 +3145,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                 <Empty
                   icon="trophy-outline"
                   title="No Results Yet"
-                  description="Evaluate and finalize student answer sheets to view the score report and class standings."
+                  description="Results appear once students are finalized."
                 />
               ) : (
                 results.map((ev, index) => (
@@ -3004,12 +3196,153 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                   </TouchableOpacity>
                 ))
               )}
+              {exam.status === "FINALIZED" && (exam.files_purge_at || exam.files_purged_at) && (
+                <Card style={styles.sectionCard}>
+                  <Text style={{ fontSize: 12, color: colors.textSecondary }}>
+                    {exam.files_purged_at
+                      ? `Uploaded files were deleted on ${new Date(exam.files_purged_at).toLocaleString()}. Student PDF reports were kept.`
+                      : `Uploaded files, page images and raw AI output will be deleted on ${new Date(exam.files_purge_at!).toLocaleString()}. Student PDF reports are kept.`}
+                  </Text>
+                  {!exam.files_purged_at && (
+                    <Button title="Delete Files Now" variant="secondary" size="small" onPress={handlePurgeFilesNow} style={{ marginTop: 8 }} />
+                  )}
+                </Card>
+              )}
+              {classOutcomes && classOutcomes.finalized_students > 0 && (
+                <View style={{ marginTop: 14 }}>
+                  <Text style={{ fontSize: 12, color: colors.textSecondary, marginBottom: 8 }}>
+                    Class average across {classOutcomes.finalized_students} finalized student(s)
+                  </Text>
+                  <OutcomeTables outcomes={classOutcomes} />
+                </View>
+              )}
             </View>
           );
         })()}
       </ScrollView>
 
-      {/* Upload Student Sheet Modal with multi-page compilation and on-the-fly student creation */}
+      {/* Less-used question actions */}
+      <ModalDialog
+        visible={!!moreTarget}
+        onClose={() => setMoreTarget(null)}
+        title={moreTarget ? `Question ${moreTarget.display_number}` : ""}
+      >
+        {moreTarget && (
+          <View style={{ gap: 8 }}>
+            {[
+              { label: "Split", icon: "cut-outline", color: colors.text, run: () => { setSelectedQuestionForSplit(moreTarget); setSplitModalVisible(true); } },
+              { label: "Merge", icon: "git-merge-outline", color: colors.text, run: () => { setSelectedQuestionForMerge(moreTarget); setMergeModalVisible(true); } },
+              { label: "Flag for review", icon: "flag-outline", color: colors.warning, run: () => { setSelectedQuestionForReview(moreTarget); setReviewModalVisible(true); } },
+              { label: "Delete", icon: "trash-outline", color: colors.error, run: () => handleDeleteQuestion(moreTarget) },
+            ].map((item) => (
+              <TouchableOpacity
+                key={item.label}
+                onPress={() => {
+                  setMoreTarget(null);
+                  item.run();
+                }}
+                style={[styles.studentSelectRow, { borderColor: colors.border, backgroundColor: colors.surface, justifyContent: "flex-start", gap: 10 }]}
+              >
+                <Ionicons name={item.icon as any} size={16} color={item.color} />
+                <Text style={{ fontWeight: "600", color: item.color }}>{item.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
+      </ModalDialog>
+
+      {/* K level + course outcome for one question */}
+      <ModalDialog
+        visible={!!outcomeTarget}
+        onClose={() => setOutcomeTarget(null)}
+        title={outcomeTarget ? `Question ${outcomeTarget.display_number}` : ""}
+        subtitle="Bloom's knowledge level and course outcome"
+        footer={
+          <Button
+            title="Done"
+            variant="gradient"
+            fullWidth
+            onPress={async () => {
+              if (outcomeTarget && coInput.trim() !== (outcomeTarget.course_outcome || "")) {
+                await saveOutcome(outcomeTarget, { course_outcome: coInput.trim() || null });
+              }
+              setOutcomeTarget(null);
+            }}
+          />
+        }
+      >
+        {outcomeTarget && (
+          <View style={{ gap: 12 }}>
+            {outcomeTarget.k_level_source === "SUGGESTED" && (
+              <Text style={{ fontSize: 12, color: colors.warning }}>
+                {outcomeTarget.k_level} was suggested from the question's wording. Tap a level to confirm or change it.
+              </Text>
+            )}
+            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+              {Object.entries(K_LEVEL_NAMES).map(([k, name]) => {
+                const on = outcomeTarget.k_level === k;
+                return (
+                  <TouchableOpacity
+                    key={k}
+                    onPress={() => saveOutcome(outcomeTarget, { k_level: k })}
+                    style={[styles.studentSelectRow, { borderColor: on ? colors.primary : colors.border, backgroundColor: on ? "rgba(7, 159, 189, 0.15)" : colors.surface, width: "47%" }]}
+                  >
+                    <Text style={{ fontWeight: "700", color: on ? colors.primary : colors.text }}>{k}</Text>
+                    <Text style={{ fontSize: 12, color: colors.textSecondary }}>{name}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+            <Input
+              label="Course Outcome"
+              placeholder="e.g. CO1"
+              value={coInput}
+              onChangeText={setCoInput}
+              autoCapitalize="characters"
+            />
+          </View>
+        )}
+      </ModalDialog>
+
+      {/* Pick the student for an answer sheet that could not be matched automatically */}
+      <ModalDialog
+        visible={!!assignTarget}
+        onClose={() => setAssignTarget(null)}
+        title="Pick the Student"
+        subtitle={assignTarget?.original_filename}
+      >
+        {assignTarget && (() => {
+          const takenIds = new Set(evaluations.map((e) => e.student.id));
+          const candIds = new Set(assignTarget.candidates.map((c) => c.id));
+          const rows = [
+            ...assignTarget.candidates.filter((c) => !takenIds.has(c.id)).map((c) => ({ ...c, likely: true })),
+            ...students.filter((st) => !candIds.has(st.id) && !takenIds.has(st.id)).map((st) => ({ ...st, likely: false })),
+          ];
+          return (
+            <ScrollView style={{ maxHeight: 360 }}>
+              {rows.length === 0 && (
+                <Text style={{ fontSize: 13, color: colors.textSecondary }}>Every student in this class already has a sheet.</Text>
+              )}
+              {rows.map((st) => (
+                <TouchableOpacity
+                  key={st.id}
+                  disabled={actionLoading}
+                  onPress={() => handleAssignSheet(assignTarget, st.id)}
+                  style={[styles.studentSelectRow, { backgroundColor: colors.surface, borderColor: st.likely ? colors.primary : colors.border }]}
+                >
+                  <Text style={{ fontWeight: "600", color: colors.text, flex: 1 }}>
+                    {st.roll_number} — {st.name}
+                    {st.registration_number ? ` (${st.registration_number})` : ""}
+                  </Text>
+                  {st.likely && <Badge label="Likely" variant="teal" size="small" />}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          );
+        })()}
+      </ModalDialog>
+
+      {/* Upload Student Sheet Modal with multi-page compilation */}
       <ModalDialog
         visible={uploadSheetModal}
         onClose={() => {
@@ -3018,7 +3351,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
           }
         }}
         title="Upload Student Answer Sheet"
-        subtitle="Upload single or multi-page handwritten sheets"
+        subtitle="One student's sheet: single or multi-page"
         footer={
           <View style={{ gap: 6, width: "100%" }}>
             <Button
@@ -3033,18 +3366,10 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
               onPress={handleSubmitStudentSheet}
               variant="gradient"
               loading={uploadingSheet || compilingPages}
-              disabled={
-                compilingPages ||
-                uploadingSheet ||
-                attachedPages.length === 0 ||
-                (studentMode === "new"
-                  ? !newStudentName.trim() || !newStudentRoll.trim()
-                  : !selectedStudentId)
-              }
+              disabled={compilingPages || uploadingSheet || attachedPages.length === 0}
               fullWidth
             />
-            {(attachedPages.length === 0 ||
-              (studentMode === "new" ? !newStudentName.trim() || !newStudentRoll.trim() : !selectedStudentId)) && (
+            {attachedPages.length === 0 && (
               <Text
                 style={{
                   fontSize: 11,
@@ -3053,112 +3378,20 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                   marginTop: 2,
                 }}
               >
-                {attachedPages.length === 0
-                  ? "Scan or attach answer sheet pages to submit"
-                  : studentMode === "new"
-                  ? "Enter the student name and roll number to continue"
-                  : "Select an enrolled student to enable submission"}
+                Scan or attach answer sheet pages to submit
               </Text>
             )}
           </View>
         }
       >
-        {/* Student Mode Selector Toggle */}
-        <View style={styles.studentModeTabs}>
-          <TouchableOpacity
-            style={[
-              styles.studentModeTab,
-              studentMode === "existing" && {
-                backgroundColor: colors.surfaceElevated,
-                borderColor: colors.primary,
-              },
-            ]}
-            onPress={() => setStudentMode("existing")}
-          >
-            <Ionicons
-              name="people-outline"
-              size={14}
-              color={studentMode === "existing" ? colors.primary : colors.textSecondary}
-            />
-            <Text
-              style={[
-                styles.studentModeTabText,
-                { color: studentMode === "existing" ? colors.primary : colors.textSecondary },
-              ]}
-            >
-              Enrolled Student
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[
-              styles.studentModeTab,
-              studentMode === "new" && {
-                backgroundColor: colors.surfaceElevated,
-                borderColor: colors.primary,
-              },
-            ]}
-            onPress={() => setStudentMode("new")}
-          >
-            <Ionicons
-              name="person-add-outline"
-              size={14}
-              color={studentMode === "new" ? colors.primary : colors.textSecondary}
-            />
-            <Text
-              style={[
-                styles.studentModeTabText,
-                { color: studentMode === "new" ? colors.primary : colors.textSecondary },
-              ]}
-            >
-              New Student
-            </Text>
-          </TouchableOpacity>
+        <View
+          style={{ flexDirection: "row", gap: 8, padding: 10, borderRadius: 10, marginBottom: 12, backgroundColor: colors.surfaceElevated }}
+        >
+          <Ionicons name="person-circle-outline" size={18} color={colors.primary} />
+          <Text style={{ flex: 1, fontSize: 12, color: colors.textSecondary }}>
+            The student is matched from the details written on the sheet.
+          </Text>
         </View>
-
-        {studentMode === "existing" ? (
-          <>
-            <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>Select Student *</Text>
-            <ScrollView style={{ maxHeight: 130, marginBottom: 12 }}>
-              {students.map((st) => {
-                const isSelected = selectedStudentId === st.id;
-                return (
-                  <TouchableOpacity
-                    key={st.id}
-                    onPress={() => setSelectedStudentId(st.id)}
-                    style={[
-                      styles.studentSelectRow,
-                      {
-                        backgroundColor: isSelected ? "rgba(7, 159, 189, 0.15)" : colors.surface,
-                        borderColor: isSelected ? colors.primary : colors.border,
-                      },
-                    ]}
-                  >
-                    <Text style={[{ fontWeight: "600" }, { color: isSelected ? colors.primary : colors.text }]}>
-                      {st.name} (Roll: {st.roll_number})
-                    </Text>
-                    {isSelected && <Ionicons name="checkmark-circle" size={18} color={colors.primary} />}
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-          </>
-        ) : (
-          <View style={{ marginBottom: 12, gap: 10 }}>
-            <Input
-              label="Student Full Name *"
-              value={newStudentName}
-              onChangeText={setNewStudentName}
-              placeholder="e.g. Rahul Sharma"
-            />
-            <Input
-              label="Roll Number *"
-              value={newStudentRoll}
-              onChangeText={setNewStudentRoll}
-              placeholder="e.g. 25"
-            />
-          </View>
-        )}
 
         <Text style={[styles.modalLabel, { color: colors.textSecondary }]}>
           Answer Sheet Pages ({attachedPages.length}) *
@@ -3228,7 +3461,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
               />
             </View>
             <Text style={{ fontSize: 11, color: colors.brandGreen, textAlign: "center" }}>
-              ✓ {attachedPages.length} page(s) attached • Will be compiled into a single PDF
+              {attachedPages.length} page(s) attached
             </Text>
           </View>
         ) : (
@@ -3254,7 +3487,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
               fullWidth
             />
             <Text style={{ fontSize: 11, color: colors.textSecondary, textAlign: "center" }}>
-              Tip: You can attach multiple pages. Each page will be compiled in order into one document.
+              Pages are combined in order into one file.
             </Text>
           </View>
         )}

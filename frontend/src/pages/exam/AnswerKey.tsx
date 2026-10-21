@@ -87,7 +87,9 @@ export default function AnswerKey() {
   }, [doc.data?.status, keys]);
 
   if (exam.status === "DRAFT" || ["QUESTION_PAPER_UPLOADED", "QUESTIONS_EXTRACTED"].includes(exam.status))
-    return <Empty title="Verify questions first" hint="The answer key is mapped onto verified questions, so question verification must be completed first." />;
+    return <Empty title="Verify questions first" hint={exam.answer_key_document
+      ? "Your answer key is uploaded and waiting. It is read and matched to the questions as soon as the questions are verified."
+      : "You can upload the answer key now in the Question Paper & Answer Key tab. It is read as soon as the questions are verified."} />;
   if (doc.loading || keys.loading) return <Loading />;
   const d = doc.data, k = keys.data;
   const isLocked = Boolean(k?.locked || ["ANSWER_KEY_VERIFIED", "READY_FOR_EVALUATION", "EVALUATING", "REVIEW_REQUIRED", "FINALIZED"].includes(exam.status));
@@ -129,19 +131,19 @@ export default function AnswerKey() {
                   type="button"
                   onClick={() => setSourceMode("upload")}
                   className={`rounded-md px-3 py-1 font-medium transition-colors ${
-                    sourceMode === "upload" ? "bg-surface font-semibold text-pen shadow-xs" : "text-mute hover:text-ink"
+                    sourceMode === "upload" ? "bg-surface font-semibold text-pen shadow-xs" : "text-mute hover:text-brown"
                   }`}
                 >
-                  📄 Upload Answer Key
+                  Upload
                 </button>
                 <button
                   type="button"
                   onClick={() => setSourceMode("ai")}
                   className={`rounded-md px-3 py-1 font-medium transition-colors ${
-                    sourceMode === "ai" ? "bg-surface font-semibold text-pen shadow-xs" : "text-mute hover:text-ink"
+                    sourceMode === "ai" ? "bg-surface font-semibold text-pen shadow-xs" : "text-mute hover:text-brown"
                   }`}
                 >
-                  ✨ AI Generation
+                  Generate with AI
                 </button>
               </div>
               {hasKeys && (
@@ -156,17 +158,14 @@ export default function AnswerKey() {
             <UploadZone
               accept=".pdf,.png,.jpg,.jpeg,.docx"
               onFile={upload}
-              hint="PDF, DOCX, PNG or JPG. Answers are matched to verified questions by question number."
+              hint="PDF, Word, PNG or JPG."
             />
           ) : (
-            <div className="rounded-xl border border-dashed border-line bg-sunken/40 p-8 text-center space-y-3.5">
-              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-pen-soft text-pen text-xl font-bold shadow-xs">
-                ✨
-              </div>
+            <div className="rounded-lg border border-dashed border-line bg-sunken/40 p-8 text-center space-y-3.5">
               <div className="max-w-md mx-auto space-y-1">
                 <p className="font-bold text-sm text-ink">Generate Answer Key with AI</p>
                 <p className="text-xs text-mute leading-relaxed">
-                  Uses InternVL via local Ollama to examine the verified question paper and draft comprehensive model answers, marking criteria, and keywords for each question.
+                  Drafts model answers, marking criteria and keywords for each question.
                 </p>
               </div>
               <div>
@@ -189,20 +188,20 @@ export default function AnswerKey() {
 
       {!hasKeys && !d && !showOptions && (
         <Card className="p-8 text-center text-sm text-mute shadow-soft">
-          No answer key loaded yet. Use the options above to upload an official answer key sheet or generate one using AI.
+          No answer key yet. Upload one or generate it with AI.
         </Card>
       )}
 
       {k && ready && (
         <>
-          <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-surface/95 p-3.5 shadow-soft backdrop-blur">
+          <div className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-surface/95 p-3.5 shadow-soft backdrop-blur">
             <div className="flex flex-wrap items-center gap-3 text-xs sm:text-sm">
               <span className="font-semibold text-ink">
                 <b>{k.keys.length}</b> answer rows
               </span>
               {k.missing_question_ids.length > 0 && (
                 <span className="font-semibold text-mark">
-                  ⚠ {k.missing_question_ids.length} question(s) missing answer
+                  {k.missing_question_ids.length} question(s) missing an answer
                 </span>
               )}
             </div>
@@ -317,7 +316,7 @@ export default function AnswerKey() {
                         </div>
                       </div>
                       {r.mapping_note && r.mapping_status !== "MAPPED" && (
-                        <p className="mt-1 text-xs font-semibold text-mark">⚠️ {r.mapping_note}</p>
+                        <p className="mt-1 text-xs font-semibold text-mark">{r.mapping_note}</p>
                       )}
                       <div className="doc-text mt-2.5 line-clamp-4 text-sm text-ink/90">
                         <MathView text={r.answer_text} />
@@ -478,10 +477,10 @@ function ReviewGeneratedModal({
       }
     >
       <div className="space-y-4">
-        <div className="rounded-xl border border-pen/30 bg-pen-soft/40 p-3.5 text-sm text-ink shadow-xs">
+        <div className="rounded-lg border border-pen/30 bg-pen-soft/40 p-3.5 text-sm text-ink shadow-xs">
           <p className="font-semibold text-pen">Generated Model Answers</p>
           <p className="text-xs text-mute mt-0.5">
-            Review and adjust model answers, marking criteria, or keywords before saving. Teacher approval is required before using the key for student evaluation.
+            Check and adjust the answers before saving. You approve the key before it is used.
           </p>
         </div>
         <ErrorPanel error={err} />
@@ -684,7 +683,7 @@ function KeyDlg({ row, qid, k, examId, onClose, onDone }: { row?: AnswerKeyRow; 
           )}
         </Field>
         {row?.mark_mismatch && q && (
-          <div className="rounded-xl border border-mark/50 bg-mark-soft/30 p-3.5 text-sm">
+          <div className="rounded-lg border border-mark/50 bg-mark-soft/30 p-3.5 text-sm">
             <p className="font-semibold text-mark">Mark mismatch: key says {row.marks}, question {q.display_number} is worth {q.max_marks}.</p>
             <div className="mt-2.5 flex flex-wrap gap-2">
               <Button small busy={busy} onClick={() => resolve("keep_question_marks")}>Keep question's {q.max_marks} marks</Button>

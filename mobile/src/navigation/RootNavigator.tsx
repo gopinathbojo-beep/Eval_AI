@@ -17,6 +17,7 @@ import { SubjectsScreen } from "../screens/subjects/SubjectsScreen";
 import { StudentsScreen } from "../screens/students/StudentsScreen";
 import { VerifyExamScreen } from "../screens/exams/VerifyExamScreen";
 import { SettingsScreen } from "../screens/settings/SettingsScreen";
+import { TemplateEditorScreen } from "../screens/settings/TemplateEditorScreen";
 
 const Stack = createNativeStackNavigator();
 
@@ -109,12 +110,17 @@ export const RootNavigator: React.FC = () => {
             <Stack.Screen
               name="Students"
               component={StudentsScreen}
-              options={{ title: "Student Roster" }}
+              options={{ title: "Students" }}
             />
             <Stack.Screen
               name="Settings"
               component={SettingsScreen}
               options={{ title: "Settings & AI Diagnostics" }}
+            />
+            <Stack.Screen
+              name="TemplateEditor"
+              component={TemplateEditorScreen}
+              options={{ title: "Report Template" }}
             />
           </>
         )}

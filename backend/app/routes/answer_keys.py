@@ -429,7 +429,7 @@ def _collect_answer_key_validation(db: Session, exam: Exam) -> dict:
         blocking_issues.append({
             "key_id": None,
             "question": "Answer Key Document",
-            "reason": "Some pages failed OCR. Retry them before verifying.",
+            "reason": "Some pages could not be read. Retry them before verifying.",
             "issue_type": "ocr_failed",
         })
 
@@ -552,7 +552,7 @@ def verify_all_keys(exam_id: str, db: Session = Depends(get_db), t: Teacher = De
         blocking_issues.append({
             "key_id": None,
             "question": "Answer Key Document",
-            "reason": "Some pages failed OCR. Retry them before verifying.",
+            "reason": "Some pages could not be read. Retry them before verifying.",
             "issue_type": "ocr_failed",
         })
 
@@ -562,7 +562,7 @@ def verify_all_keys(exam_id: str, db: Session = Depends(get_db), t: Teacher = De
         primary_issue_type = None
 
         if doc_failed:
-            reasons.append("Document OCR processing failed")
+            reasons.append("Document reading failed")
             primary_issue_type = "ocr_failed"
 
         # Check question mapping
@@ -685,7 +685,7 @@ def verify_keys(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depend
     refresh_key_state(db, exam.id)
     issues = []
     if doc is not None and doc.status != "READY":
-        issues.append({"question": "Answer key", "reason": "Some pages failed OCR. Retry them before verifying."})
+        issues.append({"question": "Answer key", "reason": "Some pages could not be read. Retry them before verifying."})
     for k in keys:
         label = k.raw_question_number or "(no number)"
         if k.mapping_status != "MAPPED":

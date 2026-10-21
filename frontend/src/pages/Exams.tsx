@@ -106,7 +106,7 @@ export function ExamsList() {
     <div className="space-y-4">
       <PageHeader
         title="Exams Management"
-        sub="Organize and monitor all examination workflows from question verification to final marks."
+        sub="Create exams and track their progress."
         actions={
           <Link to="/exams/new">
             <Button variant="primary" className="shadow-xs">
@@ -124,7 +124,7 @@ export function ExamsList() {
       ) : !data?.length ? (
         <Empty
           title="No exams created yet"
-          hint="Create an examination to upload its question paper and begin automated evaluation."
+          hint="Create an exam to get started."
           action={
             <Link to="/exams/new">
               <Button variant="primary">Create Exam</Button>
@@ -165,13 +165,13 @@ export function ExamsList() {
                     <th className="px-4 py-3">Class</th>
                     <th className="px-4 py-3">Subject</th>
                     <th className="px-4 py-3">Total Marks</th>
-                    <th className="px-4 py-3">Workflow Status</th>
+                    <th className="px-4 py-3">Status</th>
                     <th className="px-4 py-3 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-line text-sm">
                   {table.paginatedData.map((e) => (
-                    <tr key={e.id} className="hover:bg-sunken/40">
+                    <tr key={e.id} className="hover:bg-hover">
                       <td className="px-4 py-3">
                         <Link
                           className="font-semibold text-pen hover:underline text-base block"
@@ -374,7 +374,7 @@ export function ExamNew() {
     <div className="max-w-3xl space-y-5">
       <PageHeader
         title="Create New Examination"
-        sub="Set up exam details, select class & subject, and configure evaluation criteria."
+        sub="Name, class, subject and marks."
         actions={
           <Link to="/exams">
             <Button variant="ghost">Cancel &amp; Return</Button>
@@ -383,12 +383,10 @@ export function ExamNew() {
       />
 
       {hasNoClassesOrSubjects && (
-        <div className="rounded-xl border border-pen/20 bg-pen-soft/40 p-4 text-sm text-ink flex items-start gap-3">
-          <span className="text-pen font-bold text-base">💡</span>
+        <div className="rounded-lg border border-line bg-sunken/50 p-3 text-sm text-ink">
           <div>
-            <p className="font-semibold text-pen">Flexible Setup</p>
-            <p className="text-xs text-mute mt-0.5">
-              You can search existing options or type any new class (e.g. 10-A, 11-B) and subject directly in the fields below. Select <b>+ Add</b> to register them on the fly.
+            <p className="text-xs text-mute">
+              Type a new class or subject below and choose <b>+ Add</b> to create it.
             </p>
           </div>
         </div>

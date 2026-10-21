@@ -14,7 +14,7 @@ from app.models import (
     Teacher,
 )
 from app.security import hash_password
-from app.services.report_generator import build_evaluation_pdf_report, format_math_text
+from app.services.report_generator import format_math_text
 
 
 def test_format_math_text():
@@ -213,8 +213,8 @@ def test_download_evaluation_report_pdf_e2e(client, auth):
     assert "Mathematics" in clean_text
     assert "18.5" in clean_text
     assert "92.5%" in clean_text
-    assert "TEACHER OVERRIDE" in clean_text
-    assert "Awarded half mark for clear intermediate step" in clean_text
+    assert "A1" in clean_text                                                   # CBSE grade for 92.5%
+    assert "Adjusted by teacher: Awarded half mark for clear intermediate step" in clean_text
     assert "Accepted correct final simplification" in clean_text
     assert "Page 1 of" in clean_text
 

@@ -372,7 +372,7 @@ export const SearchableCombobox = forwardRef<
               onClick={handleClear}
               title="Clear selection"
               tabIndex={-1}
-              className="p-1 rounded hover:bg-sunken hover:text-ink transition-colors"
+              className="p-1 rounded hover:bg-hover hover:text-brown transition-colors"
             >
               <IconX size={14} />
             </button>
@@ -393,7 +393,7 @@ export const SearchableCombobox = forwardRef<
             }}
             tabIndex={-1}
             title={isOpen ? "Close suggestions" : "Show suggestions"}
-            className="p-1 rounded hover:bg-sunken hover:text-ink transition-colors"
+            className="p-1 rounded hover:bg-hover hover:text-brown transition-colors"
           >
             <IconChevronDown
               size={15}
@@ -409,7 +409,7 @@ export const SearchableCombobox = forwardRef<
         <div
           id={`${inputId}-listbox`}
           role="listbox"
-          className="absolute z-50 mt-1.5 w-full rounded-xl border border-line bg-surface p-1 shadow-lg max-h-64 overflow-y-auto animate-in fade-in-50 duration-150 backdrop-blur-sm"
+          className="absolute z-50 mt-1.5 w-full rounded-lg border border-line bg-surface p-1 shadow-lg max-h-64 overflow-y-auto animate-in fade-in-50 duration-150 backdrop-blur-sm"
         >
           {filteredOptions.length > 0 ? (
             <ul ref={listRef} className="space-y-0.5">
@@ -430,7 +430,7 @@ export const SearchableCombobox = forwardRef<
                         ? "bg-pen-soft text-pen font-medium"
                         : isSelected
                         ? "bg-pen-soft/40 text-ink font-medium"
-                        : "text-ink hover:bg-sunken/60"
+                        : "text-ink hover:bg-hover"
                     }`}
                   >
                     <div className="flex flex-col min-w-0">
@@ -475,7 +475,7 @@ export const SearchableCombobox = forwardRef<
                 className={`flex items-center justify-between rounded-lg px-2.5 py-2 text-sm cursor-pointer select-none transition-colors ${
                   highlightedIndex === filteredOptions.length
                     ? "bg-pen-soft text-pen font-medium"
-                    : "text-ink hover:bg-sunken/60"
+                    : "text-ink hover:bg-hover"
                 }`}
               >
                 <div className="flex items-center gap-2 min-w-0">

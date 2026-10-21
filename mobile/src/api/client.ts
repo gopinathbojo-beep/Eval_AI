@@ -237,6 +237,24 @@ export async function downloadAndShareFile(
   }
 }
 
+/** POSTs JSON, saves the PDF that comes back (e.g. a template preview) and opens the share sheet. */
+export async function postAndShareFile(path: string, json: unknown, filename = "preview.pdf"): Promise<void> {
+  const baseUrl = await getBaseUrl();
+  const token = await getToken();
+  const res = await fetch(`${baseUrl}/api${path.startsWith("/") ? path : `/${path}`}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify(json),
+  });
+  if (!res.ok) throw await toError(res);
+  const fileUri = `${FileSystem.cacheDirectory}${filename.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+  await FileSystem.writeAsStringAsync(fileUri, uint8ArrayToBase64(new Uint8Array(await res.arrayBuffer())), {
+    encoding: FileSystem.EncodingType.Base64,
+  });
+  if (!(await Sharing.isAvailableAsync())) throw new Error("Sharing is not available on this device.");
+  await Sharing.shareAsync(fileUri, { mimeType: "application/pdf", dialogTitle: "Preview" });
+}
+
 function base64ToUint8Array(base64: string): Uint8Array {
   const clean = base64.replace(/[\r\n\s]/g, "");
   if (typeof atob === "function") {

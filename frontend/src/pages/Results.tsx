@@ -6,6 +6,7 @@ import { Badge, Button, Card, Empty, ErrorPanel, Loading, MathView, PageHeader, 
 import { useApi } from "../hooks/useApi";
 import { useTableState } from "../hooks/useTableState";
 import type { Evaluation, ResultResponse } from "../types";
+import { OutcomeTables } from "../components/OutcomeTables";
 import { date, fmt } from "../utils/format";
 
 export function EvaluationsList() {
@@ -15,7 +16,7 @@ export function EvaluationsList() {
     <div className="space-y-4">
       <PageHeader
         title="Evaluations Queue"
-        sub="Monitor student answer sheet evaluations across all active examinations."
+        sub="Answer sheets being evaluated."
       />
       <ErrorPanel error={error} />
       {loading ? (
@@ -28,11 +29,11 @@ export function EvaluationsList() {
             <Link
               key={e.id}
               to={e.status === "FINALIZED" ? `/results/${e.id}` : `/evaluations/${e.id}`}
-              className="group block rounded-xl border border-line bg-surface p-4 shadow-soft transition-all hover:border-pen/40 hover:shadow-card"
+              className="group block rounded-lg border border-line bg-surface p-4 shadow-soft transition-all hover:border-pen/40 hover:shadow-card"
             >
               <div className="flex items-start justify-between gap-2">
                 <div>
-                  <p className="font-semibold text-ink group-hover:text-pen transition-colors">
+                  <p className="font-semibold text-ink group-hover:text-brown transition-colors">
                     {e.student.name}
                   </p>
                   <p className="font-mono text-xs text-mute">Roll: {e.student.roll_number}</p>
@@ -149,7 +150,7 @@ export function ResultsList() {
     <div className="space-y-4">
       <PageHeader
         title="Finalized Examination Results"
-        sub="Search, filter, and export finalized student performance reports."
+        sub="Finalized student results."
       />
       <ErrorPanel error={error} />
       {loading ? (
@@ -198,7 +199,7 @@ export function ResultsList() {
                 </thead>
                 <tbody className="divide-y divide-line text-sm">
                   {table.paginatedData.map((e) => (
-                    <tr key={e.id} className="hover:bg-sunken/40">
+                    <tr key={e.id} className="hover:bg-hover">
                       <td className="px-4 py-3">
                         <Link className="font-semibold text-pen hover:underline block" to={`/results/${e.id}`}>
                           {e.student.name}
@@ -336,13 +337,13 @@ export function ResultPage() {
       />
 
       {downloadError && (
-        <div className="rounded-xl border border-mark/20 bg-mark-soft p-3.5 text-sm text-mark">
+        <div className="rounded-lg border border-mark/20 bg-mark-soft p-3.5 text-sm text-mark">
           {downloadError}
         </div>
       )}
 
       {/* Performance Summary Banner */}
-      <Card className="flex flex-wrap items-center justify-between gap-6 p-6 shadow-soft bg-gradient-to-r from-surface via-surface to-pen-soft/20 border-pen/20">
+      <Card className="flex flex-wrap items-center justify-between gap-6 p-6 shadow-soft">
         <div className="flex items-center gap-5">
           <PenScore got={data.total_marks} max={data.maximum_marks} />
           <div>
@@ -370,15 +371,15 @@ export function ResultPage() {
 
       {/* Tabs Navigation */}
       <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-        <div className="inline-flex items-center gap-1.5 rounded-xl border border-line bg-surface p-1.5 shadow-soft">
+        <div className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface p-1.5 shadow-soft">
           {/* Tab 1: Marks Breakdown by Question */}
           <button
             type="button"
             onClick={() => handleTabChange("breakdown")}
             className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-xs sm:text-sm font-semibold transition-all select-none ${
               activeTab === "breakdown"
-                ? "bg-pen text-white shadow-xs"
-                : "text-mute hover:text-ink hover:bg-sunken"
+                ? "bg-pen text-surface shadow-xs"
+                : "text-mute hover:text-brown hover:bg-hover"
             }`}
           >
             <svg
@@ -398,7 +399,7 @@ export function ResultPage() {
             <span
               className={`rounded-full px-2 py-0.5 text-[10px] font-mono font-bold ${
                 activeTab === "breakdown"
-                  ? "bg-white/20 text-white"
+                  ? "bg-surface/20 text-surface"
                   : "bg-sunken text-mute"
               }`}
             >
@@ -412,8 +413,8 @@ export function ResultPage() {
             onClick={() => handleTabChange("detailed")}
             className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-xs sm:text-sm font-semibold transition-all select-none ${
               activeTab === "detailed"
-                ? "bg-pen text-white shadow-xs"
-                : "text-mute hover:text-ink hover:bg-sunken"
+                ? "bg-pen text-surface shadow-xs"
+                : "text-mute hover:text-brown hover:bg-hover"
             }`}
           >
             <svg
@@ -433,7 +434,7 @@ export function ResultPage() {
             <span
               className={`rounded-full px-2 py-0.5 text-[10px] font-mono font-bold ${
                 activeTab === "detailed"
-                  ? "bg-white/20 text-white"
+                  ? "bg-surface/20 text-surface"
                   : "bg-sunken text-mute"
               }`}
             >
@@ -444,12 +445,15 @@ export function ResultPage() {
       </div>
 
       {/* Tab 1 Content: Marks Breakdown by Question */}
+      {activeTab === "breakdown" && data.outcomes && <OutcomeTables outcomes={data.outcomes} />}
       {activeTab === "breakdown" && (
         <Card className="overflow-x-auto shadow-soft">
           <table className="w-full text-left text-sm">
             <thead className="border-b border-line bg-surface text-xs font-semibold uppercase tracking-wider text-mute">
               <tr>
                 <th className="px-4 py-3">Question</th>
+                <th className="px-4 py-3">K Level</th>
+                <th className="px-4 py-3">CO</th>
                 <th className="px-4 py-3">Marks Awarded</th>
                 <th className="px-4 py-3">Max Marks</th>
                 <th className="px-4 py-3">Evaluation Status</th>
@@ -457,15 +461,17 @@ export function ResultPage() {
             </thead>
             <tbody className="divide-y divide-line text-sm">
               {data.questions.map((q) => (
-                <tr key={q.question_id} className="hover:bg-sunken/40">
+                <tr key={q.question_id} className="hover:bg-hover">
                   <td className="px-4 py-3 font-bold text-ink">Question {q.question}</td>
+                  <td className="px-4 py-3 font-mono text-ink">{q.k_level || "–"}</td>
+                  <td className="px-4 py-3 font-mono text-ink">{q.course_outcome || "–"}</td>
                   <td className="px-4 py-3 font-mono font-bold text-pen">{fmt(q.final_marks)}</td>
                   <td className="px-4 py-3 font-mono text-mute">{fmt(q.max_marks)}</td>
                   <td className="px-4 py-3">
                     {q.teacher_overridden ? (
                       <Badge tone="warn">Teacher Adjusted ({fmt(q.ai_marks)} &rarr; {fmt(q.final_marks)})</Badge>
                     ) : (
-                      <Badge tone="ok">AI Evaluated</Badge>
+                      <Badge tone="ok">Evaluated</Badge>
                     )}
                   </td>
                 </tr>
@@ -505,7 +511,7 @@ export function ResultPage() {
 
               {/* Answer Comparison Cards */}
               <div className="grid gap-3.5 md:grid-cols-2">
-                <div className="rounded-xl border border-line bg-sunken/50 p-3.5">
+                <div className="rounded-lg border border-line bg-sunken/50 p-3.5">
                   <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-mute">
                     Student's Written Answer
                   </p>
@@ -518,7 +524,7 @@ export function ResultPage() {
                   </div>
                 </div>
 
-                <div className="rounded-xl border border-line bg-pen-soft/20 p-3.5">
+                <div className="rounded-lg border border-line bg-pen-soft/20 p-3.5">
                   <p className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-pen">
                     Official Model Answer
                   </p>

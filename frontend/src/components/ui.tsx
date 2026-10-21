@@ -14,11 +14,11 @@ import { label, toneOf, type Tone } from "../utils/format";
 import { IconAlertCircle, IconAlertTriangle, IconX } from "./Icons";
 
 const toneCls: Record<Tone, { badge: string; dot: string }> = {
-  ok: { badge: "bg-ok-soft text-ok border-ok/20", dot: "bg-ok" },
-  warn: { badge: "bg-warn-soft text-warn border-warn/25", dot: "bg-warn" },
-  mark: { badge: "bg-mark-soft text-mark border-mark/20", dot: "bg-mark" },
-  pen: { badge: "bg-pen-soft text-pen border-pen/20", dot: "bg-pen" },
-  mute: { badge: "bg-sunken text-mute border-line", dot: "bg-mute" },
+  ok: { badge: "bg-ok-soft/70 text-ok border-ok/45", dot: "bg-ok" },
+  warn: { badge: "bg-warn-soft/70 text-warn border-warn/45", dot: "bg-warn" },
+  mark: { badge: "bg-mark-soft/70 text-mark border-mark/45", dot: "bg-mark" },
+  pen: { badge: "bg-pen-soft/70 text-pen border-pen/40", dot: "bg-pen" },
+  mute: { badge: "bg-sunken/60 text-mute border-mute/30", dot: "bg-mute" },
 };
 
 export const Badge = ({
@@ -35,7 +35,7 @@ export const Badge = ({
   const t = toneCls[tone] || toneCls.mute;
   return (
     <span
-      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium tracking-tight ${t.badge} ${className}`}
+      className={`stamp inline-flex items-center gap-1.5 px-2 py-0.5 ${t.badge} ${className}`}
     >
       {withDot && <span className={`h-1.5 w-1.5 rounded-full ${t.dot}`} />}
       {children}
@@ -45,7 +45,7 @@ export const Badge = ({
 
 export const StatusBadge = ({
   status,
-  withDot = true,
+  withDot = false,
   className = "",
 }: {
   status?: string | null;
@@ -77,27 +77,78 @@ export function Button({
 }: BtnProps) {
   const v: Record<BtnVariant, string> = {
     primary:
-      "bg-pen text-white hover:bg-pen/95 shadow-sm active:scale-[0.99] border border-transparent focus-visible:ring-pen",
+      "bg-pen text-surface border border-pen shadow-[inset_0_-2px_0_rgb(0_0_0/0.22)] hover:bg-pen/90 active:translate-y-px active:shadow-none dark:text-paper",
     secondary:
-      "bg-surface text-ink border border-line hover:bg-sunken shadow-sm active:scale-[0.99] focus-visible:ring-pen",
-    soft: "bg-sunken text-ink hover:bg-line/60 active:scale-[0.99] border border-transparent focus-visible:ring-pen",
-    ghost: "text-pen hover:bg-pen-soft/80 active:scale-[0.99] border border-transparent",
+      "bg-surface text-ink border border-line shadow-[inset_0_-2px_0_rgb(var(--line))] hover:border-ink/30 hover:bg-hover active:translate-y-px active:shadow-none",
+    soft: "bg-sunken text-ink border border-transparent hover:bg-hover active:translate-y-px",
+    ghost: "text-pen border border-transparent hover:bg-hover active:translate-y-px",
     danger:
-      "bg-mark text-white hover:bg-mark/95 shadow-sm active:scale-[0.99] border border-transparent focus-visible:ring-mark",
-    outline: "border border-pen text-pen hover:bg-pen-soft/70 active:scale-[0.99]",
+      "bg-mark text-white border border-mark shadow-[inset_0_-2px_0_rgb(0_0_0/0.22)] hover:bg-mark/90 active:translate-y-px active:shadow-none dark:text-paper",
+    outline: "border border-pen/70 text-pen hover:bg-hover hover:border-pen active:translate-y-px",
   };
 
   return (
     <button
       {...p}
       disabled={disabled || busy}
-      className={`inline-flex items-center justify-center gap-1.5 rounded-lg font-medium transition-ui select-none disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none ${
+      className={`inline-flex items-center justify-center gap-1.5 rounded-md font-medium transition-ui select-none disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none ${
         small ? "px-2.5 py-1 text-xs" : "px-3.5 py-2 text-sm"
       } ${v[variant]} ${className}`}
     >
       {busy ? <Spinner size={small ? 13 : 15} /> : icon ? <span className="shrink-0">{icon}</span> : null}
       {children}
     </button>
+  );
+}
+
+/** A small "More" button that opens a list of less-used actions. Closes on outside click or Escape. */
+export function MoreMenu({
+  items,
+  label: text = "More",
+}: {
+  items: { label: string; onClick: () => void; danger?: boolean; hidden?: boolean }[];
+  label?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent | KeyboardEvent) => {
+      if (e instanceof KeyboardEvent ? e.key === "Escape" : !ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", close);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", close);
+    };
+  }, [open]);
+  const shown = items.filter((i) => !i.hidden);
+  if (!shown.length) return null;
+  return (
+    <div ref={ref} className="relative">
+      <Button small variant="ghost" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        {text} <span aria-hidden className="text-[10px]">▾</span>
+      </Button>
+      {open && (
+        <div role="menu" className="absolute right-0 z-20 mt-1 min-w-40 animate-rise overflow-hidden rounded-md border border-line bg-surface py-1 shadow-pop">
+          {shown.map((i) => (
+            <button
+              key={i.label}
+              role="menuitem"
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                i.onClick();
+              }}
+              className={`block w-full px-3 py-1.5 text-left text-xs font-medium hover:bg-hover ${i.danger ? "text-mark" : "text-ink hover:text-brown"}`}
+            >
+              {i.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -117,10 +168,10 @@ export const Spinner = ({ size = 18 }: { size?: number }) => (
 
 export const Loading = ({ text = "Loading data..." }: { text?: string }) => (
   <div className="flex flex-col items-center justify-center gap-3 py-16 text-center text-mute">
-    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-pen-soft text-pen shadow-sm">
-      <Spinner size={22} />
+    <div className="flex h-11 w-11 items-center justify-center rounded-full border-2 border-dashed border-pen/40 text-pen">
+      <Spinner size={20} />
     </div>
-    <p className="text-sm font-medium">{text}</p>
+    <p className="font-doc text-sm italic">{text}</p>
   </div>
 );
 
@@ -134,8 +185,8 @@ export const Card = ({
   hover?: boolean;
 }) => (
   <div
-    className={`rounded-xl border border-line bg-surface shadow-sm ${
-      hover ? "transition-ui hover:border-pen/40 hover:shadow-md" : ""
+    className={`rounded-lg border border-line bg-surface shadow-card ${
+      hover ? "transition-ui hover:-translate-y-0.5 hover:border-pen/40 hover:shadow-[0_1px_0_0_rgb(var(--line)),5px_5px_0_0_rgb(var(--pen)/0.18)]" : ""
     } ${className}`}
   >
     {children}
@@ -146,14 +197,14 @@ export function ProgressBar({ value, max }: { value: number; max: number }) {
   const p = max > 0 ? Math.min(100, Math.round((100 * value) / max)) : 0;
   return (
     <div
-      className="h-2 w-full overflow-hidden rounded-full bg-sunken"
+      className="h-2 w-full overflow-hidden rounded-full bg-sunken ring-1 ring-inset ring-line"
       role="progressbar"
       aria-valuenow={p}
       aria-valuemin={0}
       aria-valuemax={100}
     >
       <div
-        className="h-full rounded-full bg-pen transition-all duration-300 ease-out"
+        className="h-full rounded-full bg-[repeating-linear-gradient(115deg,rgb(var(--pen))_0_8px,rgb(var(--pen)/0.82)_8px_12px)] transition-all duration-500 ease-out"
         style={{ width: `${p}%` }}
       />
     </div>
@@ -174,15 +225,15 @@ export function PageHeader({
   breadcrumbs?: { label: string; to?: string }[];
 }) {
   return (
-    <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <div className="mb-7 flex flex-col gap-3 border-b border-dashed border-line pb-5 sm:flex-row sm:items-end sm:justify-between">
       <div className="min-w-0 flex-1">
         {breadcrumbs && breadcrumbs.length > 0 && (
-          <nav aria-label="Breadcrumbs" className="mb-1.5 flex items-center gap-1.5 text-xs text-mute">
+          <nav aria-label="Breadcrumbs" className="mb-2 flex items-center gap-1.5 pl-3.5 text-[11px] font-medium uppercase tracking-[0.12em] text-mute">
             {breadcrumbs.map((b, i) => (
               <span key={i} className="flex items-center gap-1.5">
-                {i > 0 && <span className="opacity-40">/</span>}
+                {i > 0 && <span className="text-mark/60">/</span>}
                 {b.to ? (
-                  <a href={b.to} className="hover:text-ink transition-colors">
+                  <a href={b.to} className="hover:text-brown transition-colors">
                     {b.label}
                   </a>
                 ) : (
@@ -192,11 +243,11 @@ export function PageHeader({
             ))}
           </nav>
         )}
-        <div className="flex flex-wrap items-center gap-2.5">
-          <h1 className="text-2xl font-bold tracking-tight text-ink sm:text-3xl">{title}</h1>
+        <div className="flex flex-wrap items-center gap-3 pl-3.5">
+          <h1 className="margin-rule font-display text-2xl font-semibold text-ink sm:text-[2rem] sm:leading-tight">{title}</h1>
           {badge}
         </div>
-        {sub && <div className="mt-1 text-sm text-mute leading-relaxed">{sub}</div>}
+        {sub && <div className="mt-1.5 pl-3.5 text-sm text-mute leading-relaxed">{sub}</div>}
       </div>
       {actions && <div className="flex flex-wrap items-center gap-2 pt-1 sm:pt-0 shrink-0">{actions}</div>}
     </div>
@@ -214,8 +265,8 @@ export const Empty = ({
   action?: ReactNode;
   icon?: ReactNode;
 }) => (
-  <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-line bg-surface/50 p-10 text-center">
-    <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-sunken text-mute">
+  <div className="ruled flex flex-col items-center justify-center rounded-lg border border-dashed border-line bg-surface/70 px-10 py-12 text-center">
+    <div className="mb-3 flex h-12 w-12 -rotate-3 items-center justify-center rounded-md border border-line bg-surface text-pen shadow-card">
       {icon ?? (
         <svg className="h-6 w-6 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path
@@ -227,7 +278,7 @@ export const Empty = ({
         </svg>
       )}
     </div>
-    <h3 className="text-base font-semibold text-ink">{title}</h3>
+    <h3 className="font-display text-lg font-semibold text-ink">{title}</h3>
     {hint && <p className="mt-1 max-w-sm text-sm text-mute">{hint}</p>}
     {action && <div className="mt-4">{action}</div>}
   </div>
@@ -242,7 +293,7 @@ export function ErrorPanel({ error, action }: { error: unknown; action?: ReactNo
   return (
     <div
       role="alert"
-      className="rounded-xl border border-mark/30 bg-mark-soft/60 p-4 text-sm shadow-sm transition-ui"
+      className="rounded-md border border-mark/30 border-l-4 border-l-mark bg-mark-soft/60 p-4 text-sm transition-ui"
     >
       <div className="flex items-start gap-3">
         <IconAlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-mark" />
@@ -283,7 +334,7 @@ export function Modal({
   title: string;
   onClose: () => void;
   children: ReactNode;
-  wide?: boolean;
+  wide?: boolean | "xl";
   footer?: ReactNode;
   icon?: ReactNode;
 }) {
@@ -297,7 +348,7 @@ export function Modal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex animate-fadeIn items-center justify-center bg-cover/55 p-4 backdrop-blur-[3px]"
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >
       <div
@@ -306,25 +357,25 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className={`flex max-h-[92vh] w-full flex-col rounded-2xl border border-line bg-surface shadow-2xl transition-ui ${
-          wide ? "max-w-4xl" : "max-w-lg"
+        className={`flex max-h-[92vh] w-full animate-rise flex-col overflow-hidden rounded-lg border border-line border-t-4 border-t-pen bg-surface shadow-pop ${
+          wide === "xl" ? "max-w-7xl" : wide ? "max-w-4xl" : "max-w-lg"
         }`}
       >
         <div className="flex items-center justify-between border-b border-line px-6 py-4">
           <div className="flex items-center gap-2.5">
             {icon && <span className="text-pen">{icon}</span>}
-            <h2 className="text-lg font-semibold text-ink">{title}</h2>
+            <h2 className="font-display text-xl font-semibold text-ink">{title}</h2>
           </div>
           <button
             onClick={onClose}
             aria-label="Close dialog"
-            className="rounded-lg p-1.5 text-mute transition-colors hover:bg-sunken hover:text-ink focus-visible:ring-1 focus-visible:ring-pen"
+            className="rounded-lg p-1.5 text-mute transition-colors hover:bg-hover hover:text-brown focus-visible:ring-1 focus-visible:ring-pen"
           >
             <IconX size={18} />
           </button>
         </div>
         <div className="overflow-y-auto p-6">{children}</div>
-        {footer && <div className="flex justify-end gap-2.5 border-t border-line bg-sunken/40 px-6 py-4">{footer}</div>}
+        {footer && <div className="flex justify-end gap-2.5 border-t border-dashed border-line bg-paper/60 px-6 py-4">{footer}</div>}
       </div>
     </div>
   );
@@ -382,7 +433,7 @@ export function Confirm({
 }
 
 const inputCls =
-  "w-full rounded-lg border border-line bg-surface px-3.5 py-2 text-sm text-ink placeholder:text-mute shadow-sm transition-ui focus:border-pen focus:ring-2 focus:ring-pen/20 focus:outline-none";
+  "w-full rounded-md border border-line bg-surface px-3.5 py-2 text-sm text-ink placeholder:text-mute/70 shadow-[inset_0_1px_2px_rgb(var(--ink)/0.04)] transition-ui hover:border-ink/25 focus:border-pen focus:ring-[3px] focus:ring-pen/15 focus:outline-none";
 
 export function Field({
   label: l,
@@ -401,7 +452,7 @@ export function Field({
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between">
-        <label htmlFor={id} className="block text-sm font-medium text-ink">
+        <label htmlFor={id} className="block text-[13px] font-semibold text-ink">
           {l} {required && <span className="text-mark font-bold">*</span>}
         </label>
         {hint && <span className="text-xs text-mute">{hint}</span>}
@@ -449,28 +500,20 @@ export function Stat({
   hint?: string;
   className?: string;
 }) {
-  const toneBorder = {
-    ok: "border-l-4 border-l-ok",
-    warn: "border-l-4 border-l-warn",
-    mark: "border-l-4 border-l-mark",
-    pen: "border-l-4 border-l-pen",
-    mute: "",
-  }[tone || "mute"];
+  const t = tone || "mute";
+  const tab = { ok: "bg-ok", warn: "bg-warn", mark: "bg-mark", pen: "bg-pen", mute: "bg-line" }[t];
+  const num = { ok: "text-ok", warn: "text-warn", mark: "text-mark", pen: "text-pen", mute: "text-ink" }[t];
 
   return (
-    <Card className={`p-4 transition-ui hover:border-line/80 ${toneBorder} ${className}`}>
+    <Card className={`relative overflow-hidden p-4 pt-5 ${className}`}>
+      {/* Index-card tab colour */}
+      <span aria-hidden className={`absolute inset-x-0 top-0 h-1 ${tab}`} />
       <div className="flex items-center justify-between gap-2">
-        <p className="text-xs font-medium uppercase tracking-wider text-mute">{l}</p>
-        {icon && <span className="text-mute/80">{icon}</span>}
+        <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-mute">{l}</p>
+        {icon && <span className="text-mute/70">{icon}</span>}
       </div>
-      <p
-        className={`mt-1.5 text-2xl font-bold tracking-tight ${
-          tone === "mark" ? "text-mark" : tone === "ok" ? "text-ok" : "text-ink"
-        }`}
-      >
-        {value}
-      </p>
-      {hint && <p className="mt-1 text-xs text-mute">{hint}</p>}
+      <p className={`mt-2 font-display text-[2rem] font-semibold leading-none ${num}`}>{value}</p>
+      {hint && <p className="mt-2 border-t border-dashed border-line pt-2 text-xs text-mute">{hint}</p>}
     </Card>
   );
 }

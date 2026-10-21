@@ -82,7 +82,7 @@ export function PageViewer({
               type="button"
               onClick={() => setZoom((z) => Math.max(0.5, z - 0.25))}
               aria-label="Zoom out"
-              className="rounded p-1 text-mute transition-colors hover:bg-surface hover:text-ink disabled:opacity-40"
+              className="rounded p-1 text-mute transition-colors hover:bg-surface hover:text-brown disabled:opacity-40"
               disabled={zoom <= 0.5}
             >
               <IconZoomOut size={15} />
@@ -91,7 +91,7 @@ export function PageViewer({
               type="button"
               onClick={() => setZoom(1)}
               title="Reset zoom to 100%"
-              className="px-2 text-xs font-semibold font-mono text-ink hover:text-pen"
+              className="px-2 text-xs font-semibold font-mono text-ink hover:text-brown"
             >
               {Math.round(zoom * 100)}%
             </button>
@@ -99,7 +99,7 @@ export function PageViewer({
               type="button"
               onClick={() => setZoom((z) => Math.min(3, z + 0.25))}
               aria-label="Zoom in"
-              className="rounded p-1 text-mute transition-colors hover:bg-surface hover:text-ink disabled:opacity-40"
+              className="rounded p-1 text-mute transition-colors hover:bg-surface hover:text-brown disabled:opacity-40"
               disabled={zoom >= 3}
             >
               <IconZoomIn size={15} />
@@ -110,7 +110,7 @@ export function PageViewer({
                 onClick={() => setZoom(1)}
                 title="Reset zoom"
                 aria-label="Reset zoom"
-                className="ml-0.5 rounded border-l border-line pl-1.5 pr-1 text-mute hover:text-ink"
+                className="ml-0.5 rounded border-l border-line pl-1.5 pr-1 text-mute hover:text-brown"
               >
                 <IconRotateCcw size={13} />
               </button>
@@ -120,7 +120,7 @@ export function PageViewer({
       </div>
 
       {/* Viewport Canvas with Independent Scroll */}
-      <div className="relative min-h-0 flex-1 overflow-auto bg-slate-900/5 p-4 dark:bg-slate-950/40">
+      <div className="relative min-h-0 flex-1 overflow-auto bg-sunken/70 p-4">
         {failed && (
           <div className="flex h-64 flex-col items-center justify-center gap-2 text-center text-mark">
             <IconAlertCircle size={28} />
@@ -128,7 +128,7 @@ export function PageViewer({
           </div>
         )}
         {!url && !failed && (
-          <div className="flex h-96 w-full animate-pulse items-center justify-center rounded-xl bg-sunken/80 text-mute">
+          <div className="flex h-96 w-full animate-pulse items-center justify-center rounded-lg bg-sunken/80 text-mute">
             <p className="text-xs font-medium">Loading high-resolution document scan...</p>
           </div>
         )}
@@ -161,7 +161,7 @@ export function PageViewer({
       {highlight && highlight.width > 0 && (
         <div className="flex items-center gap-2 border-t border-line bg-sunken/40 px-3.5 py-1.5 text-xs text-mute">
           <IconInfo size={14} className="shrink-0 text-pen" />
-          <span>The red border highlights the approximate crop detected by OCR on this page.</span>
+          <span>The red border highlights the approximate crop detected on this page.</span>
         </div>
       )}
     </div>

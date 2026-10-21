@@ -45,7 +45,7 @@ import {
 } from "../components/Icons";
 
 type Tab = "mapping" | "marks";
-const FILTERS = ["All", "Mapped", "Suggested", "Needs review", "Unmapped", "Missing", "OCR error"] as const;
+const FILTERS = ["All", "Mapped", "Suggested", "Needs review", "Unmapped", "Missing", "Read error"] as const;
 
 export default function EvaluationPage() {
   const { id } = useParams();
@@ -68,8 +68,8 @@ export default function EvaluationPage() {
         title={
           <div className="flex flex-wrap items-center gap-2.5">
             <span>{ev.student.name}</span>
-            <span className="rounded-lg bg-sunken px-2 py-0.5 font-mono text-sm font-semibold text-mute">
-              {ev.student.roll_number}
+            <span className="stamp rotate-[-2deg] border-pen/40 px-2 py-0.5 font-mono text-[11px] text-pen">
+              Roll {ev.student.roll_number}
             </span>
           </div>
         }
@@ -105,13 +105,14 @@ export default function EvaluationPage() {
       {/* Main Tabs Navigation */}
       {!reading && (
         <div className="space-y-4">
-          <div className="flex items-center gap-1 border-b border-line">
+          {/* stays at the top of the page while scrolling */}
+          <div className="sticky top-0 z-30 -mx-1 flex h-12 items-end gap-1.5 border-b border-line bg-paper/95 px-2 backdrop-blur">
             <button
               onClick={() => setTab("mapping")}
-              className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-semibold transition-ui ${
+              className={`-mb-px flex items-center gap-2 rounded-t-md border px-4 py-2.5 text-sm font-semibold transition-ui ${
                 tab === "mapping"
-                  ? "border-pen text-pen"
-                  : "border-transparent text-mute hover:text-ink hover:border-line"
+                  ? "border-line border-b-surface border-t-2 border-t-pen bg-surface text-ink"
+                  : "border-transparent text-mute hover:bg-hover hover:text-brown"
               }`}
             >
               <IconFileText size={16} />
@@ -124,10 +125,10 @@ export default function EvaluationPage() {
             </button>
             <button
               onClick={() => setTab("marks")}
-              className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-semibold transition-ui ${
+              className={`-mb-px flex items-center gap-2 rounded-t-md border px-4 py-2.5 text-sm font-semibold transition-ui ${
                 tab === "marks"
-                  ? "border-pen text-pen"
-                  : "border-transparent text-mute hover:text-ink hover:border-line"
+                  ? "border-line border-b-surface border-t-2 border-t-pen bg-surface text-ink"
+                  : "border-transparent text-mute hover:bg-hover hover:text-brown"
               }`}
             >
               <IconCheckCircle size={16} />
@@ -182,7 +183,7 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
       case "Needs review":
         return a.status === "NEEDS_REVIEW";
       case "Missing":
-      case "OCR error":
+      case "Read error":
         return false;
       default:
         return true;
@@ -233,7 +234,7 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
         return d.summary.needs_review;
       case "Missing":
         return d.summary.missing;
-      case "OCR error":
+      case "Read error":
         return ocrErrors.length;
       case "Unmapped":
         return d.answers.filter((a) => a.status === "UNMAPPED").length;
@@ -262,14 +263,14 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
           tone={d.summary.missing ? "mark" : "mute"}
         />
         <Stat
-          label="OCR Errors"
+          label="Read Errors"
           value={ocrErrors.length}
           tone={ocrErrors.length ? "mark" : "mute"}
         />
       </div>
 
       {/* Filters Toolbar and Bulk Actions */}
-      <div className="flex flex-col gap-3 rounded-xl border border-line bg-surface p-3 sm:flex-row sm:items-center sm:justify-between shadow-xs">
+      <div className="flex flex-col gap-3 rounded-lg border border-line bg-surface p-3 sm:flex-row sm:items-center sm:justify-between shadow-xs">
         {/* Filter Pills with Counts */}
         <div className="flex flex-wrap items-center gap-1.5" role="tablist" aria-label="Filter answers">
           {FILTERS.map((f) => {
@@ -283,14 +284,14 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
                 onClick={() => setFilter(f)}
                 className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-ui ${
                   active
-                    ? "bg-pen text-white shadow-xs"
-                    : "bg-sunken text-ink hover:bg-line/70"
+                    ? "bg-pen text-surface shadow-xs"
+                    : "bg-sunken text-ink hover:bg-hover"
                 }`}
               >
                 <span>{f}</span>
                 <span
                   className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
-                    active ? "bg-white/20 text-white" : "bg-line/60 text-mute"
+                    active ? "bg-surface/20 text-surface" : "bg-line/60 text-mute"
                   }`}
                 >
                   {count}
@@ -350,7 +351,7 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
       <div className="grid gap-4 lg:grid-cols-2">
         {/* Left Panel: Original Answer Sheet Scan */}
         <div
-          className={`h-[calc(100vh-17rem)] min-h-[30rem] overflow-hidden rounded-xl border border-line bg-surface shadow-sm ${
+          className={`h-[calc(100vh-17rem)] min-h-[30rem] overflow-hidden rounded-lg border border-line bg-surface shadow-sm ${
             mobileView === "answers" ? "hidden lg:block" : "block"
           }`}
         >
@@ -384,7 +385,7 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
                     <MathView text={q.question_text} />
                   </div>
                   <p className="text-xs text-mute">
-                    If the student answered this question, check the scan on the left and use "Edit OCR & Map" to link it.
+                    If it was answered, find it on the scan and use "Edit Text & Mapping" to link it.
                   </p>
                 </Card>
               ))
@@ -392,22 +393,22 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
               <Empty title="No missing answers" hint="All examination questions have at least one mapped answer." />
             ))}
 
-          {filter === "OCR error" &&
+          {filter === "Read error" &&
             (ocrErrors.length ? (
               ocrErrors.map((p) => (
                 <Card key={p.page_number} className="border-l-4 border-l-mark border-line p-4 space-y-2">
                   <div className="flex items-center justify-between">
-                    <p className="font-semibold text-mark">Page {p.page_number}: OCR Processing Issue</p>
+                    <p className="font-semibold text-mark">Page {p.page_number}: Processing Issue</p>
                     <StatusBadge status={p.ocr_status} />
                   </div>
                   <p className="text-sm text-mute">{p.ocr_error || "Failed to process text on this page scan."}</p>
                 </Card>
               ))
             ) : (
-              <Empty title="No OCR errors" hint="Every uploaded page scan was read successfully." />
+              <Empty title="No read errors" hint="Every uploaded page scan was read successfully." />
             ))}
 
-          {!["Missing", "OCR error"].includes(filter) &&
+          {!["Missing", "Read error"].includes(filter) &&
             (rows.length === 0 ? (
               <Empty
                 title="No answers match this filter"
@@ -449,7 +450,7 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
                         </div>
                         <div className="flex items-center gap-1.5">
                           {topCand && a.status === "NEEDS_REVIEW" && (
-                            <Badge tone="pen" withDot>
+                            <Badge tone="pen">
                               Suggested: Q{topCand.display_number}
                             </Badge>
                           )}
@@ -500,7 +501,7 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
                       {a.edited && (
                         <p className="mt-1.5 text-[11px] text-mute flex items-center gap-1">
                           <IconEdit size={12} className="text-pen" />
-                          Edited by teacher (original OCR retained in audit).
+                          Edited by teacher (original transcription retained in audit).
                         </p>
                       )}
                     </button>
@@ -547,28 +548,15 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
                               </Button>
                             )}
 
-                            {a.status === "MAPPED" && (
-                              <Button
-                                small
-                                variant="primary"
-                                disabled={!a.exam_question_id}
-                                busy={busy === a.id + "c"}
-                                onClick={() => act(a, { confirm: true }, "c")}
-                                icon={<IconCheck size={14} />}
-                              >
-                                Confirm
-                              </Button>
-                            )}
-
-                            {/* Consolidated single Edit OCR & Mapping button */}
+                            {/* Consolidated single Edit Text & Mapping button */}
                             <Button
                               small
                               variant="secondary"
                               onClick={() => setDlg(a)}
                               icon={<IconEdit size={13} />}
-                              title="Edit transcribed OCR text or change the mapped question"
+                              title="Edit transcribed text or change the mapped question"
                             >
-                              Edit OCR & Mapping
+                              Edit Text & Mapping
                             </Button>
 
                             <Button
@@ -674,7 +662,7 @@ function MapDlg({
 
   return (
     <Modal
-      title="Edit OCR Text & Question Mapping"
+      title="Edit Text & Question Mapping"
       wide
       onClose={onClose}
       icon={<IconEdit className="text-pen" size={20} />}
@@ -695,7 +683,7 @@ function MapDlg({
           <p className="text-xs font-semibold uppercase tracking-wider text-mute">
             Source Document Scan (Page {a.page_number})
           </p>
-          <div className="h-80 overflow-hidden rounded-xl border border-line bg-sunken/40 shadow-xs">
+          <div className="h-80 overflow-hidden rounded-lg border border-line bg-sunken/40 shadow-xs">
             {a.page_number && (
               <PageViewer
                 kind="answer-sheet"
@@ -746,7 +734,7 @@ function MapDlg({
             )}
           </Field>
 
-          <Field label="Transcribed Answer Text (OCR & Math)">
+          <Field label="Transcribed Answer Text (incl. Math)">
             {(id) => <MathTextarea id={id} rows={6} value={text} onChange={setText} />}
           </Field>
 
@@ -827,7 +815,7 @@ function SplitAnswerModal({
     >
       <div className="space-y-4">
         <p className="text-sm text-mute">
-          Drag the slider to define the split boundary. The original answer retains the first part, and a new answer card is created for the second part.
+          Drag the slider to choose where to split. The second part becomes a new answer.
         </p>
 
         <Field label="Question Number for Second Answer (e.g. Q8(b) or 9)" required>
@@ -841,7 +829,7 @@ function SplitAnswerModal({
           )}
         </Field>
 
-        <div className="space-y-1.5 rounded-xl border border-line bg-sunken/40 p-4">
+        <div className="space-y-1.5 rounded-lg border border-line bg-sunken/40 p-4">
           <div className="flex items-center justify-between text-xs text-mute font-medium">
             <span>Split slider position</span>
             <span className="font-mono text-pen font-bold">
@@ -859,7 +847,7 @@ function SplitAnswerModal({
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2">
-          <div className="rounded-xl border border-line bg-surface p-3.5 text-xs shadow-xs">
+          <div className="rounded-lg border border-line bg-surface p-3.5 text-xs shadow-xs">
             <p className="mb-1.5 font-bold uppercase tracking-wider text-pen">
               Kept in Current Answer ({a.raw_question_number ?? "none"})
             </p>
@@ -867,7 +855,7 @@ function SplitAnswerModal({
               {head}
             </div>
           </div>
-          <div className="rounded-xl border border-line bg-sunken/60 p-3.5 text-xs shadow-xs">
+          <div className="rounded-lg border border-line bg-sunken/60 p-3.5 text-xs shadow-xs">
             <p className="mb-1.5 font-bold uppercase tracking-wider text-ok">
               New Answer ({lbl || "..."})
             </p>
@@ -941,7 +929,7 @@ function MergeAnswerModal({
     >
       <div className="space-y-4">
         <p className="text-sm text-mute leading-relaxed">
-          Append text from another detected answer block into this one. The other answer will be deleted, and its content combined into this card.
+          Add another answer's text to this one. The other answer is removed.
         </p>
 
         <Field label="Select Answer Block to Merge Into This One" required>
@@ -1011,11 +999,11 @@ function MarksTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<vo
   return (
     <div className="space-y-4">
       {/* Sticky Assessment Action Bar */}
-      <div className="sticky top-0 z-20 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-line bg-surface/95 p-4 shadow-sm backdrop-blur-md">
+      <div className="sticky top-12 z-20 flex flex-wrap items-center justify-between gap-4 rounded-lg border border-line border-l-4 border-l-mark bg-surface/95 p-4 shadow-card backdrop-blur-md">
         <div className="flex items-center gap-3">
           <PenScore got={total} max={max} />
           <div>
-            <p className="text-sm font-semibold text-ink">
+            <p className="font-display text-base font-semibold text-ink">
               {ev.status === "FINALIZED" ? "Final Examination Score" : "Current Assessment Marks"}
             </p>
             <p className="text-xs text-mute">
@@ -1065,7 +1053,7 @@ function MarksTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<vo
       {ev.run_status === "RUNNING" && (
         <Card className="p-4 space-y-2">
           <div className="flex items-center justify-between text-xs text-mute font-medium">
-            <span>Evaluating student answers with AI vision model...</span>
+            <span>Evaluating...</span>
             <span className="font-semibold text-pen">
               Question {ev.run_progress} of {ev.run_total}
             </span>
@@ -1077,20 +1065,20 @@ function MarksTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<vo
       {ev.run_status === "ERROR" && (
         <div
           role="alert"
-          className="flex items-start gap-3 rounded-xl border border-mark/40 bg-mark-soft p-4 text-sm text-mark"
+          className="flex items-start gap-3 rounded-lg border border-mark/40 bg-mark-soft p-4 text-sm text-mark"
         >
           <IconAlertCircle className="h-5 w-5 shrink-0" />
           <div>
             <p className="font-semibold">AI Perception Engine Offline</p>
             <p className="mt-0.5 text-xs text-mark/90">
-              InternVL3.5 4B is currently unreachable. Ensure the local Ollama instance is running with blaifa/InternVL3_5:4B loaded, then re-run.
+              The AI model is not running. Start Ollama, then try again.
             </p>
           </div>
         </div>
       )}
 
       {unresolved && (
-        <div className="flex items-start gap-3 rounded-xl border border-warn/40 bg-warn-soft p-4 text-sm text-ink">
+        <div className="flex items-start gap-3 rounded-lg border border-warn/40 bg-warn-soft p-4 text-sm text-ink">
           <IconAlertTriangle className="h-5 w-5 shrink-0 text-warn" />
           <div>
             <p className="font-semibold text-warn">Unresolved Question Mappings</p>
@@ -1114,7 +1102,7 @@ function MarksTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<vo
 
       {/* Issues Accordion before finalization */}
       {!err && !locked && d.issues.length > 0 && d.items.length > 0 && (
-        <details className="group rounded-xl border border-warn/30 bg-warn-soft/40 p-4 text-sm transition-ui">
+        <details className="group rounded-lg border border-warn/30 bg-warn-soft/40 p-4 text-sm transition-ui">
           <summary className="flex cursor-pointer items-center justify-between font-semibold text-warn">
             <span className="flex items-center gap-2">
               <IconAlertTriangle size={16} />
@@ -1163,11 +1151,14 @@ function MarksTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<vo
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="text-base font-bold text-ink">
-                        Question {q.display_number}
+                      <span
+                        className="flex h-8 min-w-8 items-center justify-center rounded-full border-2 border-pen/60 px-1.5 font-display text-sm font-semibold text-pen"
+                        title={`Question ${q.display_number}`}
+                      >
+                        {q.display_number}
                       </span>
-                      <span className="rounded-md bg-sunken px-2 py-0.5 text-xs font-semibold text-mute">
-                        {fmt(q.max_marks)} marks
+                      <span className="font-doc text-xs italic text-mute">
+                        [{fmt(q.max_marks)} marks]
                       </span>
                       {q.section && (
                         <span className="rounded-md bg-pen-soft px-2 py-0.5 text-xs font-semibold text-pen">
@@ -1190,8 +1181,8 @@ function MarksTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<vo
 
                 {/* Answers Side-by-Side Comparison */}
                 <div className="mt-4 grid gap-4 md:grid-cols-2">
-                  <div className="rounded-xl border border-line bg-sunken/40 p-3.5 space-y-1">
-                    <p className="text-xs font-bold uppercase tracking-wider text-pen">
+                  <div className="rounded-md border border-pen/20 bg-pen-soft/40 p-3.5 space-y-1">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-pen">
                       Official Marking Scheme & Criteria
                     </p>
                     <div className="doc-text text-xs text-ink/90 leading-relaxed max-h-36 overflow-y-auto">
@@ -1199,11 +1190,11 @@ function MarksTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<vo
                     </div>
                   </div>
 
-                  <div className="rounded-xl border border-line bg-surface p-3.5 space-y-1">
-                    <p className="text-xs font-bold uppercase tracking-wider text-mute">
-                      Student's Answer (OCR)
+                  <div className="ruled rounded-md border border-line bg-surface p-3.5 pl-14 space-y-1">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-mute">
+                      Student's Answer (Transcribed)
                     </p>
-                    <div className="doc-text text-xs text-ink/90 leading-relaxed max-h-36 overflow-y-auto">
+                    <div className="doc-text text-sm text-ink leading-7 max-h-40 overflow-y-auto">
                       {a?.answer_text ? (
                         <MathView text={a.answer_text} />
                       ) : (
@@ -1222,7 +1213,7 @@ function MarksTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<vo
 
                 {/* AI Evaluation Breakdown */}
                 {it && it.ai_marks !== null && (
-                  <div className="mt-4 rounded-xl border border-pen/20 bg-pen-soft/30 p-3.5 space-y-2 text-xs">
+                  <div className="mt-4 rounded-lg border border-pen/20 bg-pen-soft/30 p-3.5 space-y-2 text-xs">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="font-bold text-ink">
                         AI Assessment: {fmt(it.ai_marks)} / {fmt(q.max_marks)} marks
@@ -1256,7 +1247,7 @@ function MarksTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<vo
                     )}
 
                     {it.teacher_overridden && (
-                      <p className="text-amber-600 font-medium">
+                      <p className="text-warn font-medium">
                         * You overrode the AI score for this question.
                       </p>
                     )}
@@ -1365,7 +1356,7 @@ function MarksTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<vo
                 for student <b>{ev.student.name}</b> (Roll {ev.student.roll_number})?
               </p>
               <p className="text-xs text-mute">
-                Once finalized, this assessment will be locked as the official academic record and available in the final examination results report.
+                Once finalized, the marks are locked and appear in the results.
               </p>
             </div>
           }
