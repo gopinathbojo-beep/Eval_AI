@@ -9,7 +9,10 @@ class Base(DeclarativeBase):
 
 
 def _make_engine(url: str | None = None):
-    url = url or f"sqlite:///{get_settings().data_path / 'adem.db'}"
+    url = url or get_settings().database_url or f"sqlite:///{get_settings().data_path / 'adem.db'}"
+    if not url.startswith("sqlite"):
+        return create_engine(url, pool_pre_ping=True, pool_size=10, max_overflow=20)
+
     eng = create_engine(url, connect_args={"check_same_thread": False})
 
     @event.listens_for(eng, "connect")

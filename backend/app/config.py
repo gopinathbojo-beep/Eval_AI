@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     internvl_num_ctx: int = 8192
     internvl_num_predict: int = 4096
 
+    # e.g. postgresql+psycopg://adem:password@localhost:5432/adem. Empty falls back to SQLite in data_path.
+    database_url: str = ""
     secret_key: str = ""
     access_token_minutes: int = 480
     data_dir: str = "../data"
