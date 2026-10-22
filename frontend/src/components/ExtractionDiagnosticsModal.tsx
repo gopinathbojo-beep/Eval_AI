@@ -151,7 +151,7 @@ export function ExtractionDiagnosticsModal({ onClose }: { onClose: () => void })
                 {["ALL", "Chemistry", "English", "Mathematics"].map((s) => (
                   <button
                     key={s}
-                    className={`px-2 py-0.5 rounded text-xs transition ${filterSubject === s ? "bg-pen text-surface font-medium" : "bg-sunken text-mute hover:text-brown"}`}
+                    className={`px-2 py-0.5 rounded text-xs transition ${filterSubject === s ? "bg-pen text-white font-medium" : "bg-sunken text-mute hover:text-brown"}`}
                     onClick={() => setFilterSubject(s)}
                   >
                     {s}

@@ -87,7 +87,7 @@ export function UploadZone({
 
         <div
           className={`mb-3 flex h-14 w-14 items-center justify-center rounded-xl transition-ui ${
-            drag ? "bg-pen text-surface shadow-md" : "bg-pen-soft text-pen group-hover:scale-105"
+            drag ? "bg-pen text-white shadow-md" : "bg-pen-soft text-pen group-hover:scale-105"
           }`}
         >
           <IconUpload size={26} />

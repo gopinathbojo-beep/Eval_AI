@@ -113,8 +113,29 @@ def split_key_text(raw_lbl: str | None, text: str) -> list[tuple[str | None, str
     return res
 
 
+# Running page headers/footers and page separators, e.g. "Answer Key & Marking Scheme | Page 4", "Page 2 of 5"
+_PAGE_FURNITURE = re.compile(
+    r"^[ \t]*(?:--- PAGE \d+ ---|[^\n]*\|[ \t]*Page[ \t]+\d+(?:[ \t]+of[ \t]+\d+)?|Page[ \t]+\d+(?:[ \t]+of[ \t]+\d+)?)[ \t]*$\n?",
+    re.I | re.M,
+)
+# A line opening the marking scheme ("Marking Scheme (3 Marks):", "KEYWORD MARKING SCHEME")
+_SCHEME_LINE = re.compile(r"^[^\n]*\bMarking\s+Scheme\b[^\n]*$", re.I | re.M)
+
+
+def _table_criteria(scheme: str) -> list[str]:
+    """Criteria from a two-column scheme table flattened to lines: '1.0' / 'Correct identity.' ..."""
+    lines = [l.strip() for l in scheme.splitlines() if l.strip()]
+    out = []
+    for i, line in enumerate(lines[:-1]):
+        if re.fullmatch(r"\d+(?:\.\d+)?", line) and not re.fullmatch(r"\d+(?:\.\d+)?", lines[i + 1]):
+            mk = float(line)
+            out.append(f"{mk:g} Mark{'s' if mk != 1 else ''}: {lines[i + 1]}")
+    return out
+
+
 def extract_from_full_pdf_text(full_text: str, norm_num: str) -> tuple[str | None, list[str]]:
     """Extract answer text and criteria for a specific question number from full document text."""
+    full_text = _PAGE_FURNITURE.sub("", full_text)
     pat = re.compile(
         rf"(?:^|\n)\s*(?![o•\-\*]?\s*\d+(?:\.\d+)?\s*marks?[:\s])(?:Q(?:uestion)?\.?\s*{norm_num}|{norm_num}\.(?!\d|\s*marks?\b))\b[^\n]*\n(.*)",
         re.DOTALL | re.I
@@ -144,20 +165,22 @@ def extract_from_full_pdf_text(full_text: str, norm_num: str) -> tuple[str | Non
                 break
 
     block = rest[:next_idx].strip() if next_idx is not None else rest.strip()
-    clean_block = re.sub(r"--- PAGE \d+ ---", "", block).strip()
+    clean_block = block.strip()
 
-    ms_match = re.search(r"(?:Marking\s+Scheme\s*(\([^\)]+\))?[:\s]*)(.*)", clean_block, re.DOTALL | re.I)
+    ms_match = _SCHEME_LINE.search(clean_block)
     criteria = []
     answer_text = clean_block
     if ms_match:
         answer_text = clean_block[:ms_match.start()].strip()
+        scheme = clean_block[ms_match.start():]
         crit_items = re.findall(
             r"(?:^|\n)\s*[o•\-\*]?\s*(\d+(?:\.\d+)?\s*marks?[:\s][^\n]+|1 mark per[^\n]+|\([^\)]+marks?[^\)]*\)[^\n]*)",
-            clean_block[ms_match.start():],
+            scheme,
             re.I,
         )
-        criteria = [c.strip() for c in crit_items if c.strip()]
+        criteria = [c.strip() for c in crit_items if c.strip()] or _table_criteria(scheme)
 
+    answer_text = re.sub(r"^\s*(?:Model\s+Answer|Answer\s+Key)\s*:?\s*\n", "", answer_text, flags=re.I)
     answer_text = re.sub(r"^\s*(?:[•\-\*]\s*)?Answer\s*:\s*", "", answer_text, flags=re.I).strip()
     return answer_text, criteria
 
@@ -399,4 +422,86 @@ def segment_answer_keys(
         key=lambda k: int(k.normalized_number) if k.normalized_number and k.normalized_number.isdigit() else 999
     )
 
+    # Fallback for keys whose parts were read as separate answers (e.g. "(vi) Error: offers ..." labels)
+    rebuilt = _rebuild_keys_from_headings(full_text, grouped, canonical_questions)
+    if rebuilt:
+        grouped = rebuilt
+
     return grouped
+
+
+def _canonical_top_numbers(canonical_questions: list[Any] | None) -> list[tuple[str, float | None]] | None:
+    """[(number, max_marks)] when the exam's questions are plain 1..N, else None (subpart exams are left alone)."""
+    if not canonical_questions:
+        return None
+    out = []
+    for q in canonical_questions:
+        n = str(getattr(q, "display_number", None) or getattr(q, "normalized_number", None) or "").strip()
+        if not n.isdigit():
+            return None
+        out.append((n, getattr(q, "max_marks", None)))
+    nums = [int(n) for n, _ in out]
+    return out if nums == list(range(1, len(nums) + 1)) and len(nums) >= 2 else None
+
+
+def _keys_are_broken(grouped: list[SegmentedKey], canonical: list[tuple[str, float | None]]) -> bool:
+    """A question has no key, a key has no usable number, or two keys claim the same question."""
+    nums = {n for n, _ in canonical}
+    seen = [k.normalized_number for k in grouped]
+    return any(n not in nums for n in seen) or len(seen) != len(set(seen)) or nums - set(seen) != set()
+
+
+def _rebuild_keys_from_headings(
+    full_text: str, grouped: list[SegmentedKey], canonical_questions: list[Any] | None
+) -> list[SegmentedKey] | None:
+    """One key per question, cut from the PDF text at the headings "1.", "2.", ... "N." (all must be found, in order).
+
+    Used only when the block-by-block result is broken. Marks come from the question; the AI's criteria are kept
+    only when they add up to those marks.
+    """
+    canonical = _canonical_top_numbers(canonical_questions)
+    if not canonical or not full_text.strip() or not _keys_are_broken(grouped, canonical):
+        return None
+
+    heads = []
+    pos = 0
+    for n, _ in canonical:
+        m = re.compile(rf"(?m)^[ \t]*(?:Q(?:uestion)?\.?[ \t]*)?{n}[ \t]*[\.\):][ \t]+(?=\S)").search(full_text, pos)
+        if not m:
+            return None
+        heads.append(m)
+        pos = m.end()
+
+    # Running page titles: a line found among the first lines of two or more pages
+    tops: dict[str, int] = {}
+    for page in re.split(r"--- PAGE \d+ ---", full_text):
+        for line in [l.strip() for l in page.splitlines() if l.strip()][:3]:
+            tops[line] = tops.get(line, 0) + 1
+    running = {l for l, c in tops.items() if c >= 2}
+
+    by_num = {k.normalized_number: k for k in grouped if k.normalized_number}
+    out: list[SegmentedKey] = []
+    for i, ((n, max_marks), m) in enumerate(zip(canonical, heads)):
+        end = heads[i + 1].start() if i + 1 < len(heads) else len(full_text)
+        block = _PAGE_FURNITURE.sub("", full_text[m.end():end])
+        block = "\n".join(l for l in block.splitlines() if l.strip() not in running)
+        # Drop a section heading that sits just before the next question ("SECTION B — GRAMMAR ...")
+        block = re.sub(r"(?:\n[ \t]*SECTION\b[^\n]*)+\s*$", "", block, flags=re.I).strip()
+        page_marks = re.findall(r"--- PAGE (\d+) ---", full_text[:m.start()])
+        old = by_num.get(n)
+        crit = list(old.criteria) if old else []
+        if crit and (max_marks is None or parse_criteria_marks(crit, block) != max_marks):
+            crit = []  # criteria that do not add up to the question's marks would mislead the grader
+        out.append(SegmentedKey(
+            raw_question_number=f"Q{n}",
+            normalized_number=n,
+            answer_text=block,
+            marks=max_marks,
+            criteria=crit,
+            accepted_answers=list(old.accepted_answers) if old else [],
+            keywords=list(old.keywords) if old else [],
+            page_number=int(page_marks[-1]) if page_marks else 1,
+            bbox=old.bbox if old else None,
+            ocr_confidence=old.ocr_confidence if old else None,
+        ))
+    return out

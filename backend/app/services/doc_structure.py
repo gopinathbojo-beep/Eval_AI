@@ -19,6 +19,7 @@ from .numbering import (
     parent_number,
     extract_subquestion_token,
     extract_label_from_text_prefix,
+    subquestion_value,
 )
 
 # Common patterns for section headings and titles
@@ -345,12 +346,27 @@ def _consolidate_subquestions(questions: list[StructuredQuestion]) -> list[Struc
 
         has_explicit_parent = any(sq.raw_question_number and not is_sub_question(sq.normalized_number or "") for sq in sub_qs)
         has_bare_sub = any(sq.raw_question_number and not re.search(r"\d", sq.raw_question_number) for sq in sub_qs)
-        if not (has_explicit_parent or has_bare_sub):
+        first_q = sub_qs[0]
+        sec = first_q.section or ""
+        rule_mark = extract_section_marks_rule(sec)
+        if rule_mark is None:
+            if "SECTION A" in sec.upper():
+                rule_mark = 2.0
+            elif "SECTION B" in sec.upper():
+                rule_mark = 3.0
+            elif "SECTION C" in sec.upper():
+                rule_mark = 5.0
+
+        # Fully-labelled parts ("Q5(a)", "Q5(b)") are one question when their section fixes marks per question
+        # (e.g. "4 questions x 3 marks"); without such a rule each part stays separately scored.
+        has_labelled_parts = rule_mark is not None and p_num.isdigit() and all(
+            sq.raw_question_number and is_sub_question(sq.normalized_number or "") for sq in sub_qs
+        )
+        if not (has_explicit_parent or has_bare_sub or has_labelled_parts):
             for sq in sub_qs:
                 consolidated.append(sq)
             continue
 
-        first_q = sub_qs[0]
         merged_texts = []
         seen_texts = set()
         for sq in sub_qs:
@@ -364,7 +380,7 @@ def _consolidate_subquestions(questions: list[StructuredQuestion]) -> list[Struc
             if sub_tok and not st.startswith(f"({sub_tok})"):
                 if "\n" in st:
                     top_line, rest_lines = st.split("\n", 1)
-                    if top_line.strip().endswith(":") and not rest_lines.strip().startswith(f"({sub_tok})"):
+                    if _is_pure_topic_title(None, top_line) and not rest_lines.strip().startswith(f"({sub_tok})"):
                         st = f"{top_line.strip()}\n({sub_tok}) {rest_lines.strip()}"
                     else:
                         st = f"({sub_tok}) {st}"
@@ -382,16 +398,6 @@ def _consolidate_subquestions(questions: list[StructuredQuestion]) -> list[Struc
         combined_text = "\n".join(merged_texts)
         cleaned_comb, embedded_secs = _extract_and_strip_embedded_sections(combined_text)
         combined_text = _deduplicate_question_text(cleaned_comb)
-
-        sec = first_q.section or ""
-        rule_mark = extract_section_marks_rule(sec)
-        if rule_mark is None:
-            if "SECTION A" in sec.upper():
-                rule_mark = 2.0
-            elif "SECTION B" in sec.upper():
-                rule_mark = 3.0
-            elif "SECTION C" in sec.upper():
-                rule_mark = 5.0
 
         sub_marks = [sq.max_marks for sq in sub_qs if sq.max_marks is not None]
         if rule_mark is not None:
@@ -602,6 +608,188 @@ def split_swallowed_qp_blocks(
             res.append((b_lbl, chunk))
     return res
 
+
+
+# --- Top-level rebuild -------------------------------------------------------------------------
+# Scanned papers (e.g. CBSE English) often come back from OCR with the main question numbers lost:
+# passages unnumbered, sub-parts "(i)".."(xii)" as labels, "4." buried in text, "9." in the section
+# field. The block-by-block parser above then numbers sub-parts as questions. This pass rebuilds the
+# paper from its top-level question starts and is used only when the normal result fails sanity checks.
+
+_TOP_NUM_LABEL = re.compile(r"^\s*(?:Q(?:uestion)?\.?\s*)?(\d{1,2})\s*[\.\)]?\s*$", re.I)
+_TOP_NUM_LINE = re.compile(r"^[ \t]*(\d{1,2})[ \t]*\.(?!\d)[ \t]*", re.M)
+_SECTION_NUM = re.compile(r"^\s*(\d{1,2})\s*\.\s*(.*)$", re.S)
+_QUESTION_OPENER = re.compile(
+    r"^\s*(?:Read\s+the\s+(?:text|extracts?|extra|passage|poem|following|given)\b"
+    r"|(?:Attempt|Answer|Complete|Do)\s+ANY\s+(?:ONE|TWO|THREE|FOUR|FIVE|SIX|SEVEN|EIGHT|TEN|\d+)\b)",
+    re.I,
+)
+_LEADING_PART = re.compile(r"^\s*\(\s*([ivxIVX]{1,5}|[a-zA-Z])\s*\)")
+_ALTERNATIVE = re.compile(r"^\s*(?:\(\s*[A-D]\s*\)|OR\s*$)")
+
+
+@dataclass
+class _TopQuestion:
+    num: int
+    texts: list[str]
+    start_marks: float | None
+    part_marks: list[float]
+    section: str | None
+    page_start: int
+    page_end: int
+    bbox: dict | None
+    confidence: float | None
+    qtype: str | None
+
+
+def _rebuild_from_question_starts(
+    page_results: list[tuple[dict, Any]], stated_count: int | None, exam_max: float | None
+) -> list[StructuredQuestion] | None:
+    """Rebuild questions 1..N from top-level starts; None unless the result is anchored by the stated
+    question count (or, when no count is printed, by the paper total)."""
+    limit = stated_count or 99
+    cap = exam_max * 0.25 if exam_max else None  # a part claiming >25% of the paper is a misread
+    qs: list[_TopQuestion] = []
+    section: str | None = None
+
+    def start(num: int, page: int, text: str, q: Any, preface: str | None = None) -> None:
+        body = f"{preface.strip()}\n{text}".strip() if preface else text
+        qs.append(_TopQuestion(num, [body] if body else [], q.marks, [], section, page, page,
+                               q.bbox.model_dump() if getattr(q, "bbox", None) else None, q.confidence, q.question_type))
+
+    def append(page: int, text: str, label: str | None, marks: float | None) -> None:
+        cur = qs[-1]
+        lbl = (label or "").strip()
+        if text and lbl.startswith("(") and not text.lstrip().startswith(lbl):
+            text = f"{lbl} {text}"
+        if text and text.strip() not in cur.texts:
+            cur.texts.append(text.strip())
+        if marks is not None and marks > 0 and (cap is None or marks <= cap):
+            cur.part_marks.append(marks)
+        cur.page_end = max(cur.page_end, page)
+
+    for page_info, page_res in page_results:
+        page = page_info["page_number"]
+        for q in getattr(page_res, "questions", []):
+            text = (q.question_text or "").strip()
+            label = (q.raw_question_number or "").strip() or None
+            sec = (q.section or "").strip() or None
+            sec_num = _SECTION_NUM.match(sec) if sec else None
+            if sec and not sec_num:
+                section = sec
+            nxt = (qs[-1].num + 1) if qs else 1
+            nxt = nxt if nxt <= limit else None
+            cur_num = qs[-1].num if qs else None
+
+            # 1. Explicit number as the label: "3.", "Q8"
+            m = _TOP_NUM_LABEL.match(label) if label else None
+            if m:
+                n = int(m.group(1))
+                if nxt and n == nxt:
+                    start(n, page, text, q)
+                    continue
+                if cur_num and n == cur_num:
+                    append(page, text, None, q.marks)
+                    continue
+
+            # 2. Number opening a line of the text: "4. Attempt ANY ONE ...", "5.\nAttempt ...", "7. (B) ..."
+            handled = False
+            for lm in _TOP_NUM_LINE.finditer(text):
+                n, after = int(lm.group(1)), text[lm.end():].strip()
+                if cur_num and n == cur_num and lm.start() == 0:
+                    append(page, after, None, q.marks)
+                    handled = True
+                    break
+                if nxt and n == nxt and (lm.start() == 0 or _QUESTION_OPENER.match(after)):
+                    before = text[:lm.start()].strip()
+                    if before and qs:
+                        append(page, before, label, None)
+                    start(n, page, after, q)
+                    handled = True
+                    break
+            if handled:
+                continue
+
+            # 3. Number carried in the section field: "9. Answer ANY TWO ..." (unless the block continues
+            #    the previous question's parts, e.g. "(iv) ..." after Q8's "(iii)")
+            if sec_num and nxt and int(sec_num.group(1)) == nxt:
+                lead = _LEADING_PART.match(text)
+                if not lead or subquestion_value(lead.group(1)) <= 1:
+                    start(nxt, page, text, q, preface=sec_num.group(2))
+                    continue
+
+            # 4. Unnumbered question opener: "Read the text given below", "Answer ANY FOUR ..."
+            is_part = bool(label and (_LEADING_PART.match(label) or _ALTERNATIVE.match(label)))
+            if (nxt and _QUESTION_OPENER.match(text) and not is_part
+                    and not _ALTERNATIVE.match(text) and (not qs or qs[-1].texts)):
+                start(nxt, page, text, q)
+                continue
+
+            # 5. Everything else belongs to the current question (parts, alternatives, OR, passages)
+            if qs:
+                append(page, text, label, q.marks)
+
+    n = len(qs)
+    if n < 2 or (stated_count and n != stated_count):
+        return None
+
+    # Marks: a question's own printed total is trusted when it is at least its largest part;
+    # the rest of the paper total is shared among the uncertain questions.
+    trusted: dict[int, float] = {}
+    for tq in qs:
+        m = tq.start_marks
+        if m and m > 0 and (cap is None or m <= exam_max * 0.5) and m >= max(tq.part_marks, default=0):
+            trusted[tq.num] = m
+    uncertain = [tq.num for tq in qs if tq.num not in trusted]
+    inferred: dict[int, float] = {}
+    if uncertain and exam_max:
+        share = (exam_max - sum(trusted.values())) / len(uncertain)
+        if share > 0 and abs(share * 2 - round(share * 2)) < 1e-9:
+            inferred = {num: share for num in uncertain}
+    marks = {**trusted, **inferred}
+    if not stated_count and (not exam_max or abs(sum(marks.values()) - exam_max) > 1e-6):
+        return None
+
+    out: list[StructuredQuestion] = []
+    for tq in qs:
+        reasons = []
+        if tq.num in inferred:
+            reasons.append("Marks inferred from the paper total; please check")
+        elif tq.num not in marks:
+            reasons.append("Marks not found")
+        out.append(StructuredQuestion(
+            raw_question_number=f"Q{tq.num}",
+            normalized_number=str(tq.num),
+            display_number=str(tq.num),
+            question_text=_deduplicate_question_text("\n".join(tq.texts)),
+            question_type=tq.qtype or "descriptive",
+            max_marks=marks.get(tq.num),
+            section=tq.section,
+            page_start=tq.page_start,
+            page_end=tq.page_end,
+            bbox=tq.bbox,
+            ocr_confidence=tq.confidence,
+            verification_status="NEEDS_REVIEW" if reasons else "UNVERIFIED",
+            review_reason="; ".join(reasons) or None,
+        ))
+    return out
+
+
+def _structure_is_broken(doc: DocumentStructure) -> bool:
+    """Top-level numbering not 1..k, count differs from the stated count, or marks miss the paper total."""
+    parents: list[int] = []
+    for q in doc.questions:
+        p = parent_number(q.normalized_number or "")
+        if not p.isdigit():
+            return True
+        if not parents or parents[-1] != int(p):
+            parents.append(int(p))
+    if parents != list(range(1, len(parents) + 1)):
+        return True
+    if doc.stated_question_count and len(parents) != doc.stated_question_count:
+        return True
+    total = sum(q.max_marks or 0 for q in doc.questions)
+    return bool(doc.exam_max_marks and abs(total - doc.exam_max_marks) > 1e-6)
 
 
 def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> DocumentStructure:
@@ -920,6 +1108,7 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
                             detected_num = None
                             detected_title = None
                             if page_text:
+                                curr_parent_int = int(parent) if parent.isdigit() else 0
                                 prev_snippet = (last_q.question_text or "")[-30:].strip()
                                 curr_snippet = text[:30].strip()
                                 p_idx = page_text.find(prev_snippet) if prev_snippet else -1
@@ -927,13 +1116,15 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
                                 start_search = (p_idx + len(prev_snippet)) if p_idx != -1 else 0
                                 if c_idx != -1 and c_idx >= start_search:
                                     intermediate = page_text[start_search:c_idx]
-                                    m_q = re.search(r"(?:Q(?:uestion)?\.?\s*([0-9]{1,3})|[0-9]{1,3}\.)\s*[:\-.]?\s*([^\n]*)", intermediate, re.IGNORECASE)
-                                    if m_q:
-                                        detected_num = m_q.group(1).strip()
-                                        detected_title = m_q.group(2).strip()
+                                    # The new parent is the nearest question label before this part that is
+                                    # higher than the current one (skips "Q9." and stray "2.4" when Q10 starts)
+                                    for m_q in re.finditer(r"(?:^|\n)\s*(?:Q(?:uestion)?\.?\s*([0-9]{1,3})|([0-9]{1,3})\.(?!\d))\s*[:\-.]?\s*([^\n]*)", intermediate, re.IGNORECASE):
+                                        q_cand = m_q.group(1) or m_q.group(2)
+                                        if q_cand and int(q_cand) > curr_parent_int:
+                                            detected_num = q_cand.strip()
+                                            detected_title = m_q.group(3).strip()
 
                                 if not detected_num:
-                                    curr_parent_int = int(parent) if parent.isdigit() else 0
                                     for m_q in re.finditer(r"(?:^|\n)\s*(?:Q(?:uestion)?\.?\s*([0-9]{1,3})|([0-9]{1,3})\.)\s*[:\-.]?\s*([^\n]*)", page_text, re.IGNORECASE):
                                         q_cand = m_q.group(1) or m_q.group(2)
                                         if q_cand and q_cand.isdigit() and int(q_cand) > curr_parent_int:
@@ -961,7 +1152,11 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
             assigned_marks = marks
             m_inline = _INLINE_MARKS_PATTERN.search(text)
             inline_val = float(m_inline.group(1)) if m_inline else None
-            if section_marks_rule is not None:
+            part_val = inline_val if inline_val is not None else marks
+            if section_marks_rule is not None and norm and is_sub_question(norm) and part_val is not None and 0 < part_val < section_marks_rule:
+                # A part's own mark ("(a) ... (2 marks)") is a share of the per-question rule, not the whole rule
+                assigned_marks = part_val
+            elif section_marks_rule is not None:
                 if inline_val is not None and inline_val >= section_marks_rule:
                     assigned_marks = inline_val
                 else:
@@ -1046,4 +1241,10 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
                     doc_struct.instructions.append("\n".join(sec_lines[1:]))
 
     doc_struct.questions = _consolidate_subquestions(doc_struct.questions)
+
+    # Fallback for papers whose OCR lost the main question numbers (see _rebuild_from_question_starts)
+    if _structure_is_broken(doc_struct):
+        rebuilt = _rebuild_from_question_starts(page_results, doc_struct.stated_question_count, doc_struct.exam_max_marks)
+        if rebuilt:
+            doc_struct.questions = rebuilt
     return doc_struct

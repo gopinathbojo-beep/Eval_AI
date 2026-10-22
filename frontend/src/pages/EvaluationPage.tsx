@@ -284,14 +284,14 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
                 onClick={() => setFilter(f)}
                 className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-ui ${
                   active
-                    ? "bg-pen text-surface shadow-xs"
+                    ? "bg-pen text-white shadow-xs"
                     : "bg-sunken text-ink hover:bg-hover"
                 }`}
               >
                 <span>{f}</span>
                 <span
                   className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
-                    active ? "bg-surface/20 text-surface" : "bg-line/60 text-mute"
+                    active ? "bg-white/20 text-white" : "bg-line/60 text-mute"
                   }`}
                 >
                   {count}

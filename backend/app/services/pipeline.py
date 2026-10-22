@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from ..config import AI_BAD_RESPONSE_MESSAGE, AI_UNAVAILABLE_MESSAGE, get_settings
 from ..database import SessionLocal
 from ..documents import cropping
-from ..documents.renderer import RenderError, render_document
+from ..documents.renderer import RenderError, page_text as pdf_page_text, render_document
 from ..documents.storage import abs_path, rel
 from ..models import (AnswerKey, AnswerKeyDocument, AnswerSheetDocument, Evaluation, EvaluationItem, Exam, ExamQuestion,
                       QuestionPaperDocument, StudentAnswer)
@@ -218,11 +218,11 @@ def _load_results(doc, schema):
         if p.get("ocr_status") != "OK":
             continue
         p_dict = dict(p)
-        if pdf_doc and "page_text" not in p_dict:
+        if pdf_doc:  # re-read so earlier uploads get current extraction (e.g. superscripts kept)
             p_num = p_dict.get("page_number", 1)
             if 1 <= p_num <= len(pdf_doc):
                 try:
-                    p_dict["page_text"] = pdf_doc[p_num - 1].get_text()
+                    p_dict["page_text"] = pdf_page_text(pdf_doc[p_num - 1])
                 except Exception:
                     pass
         data = json.loads(abs_path(p["ocr_file"]).read_text(encoding="utf-8"))

@@ -622,7 +622,7 @@ export function ExamResults() {
                         to={e.status === "FINALIZED" ? `/results/${e.id}` : `/evaluations/${e.id}`}
                         className="text-xs font-medium text-pen hover:underline"
                       >
-                        {e.status === "FINALIZED" ? "View Report &rarr;" : "Review &rarr;"}
+                        {e.status === "FINALIZED" ? "View Report →" : "Review →"}
                       </Link>
                     </td>
                   </tr>

@@ -961,17 +961,6 @@ function OutcomeTags({
           ))}
         </select>
       </label>
-      {suggested && (
-        <button
-          type="button"
-          disabled={disabled}
-          onClick={() => save({ k_level: q.k_level })}
-          className="rounded-full border border-warn/40 bg-warn-soft px-2 py-0.5 font-medium text-warn hover:bg-warn-soft/70"
-          title="Suggested from the question's wording. Click to confirm."
-        >
-          Suggested · confirm
-        </button>
-      )}
       <label className="flex items-center gap-1.5">
         <span className="font-semibold text-mute">CO</span>
         <input

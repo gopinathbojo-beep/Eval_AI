@@ -1,5 +1,6 @@
 from __future__ import annotations
 import math
+import re
 from ..ocr.schemas import EvaluationResult
 
 VALID_DECISIONS = {"CORRECT", "PARTIALLY_CORRECT", "INCORRECT", "NOT_ATTEMPTED"}
@@ -25,4 +26,31 @@ def validate_evaluation(result: EvaluationResult, official_max: float) -> Evalua
         result.decision = result.decision.strip().upper().replace(" ", "_")
         if result.decision not in VALID_DECISIONS:
             result.decision = None
+    return _limit_unexplained_deduction(result, official_max)
+
+
+_OMISSION_IN_FEEDBACK = re.compile(
+    r"\b(?:did\s+not|didn'?t|does\s+not|doesn'?t|not\s+(?:provide|provided|mention|mentioned|include|included|give|given|answer|attempted|address|addressed|stated|calculate|calculated)"
+    r"|missing|missed|omit(?:s|ted)?|lacks?|lacking|incomplete|incorrect(?:ly)?|wrong|no\s+(?:calculation|explanation|answer|attempt|working))\b",
+    re.I,
+)
+UNEXPLAINED_DEDUCTION_CAP = 0.5
+UNEXPLAINED_DEDUCTION_NOTE = "Deduction limited to 0.5: the AI named no missing marking point."
+
+
+def _limit_unexplained_deduction(result: EvaluationResult, official_max: float) -> EvaluationResult:
+    """A deduction must point at something missing; without one, treat it as a minor slip (at most 0.5 marks).
+
+    Wholly wrong or blank answers (0 marks, INCORRECT / NOT_ATTEMPTED) are left alone.
+    """
+    m = result.marks_awarded
+    named = [p for p in (result.missing_points or []) if str(p).strip()]
+    if named or m <= 0 or result.decision in ("INCORRECT", "NOT_ATTEMPTED"):
+        return result
+    if _OMISSION_IN_FEEDBACK.search(result.feedback or ""):  # the gap is described, just not listed
+        return result
+    floor = max(0.0, official_max - UNEXPLAINED_DEDUCTION_CAP)
+    if m < floor - 1e-9:
+        result.marks_awarded = floor
+        result.feedback = f"{(result.feedback or '').strip()} ({UNEXPLAINED_DEDUCTION_NOTE})".strip()
     return result

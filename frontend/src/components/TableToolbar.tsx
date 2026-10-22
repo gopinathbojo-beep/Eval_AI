@@ -349,7 +349,7 @@ export function FilteredEmptyState({
         <button
           type="button"
           onClick={onClearFilters}
-          className="rounded-md bg-pen px-3.5 py-1.5 text-xs font-medium text-surface hover:opacity-90 transition-opacity"
+          className="rounded-md bg-pen px-3.5 py-1.5 text-xs font-medium text-white hover:opacity-90 transition-opacity"
         >
           Clear Filters
         </button>

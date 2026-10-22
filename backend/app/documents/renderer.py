@@ -16,6 +16,31 @@ class RenderError(Exception):
     pass
 
 
+_SUPERSCRIPT = str.maketrans("0123456789+-=()n", "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿ")
+_SUPERSCRIPT_FLAG = 1  # PyMuPDF span flag bit for superscript text
+
+
+def page_text(page) -> str:
+    """Plain page text like page.get_text(), but keeps superscripts: '2³ + 4³' instead of '23 + 43'."""
+    try:
+        blocks = page.get_text("dict")["blocks"]
+    except Exception:
+        return page.get_text()
+    out: list[str] = []
+    for b in blocks:
+        if b.get("type") != 0:
+            continue
+        for line in b.get("lines", []):
+            parts = []
+            for span in line.get("spans", []):
+                t = span.get("text", "")
+                if span.get("flags", 0) & _SUPERSCRIPT_FLAG and t.strip() and all(ch in "0123456789+-=()n " for ch in t):
+                    t = t.translate(_SUPERSCRIPT)
+                parts.append(t)
+            out.append("".join(parts))
+    return "\n".join(out) + "\n"
+
+
 def _docx_to_pdf(src: Path, out_dir: Path) -> Path:
     exe = shutil.which("soffice") or shutil.which("libreoffice")
     if not exe:
@@ -77,8 +102,7 @@ def render_document(src: Path, ext: str, work_dir: Path) -> list[dict]:
         for i, page in enumerate(doc, start=1):
             pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False)
             img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-            txt = page.get_text()
-            finish(i, img, page_text=txt)
+            finish(i, img, page_text=page_text(page))
         doc.close()
     elif ext in ("png", "jpg"):
         try:
