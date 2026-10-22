@@ -16,7 +16,7 @@ if backend_dir not in sys.path:
 from sqlalchemy import create_engine, func, select
 
 from app.config import get_settings
-from app.database import Base, _make_engine, init_db
+from app.database import Base, _make_engine
 from app import models  # noqa: F401
 
 
@@ -28,7 +28,7 @@ def main():
     sqlite_path = sys.argv[1] if len(sys.argv) > 1 else str(settings.data_path / "adem.db")
     src = create_engine(f"sqlite:///{sqlite_path}")
     dst = _make_engine(settings.database_url)
-    init_db()
+    Base.metadata.create_all(dst)
 
     with src.connect() as s, dst.begin() as d:
         for table in Base.metadata.sorted_tables:          # parents before children, so FKs resolve

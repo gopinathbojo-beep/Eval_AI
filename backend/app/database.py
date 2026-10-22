@@ -1,4 +1,5 @@
 from __future__ import annotations
+import logging
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from .config import get_settings
@@ -8,8 +9,17 @@ class Base(DeclarativeBase):
     pass
 
 
+def _database_url() -> str:
+    s = get_settings()
+    if s.db_mode == "local":
+        return f"sqlite:///{s.data_path / 'adem.db'}"
+    if not s.database_url:
+        raise RuntimeError("DB_MODE=supabase but DATABASE_URL is empty in backend/.env.")
+    return s.database_url
+
+
 def _make_engine(url: str | None = None):
-    url = url or get_settings().database_url or f"sqlite:///{get_settings().data_path / 'adem.db'}"
+    url = url or _database_url()
     if not url.startswith("sqlite"):
         # Supabase hands out postgres:// / postgresql:// URLs; route them to the installed psycopg 3 driver
         for prefix in ("postgres://", "postgresql://"):
@@ -47,6 +57,8 @@ def get_db():
 
 def init_db():
     from . import models  # noqa: F401
+    where = engine.url.database if engine.url.get_backend_name() == "sqlite" else engine.url.host
+    logging.getLogger("adem").info("Database: %s (%s)", get_settings().db_mode, where)
     Base.metadata.create_all(engine)
     _migrate()
 
