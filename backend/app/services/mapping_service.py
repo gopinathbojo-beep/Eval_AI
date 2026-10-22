@@ -153,7 +153,6 @@ def mapping_summary(db: Session, ev: Evaluation) -> dict:
                     suggested_q.add(cid)
 
     # Questions completely missing an answer
-    accounted_q = mapped_q | suggested_q
     missing = [q for q in qs if q.id not in {a.exam_question_id for a in live if a.exam_question_id}]
 
     return {

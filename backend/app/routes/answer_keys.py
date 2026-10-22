@@ -1,4 +1,5 @@
 from __future__ import annotations
+import logging
 from typing import Literal
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
@@ -14,7 +15,7 @@ from ..ocr.schemas import GeneratedAnswerKeyResult
 from ..security import current_teacher
 from ..serializers import key_view
 from ..services.audit import audit
-from ..services.mapping import flag_duplicates, map_label
+from ..services.mapping import map_label
 from ..services.mapping_service import exam_questions, refresh_key_state
 from ..services.numbering import normalize_question_number
 from ..services.state import set_state
@@ -327,9 +328,9 @@ def generate_answer_keys_ai(exam_id: str, db: Session = Depends(get_db), t: Teac
                         "keywords": ans.keywords,
                         "accepted_answers": ans.accepted_answers,
                     })
-        except Exception as e:
+        except Exception:
             # If a chunk fails, log and continue so subsequent chunks can succeed
-            pass
+            logging.getLogger("adem").exception("AI answer-key generation failed for a chunk")
 
     for q in qs:
         if q.id not in accounted_qids:

@@ -28,7 +28,7 @@ def _now() -> datetime:
 
 
 def _aware(dt: datetime | None) -> datetime | None:
-    # SQLite hands datetimes back without a timezone; they are stored in UTC
+    # SQLite (the test database) hands datetimes back without a timezone; they are stored in UTC
     return dt.replace(tzinfo=timezone.utc) if dt is not None and dt.tzinfo is None else dt
 
 

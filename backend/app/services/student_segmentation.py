@@ -434,7 +434,7 @@ def segment_student_answers(
     curr_was_redirected: bool = False
 
     def flush_current():
-        nonlocal curr_raw_label, curr_norm_num, curr_text_parts, curr_page, curr_bbox, curr_confs, curr_was_redirected
+        nonlocal curr_raw_label, curr_norm_num, curr_text_parts, curr_bbox, curr_confs, curr_was_redirected
         if not curr_text_parts and not curr_raw_label:
             return
         full_text = "\n".join(curr_text_parts).strip()

@@ -48,3 +48,6 @@ yarn-error.*
 /ios
 /android
 *.db
+
+# generated marksheets (written by /api/reports/marksheet)
+/Student_Marksheet*.xlsx

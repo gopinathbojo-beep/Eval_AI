@@ -9,7 +9,7 @@ from ..database import get_db
 from ..deps import err, get_exam
 from ..documents.storage import abs_path, doc_dir, read_validated_upload, rel
 from ..models import (AnswerKey, AnswerKeyDocument, AnswerSheetDocument, Evaluation, EvaluationItem, ExamQuestion,
-                      QuestionPaperDocument, Student, SchoolClass, StudentAnswer, Teacher)
+                      QuestionPaperDocument, Student, StudentAnswer, Teacher)
 from ..security import current_teacher
 from ..serializers import doc_view, evaluation_view
 from ..services.audit import audit

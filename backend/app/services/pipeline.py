@@ -3,10 +3,9 @@ from __future__ import annotations
 import copy
 import json
 import logging
-import shutil
 from pathlib import Path
 from sqlalchemy.orm import Session
-from ..config import AI_BAD_RESPONSE_MESSAGE, AI_UNAVAILABLE_MESSAGE, get_settings
+from ..config import AI_BAD_RESPONSE_MESSAGE, AI_UNAVAILABLE_MESSAGE
 from ..database import SessionLocal
 from ..documents import cropping
 from ..documents.renderer import RenderError, page_text as pdf_page_text, render_document
@@ -19,8 +18,7 @@ from ..ocr.schemas import AnswerKeyPageResult, QuestionPageResult, StudentPageRe
 from .doc_structure import parse_question_paper_structure, StructuredQuestion
 from .key_segmentation import segment_answer_keys
 from .student_segmentation import segment_student_answers
-from .mapping_service import apply_key_mapping, apply_student_mapping, refresh_key_state
-from .numbering import normalize_question_number
+from .mapping_service import apply_key_mapping, apply_student_mapping
 from .state import set_state
 
 log = logging.getLogger("adem.pipeline")

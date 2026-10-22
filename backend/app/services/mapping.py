@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Protocol
-from .numbering import normalize_question_number, parent_number, subpart_path, is_sub_question
+from .numbering import normalize_question_number, parent_number
 from .ocr_recovery import find_recovery_candidates, _tokenize, _extract_distinct_numbers
 
 MAPPED = "MAPPED"
