@@ -5,7 +5,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 _tmp = tempfile.mkdtemp(prefix="adem-test-")
 os.environ["DATA_DIR"] = _tmp
-os.environ["DB_MODE"] = "local"   # overrides .env so tests never touch Supabase
+os.environ["DATABASE_URL"] = "postgresql://unused@127.0.0.1:1/unused"   # overrides .env; replaced by SQLite below
 os.environ["SECRET_KEY"] = "test-secret-at-least-32-bytes-long-for-jwt-security"
 os.environ["PDF_RENDER_DPI"] = "72"
 os.environ["INTERNVL_MAX_RETRIES"] = "1"
@@ -13,6 +13,20 @@ os.environ["INTERNVL_MAX_RETRIES"] = "1"
 import fitz  # noqa: E402  (pymupdf)
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
+from sqlalchemy import create_engine, event  # noqa: E402
+from app import database  # noqa: E402
+
+# Tests never touch Supabase: swap in a throwaway SQLite database before anything connects.
+database.engine = create_engine(f"sqlite:///{_tmp}/test.db", connect_args={"check_same_thread": False})
+database.SessionLocal.configure(bind=database.engine)
+
+
+@event.listens_for(database.engine, "connect")
+def _sqlite_pragmas(dbapi_conn, _):
+    cur = dbapi_conn.cursor()
+    cur.execute("PRAGMA foreign_keys=ON")
+    cur.execute("PRAGMA busy_timeout=5000")
+    cur.close()
 
 MODEL = "blaifa/InternVL3_5:4B"
 BEHAVIOUR = {"garbage_pages": set(), "sheet": "main", "identities": []}   # tweakable per test

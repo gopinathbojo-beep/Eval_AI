@@ -35,7 +35,7 @@ def main():
         except PermissionError:
             fallback = os.path.normpath(os.path.join(backend_dir, "..", "Student_Marksheet_Updated.xlsx"))
             wb.save(fallback)
-            print(f"\nNote: 'Student_Marksheet.xlsx' is currently open in Excel.")
+            print("\nNote: 'Student_Marksheet.xlsx' is currently open in Excel.")
             print(f"Saved updated marksheet to:\n  {fallback}\n")
             print("To update 'Student_Marksheet.xlsx', please close Microsoft Excel and re-run.")
     finally:

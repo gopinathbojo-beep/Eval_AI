@@ -2,7 +2,6 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
-from ..config import AI_UNAVAILABLE_MESSAGE
 from ..database import SessionLocal
 from dataclasses import dataclass, field
 from ..models import AnswerKey, AnswerSheetDocument, Evaluation, Exam, ExamQuestion, EvaluationItem, StudentAnswer

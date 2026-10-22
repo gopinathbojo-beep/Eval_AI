@@ -1,6 +1,6 @@
 # ADEM: AI-assisted Digital Examination Management and Evaluation
 
-A local exam-marking platform. **InternVL3.5 4B** (via Ollama) reads documents and suggests marks.
+An exam-marking platform backed by a **Supabase** (Postgres) database. **InternVL3.5 4B** (via Ollama) reads documents and suggests marks.
 **The application** owns question identity, mapping, maximum marks, validation, audit and the final result.
 The teacher approves everything that matters.
 
@@ -26,7 +26,7 @@ ollama list                      # must show blaifa/InternVL3_5:4B
 cd backend
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
+cp .env.example .env              # set DATABASE_URL to your Supabase transaction pooler string
 python -m app.create_teacher "Your Name" you@school.org 'a-strong-password'   # there is no sign-up page
 uvicorn app.main:app --port 8000
 
@@ -56,17 +56,18 @@ Production-style: `npm run build`, then `npm run preview` (proxy target is set i
 | `INTERNVL_API_URL` | `http://127.0.0.1:11434` | Ollama server (native `/api/chat`) |
 | `INTERNVL_TIMEOUT` | `300` | Seconds per model call |
 | `SECRET_KEY` | auto | JWT secret. If empty, one is generated into `data/.secret_key` |
-| `DATA_DIR` | `../data` | SQLite DB and all files |
+| `DATABASE_URL` | none (required) | Supabase Postgres connection string (transaction pooler, `?sslmode=require`) |
+| `DATA_DIR` | `../data` | Uploaded and generated files |
 | `PDF_RENDER_DPI` | `300` | Render resolution for PDFs |
 | `MAX_UPLOAD_MB` | `50` | Upload size limit |
 
 ## Run the tests
 ```bash
-cd backend && pytest -q            # 111 tests, ~20 s
+cd backend && pytest -q            # 164 tests, ~30 s
 cd frontend && npm run build       # type-check + production build
 ```
 The API tests run the **real** HTTP client against a small stand-in for the Ollama server that lives only in `tests/conftest.py`.
-The application itself contains no mock mode.
+Tests run on a throwaway SQLite file created by `conftest.py` and never touch Supabase. The application itself contains no mock mode.
 
 ## Where the rules live
 | Rule | File |
@@ -107,5 +108,5 @@ The AI mark is stored separately and never overwritten. A teacher override needs
 | Page shows `Failed parse` | Open **Show diagnostics** for the raw model output, then retry the page. Very dense pages may exceed `INTERNVL_NUM_PREDICT` |
 | DOCX upload fails | Install LibreOffice, or export the file to PDF |
 | Timeouts on large scans | Raise `INTERNVL_TIMEOUT`, lower `PDF_RENDER_DPI` or `OCR_MAX_SIDE` |
-| Login always fails | Create the teacher with `python -m app.create_teacher` (same `DATA_DIR`) |
+| Login always fails | Create the teacher with `python -m app.create_teacher` (same `DATABASE_URL`) |
 | Browser "Cannot reach the ADEM server" | Backend not running on the proxied port |

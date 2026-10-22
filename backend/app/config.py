@@ -2,7 +2,6 @@ from __future__ import annotations
 import secrets
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 AI_UNAVAILABLE_MESSAGE = (
@@ -23,9 +22,7 @@ class Settings(BaseSettings):
     internvl_num_ctx: int = 8192
     internvl_num_predict: int = 4096
 
-    # DB_MODE=local uses SQLite at data_path/adem.db; DB_MODE=supabase uses DATABASE_URL (Supabase/Postgres).
-    db_mode: Literal["local", "supabase"] = "local"
-    database_url: str = ""
+    database_url: str = ""  # Supabase Postgres connection string
     secret_key: str = ""
     access_token_minutes: int = 480
     data_dir: str = "../data"
