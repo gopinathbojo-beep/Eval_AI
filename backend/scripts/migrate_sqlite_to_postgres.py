@@ -22,8 +22,8 @@ from app import models  # noqa: F401
 
 def main():
     settings = get_settings()
-    if not settings.database_url.startswith("postgresql"):
-        sys.exit("Set DATABASE_URL to a postgresql+psycopg://... URL first (in backend/.env or the environment).")
+    if not settings.database_url.startswith(("postgres://", "postgresql")):
+        sys.exit("Set DATABASE_URL to your Supabase/Postgres connection string first (in backend/.env or the environment).")
 
     sqlite_path = sys.argv[1] if len(sys.argv) > 1 else str(settings.data_path / "adem.db")
     src = create_engine(f"sqlite:///{sqlite_path}")
