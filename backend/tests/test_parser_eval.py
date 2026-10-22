@@ -79,3 +79,29 @@ def test_valid_and_decision_normalised():
 def test_marks_must_be_numeric():
     with pytest.raises(Exception):
         EvaluationResult.model_validate({"marks_awarded": "lots"})
+
+
+def test_unexplained_deduction_is_limited_to_half_mark():
+    # "minor error ... final answer correct" with nothing named as missing: 2/3 -> 2.5/3
+    r = validate_evaluation(EvaluationResult(marks_awarded=2, max_marks=3, decision="PARTIALLY_CORRECT",
+                                             missing_points=[], feedback="Minor error, final answer correct."), 3)
+    assert r.marks_awarded == 2.5 and "Deduction limited" in r.feedback
+
+
+def test_named_missing_point_keeps_the_deduction():
+    r = validate_evaluation(EvaluationResult(marks_awarded=1, max_marks=3, decision="PARTIALLY_CORRECT",
+                                             missing_points=["Industrial uses of coke"]), 3)
+    assert r.marks_awarded == 1
+
+
+def test_wrong_or_blank_answers_are_not_lifted():
+    assert validate_evaluation(EvaluationResult(marks_awarded=0, max_marks=3, decision="INCORRECT"), 3).marks_awarded == 0
+    assert validate_evaluation(EvaluationResult(marks_awarded=1, max_marks=3, decision="INCORRECT"), 3).marks_awarded == 1
+    # a half-mark deduction without a named point is already within the limit
+    assert validate_evaluation(EvaluationResult(marks_awarded=2.5, max_marks=3, decision="PARTIALLY_CORRECT"), 3).marks_awarded == 2.5
+
+
+def test_omission_described_only_in_feedback_keeps_the_deduction():
+    r = validate_evaluation(EvaluationResult(marks_awarded=1.5, max_marks=3, decision="PARTIALLY_CORRECT", missing_points=[],
+                                             feedback="You stated both laws. However, you did not provide any calculations for part (b)."), 3)
+    assert r.marks_awarded == 1.5

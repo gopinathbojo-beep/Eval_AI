@@ -862,3 +862,357 @@ def test_redundant_full_page_dump_deduplication():
 
 
 
+
+
+def test_labelled_parts_merge_under_section_rule_and_q10_not_swallowed_by_q9():
+    """Physics QP: Q5(a)/(b) labelled in full; page 2 has bare (a)/(b) for Q9 and Q10 with numbered steps."""
+    p1_text = (
+        "SECTION B: MEDIUM ANSWER QUESTIONS\n(4 questions x 3 marks = 12 Marks)\n"
+        "Q5. Optics & Reflection:\n(a) State the two Laws of Reflection. (1.5 marks)\n"
+        "(b) Calculate the angle of incidence. (1.5 marks)\n"
+    )
+    p2_text = (
+        "SECTION C: LONG ANSWER & ANALYTICAL PROBLEMS\n(2 questions x 5 marks = 10 Marks)\n"
+        "Q9. Wave Motion & Sound Calculations:\n"
+        "(a) A sonar wave travels at v = 1500 m/s and returns after t = 2.4 seconds. Calculate the depth. (2 marks)\n"
+        "(b) A vibrating string completes 1200 oscillations in 15 seconds. Calculate its:\n"
+        "1. Frequency in Hertz. (1.5 marks)\n2. Time Period in seconds. (1.5 marks)\n"
+        "Q10. Human Eye Anatomy & Vision Defects:\n"
+        "(a) Define the role of the following components of the human eye:\n"
+        "1. Cornea & Lens\n2. Iris & Pupil\n"
+        "(b) Explain the difference between Myopia and Hypermetropia. (2 marks)\n"
+    )
+    p1 = QuestionPageResult(page_number=1, questions=[
+        QuestionItem(raw_question_number="Q5(a)", question_text="(a) State the two Laws of Reflection.", marks=1.5, section="SECTION B: MEDIUM ANSWER QUESTIONS"),
+        QuestionItem(raw_question_number="Q5(b)", question_text="(b) Calculate the angle of incidence.", marks=1.5, section="SECTION B: MEDIUM ANSWER QUESTIONS"),
+    ])
+    p2 = QuestionPageResult(page_number=2, questions=[
+        QuestionItem(raw_question_number="Q9(a)", question_text="A sonar wave travels at v = 1500 m/s and returns after t = 2.4 seconds. Calculate the depth. (2 marks)", marks=2),
+        QuestionItem(raw_question_number="(b)", question_text="A vibrating string completes 1200 oscillations in 15 seconds. Calculate its:", marks=3),
+        QuestionItem(raw_question_number="1.", question_text="Frequency in Hertz. (1.5 marks)", marks=1.5),
+        QuestionItem(raw_question_number="2.", question_text="Time Period in seconds. (1.5 marks)", marks=1.5),
+        QuestionItem(raw_question_number="(a)", question_text="Define the role of the following components of the human eye:", marks=3),
+        QuestionItem(raw_question_number="1.", question_text="Cornea & Lens"),
+        QuestionItem(raw_question_number="2.", question_text="Iris & Pupil"),
+        QuestionItem(raw_question_number="(b)", question_text="Explain the difference between Myopia and Hypermetropia. (2 marks)", marks=2),
+    ])
+    doc = parse_question_paper_structure([
+        ({"page_number": 1, "page_text": p1_text}, p1),
+        ({"page_number": 2, "page_text": p2_text}, p2),
+    ])
+    by_num = {q.display_number: q for q in doc.questions}
+    assert list(by_num) == ["5", "9", "10"]
+    assert by_num["5"].max_marks == 3.0 and "(b) Calculate" in by_num["5"].question_text
+    assert by_num["9"].max_marks == 5.0 and "Myopia" not in by_num["9"].question_text
+    assert "(b) A vibrating string" in by_num["9"].question_text
+    assert by_num["10"].max_marks == 5.0 and "Cornea" in by_num["10"].question_text and "Myopia" in by_num["10"].question_text
+
+
+@pytest.mark.parametrize("sec_title", ["PART II", "SECTION D: CASE STUDY"])
+def test_part_marks_never_exceed_parent_question(sec_title):
+    """Q7 is 3 marks with (a) 2 + (b) 1; each part must not inherit the whole 3-mark section rule."""
+    page_text = f"{sec_title}\n(2 questions x 3 marks = 6 Marks)\nQ7. Sound:\n(a) Define audible range. (2 marks)\n(b) What is tinnitus? (1 mark)\nQ8. Explain echo.\n"
+    res = QuestionPageResult(page_number=1, questions=[
+        QuestionItem(raw_question_number=None, question_text=f"{sec_title}\n(2 questions x 3 marks = 6 Marks)"),
+        QuestionItem(raw_question_number="Q7(a)", question_text="Define audible range. (2 marks)", marks=2),
+        QuestionItem(raw_question_number="Q7(b)", question_text="What is tinnitus? (1 mark)", marks=1),
+        QuestionItem(raw_question_number="Q8", question_text="Explain echo.", marks=3),
+    ])
+    doc = parse_question_paper_structure([({"page_number": 1, "page_text": page_text}, res)])
+    q7_parts = [q for q in doc.questions if (q.normalized_number or "").startswith("7")]
+    assert sum(q.max_marks or 0 for q in q7_parts) == 3.0
+    assert sum(q.max_marks or 0 for q in doc.questions) == 6.0
+
+
+def test_student_answer_relabelled_on_next_page_is_merged_not_duplicate():
+    """Student writes Q4 at the bottom of page 1, runs out of space, and writes 'Q4' again on page 2."""
+    exam_qs = [DummyQuestion("q3", "3", 1), DummyQuestion("q4", "4", 2), DummyQuestion("q5a", "5(a)", 3), DummyQuestion("q5b", "5(b)", 4)]
+    p1 = StudentPageResult(page_number=1, answers=[
+        StudentAnswerItem(question_number="Q3", answer_text="Rolling friction is the smallest."),
+        StudentAnswerItem(question_number="Q4", answer_text="Electroplating is depositing a metal layer using"),
+        StudentAnswerItem(question_number="Q5(a)", answer_text="Angle of incidence equals angle of"),
+    ])
+    p2 = StudentPageResult(page_number=2, answers=[
+        StudentAnswerItem(question_number="(a)", answer_text="reflection. Both rays lie in one plane."),
+        StudentAnswerItem(question_number="Q5(b)", answer_text="Angle of incidence is 55 degrees."),
+    ])
+    p3 = StudentPageResult(page_number=3, answers=[
+        StudentAnswerItem(question_number="Q5(b)", answer_text="So the angle of reflection is also 55 degrees."),
+    ])
+    res = segment_student_answers([({"page_number": 1}, p1), ({"page_number": 2}, p2), ({"page_number": 3}, p3)], canonical_questions=exam_qs)
+    assert [a.normalized_number for a in res] == ["3", "4", "5(a)", "5(b)"]
+    assert "reflection. Both rays" in res[2].answer_text
+    assert "also 55 degrees" in res[3].answer_text
+
+    # Q4 cut across pages and relabelled at the top of page 2
+    p2b = StudentPageResult(page_number=2, answers=[
+        StudentAnswerItem(question_number="Q4", answer_text="electrolysis. Electrolyte is copper sulphate."),
+    ])
+    res = segment_student_answers([({"page_number": 1}, StudentPageResult(page_number=1, answers=p1.answers[:2])), ({"page_number": 2}, p2b)], canonical_questions=exam_qs)
+    assert [a.normalized_number for a in res] == ["3", "4"]
+    assert "copper sulphate" in res[1].answer_text and "metal layer" in res[1].answer_text
+
+
+def test_student_same_label_twice_on_same_page_stays_duplicate():
+    exam_qs = [DummyQuestion("q1", "1", 1), DummyQuestion("q2", "2", 2)]
+    page = StudentPageResult(page_number=1, answers=[
+        StudentAnswerItem(question_number="1", answer_text="Osmosis is water movement"),
+        StudentAnswerItem(question_number="Q1", answer_text="Another try at one"),
+    ])
+    res = segment_student_answers([({"page_number": 1}, page)], canonical_questions=exam_qs)
+    assert [a.normalized_number for a in res] == ["1", "1"]
+
+
+def test_student_parts_folded_into_parent_even_when_content_matches_parent():
+    """'Q5a' / 'Q5b' on one page for an exam with plain Q5: content matching Q5 must not split them."""
+    exam_qs = [
+        DummyQuestion("q4", "4", 1, "Define electroplating and electrodes."),
+        DummyQuestion("q5", "5", 2, "Optics & Reflection: (a) State the two fundamental Laws of Reflection. (b) If a ray of light strikes a plane mirror making an angle of 35 with the glancing surface, calculate the angle of incidence and angle of reflection."),
+        DummyQuestion("q6", "6", 3, "Differentiate between a conductor and an insulator."),
+    ]
+    page = StudentPageResult(page_number=1, answers=[
+        StudentAnswerItem(question_number="Q5a", answer_text="1. Angle of incidence = angle of reflection\n2. Incident ray, reflected ray and normal lie in the same plane."),
+        StudentAnswerItem(question_number="Q5b", answer_text="If a ray of light strikes a plane mirror making an angle of 35 with the glancing surface, calculate the angle of incidence and angle of reflection. i = 55, r = 55"),
+        StudentAnswerItem(question_number="Q6", answer_text="Conductor has free electrons, insulator does not."),
+    ])
+    res = segment_student_answers([({"page_number": 1}, page)], canonical_questions=exam_qs)
+    assert [a.normalized_number for a in res] == ["5", "6"]
+    assert res[0].answer_text.startswith("(a) 1. Angle") and "\n(b) If a ray" in res[0].answer_text
+
+
+_SUBPART_QT = {
+    "4": "Define electroplating and electrodes.",
+    "5": "Optics: (a) State the two laws of reflection. (b) A ray strikes a plane mirror at 35 degrees; calculate angle of incidence.",
+    "5(a)": "State the two laws of reflection.",
+    "5(b)": "A ray strikes a plane mirror at 35 degrees; calculate angle of incidence.",
+    "6": "Differentiate between a conductor and an insulator.",
+}
+_PART_A = "Angle of incidence equals angle of reflection; rays and normal in one plane."
+_PART_B = "Angle of incidence is 55 degrees so reflection is 55 degrees."
+_Q4 = ("Q4", "Electroplating deposits metal.")
+_Q6 = ("Q6", "Conductor has free electrons.")
+_SUBPART_SHEETS = {
+    "Q5a/Q5b": [[_Q4, ("Q5a", _PART_A), ("Q5b", _PART_B), _Q6]],
+    "Q5 then (b)": [[_Q4, ("Q5", "(a) " + _PART_A), ("(b)", _PART_B), _Q6]],
+    "Q5 then b)": [[_Q4, ("Q5", _PART_A), ("b)", _PART_B), _Q6]],
+    "5(a) then (b)": [[_Q4, ("5(a)", _PART_A), ("(b)", _PART_B), _Q6]],
+    "Q5 a) / Q5 b)": [[_Q4, ("Q5 a)", _PART_A), ("Q5 b)", _PART_B), _Q6]],
+    "5a) / 5b)": [[_Q4, ("5a)", _PART_A), ("5b)", _PART_B), _Q6]],
+    "5.a / 5.b": [[_Q4, ("5.a", _PART_A), ("5.b", _PART_B), _Q6]],
+    "Q5a p1 / Q5b p2": [[_Q4, ("Q5a", _PART_A)], [("Q5b", _PART_B), _Q6]],
+    "Q5a p1 / (b) p2": [[_Q4, ("Q5a", _PART_A)], [("(b)", _PART_B), _Q6]],
+    "Q5a cut across pages": [[_Q4, ("Q5a", _PART_A)], [("Q5a", "continued text of the laws"), ("Q5b", _PART_B), _Q6]],
+    "Q5 whole block": [[_Q4, ("Q5", "(a) " + _PART_A + "\n(b) " + _PART_B), _Q6]],
+    "Q5b before Q5a": [[_Q4, ("Q5b", _PART_B), ("Q5a", _PART_A), _Q6]],
+    "bare (a)/(b)": [[_Q4, ("(a)", _PART_A), ("(b)", _PART_B), _Q6]],
+}
+
+
+@pytest.mark.parametrize("exam_nums", [["4", "5", "6"], ["4", "5(a)", "5(b)", "6"]], ids=["exam-Q5", "exam-5a-5b"])
+@pytest.mark.parametrize("sheet", list(_SUBPART_SHEETS), ids=list(_SUBPART_SHEETS))
+def test_student_subpart_layouts_map_without_duplicates(sheet, exam_nums):
+    from app.services.mapping import flag_duplicates
+
+    exam_qs = [DummyQuestion(f"q{n}", n, i, _SUBPART_QT[n]) for i, n in enumerate(exam_nums)]
+    pages = [({"page_number": i + 1}, StudentPageResult(page_number=i + 1, answers=[StudentAnswerItem(question_number=l, answer_text=t) for l, t in pg]))
+             for i, pg in enumerate(_SUBPART_SHEETS[sheet])]
+    seg = segment_student_answers(pages, canonical_questions=exam_qs)
+
+    @dataclass
+    class Row:
+        exam_question_id: str | None
+        num: str | None
+        status: str
+        text: str
+
+    rows, prev = [], None
+    for a in seg:
+        r = map_label(a.raw_question_number, exam_qs, 0.9, 0.0, answer_text=a.answer_text,
+                      answer_position=a.position, total_answers=len(seg), prev_question_id=prev)
+        prev = r.question_id or prev
+        rows.append(Row(r.question_id, r.normalized_number, r.status, a.answer_text))
+
+    assert not flag_duplicates(rows)
+    assert all(r.status == MAPPED for r in rows), [(r.num, r.status) for r in rows]
+    if "5" in exam_nums:
+        q5 = [r for r in rows if r.num == "5"]
+        assert len(q5) == 1 and "one plane" in q5[0].text and "55 degrees" in q5[0].text
+    else:
+        (a,) = [r for r in rows if r.num == "5(a)"]
+        (b,) = [r for r in rows if r.num == "5(b)"]
+        assert "one plane" in a.text and "55 degrees" not in a.text
+        assert "55 degrees" in b.text and "one plane" not in b.text
+
+
+def test_student_part_label_with_heading_folds_into_question():
+    """'c) SR Principles' after Q10 is part (c) of Q10, not an unnumbered answer."""
+    exam_qs = [DummyQuestion("q8", "8", 1), DummyQuestion("q10", "10", 2, "Polymers: (a) uses (b) disposal (c) State the 5R principle.")]
+    page = StudentPageResult(page_number=1, answers=[
+        StudentAnswerItem(question_number="10)", answer_text="Plastics are widely used because they are lightweight."),
+        StudentAnswerItem(question_number="c) SR Principles", answer_text="Refuse -> Reduce -> Reuse -> Repurpose -> Recycle"),
+    ])
+    res = segment_student_answers([({"page_number": 1}, page)], canonical_questions=exam_qs)
+    assert [a.normalized_number for a in res] == ["10"]
+    assert "(c) SR Principles\nRefuse" in res[0].answer_text
+
+
+def test_answer_key_continuation_after_page_header_and_table_criteria():
+    """Q4's model answer starts after a 'Marking Scheme | Page N' running header on the next page."""
+    p1_text = ("Answer Key & Marking Scheme  |  Page 3\nQ3. Cubes (3 Marks)\nMODEL ANSWER\na3 + b3 = 35\nAnswer: 35\n"
+               "KEYWORD MARKING SCHEME\nMarks\nAwarded for\n1.5\nCorrect identity.\n1.5\nAnswer 35.\n"
+               "Q4. Sum of Cubes of Even Numbers (3 Marks)\nMODEL ANSWER\n")
+    p2_text = ("Answer Key & Marking Scheme  |  Page 4\nFind 2³ + 4³ + … + 16³.\n= 8 × Σn³ = 8 × 1296 = 10368\nAnswer: 10368\n"
+               "KEYWORD MARKING SCHEME\nMarks\nAwarded for\n1.0\nTaking 2³ = 8 common.\n1.0\nCorrect Σn³ = 1296.\n1.0\nFinal answer 10368.\n"
+               "Q5. Induction (5 Marks)\nMODEL ANSWER\nProve the formula.\n")
+    exam_qs = [DummyQuestion("q3", "3", 1), DummyQuestion("q4", "4", 2), DummyQuestion("q5", "5", 3)]
+    p1 = AnswerKeyPageResult(page_number=1, answers=[
+        AnswerKeyItem(question_number="Q3", answer_text="a3 + b3 = 35", marks=3),
+        AnswerKeyItem(question_number="Q4", answer_text="", marks=3),
+    ])
+    p2 = AnswerKeyPageResult(page_number=2, answers=[AnswerKeyItem(question_number="Q5", answer_text="Prove the formula.", marks=5)])
+    keys = segment_answer_keys([({"page_number": 1, "page_text": p1_text}, p1), ({"page_number": 2, "page_text": p2_text}, p2)], exam_qs)
+    q4 = next(k for k in keys if k.normalized_number == "4")
+    assert "10368" in q4.answer_text and "Page 4" not in q4.answer_text and "Answer Key" not in q4.answer_text
+    assert not q4.answer_text.startswith("MODEL ANSWER") and "KEYWORD" not in q4.answer_text
+    assert len(q4.criteria) == 3 and q4.marks == 3.0
+
+
+def test_pdf_page_text_keeps_superscripts(tmp_path):
+    import pymupdf
+    from app.documents.renderer import page_text
+
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_htmlbox(pymupdf.Rect(50, 50, 400, 120), "<p>Find 2<sup>3</sup> + 4<sup>3</sup> = 72</p>")
+    txt = page_text(page)
+    assert "2³ + 4³ = 72" in txt
+
+
+def test_scanned_paper_without_main_numbers_is_rebuilt_from_question_starts():
+    """CBSE-style scan: passages unnumbered, parts (i).. as labels, '4.' inside text, '6.' in the section field,
+    a misread '(1)' for Q2 and junk marks. Expect Q1..Q6 matching 'comprises 6 questions' and 40 marks."""
+    def Q(lbl, text, marks=None, section=None):
+        return QuestionItem(raw_question_number=lbl, question_text=text, marks=marks, section=section)
+
+    p1 = QuestionPageResult(page_number=1, questions=[
+        Q(None, "Please check that this question paper contains 6 questions."),
+        Q(None, "Maximum Marks : 40"),
+        Q("(i)", "This question paper comprises 6 questions. All questions are compulsory."),
+        Q(None, "Read the text given below :\n(1) Held every year on 21 May ...", 10, "SECTION - A READING SKILLS"),
+        Q("(i)", "What is the main idea?", 2),
+        Q("(ii)", "Read the given line and explain it.", 2),   # opener phrase inside a part: not a new question
+        Q("(1)", "Read the extract given below :", 10),       # Q2 with its number misread as a paragraph mark
+        Q("(i)", "List two objectives.", 2),
+    ])
+    p2 = QuestionPageResult(page_number=2, questions=[
+        Q("3.", "Complete ANY TEN of the following twelve tasks, as directed :", 10, "GRAMMAR"),
+        Q("(ii)", "Identify the error and supply the correction."),
+        Q(None, "Note : all details\n4. Attempt ANY ONE from A and B given below :", 5),
+        Q("(A)", "Write a letter to the Commissioner of Traffic Police.", 5),
+        Q(None, "OR", 0),
+        Q("4.", "(B) Write a letter to the editor.", 40),     # same number again: part of Q4, junk marks ignored
+        Q(None, "Read the following extracts and answer the questions for ANY ONE of the given two :", 0),
+        Q("(A)", "On the day of the inauguration ...", 40),
+        Q(None, "(ii) Which phrase would substitute 'patched up'?", 1),
+        Q(None, "(iv) Explain why the speaker mentions God.", 3, "6. Answer ANY TWO of the following three questions :"),  # still Q5
+        Q(None, "(i) Griffin is an antithesis to this statement. Justify.", None, "6. Answer ANY TWO of the following three questions :"),
+    ])
+    doc = parse_question_paper_structure([({"page_number": 1}, p1), ({"page_number": 2}, p2)])
+    nums = [q.display_number for q in doc.questions]
+    assert nums == ["1", "2", "3", "4", "5", "6"]
+    by = {q.display_number: q for q in doc.questions}
+    assert "(ii) Read the given line" in by["1"].question_text
+    assert "(B) Write a letter to the editor." in by["4"].question_text
+    assert "(iv) Explain why the speaker" in by["5"].question_text
+    assert by["6"].question_text.startswith("Answer ANY TWO")
+    # Q1-Q4 print their own totals; Q5/Q6 do not, so they share the rest of the 40 and need review
+    assert [by[n].max_marks for n in nums] == [10, 10, 10, 5, 2.5, 2.5]
+    assert [by[n].verification_status for n in ("5", "6")] == ["NEEDS_REVIEW", "NEEDS_REVIEW"]
+    assert sum(q.max_marks or 0 for q in doc.questions) == 40
+
+
+def test_answer_key_parts_with_answers_in_labels_rebuilt_from_pdf_headings():
+    """Key OCR splits Q2's parts into rows labelled '(iv) (A)', '(v) it' and drops Q3's number; the PDF text
+    has headings '1.' '2.' '3.'. Expect one key per question with the question's marks."""
+    @dataclass
+    class Q:
+        id: str
+        normalized_number: str
+        display_number: str
+        max_marks: float
+
+    exam_qs = [Q("q1", "1", "1", 10.0), Q("q2", "2", "2", 10.0), Q("q3", "3", "3", 5.0)]
+    p1_text = ("Answer Key\nPage 1\nSECTION A — READING\n1. Passage one\n(i) (a)\n(ii) (D)\n"
+               "SECTION B — GRAMMAR\n2. Grammar\n(i) explains\n(ii) Error: in Correction: to\n")
+    p2_text = ("Answer Key\nPage 2\n(iv) (A) he had been overloaded.\n(v) it\n"
+               "3. Extract — Option A: Mandela\n(i) He felt moved.\nAlternative: 3(B) — Anne Frank\n(i) Her grandmother.\n")
+    p1 = AnswerKeyPageResult(page_number=1, answers=[
+        AnswerKeyItem(question_number="1", answer_text="(i) (a)\n(ii) (D)", marks=8, criteria=["1 Mark: a", "1 Mark: D"]),
+        AnswerKeyItem(question_number="2(i)", answer_text="(i) explains\n(ii) Error: in Correction: to", marks=12,
+                      criteria=["6 Marks: x", "6 Marks: y"]),
+    ])
+    p2 = AnswerKeyPageResult(page_number=2, answers=[
+        AnswerKeyItem(question_number="(iv) (A)", answer_text="he had been overloaded.", marks=1),
+        AnswerKeyItem(question_number="(v) it", answer_text="it", marks=1),
+        AnswerKeyItem(question_number="(i)", answer_text="He felt moved.", marks=1),
+        AnswerKeyItem(question_number="(i)", answer_text="Her grandmother.", marks=1),
+    ])
+    keys = segment_answer_keys([({"page_number": 1, "page_text": p1_text}, p1), ({"page_number": 2, "page_text": p2_text}, p2)], exam_qs)
+    assert [(k.normalized_number, k.marks) for k in keys] == [("1", 10.0), ("2", 10.0), ("3", 5.0)]
+    assert "(v) it" in keys[1].answer_text and "SECTION B" not in keys[0].answer_text
+    assert "Alternative: 3(B)" in keys[2].answer_text and "Answer Key" not in keys[2].answer_text
+    assert keys[1].criteria == []  # 6 + 6 = 12 does not fit a 10-mark question
+    assert keys[2].page_number == 2
+
+
+def test_sheet_with_invented_labels_is_rebuilt_from_student_markers():
+    """The model stamps 'Q3' (copied from the question list) on every block although its own raw labels show
+    answer text. Expect: name box skipped, Q1/Q2 split at the numbering restart, '6,A' read as Q6 with 6B kept,
+    and the genuine '7A(i)' label used."""
+    exam_qs = [
+        DummyQuestion("q1", "1", 1, "Read the text: World Day for Cultural Diversity, intercultural dialogue, peace and sustainable development"),
+        DummyQuestion("q2", "2", 2, "Read the extract: NEP 2020 skill education, skill labs, hub and spoke schools, dignity of labour"),
+        DummyQuestion("q3", "3", 3, "Grammar: fill in the blank, identify the error and supply the correction, report the dialogue"),
+        DummyQuestion("q6", "6", 4, "Extract: inauguration apartheid Mandela; Anne Frank grandmother Mrs Kuperus headmistress"),
+        DummyQuestion("q7", "7", 5, "Poem: tiger in the zoo cage; the ball poem boy loss"),
+    ]
+
+    def B(text, raw, label="Q3"):
+        return StudentAnswerItem(question_number=label, raw_question_label=raw, answer_text=text)
+
+    pages = [
+        StudentPageResult(page_number=1, answers=[B("Name: A. Allen\nRoll No.: 69", "3>")]),
+        StudentPageResult(page_number=2, answers=[B(
+            "i, richness of cultures; intercultural dialogue in peace and sustainable development\nii, B\niii, creative potential\n"
+            "iv, assertive\nv, B\nviii, bridging the gap between cultures\nii, fact; objective detail\niv, other schools can use the skill labs\n"
+            "vi, dignity of labour in skill education", "(i) Fill in the blank by using the correct form of the word")]),
+        StudentPageResult(page_number=3, answers=[
+            B("iii, explains\nii, interestingly -> interesting\niii, report the dialogue: asked what challenges", "iii, explains"),
+            B("vi, offers -> offer\nvii c\nviii, B", "vi, offers -> offer"),
+            B("ix, he had just got a new haircut\nA6/A i is deeply moved, aware of the end of apartheid\niii, harsh inhumane society",
+              "ix, he had just got a new haircut"),
+            B("b i Anne was caring towards her grandmother\niii, Mrs Kuperus her headmistress", "b i Anne was caring towards"),
+        ]),
+        StudentPageResult(page_number=4, answers=[
+            StudentAnswerItem(question_number="7A(i)", raw_question_label="7,A,(i) cage", answer_text="7,A,(i) the tiger paces in its cage"),
+        ]),
+    ]
+    seg = segment_student_answers([({"page_number": p.page_number}, p) for p in pages], canonical_questions=exam_qs)
+    labels = [a.raw_question_number for a in seg]
+    assert all("Name:" not in a.answer_text for a in seg)
+    assert labels.count("Q3") == 0 and labels[-2:] == ["Q6", "Q7"]   # invented labels dropped; student's own kept
+    assert len(seg) == 5                                               # Q1, Q2, Q3 (unlabelled) + Q6 + Q7
+    assert "skill labs" in seg[1].answer_text and "skill labs" not in seg[0].answer_text
+    assert "offers -> offer" in seg[2].answer_text and "haircut" in seg[2].answer_text
+    assert "grandmother" in seg[3].answer_text                         # 6B alternative stays with Q6
+
+
+def test_genuine_short_raw_labels_are_trusted():
+    """'57' (a misread '5>') and 'a)' are real labels, so the normal segmentation runs."""
+    exam_qs = [DummyQuestion("q5", "5", 1), DummyQuestion("q1", "1", 2)]
+    page = StudentPageResult(page_number=1, answers=[
+        StudentAnswerItem(question_number="Q5", raw_question_label="57", answer_text="Five answer text here"),
+        StudentAnswerItem(question_number="Q1a", raw_question_label="a)", answer_text="One a answer text"),
+    ])
+    seg = segment_student_answers([({"page_number": 1}, page)], canonical_questions=exam_qs)
+    assert [a.raw_question_number for a in seg][0] == "Q5"

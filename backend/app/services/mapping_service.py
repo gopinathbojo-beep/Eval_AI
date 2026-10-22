@@ -1,5 +1,6 @@
 """DB-aware wrappers around the pure mapping rules."""
 from __future__ import annotations
+from typing import Any
 from sqlalchemy.orm import Session
 from ..config import get_settings
 from ..models import AnswerKey, Evaluation, ExamQuestion, StudentAnswer
@@ -19,6 +20,7 @@ def apply_student_mapping(db: Session, ev: Evaluation) -> None:
     answers = db.query(StudentAnswer).filter_by(evaluation_id=ev.id).order_by(StudentAnswer.position).all()
     total_ans = len(answers)
     prev_qid = None
+    suggested: list[tuple[StudentAnswer, list[dict]]] = []  # unlabelled answers placed by content alone
     for a in answers:
         if a.status == "IGNORED" or a.status not in _RECOMPUTABLE:
             if a.exam_question_id:
@@ -45,6 +47,9 @@ def apply_student_mapping(db: Session, ev: Evaluation) -> None:
         a.status = {MAPPED: "MAPPED", NEEDS_REVIEW: "NEEDS_REVIEW", UNMAPPED: "UNMAPPED"}[res.status]
         if res.question_id:
             prev_qid = res.question_id
+        if not a.raw_question_number and res.status == NEEDS_REVIEW and res.question_id and res.candidate_details:
+            suggested.append((a, res.candidate_details))
+    _spread_content_suggestions(answers, qs, suggested)
     live = [a for a in answers if a.status != "IGNORED"]
     dups = flag_duplicates(live)
     for a in live:
@@ -55,17 +60,47 @@ def apply_student_mapping(db: Session, ev: Evaluation) -> None:
     db.flush()
 
 
+SUGGESTION_MARGIN = 0.15
+
+
+def _spread_content_suggestions(answers: list, qs: list, suggested: list[tuple[Any, list[dict]]]) -> None:
+    """Unlabelled answers suggested for the same question: the strongest content match keeps it; each other one
+    moves to its next close candidate that is free and fits the answer order (between the questions confidently
+    answered before and after it). Results stay NEEDS_REVIEW suggestions."""
+    qpos = {q.id: q.position for q in qs}
+    by_q: dict[str, list[tuple[Any, list[dict]]]] = {}
+    for a, det in suggested:
+        by_q.setdefault(a.exam_question_id, []).append((a, det))
+    for qid, group in by_q.items():
+        if len(group) < 2:
+            continue
+        group.sort(key=lambda x: -(x[1][0].get("score") or 0))
+        for a, det in group[1:]:
+            confident = [x for x in answers if x.status == "MAPPED" and x.exam_question_id in qpos]
+            lo = max((qpos[x.exam_question_id] for x in confident if x.position < a.position), default=-1)
+            hi = min((qpos[x.exam_question_id] for x in confident if x.position > a.position), default=10**9)
+            taken = {x.exam_question_id for x in answers if x.exam_question_id and x is not a and x.status != "IGNORED"}
+            top = det[0].get("score") or 0
+            for cand in sorted(det, key=lambda d: -(d.get("score") or 0)):
+                cid = cand.get("id")
+                if (cid and cid != qid and cid not in taken and (cand.get("score") or 0) >= top - SUGGESTION_MARGIN
+                        and lo < qpos.get(cid, -2) < hi):
+                    a.exam_question_id = cid
+                    a.normalized_number = cand.get("num")
+                    a.mapping_note = f"Suggested Q{cand.get('num')} from content and answer order (please confirm)"
+                    break
+
+
 def apply_key_mapping(db: Session, exam_id: str, doc_id: str) -> None:
     qs = exam_questions(db, exam_id)
     keys = db.query(AnswerKey).filter_by(exam_id=exam_id, document_id=doc_id).order_by(AnswerKey.created_at).all()
-    minc = get_settings().min_label_confidence
     prev_qid = None
     for idx, k in enumerate(keys, 1):
         res = map_label(
             k.raw_question_number,
             qs,
             k.ocr_confidence,
-            minc,
+            get_settings().min_label_confidence,
             answer_text=k.answer_text,
             answer_position=idx,
             total_answers=len(keys),
@@ -118,8 +153,8 @@ def mapping_summary(db: Session, ev: Evaluation) -> dict:
                     suggested_q.add(cid)
 
     # Questions completely missing an answer
-    targeted_q = {a.exam_question_id for a in live if a.exam_question_id}
-    missing = [q for q in qs if q.id not in targeted_q]
+    accounted_q = mapped_q | suggested_q
+    missing = [q for q in qs if q.id not in {a.exam_question_id for a in live if a.exam_question_id}]
 
     return {
         "total_questions": len(qs),

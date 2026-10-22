@@ -75,7 +75,7 @@ export default function Dashboard() {
             Export Marksheet (.xlsx)
           </Button>
           <Link to="/exams/new">
-            <Button variant="primary" icon={<IconPlus size={16} />}>
+            <Button variant="primary">
               Create Exam
             </Button>
           </Link>
@@ -130,7 +130,7 @@ export default function Dashboard() {
           to="/exams/new"
           className="group relative flex items-center gap-3.5 rounded-lg border border-line bg-surface p-3.5 shadow-card transition-ui hover:-translate-y-0.5 hover:border-pen/40"
         >
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-pen/10 text-pen group-hover:bg-pen group-hover:text-surface transition-colors">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-pen/10 text-pen group-hover:bg-pen group-hover:text-white transition-colors">
             <IconPlus size={18} />
           </div>
           <div className="min-w-0">
@@ -143,7 +143,7 @@ export default function Dashboard() {
           to="/exams"
           className="group relative flex items-center gap-3.5 rounded-lg border border-line bg-surface p-3.5 shadow-card transition-ui hover:-translate-y-0.5 hover:border-pen/40"
         >
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-ok/10 text-ok group-hover:bg-ok group-hover:text-surface transition-colors">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-ok/10 text-ok group-hover:bg-ok group-hover:text-white transition-colors">
             <IconFileText size={18} />
           </div>
           <div className="min-w-0">
@@ -156,7 +156,7 @@ export default function Dashboard() {
           to="/evaluations"
           className="group relative flex items-center gap-3.5 rounded-lg border border-line bg-surface p-3.5 shadow-card transition-ui hover:-translate-y-0.5 hover:border-pen/40"
         >
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-warn/10 text-warn group-hover:bg-warn group-hover:text-surface transition-colors">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-warn/10 text-warn group-hover:bg-warn group-hover:text-white transition-colors">
             <IconClock size={18} />
           </div>
           <div className="min-w-0">
@@ -169,7 +169,7 @@ export default function Dashboard() {
           to="/results"
           className="group relative flex items-center gap-3.5 rounded-lg border border-line bg-surface p-3.5 shadow-card transition-ui hover:-translate-y-0.5 hover:border-pen/40"
         >
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-pen-soft text-pen group-hover:bg-pen group-hover:text-surface transition-colors">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-pen-soft text-pen group-hover:bg-pen group-hover:text-white transition-colors">
             <IconCheckCircle size={18} />
           </div>
           <div className="min-w-0">
@@ -206,7 +206,7 @@ export default function Dashboard() {
               icon={<IconExam size={24} />}
               action={
                 <Link to="/exams/new">
-                  <Button variant="primary" small icon={<IconPlus size={14} />}>
+                  <Button variant="primary" small>
                     Create Exam
                   </Button>
                 </Link>

@@ -19,7 +19,7 @@ const KEY_REPLACEABLE = [...QP_EDITABLE, "QUESTIONS_VERIFIED", "ANSWER_KEY_UPLOA
 function LockedCard({ title, text }: { title: string; text: string }) {
   return (
     <Card className="flex items-center gap-3 p-4 text-sm text-mute border-ok/30 bg-ok-soft/30 shadow-soft">
-      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-ok text-surface font-bold text-xs">✓</span>
+      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-ok text-white font-bold text-xs">✓</span>
       <div>
         <p className="font-semibold text-ok">{title}</p>
         <p className="text-xs text-mute mt-0.5">{text}</p>

@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Protocol
-from .numbering import normalize_question_number, parent_number, subpart_path, is_sub_question, subquestion_value
+from .numbering import normalize_question_number, parent_number, subpart_path, is_sub_question
 from .ocr_recovery import find_recovery_candidates, _tokenize, _extract_distinct_numbers
 
 MAPPED = "MAPPED"
@@ -46,50 +46,6 @@ def _extract_section_from_label(raw_label: str | None) -> tuple[str | None, str 
     if m:
         return m.group(1).strip(), m.group(2).strip()
     return None, raw_label
-
-
-def _section_key(sec: str | None) -> str:
-    """'Section A' / 'SECTION - A' / 'A' -> 'a'. Lets 'Part I' and 'Part II' stay distinct."""
-    if not sec:
-        return ""
-    s = re.sub(r"^\s*(?:section|part|unit|group|sec)\b", "", sec.strip(), flags=re.IGNORECASE)
-    return re.sub(r"[\s\-\:\–\—\.]+", "", s).lower()
-
-
-def _same_section(a: str | None, b: str | None) -> bool:
-    ka, kb = _section_key(a), _section_key(b)
-    return bool(ka) and ka == kb
-
-
-def _ancestors(norm: str) -> list[str]:
-    """'1(a)(i)' -> ['1(a)', '1'] (nearest first)."""
-    base, path = parent_number(norm), subpart_path(norm)
-    return [base + "".join(f"({p})" for p in path[:i]) for i in range(len(path) - 1, -1, -1)]
-
-
-def _rank_subquestion_candidates(cands: list, qs: list, sub_tok: str, prev_q) -> tuple[list, bool]:
-    """Order bare-subpart candidates using the previous answer as context.
-
-    A forward token ('(b)' after 1(a)) favours a sibling; a restarting token ('(a)' after 1(c))
-    favours the next parent question. Returns (ranked, top_is_contextual).
-    """
-    if not prev_q:
-        return cands, False
-    order = {q.id: i for i, q in enumerate(qs)}
-    prev_idx = order.get(prev_q.id, -1)
-    prev_p = parent_number(prev_q.normalized_number or "")
-    prev_path = subpart_path(prev_q.normalized_number)
-    prev_val = subquestion_value(prev_path[-1]) if prev_path else 0
-    forward = subquestion_value(sub_tok) > prev_val
-
-    def key(q):
-        idx = order.get(q.id, 0)
-        same = parent_number(q.normalized_number or "") == prev_p
-        primary = 0 if (same if forward else (not same and idx > prev_idx)) else 1
-        return (primary, 0 if idx > prev_idx else 1, abs(idx - prev_idx))
-
-    ranked = sorted(cands, key=key)
-    return ranked, key(ranked[0])[0] == 0
 
 
 def map_label(
@@ -158,13 +114,16 @@ def map_label(
     # Tier 3: Subquestion hierarchy match for bare subquestion tokens: e.g. "(a)", "(b)", "(i)", "(ii)"
     if norm.startswith("("):
         sub_tok = norm.strip("()")
-        # Prefer questions whose own (last) subpart is this token; '(a)' is 1(a), not 1(a)(i)
-        sub_cands = [q for q in qs if subpart_path(q.normalized_number)[-1:] == [sub_tok]]
-        if not sub_cands:
-            sub_cands = [q for q in qs if f"({sub_tok})" in (q.normalized_number or "")]
+        # Find candidate exam questions with this subquestion token
+        sub_cands = [q for q in qs if f"({sub_tok})" in (q.normalized_number or "")]
 
-        prev_q = next((q for q in qs if q.id == prev_question_id), None) if prev_question_id else None
-        ranked_cands, contextual = _rank_subquestion_candidates(sub_cands, qs, sub_tok, prev_q)
+        # If previous answer was mapped to a parent question or sibling, rank sibling first
+        ranked_cands = list(sub_cands)
+        if prev_question_id:
+            prev_q = next((q for q in qs if q.id == prev_question_id), None)
+            if prev_q:
+                prev_p = parent_number(prev_q.normalized_number or "")
+                ranked_cands.sort(key=lambda q: 0 if parent_number(q.normalized_number or "") == prev_p else 1)
 
         if len(ranked_cands) == 1:
             top_q = ranked_cands[0]
@@ -180,16 +139,11 @@ def map_label(
         elif len(ranked_cands) > 1:
             return MappingResult(
                 status=NEEDS_REVIEW,
-                question_id=ranked_cands[0].id if contextual else None,
-                normalized_number=ranked_cands[0].normalized_number if contextual else None,
-                note=f"Subquestion label '{norm}' matches multiple questions in exam"
-                + (f"; Q{ranked_cands[0].normalized_number} proposed from the previous answer" if contextual else ""),
+                question_id=ranked_cands[0].id if prev_question_id else None,
+                normalized_number=ranked_cands[0].normalized_number if prev_question_id else None,
+                note=f"Subquestion label '{norm}' matches multiple questions in exam",
                 candidates=[q.id for q in ranked_cands],
-                candidate_details=[
-                    {"id": q.id, "num": q.normalized_number, "score": 0.70 if contextual and i == 0 else 0.60,
-                     "reason": "Follows previous answer" if contextual and i == 0 else "Multiple subquestions share this token"}
-                    for i, q in enumerate(ranked_cands)
-                ],
+                candidate_details=[{"id": q.id, "num": q.normalized_number, "score": 0.60, "reason": "Multiple subquestions share this token"} for q in ranked_cands],
                 evidence_tier="TIER_3_SUBQUESTION_HIERARCHY",
             )
         else:
@@ -200,7 +154,8 @@ def map_label(
 
     # Section disambiguation if multiple questions share the same number across sections
     if len(exact) > 1 and active_sec:
-        sec_exact = [q for q in exact if _same_section(active_sec, getattr(q, "section", None))]
+        sec_clean = active_sec.lower()
+        sec_exact = [q for q in exact if getattr(q, "section", None) and sec_clean in q.section.lower()]
         if len(sec_exact) == 1:
             exact = sec_exact
 
@@ -261,52 +216,40 @@ def map_label(
 
     if len(exact) > 1:
         sec_names = ", ".join(filter(None, [getattr(q, "section", None) for q in exact])) or "multiple sections"
-        # Tier 7 context: the previous answer's section orders the candidates but never decides alone
-        prev_q = next((q for q in qs if q.id == prev_question_id), None) if prev_question_id else None
-        prev_sec = getattr(prev_q, "section", None) if prev_q else None
-        if prev_sec:
-            exact.sort(key=lambda q: 0 if _same_section(prev_sec, getattr(q, "section", None)) else 1)
-        hinted = exact[0] if prev_sec and _same_section(prev_sec, getattr(exact[0], "section", None)) else None
         return MappingResult(
             status=NEEDS_REVIEW,
-            question_id=hinted.id if hinted else None,
             normalized_number=norm,
-            note=f"Ambiguous: multiple exam questions share label '{norm}' ({sec_names})"
-            + (f"; {prev_sec} proposed from the previous answer" if hinted else ""),
+            note=f"Ambiguous: multiple exam questions share label '{norm}' ({sec_names})",
             candidates=[q.id for q in exact],
-            candidate_details=[{"id": q.id, "num": q.normalized_number, "score": 0.6 if q is hinted else 0.5, "reason": f"Section: {getattr(q, 'section', 'None')}"} for q in exact],
+            candidate_details=[{"id": q.id, "num": q.normalized_number, "score": 0.5, "reason": f"Section: {getattr(q, 'section', 'None')}"} for q in exact],
             evidence_tier="TIER_2_SECTION_AMBIGUITY",
         )
 
     # Tier 2: Parent / Subquestion structural relationship
-    # e.g. Student or Key wrote "3" (or "3(a)"), but exam has "3(a)", "3(b)" (or "3(a)(i)", "3(a)(ii)")
-    descendants = [q for q in qs if (q.normalized_number or "").startswith(norm + "(")]
-    if descendants:
-        only = descendants[0] if len(descendants) == 1 else None
-        return MappingResult(
-            status=NEEDS_REVIEW,
-            question_id=only.id if only else None,
-            normalized_number=only.normalized_number if only else norm,
-            note=f"Label '{norm}' refers to parent question; exam has subquestions",
-            candidates=[q.id for q in descendants],
-            candidate_details=[{"id": q.id, "num": q.normalized_number, "score": 0.70, "reason": "Subquestion under parent"} for q in descendants],
-            evidence_tier="TIER_2_SECTION_PARENT",
-        )
-    # e.g. Student wrote "3(a)(i)", but exam only has "3(a)" or "3": use the nearest existing ancestor
-    for anc in _ancestors(norm):
-        anc_exact = [q for q in qs if q.normalized_number == anc]
-        if len(anc_exact) == 1:
+    parent = parent_number(norm)
+    if norm == parent:  # e.g. Student or Key wrote "3", but exam has "3(a)", "3(b)"
+        related = [q for q in qs if parent_number(q.normalized_number or "") == parent]
+        if related:
             return MappingResult(
                 status=NEEDS_REVIEW,
-                question_id=anc_exact[0].id,
-                normalized_number=anc,
-                note=f"Label '{norm}' is a subpart; exam has parent question '{anc}'",
-                candidates=[anc_exact[0].id],
-                candidate_details=[{"id": anc_exact[0].id, "num": anc, "score": 0.75, "reason": "Parent question match"}],
+                normalized_number=norm,
+                note=f"Label '{norm}' refers to parent question; exam has subquestions",
+                candidates=[q.id for q in related],
+                candidate_details=[{"id": q.id, "num": q.normalized_number, "score": 0.70, "reason": "Subquestion under parent"} for q in related],
                 evidence_tier="TIER_2_SECTION_PARENT",
             )
-        if anc_exact:
-            break
+    else:  # e.g. Student wrote "3(a)", but exam only has "3"
+        parent_exact = [q for q in qs if q.normalized_number == parent]
+        if parent_exact:
+            return MappingResult(
+                status=NEEDS_REVIEW,
+                question_id=parent_exact[0].id,
+                normalized_number=parent,
+                note=f"Label '{norm}' is a subpart; exam has parent question '{parent}'",
+                candidates=[parent_exact[0].id],
+                candidate_details=[{"id": parent_exact[0].id, "num": parent, "score": 0.75, "reason": "Parent question match"}],
+                evidence_tier="TIER_2_SECTION_PARENT",
+            )
 
     # Tier 6: Check OCR recovery for digit confusion (e.g. handwritten Q1 misread as Q17, Q2 as Q27)
     rec_cands = find_recovery_candidates(eff_raw, answer_text, q_list, answer_position, total_answers)

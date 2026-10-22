@@ -67,7 +67,7 @@ export default function ContentAndKey({ defaultSubTab }: ContentAndKeyProps) {
               onClick={() => setActiveSubTab(t.id)}
               className={`flex items-center gap-2 rounded-lg px-3.5 py-2 text-xs font-semibold transition-all ${
                 isActive
-                  ? "bg-pen text-surface shadow-xs"
+                  ? "bg-pen text-white shadow-xs"
                   : "text-ink/80 hover:bg-hover hover:text-brown"
               }`}
             >
@@ -76,7 +76,7 @@ export default function ContentAndKey({ defaultSubTab }: ContentAndKeyProps) {
                 <span
                   className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
                     isActive
-                      ? "bg-surface/20 text-surface"
+                      ? "bg-white/20 text-white"
                       : t.badgeTone === "ok"
                       ? "bg-ok-soft text-ok border border-ok/30"
                       : "bg-warn-soft text-warn border border-warn/30"

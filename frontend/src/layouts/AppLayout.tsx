@@ -4,6 +4,7 @@ import { useAuth } from "../context/Auth";
 import { useApi } from "../hooks/useApi";
 import { Loading } from "../components/ui";
 import { BrandLabel } from "../components/Brand";
+import { ThemeToggle } from "../components/ThemeToggle";
 import {
   IconDashboard,
   IconExam,
@@ -13,8 +14,6 @@ import {
   IconStudents,
   IconSubjects,
   IconSettings,
-  IconSun,
-  IconMoon,
   IconLogOut,
   IconMenu,
   IconX,
@@ -53,18 +52,33 @@ const NAV_GROUPS: NavGroup[] = [
   },
 ];
 
-/** Profile as a ribbon bookmark hanging from the top-right of the header; opens an account card. */
+/** Irregular wax rim: a circle with soft, uneven lobes (viewBox 0 0 48 48, centred at 24,24). */
+const WAX_EDGE = (() => {
+  const lobes = 18;
+  const pts = Array.from({ length: lobes * 2 }, (_, i) => {
+    const a = (i / (lobes * 2)) * Math.PI * 2;
+    const r = i % 2 ? 21.2 : 23 - ((i * 7) % 5) * 0.25; // outer lobes vary slightly, like poured wax
+    return [24 + r * Math.cos(a), 24 + r * Math.sin(a)] as const;
+  });
+  // Smooth through midpoints so lobes read as rounded drips, not star points
+  const mid = (p: readonly [number, number], q: readonly [number, number]) => [(p[0] + q[0]) / 2, (p[1] + q[1]) / 2];
+  const start = mid(pts[pts.length - 1]!, pts[0]!);
+  let d = `M${start[0]!.toFixed(2)} ${start[1]!.toFixed(2)}`;
+  pts.forEach((p, i) => {
+    const m = mid(p, pts[(i + 1) % pts.length]!);
+    d += ` Q${p[0].toFixed(2)} ${p[1].toFixed(2)} ${m[0]!.toFixed(2)} ${m[1]!.toFixed(2)}`;
+  });
+  return `${d} Z`;
+})();
+
+/** Profile as a red wax seal pressed onto the right of the header; opens an account card. */
 function ProfileBookmark({
   name,
   email,
-  dark,
-  onToggleDark,
   onLogout,
 }: {
   name: string;
   email: string;
-  dark: boolean;
-  onToggleDark: () => void;
   onLogout: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -85,41 +99,47 @@ function ProfileBookmark({
   const initials = name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]!.toUpperCase()).join("") || "T";
 
   return (
-    <div ref={ref} className="relative h-14 w-12 shrink-0 self-start">
+    <div ref={ref} className="relative flex h-14 w-14 shrink-0 items-center justify-center self-start">
       <button
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={`Account: ${name}`}
         title={name}
-        className={`absolute left-0 top-0 flex h-[74px] w-12 flex-col items-center justify-start bg-mark pt-3 text-[#fff7e6] drop-shadow-[0_3px_3px_rgb(var(--ink)/0.25)] transition-transform duration-200 ease-out [clip-path:polygon(0_0,100%_0,100%_100%,50%_80%,0_100%)] hover:translate-y-1.5 ${
-          open ? "translate-y-1.5" : ""
+        className={`group relative flex h-12 w-12 items-center justify-center rounded-full drop-shadow-[0_2px_2px_rgb(0_0_0/0.3)] transition-transform duration-200 ease-out hover:-translate-y-0.5 hover:scale-110 ${
+          open ? "-translate-y-0.5 scale-110" : ""
         }`}
       >
-        {/* stitched edge */}
-        <span aria-hidden className="pointer-events-none absolute inset-x-1 top-0 bottom-3 border-x border-dashed border-[#fff7e6]/45" />
-        <span className="font-display text-base font-semibold leading-none">{initials}</span>
-        <span aria-hidden className="mt-2 h-px w-5 bg-[#fff7e6]/50" />
+        <svg viewBox="0 0 48 48" className="absolute inset-0 h-full w-full" aria-hidden>
+          <defs>
+            <radialGradient id="wax-fill" cx="38%" cy="32%" r="70%">
+              <stop offset="0%" stopColor="#de5a44" />
+              <stop offset="55%" stopColor="#c43a28" />
+              <stop offset="100%" stopColor="#962a1c" />
+            </radialGradient>
+          </defs>
+          <path d={WAX_EDGE} fill="url(#wax-fill)" />
+          {/* Pressed stamp: dark groove with a light lip, like an embossed ring */}
+          <circle cx="24" cy="24" r="15.5" fill="none" stroke="#7d2116" strokeOpacity="0.55" strokeWidth="1.6" />
+          <circle cx="24" cy="24.6" r="15.5" fill="none" stroke="#fff7e6" strokeOpacity="0.28" strokeWidth="0.8" />
+          <circle cx="24" cy="24" r="12.5" fill="#b33424" fillOpacity="0.45" />
+        </svg>
+        <span className="relative font-display text-[15px] font-semibold leading-none tracking-wide text-[#fff7e6] [text-shadow:0_1px_0_rgb(125_33_22/0.8)]">
+          {initials}
+        </span>
       </button>
 
       {open && (
         <div
           role="menu"
-          className="absolute right-0 top-[84px] z-50 w-64 animate-rise overflow-hidden rounded-lg border border-line border-t-4 border-t-mark bg-surface shadow-pop"
+          className="absolute right-0 top-[60px] z-50 w-64 animate-rise overflow-hidden rounded-lg border border-line border-t-4 border-t-mark bg-surface shadow-pop"
         >
           <div className="border-b border-dashed border-line px-4 py-3">
             <p className="truncate font-display text-base font-semibold text-ink">{name}</p>
             <p className="truncate text-xs text-mute">{email}</p>
           </div>
           <div className="p-1.5">
-            <button
-              role="menuitem"
-              onClick={onToggleDark}
-              className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-sm text-ink transition-ui hover:bg-hover hover:text-brown"
-            >
-              {dark ? <IconSun size={16} className="text-warn" /> : <IconMoon size={16} className="text-mute" />}
-              {dark ? "Light mode" : "Dark mode"}
-            </button>
+            <ThemeToggle menuItem />
             <Link
               role="menuitem"
               to="/settings"
@@ -147,7 +167,6 @@ function ProfileBookmark({
 export function AppLayout() {
   const { teacher, loading, logout } = useAuth();
   const loc = useLocation();
-  const [dark, setDark] = useState(() => localStorage.getItem("adem_theme") === "dark");
   const [sidebarOpen, setSidebarOpen] = useState(false); // Mobile drawer state
   const { data: aiStatus } = useApi<{
     available: boolean;
@@ -157,11 +176,6 @@ export function AppLayout() {
     detail?: string;
   }>("/system/ai-status");
   const [aiBannerDismissed, setAiBannerDismissed] = useState(false);
-
-  useEffect(() => {
-    document.documentElement.classList.toggle("dark", dark);
-    localStorage.setItem("adem_theme", dark ? "dark" : "light");
-  }, [dark]);
 
   // Close mobile sidebar on route change
   useEffect(() => {
@@ -304,8 +318,6 @@ export function AppLayout() {
             <ProfileBookmark
               name={teacher.name || "Teacher"}
               email={teacher.email}
-              dark={dark}
-              onToggleDark={() => setDark(!dark)}
               onLogout={logout}
             />
           </div>

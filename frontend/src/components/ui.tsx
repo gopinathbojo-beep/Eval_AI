@@ -77,13 +77,13 @@ export function Button({
 }: BtnProps) {
   const v: Record<BtnVariant, string> = {
     primary:
-      "bg-pen text-surface border border-pen shadow-[inset_0_-2px_0_rgb(0_0_0/0.22)] hover:bg-pen/90 active:translate-y-px active:shadow-none dark:text-paper",
+      "bg-pen text-white border border-transparent shadow-[inset_0_-2px_0_rgb(0_0_0/0.22)] hover:bg-pen/90 active:translate-y-px active:shadow-none",
     secondary:
       "bg-surface text-ink border border-line shadow-[inset_0_-2px_0_rgb(var(--line))] hover:border-ink/30 hover:bg-hover active:translate-y-px active:shadow-none",
     soft: "bg-sunken text-ink border border-transparent hover:bg-hover active:translate-y-px",
     ghost: "text-pen border border-transparent hover:bg-hover active:translate-y-px",
     danger:
-      "bg-mark text-white border border-mark shadow-[inset_0_-2px_0_rgb(0_0_0/0.22)] hover:bg-mark/90 active:translate-y-px active:shadow-none dark:text-paper",
+      "bg-mark text-white border border-mark shadow-[inset_0_-2px_0_rgb(0_0_0/0.22)] hover:bg-mark/90 active:translate-y-px active:shadow-none",
     outline: "border border-pen/70 text-pen hover:bg-hover hover:border-pen active:translate-y-px",
   };
 

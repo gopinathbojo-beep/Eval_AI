@@ -378,7 +378,7 @@ export function ResultPage() {
             onClick={() => handleTabChange("breakdown")}
             className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-xs sm:text-sm font-semibold transition-all select-none ${
               activeTab === "breakdown"
-                ? "bg-pen text-surface shadow-xs"
+                ? "bg-pen text-white shadow-xs"
                 : "text-mute hover:text-brown hover:bg-hover"
             }`}
           >
@@ -399,7 +399,7 @@ export function ResultPage() {
             <span
               className={`rounded-full px-2 py-0.5 text-[10px] font-mono font-bold ${
                 activeTab === "breakdown"
-                  ? "bg-surface/20 text-surface"
+                  ? "bg-white/20 text-white"
                   : "bg-sunken text-mute"
               }`}
             >
@@ -413,7 +413,7 @@ export function ResultPage() {
             onClick={() => handleTabChange("detailed")}
             className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-xs sm:text-sm font-semibold transition-all select-none ${
               activeTab === "detailed"
-                ? "bg-pen text-surface shadow-xs"
+                ? "bg-pen text-white shadow-xs"
                 : "text-mute hover:text-brown hover:bg-hover"
             }`}
           >
@@ -434,7 +434,7 @@ export function ResultPage() {
             <span
               className={`rounded-full px-2 py-0.5 text-[10px] font-mono font-bold ${
                 activeTab === "detailed"
-                  ? "bg-surface/20 text-surface"
+                  ? "bg-white/20 text-white"
                   : "bg-sunken text-mute"
               }`}
             >

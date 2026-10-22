@@ -1,7 +1,8 @@
 const v = (n) => `rgb(var(--${n}) / <alpha-value>)`;
 /** @type {import('tailwindcss').Config} */
 export default {
-  darkMode: "class",
+  // `dark:` variants follow <html data-theme="dark"> (set by context/Theme.tsx and the boot script in index.html)
+  darkMode: ["selector", '[data-theme="dark"]'],
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
   theme: {
     extend: {
@@ -12,8 +13,11 @@ export default {
         warn: v("warn"), "warn-soft": v("warn-soft"),
         // Notebook-cover sidebar and highlighter accent
         cover: v("cover"), "cover-ink": v("cover-ink"), "cover-line": v("cover-line"), "cover-brown": v("cover-brown"), hl: v("hl"),
-        hover: v("hover"), brown: v("brown"),
+        hover: v("hover"), brown: v("brown"), "on-pen": v("on-pen"),
       },
+      // Solid teal behind text uses its own fill token: #0f766e in dark (white text) while
+      // text-pen / border-pen / ring-pen stay the bright #5eead4 highlight.
+      backgroundColor: { pen: v("pen-fill") },
       fontFamily: {
         sans: ['"IBM Plex Sans"', '"Noto Sans Tamil"', '"Nirmala UI"', "Latha", "system-ui", "sans-serif"],
         doc: ['"Source Serif 4"', '"Noto Serif Tamil"', '"Nirmala UI"', "Latha", "Georgia", "serif"],

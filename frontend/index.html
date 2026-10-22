@@ -4,6 +4,18 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Eval AI</title>
+    <!-- Apply the saved theme before first paint so there is no flash of the wrong theme (see src/context/Theme.tsx) -->
+    <script>
+      (function () {
+        var pref = "system";
+        try { pref = localStorage.getItem("adem_theme") || "system"; } catch (e) {}
+        var dark = pref === "dark" || (pref !== "light" && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+        var root = document.documentElement;
+        root.setAttribute("data-theme", dark ? "dark" : "light");
+        root.style.colorScheme = dark ? "dark" : "light";
+      })();
+    </script>
+    <style>html[data-theme="dark"] { background: #111827; }</style>
   </head>
   <body>
     <div id="root"></div>

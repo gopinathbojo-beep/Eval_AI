@@ -323,12 +323,18 @@ EVAL_SYSTEM = (
     "1. Verifiable Calculations (NO Credit for Uncalculated Steps): In mathematics and numerical problems, NEVER award marks for final values or calculations that the student did NOT actually write. If a criterion awards marks for 'substituting and calculating A = Rs. 1,03,500', but the student only substituted into the formula and never calculated the value 1,03,500, award credit ONLY for the formula substitution (e.g. 0.5 - 1.0 mark) and NOT for the uncalculated numerical result. Mark uncalculated steps as missing.\n"
     "2. Strict Truth in Matched vs Missing Points: Every point listed in 'matched_points' MUST be physically and accurately present in the student's text. If the student wrote '8xy' instead of '48xy', DO NOT list 'Correctly simplified to 48xy' in matched_points! Accurately report 'Obtained 8xy instead of 48xy' under missing_points or feedback, and deduct marks for the error.\n"
     "3. Accurate Subpart Checking: Check the student answer carefully before listing an item as missing. If the student expanded '(3x - 4y)(3x + 4y)' into '9x^2 - 16y^2', DO NOT list that expansion as missing.\n"
-    "4. Method and Step Credit with Arithmetic Checking: In mathematics and science, award proportional partial marks for correct formulas and principles. However, verify that intermediate steps mathematically follow. If an intermediate step is mathematically invalid (e.g. writing [64/3 x 64/81] = 1024/243 where the intermediate step does not hold), deduct intermediate marks even if the final number is correct.\n"
+    "4. Method and Step Credit with Arithmetic Checking: In mathematics and science, award proportional partial marks for correct formulas and principles. Verify that intermediate steps follow. Deduct only for a genuinely wrong step of reasoning (e.g. [64/3 x 64/81] = 1024/243 where the step does not hold), and only the marks of that step's criterion. A small slip whose working and final answer stay correct costs at most 0.5 marks.\n"
     "5. Multi-Part Questions: When a question or answer has multiple parts (e.g. (a), (b), (c) or 1), 2)), you must carefully inspect the student's text for EVERY part before concluding anything is missing. Never label a subpart as missing if the student wrote an answer for it.\n"
     "6. Run-On Steps & Space Delimiters: In mathematics and science, students frequently write calculations continuously or separated by spaces on a single line (e.g., '... 36 = x^2 + 2 + 1/x^2 x^2 + 1/x^2 = 34'). Read the entire student answer string completely to the end before deciding whether a step or final answer is present.\n"
     "7. Case and Punctuation Tolerance: Do not penalize capitalization differences (e.g., 'Book' instead of 'book') unless letter case is specifically being tested in the criteria.\n"
     "8. Diagrams: When evaluating answers containing `[Diagram: ...]`, award criteria marks based on whether the required components, ray paths, connections, or labels are documented in the diagram description.\n"
-    "9. Text marked [UNCLEAR] could not be read; do not assume what it said. Reply with a single JSON object and nothing else."
+    "9. Text marked [UNCLEAR] could not be read; do not assume what it said.\n"
+    "FAIR MARKING (as a reasonable teacher would):\n"
+    "10. Every deduction must name the specific marking criterion or answer-key point that is missing or wrong in 'missing_points'. If you cannot name one, award full marks for that part.\n"
+    "11. Never deduct for correct extra information the question did not ask for (e.g. a balanced equation alongside a word equation, naming the anode as well as the cathode). Deduct only if the extra content is wrong or contradicts the answer.\n"
+    "12. Accept equivalent notation and wording: x, × and * for multiplication; ^2 and ²; 'Hz' and 'hertz'; synonyms and paraphrases with the same meaning. Do not require details, laws or terms that are not in the answer key.\n"
+    "13. The student answer is an OCR transcription of handwriting. A stray or swapped character (e.g. '3001' where the working clearly continues with 300) is most likely a reading error: do not deduct for it when the surrounding working is consistent; mention it in feedback instead.\n"
+    "Reply with a single JSON object and nothing else."
 )
 
 
@@ -356,10 +362,11 @@ STUDENT ANSWER (verbatim transcription)
 {student_answer}
 
 Award marks between 0 and {max_marks:g} (decimals allowed in 0.5 steps). Check all subparts ((a), (b)) and read the full student answer to the end before marking anything missing.
-STRICT GRADING RULES:
+GRADING RULES:
 1. Do NOT award marks for calculations the student did not write. If student wrote only the formula and stopped without computing, award partial mark ONLY for formula substitution and mark the calculation missing.
 2. Every item in matched_points MUST be truthfully written by the student. If student wrote '8xy', do NOT claim student obtained '48xy'.
-3. Award proportional partial step marks for correct method/formula while penalizing intermediate arithmetic or algebraic errors.
+3. Award proportional step marks for correct method/formula. Deduct only the marks of a criterion that is missing or genuinely wrong, and list it in missing_points; a minor slip with correct working and answer costs at most 0.5.
+4. Do not deduct for correct extra information, equivalent notation, or likely handwriting-reading errors.
 Return JSON in exactly this shape:
 {{"marks_awarded": 0, "max_marks": {max_marks:g}, "decision": "CORRECT | PARTIALLY_CORRECT | INCORRECT", "matched_points": ["..."], "missing_points": ["..."], "feedback": "one or two sentences for the teacher", "confidence": 0.0}}"""
 
@@ -416,6 +423,8 @@ Find the student's details, usually written in a header box or on labelled lines
 
 RULES:
 - Copy each value exactly as written (keep letters, digits, slashes and dashes). Do not reformat or complete it.
+- The value is what is written AFTER the label. Never return the label itself (e.g. "Roll no", "Reg. No") as a value.
+- The photo may be rotated or the details may be in the middle of the page; read them wherever they are.
 - A roll number and a registration number are different fields; only fill each from its own label.
 - If a value is missing, crossed out or not clearly legible, use null.
 - Ignore the exam name, subject, date, school name and any printed instructions.

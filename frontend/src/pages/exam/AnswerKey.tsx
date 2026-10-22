@@ -106,7 +106,7 @@ export default function AnswerKey() {
       {isLocked && (
         <Card className="flex items-center justify-between border-ok/30 bg-ok-soft/30 p-4 shadow-soft">
           <div className="flex items-center gap-3">
-            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-ok text-surface font-bold text-sm">
+            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-ok text-white font-bold text-sm">
               ✓
             </span>
             <div>

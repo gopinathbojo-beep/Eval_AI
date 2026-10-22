@@ -109,13 +109,13 @@ def normalize_question_number(raw: str | int | None) -> str | None:
     # Universal chained subparts parsing: e.g. .1.1, (a)(i), .a.i, /1/a, etc.
     parts: list[str] = []
 
-    # Optional single bare token directly after number: "3a", "3 a", "3-a", "3(a)"
-    bm = re.match(r"^\s*([a-zA-Z]{1,3})(?=\(|$|[\s\,\.\:\-\>\→])", rest)
+    # Optional single bare token directly after number: "3a", "3 a", "3-a", "3(a)", "3 a)"
+    bm = re.match(r"^\s*([a-zA-Z]{1,3})(?=\(|\)|$|[\s\,\.\:\-\>\→])", rest)
     if bm and len(bm.group(1)) <= 2:
         tok = _clean_token(bm.group(1))
         if tok is not None:
             parts.append(tok)
-            rest = rest[bm.end():].strip()
+            rest = re.sub(r"^\)", "", rest[bm.end():]).strip()
 
     while rest:
         rest = rest.strip(" :>-→,")

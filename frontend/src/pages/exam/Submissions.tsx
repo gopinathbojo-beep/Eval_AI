@@ -27,7 +27,7 @@ export default function Submissions({ defaultSubTab = "sheets" }: SubmissionsPro
             onClick={() => setActiveTab("sheets")}
             className={`flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition-all ${
               activeTab === "sheets"
-                ? "bg-pen text-surface shadow-xs"
+                ? "bg-pen text-white shadow-xs"
                 : "text-ink/80 hover:bg-hover hover:text-brown"
             }`}
           >
@@ -35,7 +35,7 @@ export default function Submissions({ defaultSubTab = "sheets" }: SubmissionsPro
             <span
               className={`rounded-full px-2 py-0.2 text-[10px] font-bold ${
                 activeTab === "sheets"
-                  ? "bg-surface/20 text-surface"
+                  ? "bg-white/20 text-white"
                   : "bg-line/60 text-mute"
               }`}
             >
@@ -47,7 +47,7 @@ export default function Submissions({ defaultSubTab = "sheets" }: SubmissionsPro
             onClick={() => setActiveTab("roster")}
             className={`flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition-all ${
               activeTab === "roster"
-                ? "bg-pen text-surface shadow-xs"
+                ? "bg-pen text-white shadow-xs"
                 : "text-ink/80 hover:bg-hover hover:text-brown"
             }`}
           >
@@ -55,7 +55,7 @@ export default function Submissions({ defaultSubTab = "sheets" }: SubmissionsPro
             <span
               className={`rounded-full px-2 py-0.2 text-[10px] font-bold ${
                 activeTab === "roster"
-                  ? "bg-surface/20 text-surface"
+                  ? "bg-white/20 text-white"
                   : "bg-line/60 text-mute"
               }`}
             >

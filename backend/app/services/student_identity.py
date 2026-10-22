@@ -48,6 +48,10 @@ def name_similarity(a: str | None, b: str | None) -> float:
                SequenceMatcher(None, "".join(ta), "".join(tb)).ratio())
 
 
+NOTE_NO_ID = "No roll number or registration number could be read from the sheet."
+NOTE_NO_MATCH = "No student in this class matches"
+
+
 def _hold(note: str, read: dict, candidates: list[Student]) -> dict:
     ids = list(dict.fromkeys(s.id for s in candidates))
     return {"match": "HOLD", "student_id": None, "note": note, "read": read, "candidates": ids[:5]}
@@ -72,7 +76,7 @@ def match_student(db: Session, exam: Exam, read: dict) -> dict:
     by_roll = [s for s in students if roll and _roll_key(s.roll_number) == _roll_key(roll)]
 
     if not (reg or roll):
-        return _hold("No roll number or registration number could be read from the sheet.", read, ranked)
+        return _hold(NOTE_NO_ID, read, ranked)
 
     if len(by_reg) == 1:
         st = by_reg[0]
@@ -90,7 +94,7 @@ def match_student(db: Session, exam: Exam, read: dict) -> dict:
         how = "roll number"
     else:
         what = " / ".join(x for x in (f"reg. no. {reg}" if reg else "", f"roll no. {roll}" if roll else "") if x)
-        return _hold(f"No student in this class matches {what}.", read, ranked)
+        return _hold(f"{NOTE_NO_MATCH} {what}.", read, ranked)
 
     if section and st.section and norm_id(section) != norm_id(st.section):
         return _hold(f"Matched {st.name} by {how}, but the sheet says section {section} and the record says "
@@ -101,6 +105,29 @@ def match_student(db: Session, exam: Exam, read: dict) -> dict:
     return {"match": "AUTO", "student_id": st.id, "note": f"Matched by {how}.", "read": read, "candidates": []}
 
 
+# The printed label read as the value: "Roll no", "Roll No.", "Rollinco" (handwritten "Roll no:"), "Reg. No"
+_ID_LABEL = re.compile(r"^\W*(?:roll|reg(?:istration|n)?|adm(?:ission)?|enrol(?:l?ment)?)\w*\W*(?:no|number|num)?\b\W*", re.I)
+
+
+def clean_id(v: str | None, strip_label: bool = True) -> str | None:
+    """Drop a label the model copied into an ID value: None when no digit is left.
+
+    strip_label removes a leading label ("Roll No. 69" -> "69"); registration numbers keep theirs because
+    letters such as "REG" can be part of the number itself.
+    """
+    if not v:
+        return None
+    s = str(v).strip()
+    if strip_label:
+        s = _ID_LABEL.sub("", s).strip(" .:-#")
+    return s if re.search(r"\d", s) else None
+
+
+def _clean_read(read: dict) -> dict:
+    return {**read, "roll_number": clean_id(read.get("roll_number")),
+            "registration_number": clean_id(read.get("registration_number"), strip_label=False)}
+
+
 def _read_header(doc: AnswerSheetDocument) -> dict:
     page1 = abs_path(doc.pages[0]["processed_file"])
     crop = page1.parent / f"identity-{page1.name}"
@@ -108,13 +135,50 @@ def _read_header(doc: AnswerSheetDocument) -> dict:
         img.crop((0, 0, img.width, max(1, int(img.height * HEADER_FRACTION)))).save(crop)
     try:
         res = chat_structured(prompts.IDENTITY_SYSTEM, prompts.student_identity_prompt(), StudentIdentityResult, crop)
-        read = res.parsed.model_dump()
+        read = _clean_read(res.parsed.model_dump())
         if not (read["roll_number"] or read["registration_number"]):  # details may sit lower on the page
             res = chat_structured(prompts.IDENTITY_SYSTEM, prompts.student_identity_prompt(), StudentIdentityResult, page1)
-            read = {k: read.get(k) or v for k, v in res.parsed.model_dump().items()}
+            read = {k: read.get(k) or v for k, v in _clean_read(res.parsed.model_dump()).items()}
         return read
     finally:
         crop.unlink(missing_ok=True)
+
+
+# Phone photos are often taken sideways; PIL rotates counter-clockwise, so 90 undoes a clockwise turn.
+ROTATIONS = (90, 270, 180)
+
+
+def _read_rotated(doc: AnswerSheetDocument, angle: int) -> dict:
+    """Read the details from the whole first page turned by `angle` degrees."""
+    page1 = abs_path(doc.pages[0]["processed_file"])
+    turned = page1.parent / f"identity-r{angle}-{page1.name}"
+    with Image.open(page1) as img:
+        img.rotate(angle, expand=True).save(turned)
+    try:
+        res = chat_structured(prompts.IDENTITY_SYSTEM, prompts.student_identity_prompt(), StudentIdentityResult, turned)
+        return _clean_read(res.parsed.model_dump())
+    finally:
+        turned.unlink(missing_ok=True)
+
+
+def identify_with_rotation(db: Session, exam: Exam, doc: AnswerSheetDocument) -> dict:
+    """Match on the page as uploaded; if that is not a confident match, retry with the page turned.
+
+    Only an AUTO match from a turned page is used; otherwise the upright result (and its note) is kept.
+    """
+    result = match_student(db, exam, _read_header(doc))
+    # Turning only helps when nothing usable was read; a clear read that conflicts with a record stays held
+    if result["match"] == "AUTO" or not result["note"].startswith((NOTE_NO_ID, NOTE_NO_MATCH)):
+        return result
+    for angle in ROTATIONS:
+        try:
+            alt = match_student(db, exam, _read_rotated(doc, angle))
+        except AIResponseError:
+            continue
+        if alt["match"] == "AUTO":
+            alt["note"] = f"{alt['note']} (page was photographed rotated)"
+            return alt
+    return result
 
 
 def assign_student(db: Session, doc: AnswerSheetDocument, student: Student, teacher_id: str | None, how: str) -> Evaluation:
@@ -182,7 +246,7 @@ def _identify(doc_id: str, teacher_id: str | None) -> bool:
             db.commit()
         try:
             check_model()
-            read = _read_header(doc)
+            result = identify_with_rotation(db, exam, doc)
         except AIUnavailable:
             db.rollback()
             _set_hold(doc_id, "The AI model is not available, so the student details could not be read. "
@@ -192,7 +256,6 @@ def _identify(doc_id: str, teacher_id: str | None) -> bool:
             db.rollback()
             _set_hold(doc_id, "The student details on this sheet could not be read. Pick the student or retry.")
             return False
-        result = match_student(db, exam, read)
         doc.identity = result
         if result["match"] != "AUTO":
             doc.status, doc.stage = "NEEDS_STUDENT", "Pick the student"

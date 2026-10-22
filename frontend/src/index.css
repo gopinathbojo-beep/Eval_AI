@@ -25,6 +25,8 @@
   --ink: 24 33 29;            /* Green-black ink #18211d */
   --mute: 90 101 95;          /* Graphite #5a655f */
   --pen: 14 94 112;           /* Teal fountain ink #0e5e70 */
+  --pen-fill: 15 118 110;     /* Solid teal behind text (bg-pen): primary buttons, active tabs #0f766e */
+  --on-pen: 255 255 255;      /* Text on pen-fill: white */
   --pen-soft: 222 238 240;
   --mark: 196 58 40;          /* Coral marking pen #c43a28 */
   --mark-soft: 251 231 225;
@@ -38,32 +40,63 @@
   --cover-ink: 226 234 228;
   --cover-line: 255 255 255;
   --cover-brown: 217 168 108;  /* Tan hover text on the cover #d9a86c */
+  color-scheme: light;
 }
 
-.dark {
-  /* Espresso desk at night — the warm counterpart of the cream light theme */
-  --paper: 22 18 14;          /* #16120e */
-  --surface: 32 26 20;        /* #201a14 */
-  --sunken: 42 35 27;         /* #2a231b */
-  --line: 62 52 40;           /* #3e3428 */
-  --hover: 56 45 32;          /* Toffee hover #382d20 */
-  --brown: 226 178 124;       /* Caramel hover text #e2b27c */
-  --ink: 241 232 212;         /* Cream ink #f1e8d4 */
-  --mute: 176 164 142;        /* #b0a48e */
-  --pen: 120 200 212;         /* #78c8d4 */
-  --pen-soft: 24 52 58;
-  --mark: 244 128 104;        /* #f48068 */
-  --mark-soft: 66 30 22;
-  --ok: 120 200 150;
-  --ok-soft: 24 50 36;
-  --warn: 236 182 88;
-  --warn-soft: 62 46 18;
-  --hl: 232 196 84;
+/*
+ * "Midnight Slate & Teal" dark theme, applied by <html data-theme="dark"> (see context/Theme.tsx).
+ * All text tokens meet WCAG AA (4.5:1) on paper, surface, sunken, hover and the sidebar.
+ */
+[data-theme="dark"] {
+  color-scheme: dark;         /* native scrollbars, date pickers and form controls follow the theme */
+  --paper: 17 24 39;          /* Main background #111827 */
+  --surface: 31 41 55;        /* Cards, elevated surfaces #1f2937 */
+  --sunken: 24 33 48;         /* Insets, table heads #182130 */
+  --line: 55 65 81;           /* Borders, dividers #374151 */
+  --hover: 40 51 68;          /* Hover rows/items #283344 */
+  --brown: 94 234 212;        /* Hover text: teal highlight #5eead4 */
+  --ink: 229 231 235;         /* Primary text #e5e7eb */
+  --mute: 156 163 175;        /* Secondary text #9ca3af */
+  --pen: 94 234 212;          /* Teal highlights, links, active text #5eead4 */
+  --pen-fill: 15 118 110;     /* Primary teal fill #0f766e */
+  --on-pen: 255 255 255;      /* Text on primary teal: white */
+  --pen-soft: 19 58 63;       /* Teal tint #133a3f */
+  --mark: 248 113 113;        /* Error #f87171 */
+  --mark-soft: 69 32 38;      /* #452026 */
+  --ok: 52 211 153;           /* Success / finalized #34d399 */
+  --ok-soft: 19 58 50;        /* #133a32 */
+  --warn: 251 191 36;         /* Warning / pending review #fbbf24 */
+  --warn-soft: 66 52 22;      /* #423416 */
+  --hl: 251 191 36;
 
-  --cover: 18 32 27;          /* Deep chalkboard #12201b */
-  --cover-ink: 222 226 214;
+  --cover: 11 23 27;          /* Sidebar #0b171b */
+  --cover-ink: 229 231 235;
   --cover-line: 255 255 255;
-  --cover-brown: 222 176 120; /* #deb078 */
+  --cover-brown: 94 234 212;  /* Sidebar hover/active text #5eead4 */
+}
+
+/* A yellow highlighter under light text is unreadable; use dark text for selections */
+[data-theme="dark"] ::selection {
+  background: rgb(var(--hl) / 0.85);
+  color: rgb(var(--paper));
+}
+
+/* Theme switch: the new theme is revealed by a growing circle (context/Theme.tsx), so the
+   default cross-fade of the view transition is turned off */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+::view-transition-old(root) { z-index: 1; }
+::view-transition-new(root) { z-index: 2; }
+
+/* Fallback for browsers without View Transitions: short colour fade while the theme flips */
+.theme-fade,
+.theme-fade *,
+.theme-fade *::before,
+.theme-fade *::after {
+  transition: background-color 0.35s ease, border-color 0.35s ease, color 0.35s ease, fill 0.35s ease, stroke 0.35s ease !important;
 }
 
 html, body, #root {
