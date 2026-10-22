@@ -58,13 +58,14 @@ def apply_student_mapping(db: Session, ev: Evaluation) -> None:
 def apply_key_mapping(db: Session, exam_id: str, doc_id: str) -> None:
     qs = exam_questions(db, exam_id)
     keys = db.query(AnswerKey).filter_by(exam_id=exam_id, document_id=doc_id).order_by(AnswerKey.created_at).all()
+    minc = get_settings().min_label_confidence
     prev_qid = None
     for idx, k in enumerate(keys, 1):
         res = map_label(
             k.raw_question_number,
             qs,
             k.ocr_confidence,
-            get_settings().min_label_confidence,
+            minc,
             answer_text=k.answer_text,
             answer_position=idx,
             total_answers=len(keys),
@@ -117,8 +118,8 @@ def mapping_summary(db: Session, ev: Evaluation) -> dict:
                     suggested_q.add(cid)
 
     # Questions completely missing an answer
-    accounted_q = mapped_q | suggested_q
-    missing = [q for q in qs if q.id not in {a.exam_question_id for a in live if a.exam_question_id}]
+    targeted_q = {a.exam_question_id for a in live if a.exam_question_id}
+    missing = [q for q in qs if q.id not in targeted_q]
 
     return {
         "total_questions": len(qs),
