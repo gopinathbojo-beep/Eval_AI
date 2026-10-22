@@ -5,6 +5,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 _tmp = tempfile.mkdtemp(prefix="adem-test-")
 os.environ["DATA_DIR"] = _tmp
+os.environ["DATABASE_URL"] = ""   # overrides .env so tests never touch a real Postgres database
 os.environ["SECRET_KEY"] = "test-secret-at-least-32-bytes-long-for-jwt-security"
 os.environ["PDF_RENDER_DPI"] = "72"
 os.environ["INTERNVL_MAX_RETRIES"] = "1"
