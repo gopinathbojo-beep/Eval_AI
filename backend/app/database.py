@@ -11,7 +11,14 @@ class Base(DeclarativeBase):
 def _make_engine(url: str | None = None):
     url = url or get_settings().database_url or f"sqlite:///{get_settings().data_path / 'adem.db'}"
     if not url.startswith("sqlite"):
-        return create_engine(url, pool_pre_ping=True, pool_size=10, max_overflow=20)
+        # Supabase hands out postgres:// / postgresql:// URLs; route them to the installed psycopg 3 driver
+        for prefix in ("postgres://", "postgresql://"):
+            if url.startswith(prefix):
+                url = "postgresql+psycopg://" + url[len(prefix):]
+        # prepare_threshold=None: Supabase's transaction pooler (port 6543) cannot use prepared statements.
+        # Small pool: Supabase limits connections per project.
+        return create_engine(url, pool_pre_ping=True, pool_size=5, max_overflow=5,
+                             connect_args={"prepare_threshold": None})
 
     eng = create_engine(url, connect_args={"check_same_thread": False})
 
