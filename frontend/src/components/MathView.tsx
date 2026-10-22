@@ -13,13 +13,42 @@ interface MathToken {
 }
 
 /**
+ * Closes \( or \[ openers that never get a matching closer (common in OCR / AI output).
+ * The closer goes before the next opener or at the end of the line, whichever comes first,
+ * so math that legitimately spans several lines is left alone.
+ */
+function closeUnmatchedOpeners(raw: string): string {
+  const opener = /\\([([])/g;
+  let out = "";
+  let pos = 0;
+  let m: RegExpExecArray | null;
+  while ((m = opener.exec(raw)) !== null) {
+    const close = m[1] === "(" ? "\\)" : "\\]";
+    const after = m.index + 2;
+    const closeIdx = raw.indexOf(close, after);
+    const rel = raw.slice(after).search(/\\[([]/);
+    const nextOpen = rel === -1 ? -1 : after + rel;
+    if (closeIdx !== -1 && (nextOpen === -1 || closeIdx < nextOpen)) continue;
+
+    const eol = raw.indexOf("\n", after);
+    let insertAt = eol === -1 ? raw.length : eol;
+    if (nextOpen !== -1 && nextOpen < insertAt) insertAt = nextOpen;
+    out += `${raw.slice(pos, insertAt).trimEnd()} ${close}`;
+    pos = insertAt;
+    opener.lastIndex = insertAt;
+  }
+  return out + raw.slice(pos);
+}
+
+/**
  * Normalizes math expressions before tokenization:
+ * 0. Closes unmatched opening delimiters (e.g. "\( x^2 = 4" with no closing \))
  * 1. Repairs unmatched closing delimiters (e.g. lines ending in \) without opening \()
  * 2. Detects bare equations (e.g. "1. A_{trapezium} = \frac{1}{2}(a+b)h") and wraps them in \( ... \)
  * 3. Keeps numbering and labels (e.g. "1. ", "(a) ") outside math delimiters.
  */
 function normalizeMathText(raw: string): string {
-  const lines = raw.split("\n");
+  const lines = closeUnmatchedOpeners(raw).split("\n");
   const processedLines = lines.map((line) => {
     const trimmed = line.trim();
     if (!trimmed) return line;
@@ -128,7 +157,7 @@ function parseMathTokens(raw: string): MathToken[] {
 
   // Secondary pass: Detect bare LaTeX commands inside text tokens (e.g. \frac{a}{b}, \left( ... \right))
   const finalTokens: MathToken[] = [];
-  const bareLatexRegex = /((?:\\left\(|\\frac\{|\\sqrt\{)[^\n]+?(?:\\right\)|(?<=\}))(?:\^(?:\{[^{}]+\}|[0-9a-zA-Z+-]+))?)/g;
+  const bareLatexRegex = /((?:\\left[([]|\\frac\{|\\sqrt\{)[^\n]+?(?:\\right[)\]]|(?<=\}))(?:\^(?:\{[^{}]+\}|[0-9a-zA-Z+-]+))?)/g;
 
   for (const token of tokens) {
     if (token.type !== "text") {

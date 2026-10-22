@@ -189,3 +189,60 @@ def test_extract_label_from_text_prefix():
     assert lbl is None
     assert "For coating iron" in rest
 
+
+
+@dataclass
+class SQ:
+    id: str
+    normalized_number: str | None
+    section: str | None = None
+
+
+def test_deep_subpart_falls_back_to_nearest_ancestor():
+    r = map_label("3(a)(i)", exam("3(a)", "3(b)"))
+    assert r.status == NEEDS_REVIEW and r.question_id == "id-3(a)" and r.normalized_number == "3(a)"
+
+
+def test_sub_label_with_deeper_exam_parts_lists_descendants():
+    r = map_label("3(a)", exam("3(a)(i)", "3(a)(ii)", "3(b)"))
+    assert r.status == NEEDS_REVIEW and r.question_id is None
+    assert r.candidates == ["id-3(a)(i)", "id-3(a)(ii)"]
+
+
+def test_parent_label_with_single_subpart_is_proposed():
+    r = map_label("3", exam("3(a)", "4"))
+    assert r.status == NEEDS_REVIEW and r.question_id == "id-3(a)"
+
+
+def test_bare_subpart_forward_prefers_sibling():
+    qs = exam("1(a)", "1(b)", "2(a)", "2(b)")
+    r = map_label("(b)", qs, prev_question_id="id-1(a)")
+    assert r.status == NEEDS_REVIEW and r.question_id == "id-1(b)"
+
+
+def test_bare_subpart_restart_prefers_next_parent():
+    qs = exam("1(a)", "1(b)", "2(a)", "2(b)", "3(a)")
+    r = map_label("(a)", qs, prev_question_id="id-1(b)")
+    assert r.status == NEEDS_REVIEW and r.question_id == "id-2(a)"
+
+
+def test_bare_subpart_matches_own_level_not_children():
+    r = map_label("(a)", exam("1(a)", "1(a)(i)", "1(a)(ii)"))
+    assert r.question_id == "id-1(a)" and r.candidates == ["id-1(a)"]
+
+
+def test_bare_subpart_without_context_is_not_preselected():
+    r = map_label("(a)", exam("1(a)", "2(a)"))
+    assert r.status == NEEDS_REVIEW and r.question_id is None
+
+
+def test_section_prefix_does_not_confuse_part_i_and_part_ii():
+    qs = [SQ("p1", "1", "Part I"), SQ("p2", "1", "Part II")]
+    assert map_label("Part II - 1", qs).question_id == "p2"
+    assert map_label("Part I - 1", qs).question_id == "p1"
+
+
+def test_section_ambiguity_uses_previous_section_as_hint_only():
+    qs = [SQ("a1", "1", "Section A"), SQ("b1", "1", "Section B"), SQ("b2", "2", "Section B")]
+    r = map_label("1", qs, prev_question_id="b2")
+    assert r.status == NEEDS_REVIEW and r.question_id == "b1" and r.candidates[0] == "b1"
