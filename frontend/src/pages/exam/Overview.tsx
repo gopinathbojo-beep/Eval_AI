@@ -1,8 +1,7 @@
-import { Link } from "react-router-dom";
 import { useApi } from "../../hooks/useApi";
 import type { AuditRow } from "../../types";
 import { date, label } from "../../utils/format";
-import { Button, Card, Stat } from "../../components/ui";
+import { Card, LinkButton, Stat } from "../../components/ui";
 import { useExam } from "../ExamWorkspace";
 
 const NEXT: Record<string, [string, string, string]> = {
@@ -60,14 +59,12 @@ export default function Overview({ onSelectSubTab }: OverviewProps) {
             {hint && <p className="text-xs text-mute max-w-xl">{hint}</p>}
           </div>
           {to && (
-            <Link to={targetUrl} onClick={handleContinue}>
-              <Button variant="primary" className="shadow-xs">
+            <LinkButton to={targetUrl} onClick={handleContinue} variant="primary" className="shadow-xs">
                 <span>Continue</span>
                 <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
                 </svg>
-              </Button>
-            </Link>
+              </LinkButton>
           )}
         </div>
       </Card>

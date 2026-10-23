@@ -22,6 +22,7 @@ import {
 import { api } from "../api/client";
 import { Button } from "./Button";
 import { Badge } from "./Badge";
+import { fonts } from "../theme/colors";
 
 interface QuestionOption {
   id: string;
@@ -180,7 +181,7 @@ export const EditAnswerKeyModal: React.FC<EditAnswerKeyModalProps> = ({
                       style={[
                         modalStyles.questionOptionRow,
                         {
-                          backgroundColor: isSelected ? "rgba(0, 168, 232, 0.16)" : "transparent",
+                          backgroundColor: isSelected ? "rgba(15, 118, 110, 0.16)" : "transparent",
                           borderColor: isSelected ? colors.primary : colors.border,
                         },
                       ]}
@@ -515,7 +516,7 @@ export const ResolveAnswerKeyModal: React.FC<ResolveAnswerKeyModalProps> = ({
             <ScrollView style={modalStyles.body} keyboardShouldPersistTaps="handled">
               {/* ISSUE 1: MARKS MISMATCH */}
               {hasMismatch && (
-                <View style={[modalStyles.issueCard, { backgroundColor: "rgba(245, 166, 35, 0.12)", borderColor: colors.warning }]}>
+                <View style={[modalStyles.issueCard, { backgroundColor: "rgba(190, 120, 10, 0.12)", borderColor: colors.warning }]}>
                   <View style={modalStyles.issueHeaderRow}>
                     <Ionicons name="alert-circle" size={18} color={colors.warning} />
                     <Text style={[modalStyles.issueTitle, { color: colors.warning }]}>Marks Discrepancy Detected</Text>
@@ -561,7 +562,7 @@ export const ResolveAnswerKeyModal: React.FC<ResolveAnswerKeyModalProps> = ({
 
               {/* ISSUE 2: MAPPING / NEEDS REVIEW */}
               {isNeedsReview && (
-                <View style={[modalStyles.issueCard, { backgroundColor: "rgba(239, 98, 98, 0.12)", borderColor: colors.error }]}>
+                <View style={[modalStyles.issueCard, { backgroundColor: "rgba(196, 58, 40, 0.12)", borderColor: colors.error }]}>
                   <View style={modalStyles.issueHeaderRow}>
                     <Ionicons name="git-branch-outline" size={18} color={colors.error} />
                     <Text style={[modalStyles.issueTitle, { color: colors.error }]}>
@@ -600,7 +601,7 @@ export const ResolveAnswerKeyModal: React.FC<ResolveAnswerKeyModalProps> = ({
                           style={[
                             modalStyles.questionOptionRow,
                             {
-                              backgroundColor: isSelected ? "rgba(0, 168, 232, 0.16)" : "transparent",
+                              backgroundColor: isSelected ? "rgba(15, 118, 110, 0.16)" : "transparent",
                               borderColor: isSelected ? colors.primary : colors.border,
                             },
                           ]}
@@ -618,7 +619,7 @@ export const ResolveAnswerKeyModal: React.FC<ResolveAnswerKeyModalProps> = ({
 
               {/* ISSUE 3: EMPTY SOLUTION TEXT */}
               {isEmptyText && (
-                <View style={[modalStyles.issueCard, { backgroundColor: "rgba(239, 98, 98, 0.08)", borderColor: colors.error }]}>
+                <View style={[modalStyles.issueCard, { backgroundColor: "rgba(196, 58, 40, 0.08)", borderColor: colors.error }]}>
                   <View style={modalStyles.issueHeaderRow}>
                     <Ionicons name="document-text-outline" size={18} color={colors.error} />
                     <Text style={[modalStyles.issueTitle, { color: colors.error }]}>Missing Solution Text</Text>
@@ -730,7 +731,7 @@ export const ValidationSummaryModal: React.FC<ValidationSummaryModalProps> = ({
                   style={[
                     summaryStyles.statCard,
                     {
-                      backgroundColor: "rgba(0, 168, 232, 0.12)",
+                      backgroundColor: "rgba(15, 118, 110, 0.12)",
                       borderColor: colors.primary,
                     },
                   ]}
@@ -749,7 +750,7 @@ export const ValidationSummaryModal: React.FC<ValidationSummaryModalProps> = ({
                   style={[
                     summaryStyles.statCard,
                     {
-                      backgroundColor: "rgba(37, 200, 120, 0.12)",
+                      backgroundColor: "rgba(23, 130, 87, 0.12)",
                       borderColor: colors.brandGreen,
                     },
                   ]}
@@ -768,7 +769,7 @@ export const ValidationSummaryModal: React.FC<ValidationSummaryModalProps> = ({
                   style={[
                     summaryStyles.statCard,
                     {
-                      backgroundColor: "rgba(245, 166, 35, 0.12)",
+                      backgroundColor: "rgba(190, 120, 10, 0.12)",
                       borderColor: colors.warning,
                     },
                   ]}
@@ -787,7 +788,7 @@ export const ValidationSummaryModal: React.FC<ValidationSummaryModalProps> = ({
                   style={[
                     summaryStyles.statCard,
                     {
-                      backgroundColor: "rgba(239, 98, 98, 0.12)",
+                      backgroundColor: "rgba(196, 58, 40, 0.12)",
                       borderColor: colors.error,
                     },
                   ]}
@@ -807,7 +808,7 @@ export const ValidationSummaryModal: React.FC<ValidationSummaryModalProps> = ({
                 style={[
                   summaryStyles.noteBanner,
                   {
-                    backgroundColor: isAllValid ? "rgba(37, 200, 120, 0.12)" : "rgba(239, 98, 98, 0.1)",
+                    backgroundColor: isAllValid ? "rgba(23, 130, 87, 0.12)" : "rgba(196, 58, 40, 0.1)",
                     borderColor: isAllValid ? colors.brandGreen : colors.error,
                   },
                 ]}
@@ -1033,6 +1034,7 @@ const modalStyles = StyleSheet.create({
   },
   title: {
     fontSize: 17,
+    fontFamily: fonts.display,
     fontWeight: "700",
   },
   subtitle: {

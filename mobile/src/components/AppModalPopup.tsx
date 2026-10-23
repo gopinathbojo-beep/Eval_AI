@@ -11,6 +11,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../theme/ThemeContext";
 import { Button } from "./Button";
+import { fonts } from "../theme/colors";
 
 export type PopupType = "info" | "success" | "warning" | "error";
 
@@ -43,26 +44,26 @@ export const AppModalPopup: React.FC<AppModalPopupProps> = ({ config, onClose })
       case "success":
         return {
           name: "checkmark-circle" as const,
-          color: colors.brandGreen || "#22C55E",
-          bg: "rgba(34, 197, 94, 0.12)",
+          color: colors.brandGreen || "#1F8F5F",
+          bg: "rgba(23, 130, 87, 0.12)",
         };
       case "error":
         return {
           name: "alert-circle" as const,
-          color: colors.error || "#EF4444",
-          bg: "rgba(239, 68, 68, 0.12)",
+          color: colors.error || "#C43A28",
+          bg: "rgba(196, 58, 40, 0.12)",
         };
       case "warning":
         return {
           name: "warning" as const,
-          color: colors.warning || "#F59E0B",
-          bg: "rgba(245, 158, 11, 0.12)",
+          color: colors.warning || "#B7791F",
+          bg: "rgba(190, 120, 10, 0.12)",
         };
       case "info":
       default:
         return {
           name: "information-circle" as const,
-          color: colors.primary || "#0EA5E9",
+          color: colors.primary || "#0F8A80",
           bg: "rgba(14, 165, 233, 0.12)",
         };
     }
@@ -134,7 +135,7 @@ export const AppModalPopup: React.FC<AppModalPopupProps> = ({ config, onClose })
                   style={[
                     { flex: 1 },
                     config.isDestructive && {
-                      backgroundColor: "rgba(239, 68, 68, 0.15)",
+                      backgroundColor: "rgba(196, 58, 40, 0.15)",
                       borderColor: colors.error,
                       borderWidth: 1,
                     },
@@ -180,6 +181,7 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 17,
+    fontFamily: fonts.display,
     fontWeight: "700",
     textAlign: "center",
     marginBottom: 8,

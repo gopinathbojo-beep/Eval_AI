@@ -5,7 +5,7 @@ import { useApi } from "../../hooks/useApi";
 import type { Evaluation, IdentityRead, OutcomeSummary, ReviewSummary, Student, UnassignedSheet } from "../../types";
 import { OutcomeTables } from "../../components/OutcomeTables";
 import { BUSY_DOC, date, fmt, label } from "../../utils/format";
-import { Badge, Button, Card, Confirm, Empty, ErrorPanel, Loading, Modal, Select, StatusBadge } from "../../components/ui";
+import { Badge, Button, Card, Confirm, Empty, ErrorPanel, LinkButton, Loading, Modal, Select, StatusBadge } from "../../components/ui";
 import { UploadZone } from "../../components/DocPanel";
 import { useExam } from "../ExamWorkspace";
 
@@ -538,14 +538,12 @@ export function AnswerSheets() {
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-1.5">
-                      <Link to={`/evaluations/${e.id}`}>
-                        <Button small variant="primary" className="shadow-xs">
-                          <span>Open Review</span>
-                          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                          </svg>
-                        </Button>
-                      </Link>
+                      <LinkButton to={`/evaluations/${e.id}`} small variant="primary" className="shadow-xs">
+                        <span>Open Review</span>
+                        <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                        </svg>
+                      </LinkButton>
                       {e.status !== "FINALIZED" && (
                         <Button
                           small

@@ -13,6 +13,7 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "../theme/ThemeContext";
+import { fonts } from "../theme/colors";
 
 interface ModalDialogProps {
   visible: boolean;
@@ -40,6 +41,7 @@ export const ModalDialog: React.FC<ModalDialogProps> = ({
       transparent
       animationType="fade"
       onRequestClose={onClose}
+      statusBarTranslucent
     >
       <TouchableWithoutFeedback onPress={onClose}>
         <View
@@ -67,7 +69,7 @@ export const ModalDialog: React.FC<ModalDialogProps> = ({
               >
                 <View style={[styles.header, { borderBottomColor: colors.border }]}>
                   <View style={{ flex: 1 }}>
-                    <Text style={[styles.title, { color: colors.text }]}>
+                    <Text accessibilityRole="header" style={[styles.title, { color: colors.text }]}>
                       {title}
                     </Text>
                     {subtitle && (
@@ -79,7 +81,9 @@ export const ModalDialog: React.FC<ModalDialogProps> = ({
                   <TouchableOpacity
                     onPress={onClose}
                     hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                    style={styles.closeButton}
+                    style={[styles.closeButton, { backgroundColor: colors.surfaceElevated }]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Close"
                   >
                     <Ionicons name="close" size={22} color={colors.textSecondary} />
                   </TouchableOpacity>
@@ -147,6 +151,7 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 18,
+    fontFamily: fonts.display,
     fontWeight: "700",
   },
   subtitle: {
@@ -155,6 +160,11 @@ const styles = StyleSheet.create({
   },
   closeButton: {
     marginLeft: 12,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
   },
   body: {
     flexShrink: 1,

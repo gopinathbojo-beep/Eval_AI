@@ -24,6 +24,8 @@ export default function Submissions({ defaultSubTab = "sheets" }: SubmissionsPro
       <div className="flex flex-col gap-3 rounded-lg border border-line bg-surface p-2 sm:flex-row sm:items-center sm:justify-between shadow-xs">
         <div className="flex items-center gap-1.5">
           <button
+            type="button"
+            aria-pressed={activeTab === "sheets"}
             onClick={() => setActiveTab("sheets")}
             className={`flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition-all ${
               activeTab === "sheets"
@@ -33,7 +35,7 @@ export default function Submissions({ defaultSubTab = "sheets" }: SubmissionsPro
           >
             <span>Student Answer Sheets</span>
             <span
-              className={`rounded-full px-2 py-0.2 text-[10px] font-bold ${
+              className={`rounded-full px-2 py-px text-[10px] font-bold ${
                 activeTab === "sheets"
                   ? "bg-white/20 text-white"
                   : "bg-line/60 text-mute"
@@ -44,6 +46,8 @@ export default function Submissions({ defaultSubTab = "sheets" }: SubmissionsPro
           </button>
 
           <button
+            type="button"
+            aria-pressed={activeTab === "roster"}
             onClick={() => setActiveTab("roster")}
             className={`flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition-all ${
               activeTab === "roster"
@@ -53,7 +57,7 @@ export default function Submissions({ defaultSubTab = "sheets" }: SubmissionsPro
           >
             <span>Class Students</span>
             <span
-              className={`rounded-full px-2 py-0.2 text-[10px] font-bold ${
+              className={`rounded-full px-2 py-px text-[10px] font-bold ${
                 activeTab === "roster"
                   ? "bg-white/20 text-white"
                   : "bg-line/60 text-mute"

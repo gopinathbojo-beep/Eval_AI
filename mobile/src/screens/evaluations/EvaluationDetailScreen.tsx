@@ -24,6 +24,7 @@ import { Empty } from "../../components/Empty";
 import { Input } from "../../components/Input";
 import { ModalDialog } from "../../components/ModalDialog";
 import { AuthImage } from "../../components/AuthImage";
+import { fonts } from "../../theme/colors";
 
 interface EvaluationDetailScreenProps {
   route: any;
@@ -806,7 +807,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
               <View
                 style={[
                   styles.avatarCircle,
-                  { backgroundColor: "rgba(7, 159, 189, 0.15)", borderColor: colors.primary },
+                  { backgroundColor: "rgba(15, 118, 110, 0.15)", borderColor: colors.primary },
                 ]}
               >
                 <Text style={[styles.avatarText, { color: colors.primary }]}>
@@ -962,7 +963,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
         <View style={{ backgroundColor: colors.background, paddingVertical: 6 }}>
         <View style={[styles.tabBarContainer, { backgroundColor: colors.surfaceElevated, borderColor: colors.border }]}>
           <TouchableOpacity
-            style={[styles.tabButton, activeTab === "mapping" && { backgroundColor: colors.primary }]}
+            style={[styles.tabButton, activeTab === "mapping" && { backgroundColor: colors.primaryFill }]}
             onPress={() => setActiveTab("mapping")}
           >
             <Ionicons
@@ -984,7 +985,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.tabButton, activeTab === "marks" && { backgroundColor: colors.primary }]}
+            style={[styles.tabButton, activeTab === "marks" && { backgroundColor: colors.primaryFill }]}
             onPress={() => setActiveTab("marks")}
           >
             <Ionicons
@@ -1197,7 +1198,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
                           styles.pageThumbButton,
                           {
                             borderColor: activeSheetPage === p.page_number ? colors.primary : colors.border,
-                            backgroundColor: activeSheetPage === p.page_number ? "rgba(24, 68, 126, 0.12)" : colors.surface,
+                            backgroundColor: activeSheetPage === p.page_number ? "rgba(15, 118, 110, 0.12)" : colors.surface,
                           },
                         ]}
                       >
@@ -1220,7 +1221,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
             {mappingFilter === "Missing" ? (
               missingQuestions.length > 0 ? (
                 missingQuestions.map((q) => (
-                  <Card key={q.id} style={[styles.mappingCard, { borderColor: "rgba(217, 119, 6, 0.4)" }]}>
+                  <Card key={q.id} style={[styles.mappingCard, { borderColor: "rgba(190, 120, 10, 0.4)" }]}>
                     <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
                       <Text style={[styles.mappingCardTitle, { color: colors.text }]}>
                         Question Q{q.display_number}: No Answer Detected
@@ -1263,7 +1264,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
                     key={a.id}
                     style={[
                       styles.mappingCard,
-                      needs && { borderColor: "rgba(217, 119, 6, 0.5)", borderWidth: 1.5 },
+                      needs && { borderColor: "rgba(190, 120, 10, 0.5)", borderWidth: 1.5 },
                       a.status === "IGNORED" && { opacity: 0.6 },
                     ]}
                   >
@@ -1297,7 +1298,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
 
                     {/* Mapping Issue Advisory Note */}
                     {a.mapping_note && needs && (
-                      <View style={[styles.mappingNoteBox, { backgroundColor: "rgba(217, 119, 6, 0.08)", borderColor: "rgba(217, 119, 6, 0.25)" }]}>
+                      <View style={[styles.mappingNoteBox, { backgroundColor: "rgba(190, 120, 10, 0.08)", borderColor: "rgba(190, 120, 10, 0.25)" }]}>
                         <Ionicons name="information-circle-outline" size={14} color={colors.warning} />
                         <Text style={[styles.mappingNoteText, { color: colors.warning }]}>
                           {a.mapping_note}
@@ -1424,7 +1425,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
           <View style={{ gap: 14 }}>
             {/* Live Evaluation Running Banner */}
             {isRunning && (
-              <Card style={[styles.runningCard, { borderColor: colors.primary, backgroundColor: "rgba(7, 159, 189, 0.08)" }]}>
+              <Card style={[styles.runningCard, { borderColor: colors.primary, backgroundColor: "rgba(15, 118, 110, 0.08)" }]}>
                 <View style={styles.runningHeader}>
                   <ActivityIndicator size="small" color={colors.primary} />
                   <Text style={[styles.runningTitle, { color: colors.primary }]}>
@@ -1443,7 +1444,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
                       style={[
                         styles.progressBarFill,
                         {
-                          backgroundColor: colors.primary,
+                          backgroundColor: colors.primaryFill,
                           width: `${Math.min(100, Math.round((evaluation.run_progress / evaluation.run_total) * 100))}%`,
                         },
                       ]}
@@ -1455,7 +1456,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
 
             {/* AI Error Banner */}
             {isRunError && (
-              <View style={[styles.errorCard, { backgroundColor: "rgba(239, 100, 100, 0.1)", borderColor: colors.error }]}>
+              <View style={[styles.errorCard, { backgroundColor: "rgba(196, 58, 40, 0.1)", borderColor: colors.error }]}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
                   <Ionicons name="alert-circle" size={18} color={colors.error} />
                   <Text style={[styles.errorTitle, { color: colors.error }]}>
@@ -1478,7 +1479,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
 
             {/* Prerequisites Block Banner */}
             {isEvalBlocked && !isFinalized && !isRunning && (
-              <View style={[styles.blockingBanner, { backgroundColor: "rgba(240, 182, 90, 0.12)", borderColor: colors.warning }]}>
+              <View style={[styles.blockingBanner, { backgroundColor: "rgba(190, 120, 10, 0.12)", borderColor: colors.warning }]}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 4 }}>
                   <Ionicons name="warning" size={18} color={colors.warning} />
                   <Text style={[styles.blockingTitle, { color: colors.warning }]}>
@@ -1496,10 +1497,10 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
               <View
                 style={[
                   styles.finalizedNoticeCard,
-                  { backgroundColor: "rgba(37, 200, 120, 0.08)", borderColor: colors.brandGreen },
+                  { backgroundColor: "rgba(23, 130, 87, 0.08)", borderColor: colors.brandGreen },
                 ]}
               >
-                <View style={[styles.finalizedIconBox, { backgroundColor: "rgba(37, 200, 120, 0.16)" }]}>
+                <View style={[styles.finalizedIconBox, { backgroundColor: "rgba(23, 130, 87, 0.16)" }]}>
                   <Ionicons name="lock-closed" size={20} color={colors.brandGreen} />
                 </View>
                 <View style={{ flex: 1 }}>
@@ -1515,7 +1516,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
 
             {/* Issues Warning Panel */}
             {!isFinalized && issues && issues.length > 0 && (
-              <View style={[styles.issuesBanner, { backgroundColor: "rgba(240, 182, 90, 0.12)", borderColor: colors.warning }]}>
+              <View style={[styles.issuesBanner, { backgroundColor: "rgba(190, 120, 10, 0.12)", borderColor: colors.warning }]}>
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 6 }}>
                   <Ionicons name="warning" size={18} color={colors.warning} />
                   <Text style={[styles.issuesTitle, { color: colors.warning }]}>
@@ -1559,7 +1560,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
                     style={[
                       styles.progressBarFill,
                       {
-                        backgroundColor: colors.primary,
+                        backgroundColor: colors.primaryFill,
                         width: `${Math.min(100, Math.round((totalProvisionalMarks / totalMaxMarks) * 100))}%`,
                         borderRadius: 4,
                       },
@@ -1650,14 +1651,14 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
                     <View style={{ flexDirection: "row", gap: 6 }}>
                       <TouchableOpacity
                         onPress={() => handleViewOriginalPage(studentAns, q)}
-                        style={[styles.smallActionBtn, { backgroundColor: "rgba(7, 159, 189, 0.1)", borderRadius: 6 }]}
+                        style={[styles.smallActionBtn, { backgroundColor: "rgba(15, 118, 110, 0.1)", borderRadius: 6 }]}
                       >
                         <Ionicons name="document-text-outline" size={13} color={colors.primary} />
                         <Text style={[styles.smallActionBtnText, { color: colors.primary }]}>View Page</Text>
                       </TouchableOpacity>
                       <TouchableOpacity
                         onPress={() => handleOpenEditTranscription(studentAns, q, item)}
-                        style={[styles.smallActionBtn, { backgroundColor: "rgba(7, 159, 189, 0.1)", borderRadius: 6 }]}
+                        style={[styles.smallActionBtn, { backgroundColor: "rgba(15, 118, 110, 0.1)", borderRadius: 6 }]}
                       >
                         <Ionicons name="create-outline" size={13} color={colors.primary} />
                         <Text style={[styles.smallActionBtnText, { color: colors.primary }]}>Edit Answer</Text>
@@ -1759,7 +1760,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
                   )}
 
                   {item.error && (
-                    <View style={[styles.itemErrorBox, { backgroundColor: "rgba(239, 100, 100, 0.08)", borderColor: colors.error }]}>
+                    <View style={[styles.itemErrorBox, { backgroundColor: "rgba(196, 58, 40, 0.08)", borderColor: colors.error }]}>
                       <Ionicons name="alert-circle-outline" size={14} color={colors.error} />
                       <Text style={[styles.itemErrorText, { color: colors.error }]}>
                         {item.error}
@@ -1768,7 +1769,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
                   )}
 
                   {item.teacher_overridden && (
-                    <View style={[styles.overriddenBadge, { backgroundColor: "rgba(239, 100, 100, 0.1)" }]}>
+                    <View style={[styles.overriddenBadge, { backgroundColor: "rgba(196, 58, 40, 0.1)" }]}>
                       <Ionicons name="pencil" size={14} color={colors.error} />
                       <Text style={[styles.overriddenText, { color: colors.error }]}>
                         Teacher Override Recorded: {item.final_marks} marks
@@ -1879,7 +1880,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
           <TouchableOpacity
             style={[
               styles.questionPickItem,
-              { backgroundColor: mapQuestionId === "" ? "rgba(7, 159, 189, 0.12)" : colors.surface },
+              { backgroundColor: mapQuestionId === "" ? "rgba(15, 118, 110, 0.12)" : colors.surface },
               mapQuestionId === "" && { borderColor: colors.primary, borderWidth: 1 },
             ]}
             onPress={() => setMapQuestionId("")}
@@ -1893,7 +1894,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
               key={q.id}
               style={[
                 styles.questionPickItem,
-                { backgroundColor: mapQuestionId === q.id ? "rgba(7, 159, 189, 0.12)" : colors.surface },
+                { backgroundColor: mapQuestionId === q.id ? "rgba(15, 118, 110, 0.12)" : colors.surface },
                 mapQuestionId === q.id && { borderColor: colors.primary, borderWidth: 1 },
               ]}
               onPress={() => setMapQuestionId(q.id)}
@@ -2039,7 +2040,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
                   key={a.id}
                   style={[
                     styles.questionPickItem,
-                    { backgroundColor: selected ? "rgba(7, 159, 189, 0.12)" : colors.surface },
+                    { backgroundColor: selected ? "rgba(15, 118, 110, 0.12)" : colors.surface },
                     selected && { borderColor: colors.primary, borderWidth: 1 },
                   ]}
                   onPress={() => setMergeOtherAnswerId(a.id)}
@@ -2126,7 +2127,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
             style={{
               padding: 10,
               borderRadius: 8,
-              backgroundColor: "rgba(7, 159, 189, 0.08)",
+              backgroundColor: "rgba(15, 118, 110, 0.08)",
               borderWidth: 1,
               borderColor: colors.border,
               marginBottom: 12,
@@ -2414,7 +2415,7 @@ export const EvaluationDetailScreen: React.FC<EvaluationDetailScreenProps> = ({
                   paddingVertical: 10,
                   paddingHorizontal: 18,
                   borderRadius: 8,
-                  backgroundColor: colors.primary,
+                  backgroundColor: colors.primaryFill,
                 }}
               >
                 <Ionicons name="pencil" size={16} color="#FFFFFF" />
@@ -2599,6 +2600,7 @@ const styles = StyleSheet.create({
   },
   sectionHeading: {
     fontSize: 18,
+    fontFamily: fonts.display,
     fontWeight: "700",
     marginBottom: 12,
   },
@@ -2656,7 +2658,7 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 8,
     borderWidth: 1,
-    backgroundColor: "rgba(7, 159, 189, 0.05)",
+    backgroundColor: "rgba(15, 118, 110, 0.05)",
     marginBottom: 10,
   },
   aiHeader: {

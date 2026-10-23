@@ -14,6 +14,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../theme/ThemeContext";
 import { Question } from "../types";
 import { api } from "../api/client";
+import { fonts } from "../theme/colors";
 
 // ==========================================
 // 1. EDIT / ADD QUESTION MODAL
@@ -178,7 +179,7 @@ export const EditQuestionModal: React.FC<EditQuestionModalProps> = ({
               <Text style={[modalStyles.btnCancelText, { color: colors.textSecondary }]}>Cancel</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity onPress={handleSave} disabled={saving} style={[modalStyles.btn, modalStyles.btnPrimary, { backgroundColor: colors.primary }]}>
+            <TouchableOpacity onPress={handleSave} disabled={saving} style={[modalStyles.btn, modalStyles.btnPrimary, { backgroundColor: colors.primaryFill }]}>
               {saving ? (
                 <ActivityIndicator size="small" color="#FFFFFF" />
               ) : (
@@ -330,7 +331,7 @@ export const SplitQuestionModal: React.FC<SplitQuestionModalProps> = ({
             <TouchableOpacity onPress={onClose} style={[modalStyles.btn, modalStyles.btnCancel, { borderColor: colors.border }]}>
               <Text style={[modalStyles.btnCancelText, { color: colors.textSecondary }]}>Cancel</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={handleSplit} disabled={saving} style={[modalStyles.btn, modalStyles.btnPrimary, { backgroundColor: colors.primary }]}>
+            <TouchableOpacity onPress={handleSplit} disabled={saving} style={[modalStyles.btn, modalStyles.btnPrimary, { backgroundColor: colors.primaryFill }]}>
               {saving ? <ActivityIndicator size="small" color="#FFFFFF" /> : <Text style={modalStyles.btnPrimaryText}>Execute Split</Text>}
             </TouchableOpacity>
           </View>
@@ -419,7 +420,7 @@ export const MergeQuestionModal: React.FC<MergeQuestionModalProps> = ({
                     modalStyles.selectOption,
                     {
                       borderColor: isSelected ? colors.primary : colors.border,
-                      backgroundColor: isSelected ? "rgba(7, 159, 189, 0.12)" : colors.background,
+                      backgroundColor: isSelected ? "rgba(15, 118, 110, 0.12)" : colors.background,
                     },
                   ]}
                 >
@@ -445,7 +446,7 @@ export const MergeQuestionModal: React.FC<MergeQuestionModalProps> = ({
             <TouchableOpacity onPress={onClose} style={[modalStyles.btn, modalStyles.btnCancel, { borderColor: colors.border }]}>
               <Text style={[modalStyles.btnCancelText, { color: colors.textSecondary }]}>Cancel</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={handleMerge} disabled={saving || !targetId} style={[modalStyles.btn, modalStyles.btnPrimary, { backgroundColor: colors.primary, opacity: targetId ? 1 : 0.6 }]}>
+            <TouchableOpacity onPress={handleMerge} disabled={saving || !targetId} style={[modalStyles.btn, modalStyles.btnPrimary, { backgroundColor: colors.primaryFill, opacity: targetId ? 1 : 0.6 }]}>
               {saving ? <ActivityIndicator size="small" color="#FFFFFF" /> : <Text style={modalStyles.btnPrimaryText}>Merge Questions</Text>}
             </TouchableOpacity>
           </View>
@@ -559,6 +560,7 @@ const modalStyles = StyleSheet.create({
   },
   title: {
     fontSize: 17,
+    fontFamily: fonts.display,
     fontWeight: "700",
   },
   closeBtn: {

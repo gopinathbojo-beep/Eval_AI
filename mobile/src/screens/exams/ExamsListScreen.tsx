@@ -162,7 +162,7 @@ export const ExamsListScreen: React.FC<ExamsListScreenProps> = ({ navigation }) 
                   style={[
                     styles.filterChip,
                     {
-                      backgroundColor: isSelected ? "rgba(7, 159, 189, 0.18)" : colors.surface,
+                      backgroundColor: isSelected ? "rgba(15, 118, 110, 0.18)" : colors.surface,
                       borderColor: isSelected ? colors.primary : colors.border,
                     },
                   ]}

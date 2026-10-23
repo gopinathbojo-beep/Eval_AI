@@ -1,5 +1,15 @@
+import { Platform } from "react-native";
+
+/*
+ * "Examiner's Desk" palette, shared with the web app (frontend/src/index.css): cream exam paper,
+ * teal fountain ink, a coral marking pen and a yellow highlighter. Dark mode is "Midnight Slate & Teal".
+ */
 export interface ThemeColors {
   primary: string;
+  /** Solid fill behind white text (buttons, active tabs); `primary` itself is for text and icons */
+  primaryFill: string;
+  /** Pale tint of the primary ink, for selected rows, soft buttons and icon wells */
+  primarySoft: string;
   primaryDeep: string;
   secondary: string;
   brandGreen: string;
@@ -21,6 +31,8 @@ export interface ThemeColors {
   danger: string;
   warning: string;
   warningSoft: string;
+  /** Highlighter yellow, for emphasis behind numbers that need the teacher's attention */
+  highlight: string;
   card: string;
   tabBar: string;
   tabBarActive: string;
@@ -30,63 +42,74 @@ export interface ThemeColors {
 }
 
 export const lightColors: ThemeColors = {
-  primary: "#18447E",        // Academic Deep Navy
-  primaryDeep: "#0F294A",    // Deep Navy Shade
-  secondary: "#2B6CB0",      // Slate Blue
-  brandGreen: "#16A34A",     // Verified Emerald Green
-  lightGreen: "#22C55E",     // Light Green
-  gradient: ["#18447E", "#2B6CB0"],
-  gradientStart: "#18447E",
-  gradientEnd: "#2B6CB0",
-  background: "#F8FAFC",     // Neutral Academic Canvas
-  surface: "#FFFFFF",        // Pure Surface
-  surfaceElevated: "#F1F5F9",// Soft Slate Surface
-  text: "#0F172A",           // High-contrast Slate 900
-  textSecondary: "#475569",  // Readable Secondary Text
-  mutedText: "#94A3B8",      // Subtitle / Placeholder Muted
-  border: "#E2E8F0",         // Subtle Thin Border
-  success: "#16A34A",
-  successSoft: "rgba(22, 163, 74, 0.12)",
-  error: "#DC2626",          // Error / Mark Red
-  errorSoft: "rgba(220, 38, 38, 0.12)",
-  danger: "#DC2626",
-  warning: "#D97706",        // Amber Warning
-  warningSoft: "rgba(217, 119, 6, 0.12)",
-  card: "#FFFFFF",
-  tabBar: "#FFFFFF",
-  tabBarActive: "#18447E",
-  tabBarInactive: "#64748B",
-  inputBackground: "#F8FAFC",
-  penScore: "#C23B2E",       // Teacher Pen Red
+  primary: "#0E5E70",        // Teal fountain ink
+  primaryFill: "#0F766E",    // Solid teal behind white text
+  primarySoft: "#DEEEF0",
+  primaryDeep: "#0A4552",
+  secondary: "#0F766E",
+  brandGreen: "#17734D",     // Green tick
+  lightGreen: "#2E9E6B",
+  gradient: ["#0F766E", "#0E5E70"],
+  gradientStart: "#0F766E",
+  gradientEnd: "#0E5E70",
+  background: "#FAF5E6",     // Cream desk paper
+  surface: "#FFFCF3",        // Fresh answer sheet
+  surfaceElevated: "#F3ECDA",// Folded margin
+  text: "#18211D",           // Green-black ink
+  textSecondary: "#5A655F",  // Graphite
+  mutedText: "#8A918C",
+  border: "#E5DBC3",         // Pencil rule
+  success: "#17734D",
+  successSoft: "#E2F1E7",
+  error: "#C43A28",          // Coral marking pen
+  errorSoft: "#FBE7E1",
+  danger: "#C43A28",
+  warning: "#A86200",        // Amber query
+  warningSoft: "#F9ECCD",
+  highlight: "#FFD666",
+  card: "#FFFCF3",
+  tabBar: "#FFFCF3",
+  tabBarActive: "#0E5E70",
+  tabBarInactive: "#5A655F",
+  inputBackground: "#FAF5E6",
+  penScore: "#C43A28",
 };
 
 export const darkColors: ThemeColors = {
-  primary: "#60A5FA",        // Light Academic Blue
-  primaryDeep: "#0F172A",
-  secondary: "#38BDF8",      // Sky Accent
-  brandGreen: "#22C55E",     // Emerald
-  lightGreen: "#4ADE80",
-  gradient: ["#1E3A8A", "#2563EB"],
-  gradientStart: "#1E3A8A",
-  gradientEnd: "#2563EB",
-  background: "#0B132B",     // Deep Slate Navy Background
-  surface: "#132238",        // Dark Card Surface
-  surfaceElevated: "#1C304A",// Elevated Dark Surface
-  text: "#F8FAFC",           // Light Crisp Text
-  textSecondary: "#94A3B8",  // Slate Muted
-  mutedText: "#64748B",
-  border: "#233852",
-  success: "#22C55E",
-  successSoft: "rgba(34, 197, 94, 0.16)",
+  primary: "#5EEAD4",        // Teal highlight
+  primaryFill: "#0F766E",
+  primarySoft: "#133A3F",
+  primaryDeep: "#0B171B",
+  secondary: "#2DD4BF",
+  brandGreen: "#34D399",
+  lightGreen: "#6EE7B7",
+  gradient: ["#0F766E", "#115E59"],
+  gradientStart: "#0F766E",
+  gradientEnd: "#115E59",
+  background: "#111827",     // Midnight slate
+  surface: "#1F2937",
+  surfaceElevated: "#283344",
+  text: "#E5E7EB",
+  textSecondary: "#9CA3AF",
+  mutedText: "#6B7280",
+  border: "#374151",
+  success: "#34D399",
+  successSoft: "#133A32",
   error: "#F87171",
-  errorSoft: "rgba(248, 113, 113, 0.16)",
+  errorSoft: "#452026",
   danger: "#F87171",
   warning: "#FBBF24",
-  warningSoft: "rgba(251, 191, 36, 0.16)",
-  card: "#132238",
-  tabBar: "#0B132B",
-  tabBarActive: "#60A5FA",
-  tabBarInactive: "#64748B",
-  inputBackground: "#0E1B2E",
+  warningSoft: "#423416",
+  highlight: "#FBBF24",
+  card: "#1F2937",
+  tabBar: "#0B171B",         // Chalkboard cover
+  tabBarActive: "#5EEAD4",
+  tabBarInactive: "#9CA3AF",
+  inputBackground: "#182130",
   penScore: "#F87171",
+};
+
+/** Serif for page titles and headings, like the web app's Source Serif; body text stays the system sans. */
+export const fonts = {
+  display: Platform.select({ ios: "Georgia", android: "serif", default: "Georgia" }) as string,
 };

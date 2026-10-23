@@ -295,7 +295,7 @@ export const StudentsScreen: React.FC<StudentsScreenProps> = ({ route }) => {
               styles.classChip,
               {
                 backgroundColor:
-                  selectedClassId === null ? "rgba(7, 159, 189, 0.18)" : colors.surface,
+                  selectedClassId === null ? "rgba(15, 118, 110, 0.18)" : colors.surface,
                 borderColor: selectedClassId === null ? colors.primary : colors.border,
               },
             ]}
@@ -319,7 +319,7 @@ export const StudentsScreen: React.FC<StudentsScreenProps> = ({ route }) => {
                 style={[
                   styles.classChip,
                   {
-                    backgroundColor: isSelected ? "rgba(7, 159, 189, 0.18)" : colors.surface,
+                    backgroundColor: isSelected ? "rgba(15, 118, 110, 0.18)" : colors.surface,
                     borderColor: isSelected ? colors.primary : colors.border,
                   },
                 ]}
@@ -345,7 +345,7 @@ export const StudentsScreen: React.FC<StudentsScreenProps> = ({ route }) => {
                 styles.chip,
                 {
                   backgroundColor:
-                    sortKey === "roll" ? "rgba(7, 159, 189, 0.15)" : colors.surface,
+                    sortKey === "roll" ? "rgba(15, 118, 110, 0.15)" : colors.surface,
                   borderColor: sortKey === "roll" ? colors.primary : colors.border,
                 },
               ]}
@@ -366,7 +366,7 @@ export const StudentsScreen: React.FC<StudentsScreenProps> = ({ route }) => {
                 styles.chip,
                 {
                   backgroundColor:
-                    sortKey === "name" ? "rgba(7, 159, 189, 0.15)" : colors.surface,
+                    sortKey === "name" ? "rgba(15, 118, 110, 0.15)" : colors.surface,
                   borderColor: sortKey === "name" ? colors.primary : colors.border,
                 },
               ]}
@@ -459,7 +459,7 @@ export const StudentsScreen: React.FC<StudentsScreenProps> = ({ route }) => {
                 <View
                   style={[
                     styles.avatarCircle,
-                    { backgroundColor: "rgba(7, 159, 189, 0.12)" },
+                    { backgroundColor: "rgba(15, 118, 110, 0.12)" },
                   ]}
                 >
                   <Text style={[styles.avatarText, { color: colors.primary }]}>
@@ -569,7 +569,7 @@ export const StudentsScreen: React.FC<StudentsScreenProps> = ({ route }) => {
                 style={[
                   styles.modalClassChip,
                   {
-                    backgroundColor: isSelected ? "rgba(7, 159, 189, 0.18)" : colors.surface,
+                    backgroundColor: isSelected ? "rgba(15, 118, 110, 0.18)" : colors.surface,
                     borderColor: isSelected ? colors.primary : colors.border,
                   },
                 ]}

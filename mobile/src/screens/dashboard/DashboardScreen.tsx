@@ -18,6 +18,7 @@ import { Button } from "../../components/Button";
 import { Loading } from "../../components/Loading";
 import { Empty } from "../../components/Empty";
 import { PenScore } from "../../components/PenScore";
+import { fonts } from "../../theme/colors";
 
 interface DashboardScreenProps {
   navigation: any;
@@ -121,7 +122,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({ navigation }) 
             styles.aiStatusBanner,
             {
               backgroundColor: aiStatus?.available ? colors.successSoft : colors.warningSoft,
-              borderColor: aiStatus?.available ? "rgba(22, 163, 74, 0.3)" : "rgba(217, 119, 6, 0.3)",
+              borderColor: aiStatus?.available ? "rgba(23, 130, 87, 0.3)" : "rgba(190, 120, 10, 0.3)",
             },
           ]}
         >
@@ -326,6 +327,7 @@ const styles = StyleSheet.create({
   },
   teacherName: {
     fontSize: 22,
+    fontFamily: fonts.display,
     fontWeight: "800",
     marginTop: 2,
     letterSpacing: 0.2,

@@ -1,9 +1,10 @@
+import { useToast } from "../components/Toast";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useApi } from "../hooks/useApi";
 import { downloadFile } from "../api/client";
 import type { Dashboard as D } from "../types";
-import {
+import { LinkButton,
   Button,
   Card,
   Empty,
@@ -29,14 +30,16 @@ import { useAuth } from "../context/Auth";
 export default function Dashboard() {
   const { teacher } = useAuth();
   const { data, error, loading } = useApi<D>("/dashboard");
+  const toast = useToast();
   const [downloading, setDownloading] = useState(false);
 
   const handleDownloadMarksheet = async () => {
     try {
       setDownloading(true);
       await downloadFile("/reports/marksheet", "ADEM_Student_Marksheet.xlsx");
+      toast("Marksheet downloaded.");
     } catch (err: any) {
-      alert(err.message || "Failed to download marksheet.");
+      toast(err.message || "Failed to download marksheet.", "mark");
     } finally {
       setDownloading(false);
     }
@@ -74,11 +77,9 @@ export default function Dashboard() {
           >
             Export Marksheet (.xlsx)
           </Button>
-          <Link to="/exams/new">
-            <Button variant="primary">
+          <LinkButton to="/exams/new" variant="primary">
               Create Exam
-            </Button>
-          </Link>
+            </LinkButton>
         </div>
       </div>
 
@@ -130,7 +131,7 @@ export default function Dashboard() {
           to="/exams/new"
           className="group relative flex items-center gap-3.5 rounded-lg border border-line bg-surface p-3.5 shadow-card transition-ui hover:-translate-y-0.5 hover:border-pen/40"
         >
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-pen/10 text-pen group-hover:bg-pen group-hover:text-white transition-colors">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-pen/10 text-pen group-hover:bg-pen group-hover:text-on-pen transition-colors">
             <IconPlus size={18} />
           </div>
           <div className="min-w-0">
@@ -143,7 +144,7 @@ export default function Dashboard() {
           to="/exams"
           className="group relative flex items-center gap-3.5 rounded-lg border border-line bg-surface p-3.5 shadow-card transition-ui hover:-translate-y-0.5 hover:border-pen/40"
         >
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-ok/10 text-ok group-hover:bg-ok group-hover:text-white transition-colors">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-ok/10 text-ok group-hover:bg-ok group-hover:text-surface transition-colors">
             <IconFileText size={18} />
           </div>
           <div className="min-w-0">
@@ -156,7 +157,7 @@ export default function Dashboard() {
           to="/evaluations"
           className="group relative flex items-center gap-3.5 rounded-lg border border-line bg-surface p-3.5 shadow-card transition-ui hover:-translate-y-0.5 hover:border-pen/40"
         >
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-warn/10 text-warn group-hover:bg-warn group-hover:text-white transition-colors">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-warn/10 text-warn group-hover:bg-warn group-hover:text-surface transition-colors">
             <IconClock size={18} />
           </div>
           <div className="min-w-0">
@@ -169,7 +170,7 @@ export default function Dashboard() {
           to="/results"
           className="group relative flex items-center gap-3.5 rounded-lg border border-line bg-surface p-3.5 shadow-card transition-ui hover:-translate-y-0.5 hover:border-pen/40"
         >
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-pen-soft text-pen group-hover:bg-pen group-hover:text-white transition-colors">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-pen-soft text-pen group-hover:bg-pen group-hover:text-on-pen transition-colors">
             <IconCheckCircle size={18} />
           </div>
           <div className="min-w-0">
@@ -205,11 +206,9 @@ export default function Dashboard() {
               hint="Create your first exam to get started."
               icon={<IconExam size={24} />}
               action={
-                <Link to="/exams/new">
-                  <Button variant="primary" small>
+                <LinkButton to="/exams/new" variant="primary" small>
                     Create Exam
-                  </Button>
-                </Link>
+                  </LinkButton>
               }
             />
           ) : (
@@ -280,7 +279,7 @@ export default function Dashboard() {
                         <p className="truncate font-semibold text-sm text-ink group-hover:text-brown transition-colors">
                           {e.student.name}
                         </p>
-                        <span className="rounded bg-sunken px-1.5 py-0.2 text-[11px] font-mono text-mute">
+                        <span className="rounded bg-sunken px-1.5 py-px text-[11px] font-mono text-mute">
                           {e.student.roll_number}
                         </span>
                       </div>

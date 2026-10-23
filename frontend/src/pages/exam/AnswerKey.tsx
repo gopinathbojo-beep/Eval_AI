@@ -6,8 +6,8 @@ import { BUSY_DOC, pct } from "../../utils/format";
 import { Badge, Button, Card, Confirm, Empty, ErrorPanel, Field, Input, Loading, MathTextarea, MathView, Modal, Select, StatusBadge, Textarea } from "../../components/ui";
 import { DocProgress, UploadZone } from "../../components/DocPanel";
 import { PageViewer } from "../../components/PageViewer";
+import { IconChevronDown } from "../../components/Icons";
 import { CriteriaEditor } from "../../components/CriteriaEditor";
-import { ExtractionDiagnosticsModal } from "../../components/ExtractionDiagnosticsModal";
 import { SaveToVerifiedCollectionModal } from "../../components/SaveToVerifiedCollectionModal";
 import { useExam } from "../ExamWorkspace";
 
@@ -22,7 +22,6 @@ export default function AnswerKey() {
   const [dlg, setDlg] = useState<{ kind: "edit" | "delete" | "add" | "split" | "merge"; row?: AnswerKeyRow; qid?: string } | null>(null);
   const [err, setErr] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
-  const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [referenceTarget, setReferenceTarget] = useState<AnswerKeyRow | null>(null);
   const [activeTab, setActiveTab] = useState<"both" | "scan" | "answers">("both");
 
@@ -106,7 +105,7 @@ export default function AnswerKey() {
       {isLocked && (
         <Card className="flex items-center justify-between border-ok/30 bg-ok-soft/30 p-4 shadow-soft">
           <div className="flex items-center gap-3">
-            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-ok text-white font-bold text-sm">
+            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-ok text-surface font-bold text-sm">
               ✓
             </span>
             <div>
@@ -232,9 +231,6 @@ export default function AnswerKey() {
                 </button>
               </div>
 
-              <Button small variant="soft" onClick={() => setShowDiagnostics(true)}>
-                Diagnostics
-              </Button>
               {!isLocked && (
                 <Button small variant="soft" onClick={() => setShowReplace((v) => !v)}>
                   {showReplace ? "Hide Options" : "Replace / Re-generate"}
@@ -299,7 +295,9 @@ export default function AnswerKey() {
                     <button
                       type="button"
                       className="block w-full text-left cursor-pointer"
+                      aria-expanded={isSelected}
                       onClick={() => {
+                        if (isSelected) return setSel(null);
                         setSel(r.id);
                         if (r.page_number) setPage(r.page_number);
                       }}
@@ -318,7 +316,7 @@ export default function AnswerKey() {
                       {r.mapping_note && r.mapping_status !== "MAPPED" && (
                         <p className="mt-1 text-xs font-semibold text-mark">{r.mapping_note}</p>
                       )}
-                      <div className="doc-text mt-2.5 line-clamp-4 text-sm text-ink/90">
+                      <div className={`doc-text mt-2.5 text-sm text-ink/90 ${isSelected ? "" : "line-clamp-4"}`}>
                         <MathView text={r.answer_text} />
                       </div>
                       {r.criteria.length > 0 && (
@@ -337,6 +335,10 @@ export default function AnswerKey() {
                           </div>
                         </div>
                       )}
+                      <span className="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold text-pen">
+                        {isSelected ? "Show less" : "Show more"}
+                        <IconChevronDown size={13} className={`transition-transform ${isSelected ? "rotate-180" : ""}`} />
+                      </span>
                     </button>
 
                     {/* Action Buttons */}
@@ -396,7 +398,6 @@ export default function AnswerKey() {
         />
       )}
 
-      {showDiagnostics && <ExtractionDiagnosticsModal onClose={() => setShowDiagnostics(false)} />}
       {referenceTarget && (
         <SaveToVerifiedCollectionModal
           initialData={{

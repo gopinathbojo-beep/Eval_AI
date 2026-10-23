@@ -10,6 +10,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../theme/ThemeContext";
 import { Button } from "./Button";
+import { fonts } from "../theme/colors";
 
 interface CalendarPickerModalProps {
   visible: boolean;
@@ -221,7 +222,7 @@ export const CalendarPickerModal: React.FC<CalendarPickerModalProps> = ({
                     activeOpacity={0.7}
                     style={[
                       styles.dayCell,
-                      isSelected && { backgroundColor: colors.primary, borderRadius: 20 },
+                      isSelected && { backgroundColor: colors.primaryFill, borderRadius: 20 },
                       isToday && !isSelected && {
                         borderColor: colors.primary,
                         borderWidth: 1.5,
@@ -315,6 +316,7 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 16,
+    fontFamily: fonts.display,
     fontWeight: "700",
   },
   subtitle: {

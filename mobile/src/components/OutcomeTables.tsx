@@ -19,7 +19,7 @@ function OutcomeCard({ title, rows }: { title: string; rows: OutcomeRow[] }) {
           </View>
           <View style={{ flex: 1, gap: 4 }}>
             <View style={[styles.track, { backgroundColor: colors.surfaceElevated }]}>
-              <View style={[styles.fill, { backgroundColor: colors.primary, width: `${Math.min(100, r.percentage ?? 0)}%` }]} />
+              <View style={[styles.fill, { backgroundColor: colors.primaryFill, width: `${Math.min(100, r.percentage ?? 0)}%` }]} />
             </View>
             <Text style={{ fontSize: 11, color: colors.textSecondary }}>
               {fmt(r.scored ?? r.average_scored)} / {fmt(r.max_marks)} marks

@@ -144,7 +144,7 @@ export const ResultsListScreen: React.FC<ResultsListScreenProps> = ({ navigation
                 styles.chip,
                 {
                   backgroundColor: filterFinalizedOnly
-                    ? "rgba(81, 188, 117, 0.18)"
+                    ? "rgba(23, 130, 87, 0.18)"
                     : colors.surface,
                   borderColor: filterFinalizedOnly ? colors.brandGreen : colors.border,
                 },
@@ -165,7 +165,7 @@ export const ResultsListScreen: React.FC<ResultsListScreenProps> = ({ navigation
               style={[
                 styles.chip,
                 {
-                  backgroundColor: "rgba(7, 159, 189, 0.15)",
+                  backgroundColor: "rgba(15, 118, 110, 0.15)",
                   borderColor: colors.primary,
                 },
               ]}

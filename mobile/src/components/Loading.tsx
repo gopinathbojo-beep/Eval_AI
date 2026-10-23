@@ -11,7 +11,13 @@ export const Loading: React.FC<LoadingProps> = ({ message = "Loading...", style 
   const { colors } = useTheme();
 
   return (
-    <View style={[styles.container, style]}>
+    <View
+      style={[styles.container, style]}
+      accessible
+      accessibilityRole="progressbar"
+      accessibilityLabel={message || "Loading"}
+      accessibilityLiveRegion="polite"
+    >
       <ActivityIndicator size="large" color={colors.primary} />
       {message ? (
         <Text style={[styles.message, { color: colors.textSecondary }]}>

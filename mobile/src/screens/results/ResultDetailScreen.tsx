@@ -19,6 +19,7 @@ import { PenScore } from "../../components/PenScore";
 import { Loading } from "../../components/Loading";
 import { Empty } from "../../components/Empty";
 import { OutcomeTables } from "../../components/OutcomeTables";
+import { fonts } from "../../theme/colors";
 
 interface ResultDetailScreenProps {
   route: any;
@@ -254,6 +255,7 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     fontSize: 17,
+    fontFamily: fonts.display,
     fontWeight: "700",
     marginBottom: 12,
   },

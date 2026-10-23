@@ -254,7 +254,7 @@ export function TemplateEditor({ kind, onClose }: { kind: TemplateKind; onClose:
                   </Field>
                   <Field label={`Logo size: ${draft.style.logo_size}`}>
                     {(id) => (
-                      <input id={id} type="range" min={30} max={110} step={2} className="w-full" value={draft.style.logo_size}
+                      <input id={id} type="range" min={30} max={160} step={2} className="w-full" value={draft.style.logo_size}
                         onChange={(e) => set({ style: { ...draft.style, logo_size: Number(e.target.value) } })} />
                     )}
                   </Field>

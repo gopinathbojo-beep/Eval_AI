@@ -16,6 +16,7 @@ import { Button } from "../../components/Button";
 import { Input } from "../../components/Input";
 import { Badge } from "../../components/Badge";
 import { SchoolDetailsCard } from "../../components/SchoolReports";
+import { fonts } from "../../theme/colors";
 
 export const SettingsScreen: React.FC<{ navigation?: any }> = ({ navigation }) => {
   const { teacher, logout } = useAuth();
@@ -87,7 +88,7 @@ export const SettingsScreen: React.FC<{ navigation?: any }> = ({ navigation }) =
           <View
             style={[
               styles.avatar,
-              { backgroundColor: "rgba(7, 159, 189, 0.15)", borderColor: colors.primary },
+              { backgroundColor: "rgba(15, 118, 110, 0.15)", borderColor: colors.primary },
             ]}
           >
             <Ionicons name="person" size={28} color={colors.primary} />
@@ -125,7 +126,7 @@ export const SettingsScreen: React.FC<{ navigation?: any }> = ({ navigation }) =
                 style={[
                   styles.themeChip,
                   {
-                    backgroundColor: isSelected ? "rgba(7, 159, 189, 0.18)" : colors.surfaceElevated,
+                    backgroundColor: isSelected ? "rgba(15, 118, 110, 0.18)" : colors.surfaceElevated,
                     borderColor: isSelected ? colors.primary : colors.border,
                   },
                 ]}
@@ -347,6 +348,7 @@ const styles = StyleSheet.create({
   },
   cardTitle: {
     fontSize: 16,
+    fontFamily: fonts.display,
     fontWeight: "700",
     marginBottom: 4,
   },

@@ -45,7 +45,7 @@ DEFAULTS: dict[str, dict] = {
         "signers": ["Class Teacher", "Principal", "Parent / Guardian"],
     },
 }
-_STYLE = {"accent": "#1E3A5F", "font": "default", "font_size": 9.0, "logo_size": 56, "logo_position": "left",
+_STYLE = {"accent": "#1E3A5F", "font": "default", "font_size": 9.0, "logo_size": 80, "logo_position": "left",
           "borders": "grid", "zebra": True, "paper": "A4"}
 _TEXT = {"footer": "", "note": ""}
 FONTS = ("default", "helvetica", "times")
@@ -86,7 +86,7 @@ def normalize(kind: str, config: dict | None) -> dict:
     style["paper"] = style["paper"] if style["paper"] in PAPERS else "A4"
     try:
         style["font_size"] = min(12.0, max(7.0, float(style["font_size"])))
-        style["logo_size"] = int(min(110, max(30, float(style["logo_size"]))))
+        style["logo_size"] = int(min(160, max(30, float(style["logo_size"]))))
     except (TypeError, ValueError):
         style["font_size"], style["logo_size"] = _STYLE["font_size"], _STYLE["logo_size"]
     style["zebra"] = bool(style["zebra"])

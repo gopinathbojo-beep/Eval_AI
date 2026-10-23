@@ -5,8 +5,8 @@ import type { Question, QuestionsResponse } from "../../types";
 import { BUSY_DOC, K_LEVELS, fmt, pct } from "../../utils/format";
 import { Badge, Button, Card, Confirm, Empty, ErrorPanel, Field, Input, Loading, MathTextarea, MathView, Modal, MoreMenu, Select, StatusBadge } from "../../components/ui";
 import { PageViewer } from "../../components/PageViewer";
+import { IconChevronDown } from "../../components/Icons";
 import { AuthImage } from "../../components/AuthImage";
-import { ExtractionDiagnosticsModal } from "../../components/ExtractionDiagnosticsModal";
 import { SaveToVerifiedCollectionModal } from "../../components/SaveToVerifiedCollectionModal";
 import { useExam } from "../ExamWorkspace";
 
@@ -28,7 +28,6 @@ export default function Questions() {
   const [actionErr, setActionErr] = useState<unknown>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
-  const [showDiagnostics, setShowDiagnostics] = useState(false);
   const [referenceTarget, setReferenceTarget] = useState<Question | null>(null);
   const [activeTab, setActiveTab] = useState<"both" | "scan" | "questions">("both");
   const [expandedPassages, setExpandedPassages] = useState<Record<string, boolean>>({});
@@ -166,10 +165,6 @@ export default function Questions() {
               Questions
             </button>
           </div>
-
-          <Button small variant="soft" onClick={() => setShowDiagnostics(true)}>
-            Diagnostics
-          </Button>
 
           {exam.status !== "FINALIZED" && qs.some((q) => q.k_level_source === "SUGGESTED") && (
             <Button
@@ -447,7 +442,9 @@ export default function Questions() {
                         <button
                           type="button"
                           className="block w-full text-left cursor-pointer"
+                          aria-expanded={isSelected}
                           onClick={() => {
+                            if (isSelected) return setSel(null);
                             setSel(q.id);
                             if (q.page_start) setPage(q.page_start);
                           }}
@@ -491,13 +488,17 @@ export default function Questions() {
                             </div>
                           )}
 
-                          <div className="doc-text mt-2.5 line-clamp-4 text-sm text-ink/90">
+                          <div className={`doc-text mt-2.5 text-sm text-ink/90 ${isSelected ? "" : "line-clamp-4"}`}>
                             {q.clean_question_text || q.question_text ? (
                               <MathView text={q.clean_question_text || q.question_text} />
                             ) : (
                               <em className="text-mute">(empty)</em>
                             )}
                           </div>
+                          <span className="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold text-pen">
+                            {isSelected ? "Show less" : "Show more"}
+                            <IconChevronDown size={13} className={`transition-transform ${isSelected ? "rotate-180" : ""}`} />
+                          </span>
                         </button>
 
                         <OutcomeTags q={q} disabled={exam.status === "FINALIZED"} onSaved={reload} onError={setActionErr} />
@@ -662,7 +663,6 @@ export default function Questions() {
         />
       )}
 
-      {showDiagnostics && <ExtractionDiagnosticsModal onClose={() => setShowDiagnostics(false)} />}
       {referenceTarget && (
         <SaveToVerifiedCollectionModal
           initialData={{

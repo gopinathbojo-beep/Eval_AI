@@ -64,6 +64,8 @@ export default function ContentAndKey({ defaultSubTab }: ContentAndKeyProps) {
           return (
             <button
               key={t.id}
+              type="button"
+              aria-pressed={isActive}
               onClick={() => setActiveSubTab(t.id)}
               className={`flex items-center gap-2 rounded-lg px-3.5 py-2 text-xs font-semibold transition-all ${
                 isActive
@@ -74,7 +76,7 @@ export default function ContentAndKey({ defaultSubTab }: ContentAndKeyProps) {
               <span>{t.label}</span>
               {t.badge && (
                 <span
-                  className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
+                  className={`rounded-full px-1.5 py-px text-[10px] font-bold ${
                     isActive
                       ? "bg-white/20 text-white"
                       : t.badgeTone === "ok"

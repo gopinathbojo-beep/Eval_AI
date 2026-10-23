@@ -1,5 +1,6 @@
 import {
   useEffect,
+  type KeyboardEvent as ReactKeyboardEvent,
   useId,
   useRef,
   useState,
@@ -9,6 +10,7 @@ import {
   type SelectHTMLAttributes,
   type TextareaHTMLAttributes,
 } from "react";
+import { Link, type LinkProps } from "react-router-dom";
 import { ApiError } from "../api/client";
 import { label, toneOf, type Tone } from "../utils/format";
 import { IconAlertCircle, IconAlertTriangle, IconX } from "./Icons";
@@ -65,6 +67,24 @@ type BtnProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   icon?: ReactNode;
 };
 
+const btnVariant: Record<BtnVariant, string> = {
+  primary:
+    "bg-pen text-on-pen border border-transparent shadow-[inset_0_-2px_0_rgb(0_0_0/0.22)] hover:bg-pen/90 active:translate-y-px active:shadow-none",
+  secondary:
+    "bg-surface text-ink border border-line shadow-[inset_0_-2px_0_rgb(var(--line))] hover:border-ink/30 hover:bg-hover active:translate-y-px active:shadow-none",
+  soft: "bg-sunken text-ink border border-transparent hover:bg-hover active:translate-y-px",
+  ghost: "text-pen border border-transparent hover:bg-hover active:translate-y-px",
+  danger:
+    "bg-mark text-white border border-mark shadow-[inset_0_-2px_0_rgb(0_0_0/0.22)] hover:bg-mark/90 active:translate-y-px active:shadow-none",
+  outline: "border border-pen/70 text-pen hover:bg-hover hover:border-pen active:translate-y-px",
+};
+
+/** Class string shared by <Button> and <LinkButton> so links that act as buttons look identical. */
+export const buttonCls = (variant: BtnVariant = "soft", small?: boolean, className = "") =>
+  `inline-flex items-center justify-center gap-1.5 rounded-md font-medium whitespace-nowrap transition-ui select-none disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none ${
+    small ? "px-2.5 py-1 text-xs" : "px-3.5 py-2 text-sm"
+  } ${btnVariant[variant]} ${className}`;
+
 export function Button({
   variant = "soft",
   busy,
@@ -73,27 +93,16 @@ export function Button({
   className = "",
   children,
   disabled,
+  type = "button",
   ...p
 }: BtnProps) {
-  const v: Record<BtnVariant, string> = {
-    primary:
-      "bg-pen text-white border border-transparent shadow-[inset_0_-2px_0_rgb(0_0_0/0.22)] hover:bg-pen/90 active:translate-y-px active:shadow-none",
-    secondary:
-      "bg-surface text-ink border border-line shadow-[inset_0_-2px_0_rgb(var(--line))] hover:border-ink/30 hover:bg-hover active:translate-y-px active:shadow-none",
-    soft: "bg-sunken text-ink border border-transparent hover:bg-hover active:translate-y-px",
-    ghost: "text-pen border border-transparent hover:bg-hover active:translate-y-px",
-    danger:
-      "bg-mark text-white border border-mark shadow-[inset_0_-2px_0_rgb(0_0_0/0.22)] hover:bg-mark/90 active:translate-y-px active:shadow-none",
-    outline: "border border-pen/70 text-pen hover:bg-hover hover:border-pen active:translate-y-px",
-  };
-
   return (
     <button
       {...p}
+      type={type}
       disabled={disabled || busy}
-      className={`inline-flex items-center justify-center gap-1.5 rounded-md font-medium transition-ui select-none disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none ${
-        small ? "px-2.5 py-1 text-xs" : "px-3.5 py-2 text-sm"
-      } ${v[variant]} ${className}`}
+      aria-busy={busy || undefined}
+      className={buttonCls(variant, small, className)}
     >
       {busy ? <Spinner size={small ? 13 : 15} /> : icon ? <span className="shrink-0">{icon}</span> : null}
       {children}
@@ -101,7 +110,24 @@ export function Button({
   );
 }
 
-/** A small "More" button that opens a list of less-used actions. Closes on outside click or Escape. */
+/** A router link styled as a button. Use instead of wrapping <Button> in <Link> (nested interactive elements). */
+export function LinkButton({
+  variant = "soft",
+  small,
+  icon,
+  className = "",
+  children,
+  ...p
+}: LinkProps & { variant?: BtnVariant; small?: boolean; icon?: ReactNode }) {
+  return (
+    <Link {...p} className={buttonCls(variant, small, className)}>
+      {icon && <span className="shrink-0">{icon}</span>}
+      {children}
+    </Link>
+  );
+}
+
+/** A small "More" button that opens a list of less-used actions. Closes on outside click or Escape; arrow keys move between items. */
 export function MoreMenu({
   items,
   label: text = "More",
@@ -111,10 +137,16 @@ export function MoreMenu({
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const menu = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
+    menu.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
     const close = (e: MouseEvent | KeyboardEvent) => {
-      if (e instanceof KeyboardEvent ? e.key === "Escape" : !ref.current?.contains(e.target as Node)) setOpen(false);
+      if (e instanceof KeyboardEvent) {
+        if (e.key !== "Escape") return;
+        ref.current?.querySelector<HTMLElement>("[aria-haspopup]")?.focus();
+      } else if (ref.current?.contains(e.target as Node)) return;
+      setOpen(false);
     };
     document.addEventListener("mousedown", close);
     document.addEventListener("keydown", close);
@@ -123,15 +155,33 @@ export function MoreMenu({
       document.removeEventListener("keydown", close);
     };
   }, [open]);
+  const onMenuKey = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    const els = Array.from(menu.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
+    const i = els.indexOf(document.activeElement as HTMLElement);
+    const go = (n: number) => {
+      e.preventDefault();
+      els[(n + els.length) % els.length]?.focus();
+    };
+    if (e.key === "ArrowDown") go(i + 1);
+    else if (e.key === "ArrowUp") go(i - 1);
+    else if (e.key === "Home") go(0);
+    else if (e.key === "End") go(els.length - 1);
+    else if (e.key === "Tab") setOpen(false);
+  };
   const shown = items.filter((i) => !i.hidden);
   if (!shown.length) return null;
   return (
     <div ref={ref} className="relative">
       <Button small variant="ghost" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-        {text} <span aria-hidden className="text-[10px]">▾</span>
+        {text} <span aria-hidden className={`text-[10px] transition-transform ${open ? "rotate-180" : ""}`}>▾</span>
       </Button>
       {open && (
-        <div role="menu" className="absolute right-0 z-20 mt-1 min-w-40 animate-rise overflow-hidden rounded-md border border-line bg-surface py-1 shadow-pop">
+        <div
+          ref={menu}
+          role="menu"
+          onKeyDown={onMenuKey}
+          className="absolute right-0 z-20 mt-1 min-w-40 animate-rise overflow-hidden rounded-md border border-line bg-surface py-1 shadow-pop"
+        >
           {shown.map((i) => (
             <button
               key={i.label}
@@ -141,7 +191,7 @@ export function MoreMenu({
                 setOpen(false);
                 i.onClick();
               }}
-              className={`block w-full px-3 py-1.5 text-left text-xs font-medium hover:bg-hover ${i.danger ? "text-mark" : "text-ink hover:text-brown"}`}
+              className={`block w-full px-3 py-1.5 text-left text-xs font-medium outline-none hover:bg-hover focus-visible:bg-hover ${i.danger ? "text-mark" : "text-ink hover:text-brown focus-visible:text-brown"}`}
             >
               {i.label}
             </button>
@@ -153,21 +203,14 @@ export function MoreMenu({
 }
 
 export const Spinner = ({ size = 18 }: { size?: number }) => (
-  <svg
-    width={size}
-    height={size}
-    viewBox="0 0 24 24"
-    className="animate-spin text-current"
-    aria-label="Loading"
-    role="img"
-  >
+  <svg width={size} height={size} viewBox="0 0 24 24" className="animate-spin text-current" aria-hidden>
     <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="3" opacity=".25" />
     <path d="M21 12a9 9 0 0 0-9-9" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
   </svg>
 );
 
 export const Loading = ({ text = "Loading data..." }: { text?: string }) => (
-  <div className="flex flex-col items-center justify-center gap-3 py-16 text-center text-mute">
+  <div role="status" aria-live="polite" className="flex flex-col items-center justify-center gap-3 py-16 text-center text-mute">
     <div className="flex h-11 w-11 items-center justify-center rounded-full border-2 border-dashed border-pen/40 text-pen">
       <Spinner size={20} />
     </div>
@@ -233,11 +276,11 @@ export function PageHeader({
               <span key={i} className="flex items-center gap-1.5">
                 {i > 0 && <span className="text-mark/60">/</span>}
                 {b.to ? (
-                  <a href={b.to} className="hover:text-brown transition-colors">
+                  <Link to={b.to} className="hover:text-brown transition-colors">
                     {b.label}
-                  </a>
+                  </Link>
                 ) : (
-                  <span className="font-medium text-ink">{b.label}</span>
+                  <span aria-current="page" className="font-medium text-ink">{b.label}</span>
                 )}
               </span>
             ))}
@@ -323,6 +366,11 @@ export function ErrorPanel({ error, action }: { error: unknown; action?: ReactNo
   );
 }
 
+/** Open dialogs, innermost last: only the top one reacts to Escape and owns the focus trap. */
+const modalStack: HTMLElement[] = [];
+const FOCUSABLE =
+  'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+
 export function Modal({
   title,
   onClose,
@@ -339,16 +387,51 @@ export function Modal({
   icon?: ReactNode;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  // Callers usually pass an inline onClose; keep the latest in a ref so the mount effect runs
+  // once and focus is not pulled back to the dialog (away from its inputs) on every re-render.
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+
   useEffect(() => {
-    const k = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", k);
-    ref.current?.focus();
-    return () => window.removeEventListener("keydown", k);
-  }, [onClose]);
+    const el = ref.current!;
+    const opener = document.activeElement as HTMLElement | null;
+    modalStack.push(el);
+    if (!el.contains(document.activeElement)) el.focus();
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    const onKey = (e: KeyboardEvent) => {
+      if (modalStack[modalStack.length - 1] !== el) return;
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        closeRef.current();
+      } else if (e.key === "Tab") {
+        const items = Array.from(el.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((n) => n.offsetParent !== null);
+        if (!items.length) return e.preventDefault();
+        const a = items[0]!;
+        const z = items[items.length - 1]!;
+        if (e.shiftKey && (document.activeElement === a || document.activeElement === el)) {
+          e.preventDefault();
+          z.focus();
+        } else if (!e.shiftKey && document.activeElement === z) {
+          e.preventDefault();
+          a.focus();
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      modalStack.splice(modalStack.indexOf(el), 1);
+      if (!modalStack.length) document.body.style.overflow = prevOverflow;
+      if (opener?.isConnected) opener.focus();
+    };
+  }, []);
 
   return (
     <div
-      className="fixed inset-0 z-50 flex animate-fadeIn items-center justify-center bg-cover/55 p-4 backdrop-blur-[3px]"
+      className="fixed inset-0 z-50 flex animate-fadeIn items-end justify-center bg-cover/55 backdrop-blur-[3px] sm:items-center sm:p-4"
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >
       <div
@@ -356,26 +439,33 @@ export function Modal({
         tabIndex={-1}
         role="dialog"
         aria-modal="true"
-        aria-label={title}
-        className={`flex max-h-[92vh] w-full animate-rise flex-col overflow-hidden rounded-lg border border-line border-t-4 border-t-pen bg-surface shadow-pop ${
+        aria-labelledby={titleId}
+        className={`flex max-h-[92dvh] w-full animate-rise flex-col overflow-hidden rounded-t-xl border border-line border-t-4 border-t-pen bg-surface shadow-pop outline-none sm:rounded-lg ${
           wide === "xl" ? "max-w-7xl" : wide ? "max-w-4xl" : "max-w-lg"
         }`}
       >
-        <div className="flex items-center justify-between border-b border-line px-6 py-4">
-          <div className="flex items-center gap-2.5">
-            {icon && <span className="text-pen">{icon}</span>}
-            <h2 className="font-display text-xl font-semibold text-ink">{title}</h2>
+        <div className="flex items-center justify-between gap-3 border-b border-line px-5 py-4 sm:px-6">
+          <div className="flex min-w-0 items-center gap-2.5">
+            {icon && <span className="shrink-0 text-pen">{icon}</span>}
+            <h2 id={titleId} className="truncate font-display text-xl font-semibold text-ink">
+              {title}
+            </h2>
           </div>
           <button
+            type="button"
             onClick={onClose}
             aria-label="Close dialog"
-            className="rounded-lg p-1.5 text-mute transition-colors hover:bg-hover hover:text-brown focus-visible:ring-1 focus-visible:ring-pen"
+            className="shrink-0 rounded-lg p-1.5 text-mute transition-colors hover:bg-hover hover:text-brown"
           >
             <IconX size={18} />
           </button>
         </div>
-        <div className="overflow-y-auto p-6">{children}</div>
-        {footer && <div className="flex justify-end gap-2.5 border-t border-dashed border-line bg-paper/60 px-6 py-4">{footer}</div>}
+        <div className="overflow-y-auto overscroll-contain p-5 sm:p-6">{children}</div>
+        {footer && (
+          <div className="flex flex-wrap justify-end gap-2.5 border-t border-dashed border-line bg-paper/60 px-5 py-4 sm:px-6">
+            {footer}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -415,10 +505,10 @@ export function Confirm({
       icon={danger ? <IconAlertTriangle className="text-mark" size={20} /> : undefined}
       footer={
         <>
-          <Button variant="secondary" onClick={onClose}>
+          <Button variant="secondary" onClick={onClose} autoFocus={danger}>
             Cancel
           </Button>
-          <Button variant={danger ? "danger" : "primary"} busy={busy} onClick={go}>
+          <Button variant={danger ? "danger" : "primary"} busy={busy} onClick={go} autoFocus={!danger}>
             {confirmLabel}
           </Button>
         </>
@@ -458,7 +548,12 @@ export function Field({
         {hint && <span className="text-xs text-mute">{hint}</span>}
       </div>
       {children(id)}
-      {error && <p className="text-xs font-medium text-mark">{error}</p>}
+      {error && (
+        <p role="alert" className="flex items-center gap-1 text-xs font-medium text-mark">
+          <IconAlertCircle size={13} className="shrink-0" />
+          {error}
+        </p>
+      )}
     </div>
   );
 }

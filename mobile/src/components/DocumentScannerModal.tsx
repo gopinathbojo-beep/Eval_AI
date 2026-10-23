@@ -1310,26 +1310,26 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
   // Dynamic corner color based on detection state
   const getCornerColor = () => {
     if (isDetectionRejected || detectionState === "NO_DOCUMENT") {
-      return "#EF4444"; // Red for rejected non-paper surface
+      return "#C43A28"; // Red for rejected non-paper surface
     }
     switch (detectionState) {
       case "READY":
       case "COUNTDOWN":
-        return "#10B981"; // Emerald Green for locked / countdown
+        return "#1F8F5F"; // Emerald Green for locked / countdown
       case "CAPTURING":
       case "PROCESSING":
-        return "#38BDF8"; // Sky Blue during capture / auto-crop
+        return "#0F8A80"; // Sky Blue during capture / auto-crop
       case "PAPER_DETECTED":
-        return "#079FBD"; // Teal for paper detected & aligning
+        return "#0F8A80"; // Teal for paper detected & aligning
       case "TOO_FAR":
       case "TOO_CLOSE":
       case "OUT_OF_BOUNDS":
       case "BAD_ASPECT_RATIO":
       case "UNSTABLE":
       case "LOW_LIGHT":
-        return "#F59E0B"; // Amber for alignment required
+        return "#B7791F"; // Amber for alignment required
       case "PAGE_CAPTURED_WAITING_FOR_NEXT":
-        return "#079FBD"; // Cyan for page swap waiting
+        return "#0F8A80"; // Cyan for page swap waiting
       default:
         return colors.primary; // Blue for searching / initializing
     }
@@ -1354,7 +1354,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
     return (
       <Modal visible={visible} animationType="slide">
         <View style={[styles.permissionContainer, { backgroundColor: colors.background }]}>
-          <View style={[styles.permIconCircle, { backgroundColor: "rgba(7, 159, 189, 0.12)" }]}>
+          <View style={[styles.permIconCircle, { backgroundColor: "rgba(15, 118, 110, 0.12)" }]}>
             <Ionicons name="camera-outline" size={48} color={colors.primary} />
           </View>
           <Text style={[styles.permissionTitle, { color: colors.text }]}>
@@ -1419,8 +1419,8 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                   size={15}
                   color={
                     scannedPages[selectedPageIndex].quality?.isAcceptable
-                      ? "#10B981"
-                      : "#F59E0B"
+                      ? "#1F8F5F"
+                      : "#B7791F"
                   }
                 />
                 <Text style={styles.qualityPillText}>
@@ -1494,8 +1494,8 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                 onPress={() => setAdjustingPageIndex(selectedPageIndex)}
                 style={styles.toolBtn}
               >
-                <Ionicons name="expand" size={18} color="#10B981" />
-                <Text style={[styles.toolBtnText, { color: "#10B981" }]}>Adjust</Text>
+                <Ionicons name="expand" size={18} color="#1F8F5F" />
+                <Text style={[styles.toolBtnText, { color: "#1F8F5F" }]}>Adjust</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -1552,7 +1552,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                 <TouchableOpacity
                   onPress={handleSaveAndNextStudent}
                   disabled={isCompiling}
-                  style={[styles.saveNextStudentBtn, { backgroundColor: "#079FBD" }]}
+                  style={[styles.saveNextStudentBtn, { backgroundColor: "#0F8A80" }]}
                 >
                   {isCompiling ? (
                     <ActivityIndicator size="small" color="#FFFFFF" />
@@ -1620,7 +1620,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                   top: 70,
                   left: 20,
                   right: 20,
-                  backgroundColor: "rgba(239, 68, 68, 0.95)",
+                  backgroundColor: "rgba(196, 58, 40, 0.95)",
                   borderRadius: 10,
                   padding: 12,
                   flexDirection: "row",
@@ -1669,19 +1669,19 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                 style={[
                   styles.autoCapturePill,
                   autoCaptureEnabled
-                    ? { backgroundColor: "rgba(16, 185, 129, 0.25)", borderColor: "#10B981" }
-                    : { backgroundColor: "rgba(245, 158, 11, 0.25)", borderColor: "#F59E0B" },
+                    ? { backgroundColor: "rgba(16, 185, 129, 0.25)", borderColor: "#1F8F5F" }
+                    : { backgroundColor: "rgba(190, 120, 10, 0.25)", borderColor: "#B7791F" },
                 ]}
               >
                 <Ionicons
                   name={autoCaptureEnabled ? "pause-circle-outline" : "play-circle-outline"}
                   size={15}
-                  color={autoCaptureEnabled ? "#10B981" : "#F59E0B"}
+                  color={autoCaptureEnabled ? "#1F8F5F" : "#B7791F"}
                 />
                 <Text
                   style={[
                     styles.autoCapturePillText,
-                    { color: autoCaptureEnabled ? "#10B981" : "#F59E0B" },
+                    { color: autoCaptureEnabled ? "#1F8F5F" : "#B7791F" },
                   ]}
                 >
                   {autoCaptureEnabled ? "Pause Auto" : "Resume Auto"}
@@ -1706,7 +1706,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                 onPress={() => setTorch(!torch)}
                 style={[
                   styles.iconCircleButton,
-                  torch && { backgroundColor: "rgba(81, 188, 117, 0.4)" },
+                  torch && { backgroundColor: "rgba(23, 130, 87, 0.4)" },
                 ]}
               >
                 <Ionicons
@@ -1736,7 +1736,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                   onPress={() => setStudentPickerVisible(true)}
                   style={styles.studentInfoPill}
                 >
-                  <Ionicons name="person-circle-outline" size={16} color="#079FBD" />
+                  <Ionicons name="person-circle-outline" size={16} color="#0F8A80" />
                   <Text style={styles.studentNameText} numberOfLines={1}>
                     {activeStudent.name} ({activeStudent.roll_number})
                   </Text>
@@ -1781,7 +1781,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                   activeOpacity={0.8}
                   style={{ flexDirection: "row", alignItems: "center", gap: 8, flex: 1 }}
                 >
-                  <Ionicons name="checkmark-circle" size={18} color="#10B981" />
+                  <Ionicons name="checkmark-circle" size={18} color="#1F8F5F" />
                   <Text style={styles.swapPageText} numberOfLines={1}>
                     Page {scannedPages.length} saved! Tap for next
                   </Text>
@@ -1792,16 +1792,16 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                     flexDirection: "row",
                     alignItems: "center",
                     gap: 4,
-                    backgroundColor: "rgba(56, 189, 248, 0.2)",
+                    backgroundColor: "rgba(15, 118, 110, 0.2)",
                     paddingHorizontal: 10,
                     paddingVertical: 5,
                     borderRadius: 8,
                     borderWidth: 1,
-                    borderColor: "#38BDF8",
+                    borderColor: "#0F8A80",
                   }}
                 >
-                  <Ionicons name="expand" size={13} color="#38BDF8" />
-                  <Text style={{ color: "#38BDF8", fontSize: 12, fontWeight: "700" }}>Adjust</Text>
+                  <Ionicons name="expand" size={13} color="#0F8A80" />
+                  <Text style={{ color: "#0F8A80", fontSize: 12, fontWeight: "700" }}>Adjust</Text>
                 </TouchableOpacity>
               </View>
             )}
@@ -1814,11 +1814,11 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                   {
                     borderColor:
                       isDetectionRejected || detectionState === "NO_DOCUMENT"
-                        ? "rgba(239, 68, 68, 0.95)"
+                        ? "rgba(196, 58, 40, 0.95)"
                         : detectionState === "READY" || detectionState === "COUNTDOWN"
                         ? "rgba(16, 185, 129, 0.8)"
                         : detectionState === "PAPER_DETECTED"
-                        ? "rgba(7, 159, 189, 0.7)"
+                        ? "rgba(15, 118, 110, 0.7)"
                         : "rgba(255, 255, 255, 0.3)",
                     borderWidth: isDetectionRejected || detectionState === "NO_DOCUMENT" ? 2.5 : 1.5,
                   },
@@ -1872,8 +1872,8 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                       style={[
                         styles.countdownCircle,
                         {
-                          borderColor: "#079FBD",
-                          backgroundColor: "rgba(7, 159, 189, 0.25)",
+                          borderColor: "#0F8A80",
+                          backgroundColor: "rgba(15, 118, 110, 0.25)",
                           width: "auto",
                           paddingHorizontal: 16,
                           height: 42,
@@ -1883,11 +1883,11 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                         },
                       ]}
                     >
-                      <Ionicons name="document-text" size={18} color="#079FBD" />
+                      <Ionicons name="document-text" size={18} color="#0F8A80" />
                       <Text
                         style={[
                           styles.countdownText,
-                          { color: "#079FBD", fontSize: 13, fontWeight: "700", marginTop: 0 },
+                          { color: "#0F8A80", fontSize: 13, fontWeight: "700", marginTop: 0 },
                         ]}
                       >
                         Paper Detected
@@ -1900,7 +1900,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                 {detectionState === "COUNTDOWN" && countdownProgress > 0 && (
                   <View style={styles.countdownCenterOverlay}>
                     <View style={styles.countdownCircle}>
-                      <ActivityIndicator size="small" color="#10B981" />
+                      <ActivityIndicator size="small" color="#1F8F5F" />
                       <Text style={styles.countdownText}>
                         {Math.max(1, Math.ceil((1 - countdownProgress) * 3))}s
                       </Text>
@@ -1914,20 +1914,20 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                 style={[
                   styles.guideBanner,
                   isDetectionRejected || detectionState === "NO_DOCUMENT"
-                    ? { backgroundColor: "rgba(239, 68, 68, 0.92)", borderColor: "#EF4444" }
+                    ? { backgroundColor: "rgba(196, 58, 40, 0.92)", borderColor: "#C43A28" }
                     : detectionState === "READY" || detectionState === "COUNTDOWN"
-                    ? { backgroundColor: "rgba(16, 185, 129, 0.88)", borderColor: "#10B981" }
+                    ? { backgroundColor: "rgba(16, 185, 129, 0.88)", borderColor: "#1F8F5F" }
                     : detectionState === "PAPER_DETECTED"
-                    ? { backgroundColor: "rgba(7, 159, 189, 0.90)", borderColor: "#079FBD" }
+                    ? { backgroundColor: "rgba(15, 118, 110, 0.90)", borderColor: "#0F8A80" }
                     : detectionState === "CAPTURING" || detectionState === "PROCESSING"
-                    ? { backgroundColor: "rgba(14, 165, 233, 0.88)", borderColor: "#0EA5E9" }
+                    ? { backgroundColor: "rgba(14, 165, 233, 0.88)", borderColor: "#0F8A80" }
                     : detectionState === "TOO_FAR" ||
                       detectionState === "TOO_CLOSE" ||
                       detectionState === "OUT_OF_BOUNDS" ||
                       detectionState === "BAD_ASPECT_RATIO" ||
                       detectionState === "UNSTABLE" ||
                       detectionState === "LOW_LIGHT"
-                    ? { backgroundColor: "rgba(245, 158, 11, 0.88)", borderColor: "#F59E0B" }
+                    ? { backgroundColor: "rgba(190, 120, 10, 0.88)", borderColor: "#B7791F" }
                     : { backgroundColor: "rgba(0, 0, 0, 0.78)", borderColor: "rgba(255, 255, 255, 0.2)" },
                 ]}
               >
@@ -1957,7 +1957,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                   onPress={() => setTorch(true)}
                   style={styles.torchPromptPill}
                 >
-                  <Ionicons name="flash" size={14} color="#F59E0B" />
+                  <Ionicons name="flash" size={14} color="#B7791F" />
                   <Text style={styles.torchPromptText}>Tap to turn on flash for clearer text</Text>
                 </TouchableOpacity>
               )}
@@ -2014,7 +2014,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                   activeOpacity={0.8}
                   style={[
                     styles.shutterOuter,
-                    detectionState === "COUNTDOWN" && { borderColor: "#10B981" },
+                    detectionState === "COUNTDOWN" && { borderColor: "#1F8F5F" },
                     !cameraReady && { opacity: 0.6 },
                   ]}
                 >
@@ -2024,9 +2024,9 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                       {
                         backgroundColor:
                           detectionState === "COUNTDOWN"
-                            ? "#10B981"
+                            ? "#1F8F5F"
                             : !cameraReady
-                            ? "#64748B"
+                            ? "#5A655F"
                             : colors.primary,
                       },
                     ]}
@@ -2047,7 +2047,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                         <TouchableOpacity
                           onPress={handleSaveAndNextStudent}
                           disabled={isCompiling}
-                          style={[styles.saveNextBtn, { backgroundColor: "#079FBD" }]}
+                          style={[styles.saveNextBtn, { backgroundColor: "#0F8A80" }]}
                         >
                           {isCompiling ? (
                             <ActivityIndicator size="small" color="#FFFFFF" />
@@ -2113,7 +2113,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                           styles.pickerStudentRow,
                           { borderBottomColor: colors.border },
                           item.id === activeStudentId && {
-                            backgroundColor: "rgba(7, 159, 189, 0.12)",
+                            backgroundColor: "rgba(15, 118, 110, 0.12)",
                           },
                         ]}
                       >
@@ -2126,7 +2126,7 @@ export const DocumentScannerModal: React.FC<DocumentScannerModalProps> = ({
                           </Text>
                         </View>
                         {item.id === activeStudentId && (
-                          <Ionicons name="checkmark-circle" size={20} color="#079FBD" />
+                          <Ionicons name="checkmark-circle" size={20} color="#0F8A80" />
                         )}
                       </TouchableOpacity>
                     )}
@@ -2298,7 +2298,7 @@ const styles = StyleSheet.create({
     width: "100%",
     height: 2,
     borderBottomWidth: 2,
-    shadowColor: "#10B981",
+    shadowColor: "#1F8F5F",
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 0.9,
     shadowRadius: 8,
@@ -2314,12 +2314,12 @@ const styles = StyleSheet.create({
     borderRadius: 32,
     backgroundColor: "rgba(0, 0, 0, 0.75)",
     borderWidth: 2.5,
-    borderColor: "#10B981",
+    borderColor: "#1F8F5F",
     justifyContent: "center",
     alignItems: "center",
   },
   countdownText: {
-    color: "#10B981",
+    color: "#1F8F5F",
     fontSize: 13,
     fontWeight: "800",
     marginTop: 2,
@@ -2347,14 +2347,14 @@ const styles = StyleSheet.create({
     gap: 6,
     backgroundColor: "rgba(0, 0, 0, 0.8)",
     borderWidth: 1,
-    borderColor: "#F59E0B",
+    borderColor: "#B7791F",
     paddingHorizontal: 14,
     paddingVertical: 6,
     borderRadius: 16,
     marginTop: 8,
   },
   torchPromptText: {
-    color: "#F59E0B",
+    color: "#B7791F",
     fontSize: 11,
     fontWeight: "700",
   },
@@ -2381,7 +2381,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     overflow: "hidden",
     borderWidth: 1.5,
-    borderColor: "#079FBD",
+    borderColor: "#0F8A80",
     position: "relative",
   },
   thumbnailImg: {
@@ -2440,7 +2440,7 @@ const styles = StyleSheet.create({
   },
   reviewContainer: {
     flex: 1,
-    backgroundColor: "#0F172A",
+    backgroundColor: "#111827",
   },
   reviewHeader: {
     flexDirection: "row",
@@ -2584,7 +2584,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
-    backgroundColor: "#F59E0B",
+    backgroundColor: "#B7791F",
     paddingVertical: 8,
     paddingHorizontal: 16,
     marginHorizontal: 20,
@@ -2613,7 +2613,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
-    backgroundColor: "#079FBD",
+    backgroundColor: "#0F8A80",
     paddingVertical: 10,
     paddingHorizontal: 16,
     marginHorizontal: 16,

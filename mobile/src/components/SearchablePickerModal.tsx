@@ -118,7 +118,7 @@ export const SearchablePickerModal: React.FC<SearchablePickerModalProps> = ({
               onPress={() => setShowCreateForm(true)}
               style={[
                 styles.addNewButton,
-                { backgroundColor: "rgba(7, 159, 189, 0.08)", borderColor: colors.primary },
+                { backgroundColor: "rgba(15, 118, 110, 0.08)", borderColor: colors.primary },
               ]}
             >
               <Ionicons name="add-circle-outline" size={18} color={colors.primary} />
@@ -220,7 +220,7 @@ export const SearchablePickerModal: React.FC<SearchablePickerModalProps> = ({
                   styles.itemRow,
                   { borderBottomColor: colors.border },
                   isSelected && {
-                    backgroundColor: "rgba(7, 159, 189, 0.12)",
+                    backgroundColor: "rgba(15, 118, 110, 0.12)",
                     borderColor: colors.primary,
                   },
                 ]}

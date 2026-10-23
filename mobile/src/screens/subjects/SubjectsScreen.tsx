@@ -208,7 +208,7 @@ export const SubjectsScreen: React.FC<SubjectsScreenProps> = () => {
                 styles.chip,
                 {
                   backgroundColor:
-                    sortKey === "name" ? "rgba(7, 159, 189, 0.15)" : colors.surface,
+                    sortKey === "name" ? "rgba(15, 118, 110, 0.15)" : colors.surface,
                   borderColor: sortKey === "name" ? colors.primary : colors.border,
                 },
               ]}
@@ -229,7 +229,7 @@ export const SubjectsScreen: React.FC<SubjectsScreenProps> = () => {
                 styles.chip,
                 {
                   backgroundColor:
-                    sortKey === "code" ? "rgba(7, 159, 189, 0.15)" : colors.surface,
+                    sortKey === "code" ? "rgba(15, 118, 110, 0.15)" : colors.surface,
                   borderColor: sortKey === "code" ? colors.primary : colors.border,
                 },
               ]}
@@ -284,7 +284,7 @@ export const SubjectsScreen: React.FC<SubjectsScreenProps> = () => {
               <View
                 style={[
                   styles.iconCircle,
-                  { backgroundColor: "rgba(81, 188, 117, 0.12)" },
+                  { backgroundColor: "rgba(23, 130, 87, 0.12)" },
                 ]}
               >
                 <Ionicons name="book" size={20} color={colors.brandGreen} />
