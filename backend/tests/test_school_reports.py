@@ -2,7 +2,8 @@ import re
 from datetime import datetime, timezone
 import pymupdf
 from app.database import SessionLocal
-from app.models import AnswerSheetDocument, Evaluation, Exam, SchoolClass, Student, Subject, Teacher
+from app.models import (AnswerSheetDocument, Evaluation, EvaluationItem, Exam, ExamQuestion, SchoolClass, Student, Subject,
+                        Teacher)
 from app.services.report_templates import normalize
 from app.services.school_reports import cbse_grade
 from .conftest import make_png
@@ -110,3 +111,47 @@ def test_school_profile_templates_and_report_cards(client, auth):
     text, _ = _text(c.get(f"/api/students/{asha_id}/report-card?academic_year=2026-27&exam_type=Term 1", headers=h).content)
     assert "Report Card · Term 1" in text and "1 of 2" in text
     assert c.get(f"/api/classes/{cls_id}/report-cards?academic_year=2026-27&exam_type=Final", headers=h).status_code == 404
+
+
+def test_exam_wise_report(client, auth):
+    c, h = client, auth
+    db = SessionLocal()
+    t = db.query(Teacher).filter_by(email="rao@school.org").one()
+    cls = SchoolClass(teacher_id=t.id, name="EX-9B")
+    sub = Subject(teacher_id=t.id, name="EX Maths")
+    db.add_all([cls, sub])
+    db.flush()
+    kids = [Student(class_id=cls.id, name=n, roll_number=r) for n, r in (("Meena", "1"), ("Arjun", "2"), ("Kavya", "3"))]
+    db.add_all(kids)
+    ex = Exam(teacher_id=t.id, name="Maths Unit Test", academic_year="2026-27", class_id=cls.id, subject_id=sub.id,
+              exam_type="Unit Test", total_marks=20, status="FINALIZED")
+    db.add(ex)
+    db.flush()
+    q1 = ExamQuestion(exam_id=ex.id, display_number="1", max_marks=10, position=0, k_level="K1")
+    q2 = ExamQuestion(exam_id=ex.id, display_number="2", max_marks=10, position=1, k_level="K3")
+    db.add_all([q1, q2])
+    db.commit()
+    empty = c.get(f"/api/exams/{ex.id}/report.pdf", headers=h)
+    assert empty.status_code == 400, empty.text                                 # nothing finalized yet
+    for st, (a, b) in ((kids[0], (10, 8)), (kids[1], (4, 0))):                  # Kavya is not evaluated
+        doc = AnswerSheetDocument(exam_id=ex.id, student_id=st.id, original_filename="s.pdf", original_file="x",
+                                  mime_type="application/pdf", file_size=1, status="READY")
+        db.add(doc)
+        db.flush()
+        ev = Evaluation(exam_id=ex.id, student_id=st.id, answer_sheet_id=doc.id, status="FINALIZED", total_marks=a + b,
+                        maximum_marks=20, percentage=5.0 * (a + b), finalized_at=datetime.now(timezone.utc))
+        db.add(ev)
+        db.flush()
+        db.add_all([EvaluationItem(evaluation_id=ev.id, exam_question_id=q1.id, final_marks=a),
+                    EvaluationItem(evaluation_id=ev.id, exam_question_id=q2.id, final_marks=b)])
+    db.commit()
+    ex_id = ex.id
+    db.close()
+
+    r = c.get(f"/api/exams/{ex_id}/report.pdf", headers=h)
+    assert r.status_code == 200 and "ExamReport_Maths_Unit_Test_EX-9B" in r.headers["content-disposition"]
+    text, _ = _text(r.content)
+    assert "Exam Result Analysis" in text and "Maths Unit Test" in text and "2 evaluated, 1 pending" in text
+    assert "Meena" in text and "Arjun" in text and "Kavya" in text and "Not evaluated" in text
+    assert "55%" in text and "1 / 2" in text and "50%" in text                  # average, passed, pass %
+    assert "Question-wise Analysis" in text and "Knowledge Level" in text

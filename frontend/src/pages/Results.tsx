@@ -59,6 +59,9 @@ export function EvaluationsList() {
 
 export function ResultsList() {
   const { data, loading, error } = useApi<Evaluation[]>("/results");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const view = searchParams.get("view") === "exam" ? "exam" : "student";
+  const setView = (v: "student" | "exam") => setSearchParams(v === "exam" ? { view: "exam" } : {}, { replace: true });
 
   const classOptions = useMemo(() => {
     if (!data) return [];
@@ -150,13 +153,31 @@ export function ResultsList() {
     <div className="space-y-4">
       <PageHeader
         title="Finalized Examination Results"
-        sub="Finalized student results."
+        sub={view === "exam" ? "Class performance per exam." : "Finalized student results."}
+        actions={
+          <div className="inline-flex items-center gap-1 rounded-lg border border-line bg-surface p-1 shadow-soft">
+            {(["student", "exam"] as const).map((v) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => setView(v)}
+                className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-all ${
+                  view === v ? "bg-pen text-white shadow-xs" : "text-mute hover:bg-hover hover:text-brown"
+                }`}
+              >
+                {v === "exam" ? "Exam-wise" : "Student-wise"}
+              </button>
+            ))}
+          </div>
+        }
       />
       <ErrorPanel error={error} />
       {loading ? (
         <Loading />
       ) : !data?.length ? (
         <Empty title="No finalized results yet" hint="Results appear here once evaluations are finalized by teachers." />
+      ) : view === "exam" ? (
+        <ExamWiseResults data={data} />
       ) : (
         <>
           <TableToolbar
@@ -247,6 +268,193 @@ export function ResultsList() {
         </>
       )}
     </div>
+  );
+}
+
+interface ExamSummary {
+  examId: string;
+  name: string;
+  className: string;
+  subject: string;
+  students: number;
+  average: number;
+  highest: number;
+  lowest: number;
+  passed: number;
+  lastFinalized: string | null;
+}
+
+const PASS_PERCENT = 33; // CBSE pass mark, same as the PDF exam report
+
+function summarizeByExam(data: Evaluation[]): ExamSummary[] {
+  const groups = new Map<string, Evaluation[]>();
+  for (const e of data) groups.set(e.exam_id, [...(groups.get(e.exam_id) ?? []), e]);
+  return Array.from(groups.entries()).map(([examId, evs]) => {
+    const pcts = evs.map((e) => e.percentage ?? 0);
+    return {
+      examId,
+      name: evs[0].exam_name || "Exam",
+      className: evs[0].class_name || evs[0].student.class_name || "–",
+      subject: evs[0].subject_name || "–",
+      students: evs.length,
+      average: Math.round((pcts.reduce((a, b) => a + b, 0) / pcts.length) * 100) / 100,
+      highest: Math.max(...pcts),
+      lowest: Math.min(...pcts),
+      passed: pcts.filter((p) => Math.floor(p + 0.5) >= PASS_PERCENT).length,
+      lastFinalized: evs.map((e) => e.finalized_at || "").sort().pop() || null,
+    };
+  });
+}
+
+function uniqueOptions(values: string[]) {
+  return Array.from(new Set(values))
+    .sort((a, b) => a.localeCompare(b))
+    .map((value) => ({ value, label: value }));
+}
+
+function ExamWiseResults({ data }: { data: Evaluation[] }) {
+  const exams = useMemo(() => summarizeByExam(data), [data]);
+  const classOptions = useMemo(() => uniqueOptions(exams.map((x) => x.className)), [exams]);
+  const subjectOptions = useMemo(() => uniqueOptions(exams.map((x) => x.subject)), [exams]);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+
+  const table = useTableState<ExamSummary>({
+    data: exams,
+    searchFilter: (x, q) => x.name.toLowerCase().includes(q),
+    filters: {
+      class: (x, val) => x.className === val,
+      subject: (x, val) => x.subject === val,
+    },
+    sortFns: {
+      date: (a, b) => new Date(a.lastFinalized || 0).getTime() - new Date(b.lastFinalized || 0).getTime(),
+      name: (a, b) => a.name.localeCompare(b.name),
+      average: (a, b) => a.average - b.average,
+      students: (a, b) => a.students - b.students,
+    },
+    defaultSort: "date",
+    defaultOrder: "desc",
+    initialPageSize: 10,
+  });
+
+  const download = async (x: ExamSummary) => {
+    setBusy(x.examId);
+    setDownloadError(null);
+    try {
+      await downloadFile(`/exams/${x.examId}/report.pdf`, `ExamReport_${x.name.replace(/[^a-zA-Z0-9_-]/g, "_")}.pdf`);
+    } catch (err: any) {
+      setDownloadError(err?.message || "Failed to download exam report.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <>
+      <TableToolbar
+        searchPlaceholder="Search by exam name..."
+        searchValue={table.search}
+        onSearchChange={table.setSearch}
+        filters={[
+          {
+            key: "class",
+            label: "All Classes",
+            options: classOptions,
+            value: table.activeFilters.class || "",
+            onChange: (val: string) => table.setFilter("class", val),
+          },
+          {
+            key: "subject",
+            label: "All Subjects",
+            options: subjectOptions,
+            value: table.activeFilters.subject || "",
+            onChange: (val: string) => table.setFilter("subject", val),
+          },
+        ]}
+        sortOptions={[
+          { value: "date", label: "Last finalized" },
+          { value: "name", label: "Exam name" },
+          { value: "average", label: "Class average" },
+          { value: "students", label: "Students" },
+        ]}
+        sortValue={table.sortBy}
+        onSortChange={table.setSortBy}
+        sortOrder={table.sortOrder}
+        onSortOrderToggle={table.toggleSortOrder}
+        isFiltered={table.isFiltered}
+        onClearFilters={table.clearFilters}
+        totalCount={table.totalCount}
+        filteredCount={table.filteredCount}
+        itemLabel="exams"
+      />
+
+      {downloadError && (
+        <div className="rounded-lg border border-mark/20 bg-mark-soft p-3.5 text-sm text-mark">{downloadError}</div>
+      )}
+
+      {table.filteredCount === 0 ? (
+        <FilteredEmptyState
+          title="No matching exams found"
+          message="No exams match your current search and filter combination."
+          onClearFilters={table.clearFilters}
+        />
+      ) : (
+        <Card className="overflow-x-auto shadow-soft">
+          <table className="w-full text-left text-sm">
+            <thead className="border-b border-line bg-surface text-xs font-semibold uppercase tracking-wider text-mute">
+              <tr>
+                <th className="px-4 py-3">Exam Name</th>
+                <th className="px-4 py-3">Class</th>
+                <th className="px-4 py-3">Subject</th>
+                <th className="px-4 py-3">Students</th>
+                <th className="px-4 py-3">Class Avg.</th>
+                <th className="px-4 py-3">Highest / Lowest</th>
+                <th className="px-4 py-3">Passed</th>
+                <th className="px-4 py-3 text-right">Report</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line text-sm">
+              {table.paginatedData.map((x) => (
+                <tr key={x.examId} className="hover:bg-hover">
+                  <td className="px-4 py-3">
+                    <Link className="block font-semibold text-pen hover:underline" to={`/exams/${x.examId}/results`}>
+                      {x.name}
+                    </Link>
+                    <span className="font-mono text-xs text-mute">Finalized {date(x.lastFinalized)}</span>
+                  </td>
+                  <td className="px-4 py-3 text-mute">{x.className}</td>
+                  <td className="px-4 py-3 text-mute">{x.subject}</td>
+                  <td className="px-4 py-3 font-mono font-medium text-ink">{x.students}</td>
+                  <td className="px-4 py-3 font-mono font-semibold text-ink">
+                    <span className="rounded bg-ok-soft/70 px-2 py-0.5 text-xs text-ok">{x.average}%</span>
+                  </td>
+                  <td className="px-4 py-3 font-mono text-xs text-ink">
+                    {x.highest}% / {x.lowest}%
+                  </td>
+                  <td className="px-4 py-3 font-mono text-xs text-ink">
+                    {x.passed} / {x.students}
+                  </td>
+                  <td className="whitespace-nowrap px-4 py-3 text-right">
+                    <Button busy={busy === x.examId} onClick={() => download(x)} title="Download exam-wise class report (PDF)">
+                      Download PDF
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <TablePagination
+            currentPage={table.page}
+            totalPages={table.totalPages}
+            pageSize={table.pageSize}
+            totalFilteredCount={table.filteredCount}
+            itemLabel="exams"
+            onPageChange={table.setPage}
+            onPageSizeChange={table.setPageSize}
+          />
+        </Card>
+      )}
+    </>
   );
 }
 

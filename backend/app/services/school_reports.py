@@ -22,7 +22,7 @@ from reportlab.pdfgen import canvas
 from reportlab.platypus import HRFlowable, Image, KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from sqlalchemy.orm import Session
 
-from ..deps import err, get_evaluation
+from ..deps import err, get_evaluation, get_exam
 from ..documents.storage import abs_path
 from ..models import AuditLog, Evaluation, EvaluationItem, Exam, ExamQuestion, SchoolClass, SchoolProfile, Student, Teacher
 from .k_level import K_LEVELS, summarize as summarize_outcomes
@@ -385,6 +385,127 @@ def build_evaluation_pdf_report(db: Session, teacher: Teacher, evaluation_id: st
     profile = db.query(SchoolProfile).filter_by(teacher_id=teacher.id).first()
     pdf = render_report(report_data(db, teacher, ev), active_config(db, teacher, "report"), _school(profile))
     return pdf, f"Report_{_clean_name(ev.student.name, ev.student.roll_number, ev.exam.name)}.pdf"
+
+
+# ---------------------------------------------------------------- exam-wise class report
+
+PASS_PERCENT = 33  # CBSE pass mark; grade E is below it
+
+
+def _rank(values: dict[str, float]) -> dict[str, int]:
+    """Standard competition ranking (1, 2, 2, 4), highest value first."""
+    ordered = sorted(values.values(), reverse=True)
+    return {k: ordered.index(v) + 1 for k, v in values.items()}
+
+
+def exam_report_data(db: Session, exam: Exam) -> dict:
+    questions = (db.query(ExamQuestion).filter_by(exam_id=exam.id)
+                 .order_by(ExamQuestion.position, ExamQuestion.display_number).all())
+    evs = db.query(Evaluation).filter_by(exam_id=exam.id, status="FINALIZED").all()
+    if not evs:
+        raise err(400, "NO_FINALIZED_RESULTS", "The exam report needs at least one finalized evaluation.")
+    marks: dict[str, dict[str, float | None]] = {}
+    for ev in evs:
+        marks[ev.id] = {i.exam_question_id: i.final_marks for i in db.query(EvaluationItem).filter_by(evaluation_id=ev.id)}
+    pct = {ev.id: _pct(ev.total_marks or 0.0, ev.maximum_marks) or 0.0 for ev in evs}
+    ranks = _rank(pct)
+    students = [{"roll": ev.student.roll_number, "name": ev.student.name, "obtained": ev.total_marks or 0.0,
+                 "maximum": ev.maximum_marks or 0.0, "percentage": pct[ev.id], "rank": ranks[ev.id]} for ev in evs]
+    done = {ev.student_id for ev in evs}
+    pending = [] if not exam.class_id else [
+        {"roll": s.roll_number, "name": s.name} for s in db.query(Student).filter_by(class_id=exam.class_id)
+        if s.id not in done]
+    roll_key = lambda s: s["roll"].zfill(12)  # noqa: E731
+    q_rows = []
+    for q in questions:
+        got = [m.get(q.id) for m in marks.values()]
+        scored = [g for g in got if g is not None]
+        avg = sum(scored) / len(evs) if evs else 0.0
+        q_rows.append({"no": q.display_number, "k": q.k_level, "co": q.course_outcome, "max": q.max_marks,
+                       "average": round(avg, 2), "percentage": _pct(avg, q.max_marks),
+                       "full": sum(1 for g in scored if q.max_marks and g >= q.max_marks),
+                       "zero": sum(1 for g in got if not g)})
+    # class-wide K-level totals: every student's marks summed per question
+    totals = {q.id: sum(m.get(q.id) or 0.0 for m in marks.values()) for q in questions}
+    scaled = [SimpleNamespace(id=q.id, k_level=q.k_level, course_outcome=q.course_outcome,
+                              max_marks=(q.max_marks or 0.0) * len(evs)) for q in questions]
+    return {
+        "exam": {"name": exam.name, "subject": exam.subject.name if exam.subject else "",
+                 "class": exam.school_class.name if exam.school_class else "", "type": exam.exam_type,
+                 "year": exam.academic_year, "date": exam.exam_date or "", "maximum": exam.total_marks},
+        "students": sorted(students, key=roll_key), "pending": sorted(pending, key=roll_key),
+        "questions": q_rows, "outcomes": summarize_outcomes(scaled, totals),
+    }
+
+
+def render_exam_report(data: dict, cfg: dict, school: dict) -> bytes:
+    d, e = _Doc(cfg, school), data["exam"]
+    students = data["students"]
+    pcts = [s["percentage"] for s in students]
+    scores = [s["obtained"] for s in students]
+    passed = sum(1 for p in pcts if math.floor(p + 0.5) >= PASS_PERCENT)
+    mean = sum(pcts) / len(pcts)
+    story: list = d.header() + d.title("Exam Result Analysis")
+    story += d.details([("Examination", e["name"]), ("Subject", e["subject"]), ("Class", e["class"]),
+                        ("Exam Type", e["type"]), ("Academic Year", e["year"]), ("Exam Date", e["date"]),
+                        ("Maximum Marks", _m(e["maximum"])),
+                        ("Students", f"{len(students)} evaluated" + (f", {len(data['pending'])} pending" if data["pending"] else ""))])
+    story += d.summary([("Class Average", f"{round(mean, 2):g}%"), ("Highest", _m(max(scores))), ("Lowest", _m(min(scores))),
+                        ("Passed", f"{passed} / {len(students)}"), ("Pass %", f"{round(100 * passed / len(students), 2):g}%")])
+
+    # grade distribution
+    counts = {g: 0 for _, g in CBSE_GRADES}
+    for p in pcts:
+        counts[cbse_grade(p)] += 1
+    grades = [g for _, g in CBSE_GRADES]
+    w = d.width / (len(grades) + 1)
+    story += d.section_title("Grade Distribution")
+    story += [d.table(["Grade"] + grades,
+                      [[d.p("<b>Students</b>")] + [d.p(str(counts[g]), align=TA_CENTER) for g in grades],
+                       [d.p("<b>%</b>")] + [d.p(f"{round(100 * counts[g] / len(students), 1):g}", align=TA_CENTER) for g in grades]],
+                      [w] * (len(grades) + 1), aligns=[TA_LEFT] + [TA_CENTER] * len(grades)), Spacer(1, 10)]
+
+    # student results
+    rows = [[d.p(_esc(s["roll"])), d.p(_esc(s["name"])), d.p(f"<b>{_m(s['obtained'])}</b> / {_m(s['maximum'])}", align=TA_RIGHT),
+             d.p(f"{s['percentage']:g}", align=TA_RIGHT), d.p(f"<b>{cbse_grade(s['percentage'])}</b>", align=TA_CENTER),
+             d.p(str(s["rank"]), align=TA_CENTER)] for s in students]
+    rows += [[d.p(_esc(s["roll"])), d.p(_esc(s["name"]), color=MUTE), d.p("Not evaluated", color=MUTE, align=TA_RIGHT),
+              d.p("–", align=TA_RIGHT), d.p("–", align=TA_CENTER), d.p("–", align=TA_CENTER)] for s in data["pending"]]
+    widths = [d.width * x for x in (0.12, 0.40, 0.18, 0.10, 0.10, 0.10)]
+    story += d.section_title("Student-wise Results")
+    story += [d.table(["Roll No.", "Student", "Marks", "%", "Grade", "Rank"], rows, widths,
+                      aligns=[TA_LEFT, TA_LEFT, TA_RIGHT, TA_RIGHT, TA_CENTER, TA_CENTER]), Spacer(1, 10)]
+
+    # question-wise analysis
+    if data["questions"]:
+        rows = [[d.p(f"<b>{_esc(q['no'])}</b>"), d.p(_esc(K_LEVELS.get(q["k"], q["k"]) if q["k"] else "–")),
+                 d.p(_m(q["max"]), align=TA_RIGHT), d.p(f"{q['average']:g}", align=TA_RIGHT),
+                 d.p("–" if q["percentage"] is None else f"{q['percentage']:g}", align=TA_RIGHT),
+                 d.p(str(q["full"]), align=TA_RIGHT), d.p(str(q["zero"]), align=TA_RIGHT)] for q in data["questions"]]
+        widths = [d.width * x for x in (0.10, 0.30, 0.10, 0.13, 0.12, 0.13, 0.12)]
+        story += d.section_title("Question-wise Analysis")
+        story += [d.table(["Q. No.", "Level", "Max", "Avg. Marks", "Avg. %", "Full Marks", "Zero / NA"], rows, widths,
+                          aligns=[TA_LEFT, TA_LEFT] + [TA_RIGHT] * 5), Spacer(1, 10)]
+
+    k_rows = [r for r in data["outcomes"]["k_levels"] if r["key"] != "Untagged"]
+    if k_rows:
+        body = [[d.p(_esc(r["label"])), d.p(str(r["questions"]), align=TA_RIGHT),
+                 d.p("–" if r["percentage"] is None else f"{r['percentage']:g}%", align=TA_RIGHT)] for r in k_rows]
+        story += d.section_title("Class Performance by Knowledge Level")
+        story += [d.table(["Level", "Questions", "Class Avg. %"], body, [d.width * 0.5, d.width * 0.25, d.width * 0.25],
+                          aligns=[TA_LEFT, TA_RIGHT, TA_RIGHT]), Spacer(1, 6)]
+
+    story += d.note() + d.signatures() + d.grade_scale()
+    return d.render(story, f"Exam Result Analysis – {e['name']}", "Exam Result Analysis")
+
+
+def build_exam_pdf_report(db: Session, teacher: Teacher, exam_id: str) -> tuple[bytes, str]:
+    """Class-level report for one exam, over its finalized evaluations. Returns (pdf_bytes, filename)."""
+    exam = get_exam(db, teacher, exam_id)
+    profile = db.query(SchoolProfile).filter_by(teacher_id=teacher.id).first()
+    pdf = render_exam_report(exam_report_data(db, exam), active_config(db, teacher, "report"), _school(profile))
+    cls = exam.school_class.name if exam.school_class else ""
+    return pdf, f"ExamReport_{_clean_name(exam.name, cls)}.pdf"
 
 
 # ---------------------------------------------------------------- term report card
