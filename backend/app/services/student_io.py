@@ -42,6 +42,12 @@ def class_name_for(cls_name: str, section: str) -> str:
     return f"{cls_name}-{section}"
 
 
+def split_class_name(name: str) -> tuple[str, str | None]:
+    """'10-A' -> ('10', 'A'); a name without a section ('Grade 12') -> ('Grade 12', None)."""
+    std, dash, sec = name.rpartition("-")
+    return (std.strip(), sec.strip()) if dash and std.strip() and sec.strip() else (name.strip(), None)
+
+
 def reg_taken(db: Session, teacher_id: str, reg: str | None, exclude_id: str | None = None) -> Student | None:
     """Registration numbers are unique across all of a teacher's students (they identify answer sheets)."""
     if not reg:
@@ -59,7 +65,7 @@ def import_students(db: Session, teacher_id: str, data: bytes, default_class: Sc
         raise ValueError("This file is not a readable Excel workbook (.xlsx).")
     ws = wb.worksheets[0]
     rows = list(ws.iter_rows(values_only=True))
-    header_idx, cols = None, {}
+    header_idx, cols, best = None, {}, {}
     for i, row in enumerate(rows[:10]):  # header may sit below a title row
         found = {}
         for j, cell in enumerate(row):
@@ -70,10 +76,14 @@ def import_students(db: Session, teacher_id: str, data: bytes, default_class: Sc
         if "name" in found and "roll_number" in found:
             header_idx, cols = i, found
             break
+        best = max(best, found, key=len)
     if header_idx is None:
-        raise ValueError("Could not find the header row. The sheet needs at least 'Name' and 'Roll Number' columns.")
+        missing = " and ".join(f"'{label}'" for field, label in (("name", "Name"), ("roll_number", "Roll Number"))
+                               if field not in best)
+        raise ValueError(f"The sheet has no {missing} column. Add a {missing} column (roll numbers as students write them "
+                         f"on their answer sheets) and import again.")
     if "class" not in cols and default_class is None:
-        raise ValueError("The sheet has no 'Class' column. Choose the class to import into.")
+        raise ValueError("The sheet has no 'Std' column. Add Std (and Sec) columns and import again.")
 
     classes = {class_key(c.name): c for c in db.query(SchoolClass).filter_by(teacher_id=teacher_id)}
     created = updated = 0
@@ -99,8 +109,11 @@ def import_students(db: Session, teacher_id: str, data: bytes, default_class: Sc
                 db.add(c)
                 db.flush()
                 classes[class_key(cls_name)] = c
-        else:
+        elif default_class is not None:
             c = default_class
+        else:
+            errors.append({"row": n, "reason": "Std is required."})
+            continue
         roll_key = (c.id, roll.lower())
         if roll_key in seen_rolls:
             errors.append({"row": n, "reason": f"Roll number {roll} appears twice for {c.name} (also row {seen_rolls[roll_key]})."})

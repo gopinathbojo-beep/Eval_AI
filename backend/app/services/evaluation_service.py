@@ -45,14 +45,41 @@ class ResolvedAnswer:
     reason: str | None = None
 
 
-def resolve_student_answer(db: Session, ev: Evaluation, q: ExamQuestion) -> ResolvedAnswer:
+class ExamSnapshot:
+    """The rows needed to judge sheets of one exam, fetched in a few bulk queries.
+
+    The database is remote, so every query is a round trip; checking sheets question by question, sheet by sheet,
+    made the review pages take tens of seconds. Rows are loaded fresh on construction: build a new one after changes.
+    """
+
+    def __init__(self, db: Session, exam_id: str, evs: list[Evaluation]):
+        ids = [e.id for e in evs] or [""]
+        self.questions = exam_questions(db, exam_id)
+        self.keys: dict[str | None, list[AnswerKey]] = {}
+        for k in db.query(AnswerKey).filter_by(exam_id=exam_id, is_active=True):
+            self.keys.setdefault(k.exam_question_id, []).append(k)
+        self.answers: dict[str, list[StudentAnswer]] = {i: [] for i in ids}
+        for a in (db.query(StudentAnswer).filter(StudentAnswer.evaluation_id.in_(ids))
+                  .order_by(StudentAnswer.page_number, StudentAnswer.position)):
+            self.answers[a.evaluation_id].append(a)
+        self.items: dict[str, list[EvaluationItem]] = {i: [] for i in ids}
+        for it in db.query(EvaluationItem).filter(EvaluationItem.evaluation_id.in_(ids)):
+            self.items[it.evaluation_id].append(it)
+        doc_ids = [e.answer_sheet_id for e in evs if e.answer_sheet_id] or [""]
+        self.docs = {d.id: d for d in db.query(AnswerSheetDocument).filter(AnswerSheetDocument.id.in_(doc_ids))}
+
+    def unresolved(self, ev: Evaluation) -> bool:
+        return any(a.status in ("UNMAPPED", "NEEDS_REVIEW") for a in self.answers.get(ev.id, []))
+
+
+def resolve_student_answer(db: Session, ev: Evaluation, q: ExamQuestion, snap: ExamSnapshot | None = None) -> ResolvedAnswer:
     """Resolve student's answer for canonical question q.id across multiple sources:
     1. verified direct student_answer_group.question_id
     2. verified parent / subquestion mappings
     3. answer blocks belonging to mapped group (including cross-page continuations)
     4. precise diagnostic states if missing (not attempted vs mapping review vs unmapped vs ocr failed).
     """
-    all_answers = (
+    all_answers = snap.answers.get(ev.id, []) if snap else (
         db.query(StudentAnswer)
         .filter_by(evaluation_id=ev.id)
         .order_by(StudentAnswer.page_number, StudentAnswer.position)
@@ -66,7 +93,7 @@ def resolve_student_answer(db: Session, ev: Evaluation, q: ExamQuestion) -> Reso
     ]
 
     # 2. Check canonical subquestions if q is a parent question
-    all_exam_qs = exam_questions(db, ev.exam_id)
+    all_exam_qs = snap.questions if snap else exam_questions(db, ev.exam_id)
     canonical_sub_qs = [
         sq for sq in all_exam_qs
         if sq.id != q.id and sq.normalized_number and q.normalized_number
@@ -155,7 +182,9 @@ def resolve_student_answer(db: Session, ev: Evaluation, q: ExamQuestion) -> Reso
         )
 
     # Check for failed OCR on answer sheet document
-    doc = db.get(AnswerSheetDocument, ev.answer_sheet_id) if ev.answer_sheet_id else None
+    doc = None
+    if ev.answer_sheet_id:
+        doc = snap.docs.get(ev.answer_sheet_id) if snap else db.get(AnswerSheetDocument, ev.answer_sheet_id)
     if doc and doc.pages:
         failed_pages = [p.get("page_number") for p in doc.pages if p.get("ocr_status") != "OK"]
         if failed_pages:
@@ -305,23 +334,27 @@ def run_evaluation(ev_id: str, only_question_ids: list[str] | None = None) -> No
         db.close()
 
 
-def confirm_not_attempted(db: Session, ev: Evaluation) -> None:
+def confirm_not_attempted(db: Session, ev: Evaluation, snap: ExamSnapshot | None = None) -> None:
     """Once every student answer is mapped, a MISSING question with no answer on the sheet is not attempted: 0 marks."""
-    if any(a.status in ("UNMAPPED", "NEEDS_REVIEW") for a in db.query(StudentAnswer).filter_by(evaluation_id=ev.id).all()):
+    snap = snap or ExamSnapshot(db, ev.exam_id, [ev])
+    if snap.unresolved(ev):
         return
-    qs = {q.id: q for q in exam_questions(db, ev.exam_id)}
-    for it in db.query(EvaluationItem).filter_by(evaluation_id=ev.id, status="MISSING", not_attempted_confirmed=False).all():
+    qs = {q.id: q for q in snap.questions}
+    for it in snap.items[ev.id]:
+        if it.status != "MISSING" or it.not_attempted_confirmed:
+            continue
         q = qs.get(it.exam_question_id)
-        if q is not None and resolve_student_answer(db, ev, q).status == STUDENT_ANSWER_NOT_ATTEMPTED:
+        if q is not None and resolve_student_answer(db, ev, q, snap).status == STUDENT_ANSWER_NOT_ATTEMPTED:
             it.not_attempted_confirmed = True
             if it.final_marks is None:
                 it.final_marks = 0.0
 
 
-def finalize_issues(db: Session, ev: Evaluation) -> list[dict]:
+def finalize_issues(db: Session, ev: Evaluation, snap: ExamSnapshot | None = None) -> list[dict]:
     """Read-only: lists what still blocks finalizing. Call confirm_not_attempted() first to settle unanswered items."""
-    exam = db.get(Exam, ev.exam_id)
-    qs = exam_questions(db, ev.exam_id)
+    snap = snap or ExamSnapshot(db, ev.exam_id, [ev])
+    qs = snap.questions
+    has_unresolved = snap.unresolved(ev)
     issues: list[dict] = []
 
     def add(question: str, reason: str):
@@ -330,18 +363,17 @@ def finalize_issues(db: Session, ev: Evaluation) -> list[dict]:
     if not qs or any(q.verification_status != "VERIFIED" for q in qs):
         add("Exam", "Question paper is not verified")
     for q in qs:
-        keys = db.query(AnswerKey).filter_by(exam_id=exam.id, exam_question_id=q.id, is_active=True).all()
-        mapped = [k for k in keys if k.mapping_status == "MAPPED"]
+        mapped = [k for k in snap.keys.get(q.id, []) if k.mapping_status == "MAPPED"]
         if len(mapped) != 1 or mapped[0].verification_status != "VERIFIED":
             add(q.display_number, "Answer key is missing, duplicated or not verified")
         elif mapped[0].mark_mismatch:
             add(q.display_number, "Answer key marks disagree with the question's maximum marks")
-    for a in db.query(StudentAnswer).filter_by(evaluation_id=ev.id).all():
+    for a in snap.answers[ev.id]:
         if a.status in ("UNMAPPED", "NEEDS_REVIEW"):
             label = a.raw_question_number or "(no question number)"
             add(label, "Student answer is unmapped" if a.status == "UNMAPPED"
                 else f"Student answer needs mapping review: {a.mapping_note or ''}".strip())
-    items = {i.exam_question_id: i for i in db.query(EvaluationItem).filter_by(evaluation_id=ev.id).all()}
+    items = {i.exam_question_id: i for i in snap.items[ev.id]}
     for q in qs:
         it = items.get(q.id)
         if it is None or it.status == "PENDING":
@@ -350,12 +382,8 @@ def finalize_issues(db: Session, ev: Evaluation) -> list[dict]:
             add(q.display_number, it.error or "AI evaluation failed")
         elif it.status == "MISSING":
             if not getattr(it, "not_attempted_confirmed", False):
-                res = resolve_student_answer(db, ev, q)
+                res = resolve_student_answer(db, ev, q, snap)
                 if res.status == STUDENT_ANSWER_NOT_ATTEMPTED:
-                    has_unresolved = any(
-                        a.status in ("UNMAPPED", "NEEDS_REVIEW")
-                        for a in db.query(StudentAnswer).filter_by(evaluation_id=ev.id).all()
-                    )
                     # with nothing left to map, confirm_not_attempted() settles this item; only report it otherwise
                     if has_unresolved:
                         add(q.display_number, "No student answer found. Map an answer or confirm it was not attempted")
@@ -379,14 +407,15 @@ def finalize_issues(db: Session, ev: Evaluation) -> list[dict]:
 def refresh_evaluation_status(db: Session, ev: Evaluation) -> None:
     if ev.status == "FINALIZED":
         return
-    confirm_not_attempted(db, ev)
-    answers = db.query(StudentAnswer).filter_by(evaluation_id=ev.id).all()
-    items = db.query(EvaluationItem).filter_by(evaluation_id=ev.id).all()
-    if any(a.status in ("UNMAPPED", "NEEDS_REVIEW") for a in answers):
+    db.flush()  # the snapshot is read from the database, so pending changes must be there first
+    snap = ExamSnapshot(db, ev.exam_id, [ev])
+    confirm_not_attempted(db, ev, snap)
+    items = snap.items[ev.id]
+    if snap.unresolved(ev):
         ev.status = "MAPPING_REVIEW"
     elif not items or all(i.status == "PENDING" for i in items):
         ev.status = "OCR_REVIEW"
-    elif not finalize_issues(db, ev):
+    elif not finalize_issues(db, ev, snap):
         ev.status = "FINALIZABLE"
     elif any(i.status == "APPROVED" or i.teacher_overridden for i in items):
         ev.status = "TEACHER_REVIEW"
@@ -395,6 +424,79 @@ def refresh_evaluation_status(db: Session, ev: Evaluation) -> None:
     else:
         ev.status = "TEACHER_REVIEW"
     db.commit()
+
+
+def approve_clean_items(db: Session, ev: Evaluation) -> int:
+    """Approve every cleanly evaluated item and confirm genuine unattempted items; returns how many were approved."""
+    mapping_complete = not any(a.status in ("UNMAPPED", "NEEDS_REVIEW")
+                               for a in db.query(StudentAnswer).filter_by(evaluation_id=ev.id).all())
+    n = 0
+    for it in db.query(EvaluationItem).filter_by(evaluation_id=ev.id):
+        if it.status == "EVALUATED":
+            it.status = "APPROVED"
+            n += 1
+            if it.student_answer_id and (a := db.get(StudentAnswer, it.student_answer_id)):
+                a.status = "APPROVED"
+        elif it.status == "MISSING" and (it.not_attempted_confirmed or mapping_complete):
+            it.not_attempted_confirmed = True
+            if it.final_marks is None:
+                it.final_marks = 0.0
+            it.status = "APPROVED"
+            n += 1
+    return n
+
+
+# AI marks below this confidence are pointed out to the teacher before a bulk finalize
+LOW_CONFIDENCE = 0.6
+_EVALUATABLE_EXAM = ("READY_FOR_EVALUATION", "EVALUATING", "REVIEW_REQUIRED")
+
+
+def auto_evaluate_sheet(doc_id: str) -> None:
+    """Grade a freshly read sheet straight away when nothing needs the teacher first (pages read, answers mapped).
+
+    Sheets with unread pages or unmapped answers are left for the teacher; review_reasons() lists why.
+    """
+    db = SessionLocal()
+    try:
+        ev = db.query(Evaluation).filter_by(answer_sheet_id=doc_id).first()
+        doc = db.get(AnswerSheetDocument, doc_id)
+        if ev is None or doc is None or ev.status == "FINALIZED" or ev.run_status == "RUNNING" or doc.status != "READY":
+            return
+        if db.get(Exam, ev.exam_id).status not in _EVALUATABLE_EXAM:
+            return
+        if any(a.status in ("UNMAPPED", "NEEDS_REVIEW") for a in db.query(StudentAnswer).filter_by(evaluation_id=ev.id)):
+            return
+        ev.run_status, ev.run_progress = "RUNNING", 0
+        db.commit()
+        ev_id = ev.id
+    finally:
+        db.close()
+    run_evaluation(ev_id)
+
+
+def review_reasons(db: Session, ev: Evaluation, snap: ExamSnapshot) -> list[dict]:
+    """Why this sheet cannot be finalized together with the others.
+
+    AI marks still awaiting approval are not listed: finalizing all sheets approves them.
+    """
+    doc = snap.docs.get(ev.answer_sheet_id)
+    issues = [i for i in finalize_issues(db, ev, snap) if i["reason"] != "Awaiting teacher approval"]
+    if snap.unresolved(ev):
+        # every question reads "Not evaluated yet" until the mapping is fixed; one line says it better
+        issues = [i for i in issues if i["reason"] != "Not evaluated yet"]
+        issues.append({"question": "Evaluation", "reason": "Not graded yet. Fix the answer mapping, then run the evaluation."})
+    if doc is not None and doc.status == "NEEDS_ATTENTION":
+        issues.insert(0, {"question": "Answer sheet", "reason": "Some pages could not be read. Retry them first."})
+    if ev.run_status == "ERROR":
+        issues.insert(0, {"question": "Evaluation", "reason": "The AI evaluation stopped with an error. Run it again."})
+    qs = {q.id: q for q in snap.questions}
+    for it in snap.items[ev.id]:
+        if it.status != "EVALUATED" or it.teacher_overridden:
+            continue
+        if it.ai_confidence is not None and it.ai_confidence < LOW_CONFIDENCE and (q := qs.get(it.exam_question_id)):
+            issues.append({"question": q.display_number,
+                           "reason": f"AI was unsure of these marks ({round(it.ai_confidence * 100)}% confidence). Check them."})
+    return issues
 
 
 def finalize(db: Session, ev: Evaluation) -> None:

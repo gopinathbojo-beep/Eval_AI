@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, fetchBlobUrl } from "../../api/client";
 import { useApi } from "../../hooks/useApi";
-import type { Evaluation, IdentityRead, OutcomeSummary, Student, UnassignedSheet } from "../../types";
+import type { Evaluation, IdentityRead, OutcomeSummary, ReviewSummary, Student, UnassignedSheet } from "../../types";
 import { OutcomeTables } from "../../components/OutcomeTables";
 import { BUSY_DOC, date, fmt, label } from "../../utils/format";
-import { Badge, Button, Card, Confirm, Empty, ErrorPanel, Loading, Select, StatusBadge } from "../../components/ui";
+import { Badge, Button, Card, Confirm, Empty, ErrorPanel, Loading, Modal, Select, StatusBadge } from "../../components/ui";
 import { UploadZone } from "../../components/DocPanel";
 import { useExam } from "../ExamWorkspace";
 
@@ -143,8 +143,8 @@ function UnassignedSheets({
         <div>
           <h3 className="text-sm font-semibold text-ink">Unidentified Answer Sheets ({rows.length})</h3>
           <p className="text-xs text-mute">
-            {workingCount > 0 && <span className="animate-pulse">Reading student details on {workingCount} sheet(s)… </span>}
-            {held.length > 0 && "These could not be matched to one student with certainty. Pick the student to continue."}
+            {workingCount > 0 && <span className="animate-pulse">Reading {workingCount} sheet(s)… </span>}
+            {held.length > 0 && "These could not be matched to one student with certainty, so they were held while the rest carried on. Pick the student and the sheet is graded straight away."}
           </p>
         </div>
       </div>
@@ -261,17 +261,167 @@ function UnassignedSheets({
   );
 }
 
+/** Every database round trip is slow, so pages poll gently while sheets are being worked on. */
+const POLL_MS = 4000;
+
+/** The batch summary, polled while sheets are still being read or graded. `onProgress` refreshes the lists alongside,
+ * but only when a sheet has moved on, not on every poll. */
+function useReviewSummary(examId: string, onProgress?: () => Promise<unknown>) {
+  const progress = useRef(onProgress);
+  progress.current = onProgress;
+  const last = useRef<number | null>(null);
+  return useApi<ReviewSummary>(`/exams/${examId}/review-summary`, (d) => {
+    if (last.current !== null && last.current !== d.processing) void progress.current?.();
+    last.current = d.processing;
+    return d.processing ? POLL_MS : null;
+  });
+}
+
+/** The uploaded batch at a glance: an alert once every sheet is read and graded, then one button to finalize the
+ * sheets that are fine, with the ones that need the teacher listed and why. */
+function BatchReview({
+  examId, summary, onChanged,
+}: {
+  examId: string; summary: ReviewSummary; onChanged: () => Promise<void>;
+}) {
+  const [done, setDone] = useState(false);
+  const [confirm, setConfirm] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const was = useRef(summary.processing);
+
+  useEffect(() => {
+    if (was.current > 0 && summary.processing === 0) setDone(true);
+    was.current = summary.processing;
+  }, [summary.processing]);
+
+  const open = summary.ready.length + summary.needs_review.length;
+  if (!summary.processing && !open && !summary.unassigned) return null;
+
+  return (
+    <Card className="overflow-x-auto shadow-soft">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
+        <div>
+          <h3 className="text-sm font-semibold text-ink">Review & Finalize</h3>
+          <p className="text-xs text-mute">
+            {summary.processing > 0 ? (
+              <span className="animate-pulse">
+                Reading and grading sheets one after another: {summary.processing} still in progress…
+              </span>
+            ) : (
+              <>
+                {summary.ready.length} ready · {summary.needs_review.length} need your review · {summary.finalized} finalized
+                {summary.unassigned > 0 && <> · {summary.unassigned} without a student</>}
+              </>
+            )}
+          </p>
+        </div>
+        <Button
+          variant="primary"
+          disabled={!summary.ready.length}
+          onClick={() => setConfirm(true)}
+          title={summary.ready.length ? "Approve the AI marks and finalize every sheet that needs nothing else" : "No sheet is ready yet"}
+        >
+          Finalize {summary.ready.length || ""} Reviewed Sheet{summary.ready.length === 1 ? "" : "s"}
+        </Button>
+      </div>
+      {result && <p className="border-b border-line bg-ok-soft px-4 py-2 text-xs font-medium text-ok">{result}</p>}
+      {summary.needs_review.length > 0 && (
+        <table className="w-full text-left text-sm">
+          <thead className="border-b border-line bg-surface text-xs font-semibold uppercase tracking-wider text-mute">
+            <tr>
+              <th className="px-4 py-3">Needs Review</th>
+              <th className="px-4 py-3">What to check</th>
+              <th className="px-4 py-3 text-right">Action</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-line text-sm">
+            {summary.needs_review.map((r) => (
+              <tr key={r.evaluation_id} className="align-top hover:bg-hover">
+                <td className="px-4 py-3">
+                  <p className="font-medium text-ink">{r.student.name}</p>
+                  <p className="font-mono text-xs text-mute">Roll: {r.student.roll_number}</p>
+                </td>
+                <td className="px-4 py-3">
+                  <ul className="space-y-0.5 text-xs">
+                    {r.reasons.map((x, i) => (
+                      <li key={i}>
+                        <span className="font-mono font-medium text-ink">{x.question}</span>{" "}
+                        <span className="text-warn">{x.reason}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </td>
+                <td className="whitespace-nowrap px-4 py-3 text-right">
+                  <Link to={`/evaluations/${r.evaluation_id}`} className="text-xs font-medium text-pen hover:underline">
+                    Review →
+                  </Link>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {done && (
+        <Modal
+          title="Evaluation Completed"
+          onClose={() => setDone(false)}
+          footer={<Button variant="primary" onClick={() => setDone(false)}>OK</Button>}
+        >
+          <div className="space-y-2 text-sm text-ink">
+            <p>All uploaded answer sheets have been read and graded.</p>
+            <ul className="list-disc space-y-0.5 pl-5 text-xs">
+              <li><b>{summary.ready.length}</b> ready to finalize after you look them over</li>
+              {summary.needs_review.length > 0 && (
+                <li className="text-warn"><b>{summary.needs_review.length}</b> need your review. They are listed with what to check.</li>
+              )}
+              {summary.unassigned > 0 && (
+                <li className="text-warn"><b>{summary.unassigned}</b> could not be matched to a student</li>
+              )}
+            </ul>
+          </div>
+        </Modal>
+      )}
+      {confirm && (
+        <Confirm
+          title="Finalize Reviewed Sheets"
+          confirmLabel={`Finalize ${summary.ready.length}`}
+          body={
+            <div className="space-y-2 text-sm text-ink">
+              <p>
+                Approve the AI marks and finalize <b>{summary.ready.length}</b> answer sheet(s)?
+              </p>
+              {summary.needs_review.length > 0 && (
+                <p className="text-xs text-mute">
+                  The {summary.needs_review.length} sheet(s) that need review are left as they are.
+                </p>
+              )}
+            </div>
+          }
+          onConfirm={async () => {
+            const r = await api<ReviewSummary & { finalized_now: number }>(`/exams/${examId}/finalize-ready`, { method: "POST" });
+            setResult(`${r.finalized_now} sheet(s) finalized.`);
+            await onChanged();
+          }}
+          onClose={() => setConfirm(false)}
+        />
+      )}
+    </Card>
+  );
+}
+
 export function AnswerSheets() {
   const { exam, reload } = useExam();
   const students = useApi<Student[]>(`/students?class_id=${exam.class_id}`);
   const sheets = useApi<Evaluation[]>(
     `/exams/${exam.id}/answer-sheets`,
-    (d) => (d.some((s) => s.document && BUSY_DOC.includes(s.document.status)) ? 2000 : null)
+    (d) => (d.some((s) => (s.document && BUSY_DOC.includes(s.document.status)) || s.run_status === "RUNNING") ? POLL_MS : null)
   );
   const unassigned = useApi<UnassignedSheet[]>(
     `/exams/${exam.id}/answer-sheets/unassigned`,
-    (d) => (d.some((s) => BUSY_DOC.includes(s.status)) ? 2000 : null)
+    (d) => (d.some((s) => BUSY_DOC.includes(s.status)) ? POLL_MS : null)
   );
+  const summary = useReviewSummary(exam.id, () => Promise.all([sheets.reload(), unassigned.reload()]));
 
   const [del, setDel] = useState<Evaluation | null>(null);
   const [progress, setProgress] = useState<string | null>(null);
@@ -280,7 +430,7 @@ export function AnswerSheets() {
   const taken = new Set((sheets.data ?? []).map((s) => s.student.id));
 
   const refresh = async () => {
-    await Promise.all([sheets.reload(), unassigned.reload(), reload()]);
+    await Promise.all([sheets.reload(), unassigned.reload(), summary.reload(), reload()]);
   };
 
   const upload = async (files: File[]) => {
@@ -291,7 +441,7 @@ export function AnswerSheets() {
         const f = new FormData();
         batch.forEach((file) => f.append("files", file));
         await api(`/exams/${exam.id}/answer-sheets/bulk`, { method: "POST", form: f });
-        await unassigned.reload();
+        await Promise.all([unassigned.reload(), summary.reload()]);
       }
     } finally {
       setProgress(null);
@@ -330,6 +480,8 @@ export function AnswerSheets() {
       )}
 
       <ErrorPanel error={sheets.error || unassigned.error} />
+
+      {summary.data && <BatchReview examId={exam.id} summary={summary.data} onChanged={refresh} />}
 
       {unassigned.data && unassigned.data.length > 0 && (
         <UnassignedSheets rows={unassigned.data} students={students.data ?? []} taken={taken} onChanged={refresh} />
@@ -443,8 +595,9 @@ export function AnswerSheets() {
 }
 
 export function ExamEvaluation() {
-  const { exam } = useExam();
-  const { data, loading, error } = useApi<Evaluation[]>(`/exams/${exam.id}/answer-sheets`);
+  const { exam, reload } = useExam();
+  const { data, loading, error, reload: reloadSheets } = useApi<Evaluation[]>(`/exams/${exam.id}/answer-sheets`);
+  const summary = useReviewSummary(exam.id, reloadSheets);
 
   if (loading) return <Loading />;
   if (error) return <ErrorPanel error={error} />;
@@ -459,6 +612,13 @@ export function ExamEvaluation() {
 
   return (
     <div className="space-y-3">
+      {summary.data && (
+        <BatchReview
+          examId={exam.id}
+          summary={summary.data}
+          onChanged={async () => { await Promise.all([reloadSheets(), summary.reload(), reload()]); }}
+        />
+      )}
       <div className="flex items-center justify-between px-1">
         <h3 className="text-sm font-semibold text-ink">Student Evaluation Queue ({data.length})</h3>
         <span className="text-xs text-mute">Click any student to open the evaluation workspace</span>

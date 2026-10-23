@@ -182,6 +182,12 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
         _handle_cancel(db, doc, doc_id)
         return
 
+    if kind == "answer-sheet" and doc.student_id is None:
+        # held for the teacher to pick the student: the pages are read now, the answers are built once assigned
+        doc.status, doc.stage = "NEEDS_STUDENT", "Pick the student (answers already read)"
+        db.commit()
+        return
+
     _progress(db, doc, "Extracting and validating", None, None, "EXTRACTING")
     results = _load_results(doc, schema)
     if kind == "question-paper":

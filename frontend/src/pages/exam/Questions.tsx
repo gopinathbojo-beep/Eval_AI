@@ -176,10 +176,10 @@ export default function Questions() {
               small
               variant="soft"
               busy={busy === "k-levels"}
-              title="Accept every suggested K level as correct"
+              title="Accept every suggested level as correct"
               onClick={() => run("k-levels", () => api(`/exams/${exam.id}/questions/confirm-k-levels`, { method: "POST" }))}
             >
-              Confirm Suggested K Levels
+              Confirm Suggested Levels
             </Button>
           )}
 
@@ -927,15 +927,13 @@ function ReviewDlg({ q, onClose, onDone }: { q: Question; onClose: () => void; o
   );
 }
 
-/** Bloom's K level and course outcome for one question. Suggested levels stay marked until the teacher confirms them. */
+/** Bloom's level for one question. Suggested levels stay marked until the teacher confirms them. */
 function OutcomeTags({
   q, disabled, onSaved, onError,
 }: {
   q: Question; disabled: boolean; onSaved: () => Promise<void>; onError: (e: unknown) => void;
 }) {
-  const [co, setCo] = useState(q.course_outcome || "");
-  useEffect(() => setCo(q.course_outcome || ""), [q.course_outcome]);
-  const save = async (json: { k_level?: string | null; course_outcome?: string | null }) => {
+  const save = async (json: { k_level?: string | null }) => {
     try {
       await api(`/exam-questions/${q.id}/outcome`, { method: "PATCH", json });
       await onSaved();
@@ -947,9 +945,9 @@ function OutcomeTags({
   return (
     <div className="mt-2.5 flex flex-wrap items-center gap-2 text-xs">
       <label className="flex items-center gap-1.5">
-        <span className="font-semibold text-mute">K level</span>
+        <span className="font-semibold text-mute">Level</span>
         <select
-          aria-label={`K level for question ${q.display_number}`}
+          aria-label={`Bloom's level for question ${q.display_number}`}
           className={`rounded-md border bg-surface px-1.5 py-0.5 text-xs ${suggested ? "border-warn/60" : "border-line"}`}
           value={q.k_level || ""}
           disabled={disabled}
@@ -957,22 +955,9 @@ function OutcomeTags({
         >
           <option value="">–</option>
           {K_LEVELS.map((k) => (
-            <option key={k.key} value={k.key}>{k.key} · {k.label}</option>
+            <option key={k.key} value={k.key}>{k.label}</option>
           ))}
         </select>
-      </label>
-      <label className="flex items-center gap-1.5">
-        <span className="font-semibold text-mute">CO</span>
-        <input
-          aria-label={`Course outcome for question ${q.display_number}`}
-          className="w-20 rounded-md border border-line bg-surface px-1.5 py-0.5 text-xs uppercase"
-          placeholder="e.g. CO1"
-          value={co}
-          disabled={disabled}
-          onChange={(e) => setCo(e.target.value)}
-          onBlur={() => co !== (q.course_outcome || "") && save({ course_outcome: co || null })}
-          onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()}
-        />
       </label>
     </div>
   );

@@ -1,9 +1,9 @@
 export interface Teacher { id: string; name: string; email: string }
-export interface ClassRow { id: string; name: string; student_count: number }
+export interface ClassRow { id: string; name: string; std: string; section: string | null; student_count: number }
 export interface Subject { id: string; name: string; code: string | null }
 export interface Student {
   id: string; name: string; roll_number: string; class_id: string; class_name: string | null;
-  registration_number?: string | null; section?: string | null;
+  class_std?: string | null; registration_number?: string | null; section?: string | null;
 }
 export interface IdentityRead {
   name: string | null; roll_number: string | null; registration_number: string | null; class_name: string | null; section: string | null;
@@ -11,6 +11,11 @@ export interface IdentityRead {
 export interface UnassignedSheet extends DocInfo {
   identity: { match?: string; note?: string; read?: Partial<IdentityRead>; candidates?: string[] };
   candidates: { id: string; name: string; roll_number: string; registration_number: string | null; section: string | null }[];
+}
+export interface BatchRow { evaluation_id: string; student: Student; status: string }
+export interface ReviewSummary {
+  total: number; processing: number; unassigned: number; finalized: number;
+  ready: BatchRow[]; needs_review: (BatchRow & { reasons: { question: string; reason: string }[] })[];
 }
 export interface ImportSummary { created: number; updated: number; errors: { row: number; reason: string }[] }
 export interface OutcomeRow {

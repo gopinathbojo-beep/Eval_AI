@@ -2,7 +2,7 @@ import { useState, type FormEvent } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/Auth";
 import { Button, ErrorPanel, Field, Input } from "../components/ui";
-import { BrandLabel, BrandMark, BrandName } from "../components/Brand";
+import { BrandLabel } from "../components/Brand";
 
 /** Decorative graded answer sheet: ruled paper, red ticks and a circled score. */
 function GradedSheet() {
@@ -92,11 +92,8 @@ export default function Login() {
       <section className="desk flex items-center justify-center p-6 sm:p-10">
         <div className="w-full max-w-sm animate-rise">
           <div className="mb-8 lg:hidden">
-            <span className="flex items-center gap-3">
-              <BrandMark className="h-10 w-10" />
-              <BrandName className="text-3xl dark:!text-ink" />
-            </span>
-            <p className="mt-1 text-xs uppercase tracking-[0.16em] text-mute">Examination evaluation &amp; grading</p>
+            <BrandLabel onDark={false} />
+            <p className="mt-2 text-xs uppercase tracking-[0.16em] text-mute">Examination evaluation &amp; grading</p>
           </div>
 
           <h1 className="font-display text-3xl font-semibold text-ink">

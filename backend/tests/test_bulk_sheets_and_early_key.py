@@ -64,13 +64,19 @@ def test_bulk_sheets_are_matched_to_students_or_held(client, auth):
     held = j(c.get(f"/api/exams/{eid}/answer-sheets/unassigned", headers=h))
     assert [d["status"] for d in held] == ["NEEDS_STUDENT", "NEEDS_STUDENT"]
     priya, blank = held
+    # held sheets are read anyway, so the batch never waits on the teacher; only the student is left to pick
+    assert all(pg["ocr_status"] == "OK" for d in held for pg in d["pages"])
+    assert {d["stage"] for d in held} == {"Pick the student (answers already read)"}
     assert "Priya" in priya["identity"]["note"] and priya["candidates"][0]["id"] == meena["id"]
     assert "No roll number or registration number" in blank["identity"]["note"]
 
     # teacher resolves: Priya's sheet is Meena's; the blank one cannot go to Asha (she already has one)
+    BEHAVIOUR["sheet"] = "dup"                  # a different sheet: if assigning read the pages again, its answers would show
     r = j(c.post(f"/api/answer-sheets/{priya['id']}/assign", headers=h, json={"student_id": meena["id"]}), 200)
+    BEHAVIOUR["sheet"] = "main"
     assert r["student"]["id"] == meena["id"]
-    assert j(c.get(f"/api/evaluations/{r['id']}", headers=h))["answers"]
+    answers = j(c.get(f"/api/evaluations/{r['id']}", headers=h))["answers"]
+    assert answers and not any("Another try" in (a["answer_text"] or "") for a in answers)
     assert c.post(f"/api/answer-sheets/{blank['id']}/assign", headers=h, json={"student_id": asha["id"]}).status_code == 409
     # a sheet whose student already has one is held, never auto-assigned twice
     BEHAVIOUR["identities"] = [{"registration_number": "REG-004", "roll_number": "1"}]   # reg -> Kumar, roll -> Asha
@@ -86,6 +92,47 @@ def test_bulk_sheets_are_matched_to_students_or_held(client, auth):
     r = c.post(f"/api/exams/{eid}/answer-sheets/bulk", headers=h, files=bad)
     assert r.status_code == 400 and "bad.pdf" in r.json()["message"]
     assert j(c.get(f"/api/exams/{eid}/answer-sheets/unassigned", headers=h)) == []
+
+
+def test_bulk_sheets_are_graded_in_turn_and_finalized_together(client, auth):
+    c, h = client, auth
+    cls, eid = _exam_ready_for_sheets(c, h, "BULK-8B")
+    mk = lambda name, roll: j(c.post("/api/students", headers=h, json={  # noqa: E731
+        "name": name, "roll_number": roll, "class_id": cls["id"]}), 201)
+    clean, messy, unsure = mk("Clean Kid", "1"), mk("Messy Kid", "2"), mk("Unsure Kid", "3")
+
+    for sheet, roll in (("clean", "1"), ("main", "2"), ("unsure", "3")):
+        BEHAVIOUR["sheet"], BEHAVIOUR["identities"] = sheet, [{"roll_number": roll}]
+        j(c.post(f"/api/exams/{eid}/answer-sheets/bulk", headers=h,
+                 files=[("files", (f"{sheet}.pdf", make_pdf(1), "application/pdf"))]), 202)
+    BEHAVIOUR["sheet"] = "main"
+
+    # every sheet was read and the clean ones graded without the teacher starting anything
+    sheets = {s["student"]["id"]: s for s in j(c.get(f"/api/exams/{eid}/answer-sheets", headers=h))}
+    assert sheets[clean["id"]]["run_status"] == "DONE" and sheets[unsure["id"]]["run_status"] == "DONE"
+    assert sheets[messy["id"]]["run_status"] == "IDLE"                          # unmapped answer: left for the teacher
+
+    summ = j(c.get(f"/api/exams/{eid}/review-summary", headers=h), 200)
+    assert summ["processing"] == 0 and summ["total"] == 3 and summ["unassigned"] == 0
+    assert [r["student"]["id"] for r in summ["ready"]] == [clean["id"]]
+    review = {r["student"]["id"]: r["reasons"] for r in summ["needs_review"]}
+    assert set(review) == {messy["id"], unsure["id"]}
+    assert any("Fix the answer mapping" in x["reason"] for x in review[messy["id"]])
+    assert not any(x["reason"] == "Not evaluated yet" for x in review[messy["id"]])
+    assert [x["question"] for x in review[unsure["id"]]] == ["3(b)"] and "30% confidence" in review[unsure["id"]][0]["reason"]
+
+    done = j(c.post(f"/api/exams/{eid}/finalize-ready", headers=h), 200)
+    assert done["finalized_now"] == 1 and done["finalized"] == 1 and done["ready"] == [] and len(done["needs_review"]) == 2
+    res = j(c.get(f"/api/evaluations/{sheets[clean['id']]['id']}/result", headers=h))
+    assert res["finalized"] and res["total_marks"] == res["maximum_marks"]
+    r = c.post(f"/api/exams/{eid}/finalize-ready", headers=h)
+    assert r.status_code == 400 and r.json()["code"] == "NOTHING_READY"
+
+    # once the teacher checks the unsure mark, that sheet joins the next bulk finalize
+    ev = j(c.get(f"/api/evaluations/{sheets[unsure['id']]['id']}", headers=h))
+    it = next(i for i in ev["items"] if i["ai_confidence"] is not None and i["ai_confidence"] < 0.5)
+    j(c.patch(f"/api/evaluations/{ev['evaluation']['id']}/items/{it['id']}", headers=h, json={"final_marks": 2, "approve": True, "reason": "Checked"}), 200)
+    assert j(c.post(f"/api/exams/{eid}/finalize-ready", headers=h), 200)["finalized_now"] == 1
 
 
 def test_student_import_export(client, auth):

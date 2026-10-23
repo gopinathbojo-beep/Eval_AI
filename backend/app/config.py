@@ -22,7 +22,6 @@ class Settings(BaseSettings):
     internvl_num_ctx: int = 8192
     internvl_num_predict: int = 4096
 
-    database_url: str = ""  # Supabase Postgres connection string
     secret_key: str = ""
     access_token_minutes: int = 480
     data_dir: str = "../data"
