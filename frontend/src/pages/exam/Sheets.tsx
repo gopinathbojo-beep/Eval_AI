@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { api, fetchBlobUrl } from "../../api/client";
+import { api, downloadFile, fetchBlobUrl } from "../../api/client";
 import { useApi } from "../../hooks/useApi";
 import type { Evaluation, IdentityRead, OutcomeSummary, ReviewSummary, Student, UnassignedSheet } from "../../types";
 import { OutcomeTables } from "../../components/OutcomeTables";
@@ -703,6 +703,19 @@ export function ExamResults() {
   const outcomes = useApi<OutcomeSummary>(`/exams/${exam.id}/outcome-summary`);
   const [err, setErr] = useState<unknown>(null);
   const [confirm, setConfirm] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+
+  const downloadExamReport = async () => {
+    setDownloading(true);
+    setErr(null);
+    try {
+      await downloadFile(`/exams/${exam.id}/report.pdf`, `ExamReport_${exam.name.replace(/[^a-zA-Z0-9_-]/g, "_")}.pdf`);
+    } catch (e) {
+      setErr(e);
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   if (loading) return <Loading />;
   const done = (data ?? []).filter((e) => e.status === "FINALIZED");
@@ -726,16 +739,26 @@ export function ExamResults() {
                   {done.length} of {data.length} students finalized
                 </p>
               </div>
-              {exam.status !== "FINALIZED" && (
+              <div className="flex flex-wrap items-center gap-2">
                 <Button
-                  variant="primary"
-                  disabled={!allFinalized}
-                  onClick={() => setConfirm(true)}
-                  title={!allFinalized ? "All students must be finalized first" : "Finalize exam"}
+                  busy={downloading}
+                  disabled={done.length === 0}
+                  onClick={downloadExamReport}
+                  title={done.length === 0 ? "Finalize at least one student first" : "Download the exam-wise class report (PDF)"}
                 >
-                  Finalize the Whole Exam
+                  Download Exam Report (PDF)
                 </Button>
-              )}
+                {exam.status !== "FINALIZED" && (
+                  <Button
+                    variant="primary"
+                    disabled={!allFinalized}
+                    onClick={() => setConfirm(true)}
+                    title={!allFinalized ? "All students must be finalized first" : "Finalize exam"}
+                  >
+                    Finalize the Whole Exam
+                  </Button>
+                )}
+              </div>
             </div>
             <table className="w-full text-left text-sm">
               <thead className="border-b border-line bg-surface text-xs font-semibold uppercase tracking-wider text-mute">

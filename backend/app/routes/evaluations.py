@@ -17,7 +17,7 @@ from ..services.k_level import summarize as summarize_outcomes
 from ..services.mapping import map_label
 from ..services.mapping_service import apply_student_mapping, exam_questions, mapping_summary
 from ..services.numbering import normalize_question_number
-from ..services.school_reports import build_evaluation_pdf_report
+from ..services.school_reports import build_evaluation_pdf_report, build_exam_pdf_report
 from ..services.state import set_state
 from ..services.student_identity import in_flight
 from ..config import get_settings
@@ -482,6 +482,19 @@ def download_evaluation_report(ev_id: str, db: Session = Depends(get_db), t: Tea
         pdf_bytes, filename = saved.read_bytes(), saved.name.split("__", 1)[1]
     else:
         pdf_bytes, filename = build_evaluation_pdf_report(db, t, ev_id)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "private, no-cache",
+        },
+    )
+
+
+@router.get("/exams/{exam_id}/report.pdf")
+def download_exam_report(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    pdf_bytes, filename = build_exam_pdf_report(db, t, exam_id)
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
