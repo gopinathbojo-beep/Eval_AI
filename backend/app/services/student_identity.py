@@ -328,5 +328,6 @@ def _identify(doc_id: str, teacher_id: str | None) -> str:
         assign_student(db, doc, db.get(Student, result["student_id"]), teacher_id, result["note"])
         db.commit()
         return ASSIGNED
-    finally:
+    finally:  
+        
         db.close()
