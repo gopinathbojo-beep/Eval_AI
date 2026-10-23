@@ -140,3 +140,16 @@ def test_cascade_delete_class_and_subject_with_assigned_exams(client, auth):
     # Clean up cls2
     c.delete(f"/api/classes/{cls2['id']}", headers=h)
 
+
+
+def test_class_is_std_plus_section(client, auth):
+    c, h = client, auth
+    r = c.post("/api/classes", headers=h, json={"std": " 11 ", "section": "1"})
+    assert r.status_code == 201 and (r.json()["name"], r.json()["std"], r.json()["section"]) == ("11-1", "11", "1")
+    nosec = c.post("/api/classes", headers=h, json={"std": "Grade 12"}).json()
+    assert (nosec["name"], nosec["section"]) == ("Grade 12", None)
+    old = c.post("/api/classes", headers=h, json={"name": "Grade 9-B"}).json()          # older clients still work
+    assert (old["std"], old["section"]) == ("Grade 9", "B")
+    upd = c.patch(f"/api/classes/{nosec['id']}", headers=h, json={"std": "Grade 12", "section": "Science"}).json()
+    assert upd["name"] == "Grade 12-Science"
+    assert c.post("/api/classes", headers=h, json={"section": "A"}).status_code == 400

@@ -22,8 +22,7 @@ function Table({ title, first, rows, average }: { title: string; first: string; 
           {rows.map((r) => (
             <tr key={r.key}>
               <td className="px-4 py-2.5 font-semibold text-ink">
-                {r.key}
-                {r.label !== r.key && <span className="ml-1.5 font-normal text-mute">{r.label}</span>}
+                {r.label}
               </td>
               <td className="px-4 py-2.5 font-mono text-mute">{r.questions}</td>
               <td className="px-4 py-2.5 font-mono font-semibold text-pen">{fmt(average ? r.average_scored : r.scored)}</td>
@@ -48,18 +47,8 @@ function Table({ title, first, rows, average }: { title: string; first: string; 
   );
 }
 
-/** Marks grouped by Bloom's K level and by course outcome. Hides a table when no question is tagged for it. */
+/** Marks grouped by Bloom's level. Hidden when no question is tagged. */
 export function OutcomeTables({ outcomes, average }: { outcomes: Outcomes; average?: boolean }) {
-  const tagged = (rows: OutcomeRow[]) => rows.some((r) => r.key !== "Untagged");
-  if (!tagged(outcomes.k_levels) && !tagged(outcomes.course_outcomes)) return null;
-  return (
-    <div className="grid gap-4 lg:grid-cols-2">
-      {tagged(outcomes.k_levels) && (
-        <Table title="Performance by Knowledge Level (Bloom's)" first="K Level" rows={outcomes.k_levels} average={average} />
-      )}
-      {tagged(outcomes.course_outcomes) && (
-        <Table title="Performance by Course Outcome" first="CO" rows={outcomes.course_outcomes} average={average} />
-      )}
-    </div>
-  );
+  if (!outcomes.k_levels.some((r) => r.key !== "Untagged")) return null;
+  return <Table title="Performance by Knowledge Level (Bloom's)" first="Level" rows={outcomes.k_levels} average={average} />;
 }

@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 from ..deps import err, get_evaluation
 from ..documents.storage import abs_path
 from ..models import AuditLog, Evaluation, EvaluationItem, Exam, ExamQuestion, SchoolClass, SchoolProfile, Student, Teacher
-from .k_level import summarize as summarize_outcomes
+from .k_level import K_LEVELS, summarize as summarize_outcomes
 from .report_generator import BASE_FONT, BOLD_FONT
 from .report_templates import active_config
 
@@ -319,7 +319,7 @@ def render_report(data: dict, cfg: dict, school: dict) -> bytes:
             cols = d.visible("columns")
             if not cols:
                 continue
-            fixed = {"qno": 46, "k_level": 28, "co": 32, "max": 40, "obtained": 52}
+            fixed = {"qno": 46, "k_level": 62, "max": 40, "obtained": 52}
             widths = [fixed.get(c, 0) for c in cols]
             if "feedback" in cols:
                 widths[cols.index("feedback")] = d.width - sum(widths)
@@ -337,7 +337,7 @@ def render_report(data: dict, cfg: dict, school: dict) -> bytes:
                     fb = (fb + "<br/>" if fb else "") + f"<font color='#B45309'>{_esc(note)}</font>"
                 if q.get("not_attempted") and not fb:
                     fb = _esc(L["not_attempted"])
-                cell = {"qno": d.p(f"<b>{_esc(q['no'])}</b>"), "k_level": d.p(_esc(q["k"] or "–")), "co": d.p(_esc(q["co"] or "–")),
+                cell = {"qno": d.p(f"<b>{_esc(q['no'])}</b>"), "k_level": d.p(_esc(K_LEVELS.get(q["k"], q["k"]) if q["k"] else "–")),
                         "max": d.p(_m(q["max"]), align=TA_RIGHT), "obtained": d.p(f"<b>{_m(q['obtained'])}</b>", align=TA_RIGHT),
                         "feedback": d.p(fb, **fb_style)}
                 rows.append([cell[c] for c in cols])
@@ -352,11 +352,11 @@ def render_report(data: dict, cfg: dict, school: dict) -> bytes:
                   for i, q in enumerate(data["questions"])]
             out = summarize_outcomes(qs, {str(i): q["obtained"] for i, q in enumerate(data["questions"])})
             tables = []
-            for title, rows in ((L["by_k"], out["k_levels"]), (L["by_co"], out["course_outcomes"])):
+            for title, rows in ((L["by_k"], out["k_levels"]),):
                 rows = [r for r in rows if r["key"] != "Untagged"]
                 if rows:
                     col = (d.width - 12) / 2
-                    body = [[d.p(_esc(f"{r['key']} {r['label']}" if r["label"] != r["key"] else r["key"])),
+                    body = [[d.p(_esc(r["label"])),
                              d.p(f"{_m(r['scored'])} / {_m(r['max_marks'])}", align=TA_RIGHT),
                              d.p("–" if r["percentage"] is None else f"{r['percentage']:g}%", align=TA_RIGHT)] for r in rows]
                     tables.append(d.table([title, L["col_obtained"], "%"], body, [col * 0.5, col * 0.3, col * 0.2],

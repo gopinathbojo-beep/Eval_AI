@@ -11,7 +11,7 @@ from ..documents.storage import abs_path, doc_dir, read_validated_upload, rel
 from ..models import (AnswerKey, AnswerKeyDocument, AnswerSheetDocument, Evaluation, EvaluationItem, ExamQuestion,
                       QuestionPaperDocument, Student, StudentAnswer, Teacher)
 from ..security import current_teacher
-from ..serializers import doc_view, evaluation_view
+from ..serializers import EVALUATION_VIEW_LOAD, doc_view, evaluation_view
 from ..services.audit import audit
 from ..services.pipeline import KINDS, process_document
 from ..services.state import set_state
@@ -299,6 +299,9 @@ def list_unassigned_sheets(exam_id: str, db: Session = Depends(get_db), t: Teach
     exam = get_exam(db, t, exam_id)
     docs = (db.query(AnswerSheetDocument).filter_by(exam_id=exam.id, is_active=True, student_id=None)
             .order_by(AnswerSheetDocument.uploaded_at).all())
+    # fetch every candidate in one query; held in a variable so the per-sheet lookups below find them in the session
+    ids = {sid for d in docs for sid in (d.identity or {}).get("candidates") or []}
+    candidates = db.query(Student).filter(Student.id.in_(ids or [""])).all()  # noqa: F841
     return [_unassigned_view(db, d) for d in docs]
 
 
@@ -365,14 +368,18 @@ def delete_unassigned_sheet(doc_id: str, db: Session = Depends(get_db), t: Teach
 @router.get("/exams/{exam_id}/answer-sheets")
 def list_answer_sheets(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     exam = get_exam(db, t, exam_id)
-    out = []
-    for ev in db.query(Evaluation).filter_by(exam_id=exam.id).order_by(Evaluation.created_at):
-        doc = db.get(AnswerSheetDocument, ev.answer_sheet_id)
-        answers = db.query(StudentAnswer).filter_by(evaluation_id=ev.id).all()
-        out.append({**evaluation_view(ev), "document": doc_view(doc, "answer-sheet"),
-                    "detected_answers": len(answers),
-                    "unresolved_answers": sum(a.status in ("UNMAPPED", "NEEDS_REVIEW") for a in answers)})
-    return out
+    evs = (db.query(Evaluation).options(*EVALUATION_VIEW_LOAD)
+           .filter_by(exam_id=exam.id).order_by(Evaluation.created_at).all())
+    # the database is remote: load each kind of row once for the whole list instead of once per sheet
+    docs = {d.id: d for d in db.query(AnswerSheetDocument).filter(
+        AnswerSheetDocument.id.in_([ev.answer_sheet_id for ev in evs] or [""]))}
+    counts: dict[str, list[int]] = {ev.id: [0, 0] for ev in evs}
+    for ev_id, status in db.query(StudentAnswer.evaluation_id, StudentAnswer.status).filter(
+            StudentAnswer.evaluation_id.in_(list(counts) or [""])):
+        counts[ev_id][0] += 1
+        counts[ev_id][1] += status in ("UNMAPPED", "NEEDS_REVIEW")
+    return [{**evaluation_view(ev), "document": doc_view(docs[ev.answer_sheet_id], "answer-sheet"),
+             "detected_answers": counts[ev.id][0], "unresolved_answers": counts[ev.id][1]} for ev in evs]
 
 
 @router.delete("/evaluations/{ev_id}")

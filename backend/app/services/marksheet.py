@@ -158,7 +158,7 @@ def generate_marksheet_workbook(db: Session, teacher_id: str | None = None) -> o
 
     # 5. Build Consolidated Overview Sheet (Inserted as the very first sheet)
     build_overview_sheet(wb, class_sheets_meta, subjects)
-    # 6. Marks per Bloom's K level and course outcome for every finalized evaluation
+    # 6. Marks per Bloom's level for every finalized evaluation
     build_outcome_sheet(wb, db, [c.id for c in classes])
     return wb
 
@@ -166,36 +166,31 @@ def generate_marksheet_workbook(db: Session, teacher_id: str | None = None) -> o
 def build_outcome_sheet(wb: openpyxl.Workbook, db: Session, class_ids: list[str]) -> None:
     from .k_level import K_LEVELS, summarize
     exams = db.query(Exam).filter(Exam.class_id.in_(class_ids or [""])).order_by(Exam.created_at).all()
-    rows, cos = [], set()
+    rows = []
     for exam in exams:
         qs = db.query(ExamQuestion).filter_by(exam_id=exam.id).all()
         evs = db.query(Evaluation).filter_by(exam_id=exam.id, status="FINALIZED").all()
         for ev in evs:
             marks = {i.exam_question_id: i.final_marks for i in db.query(EvaluationItem).filter_by(evaluation_id=ev.id)}
             s = summarize(qs, marks)
-            k = {r["key"]: r for r in s["k_levels"]}
-            co = {r["key"]: r for r in s["course_outcomes"] if r["key"] != "Untagged"}
-            cos.update(co)
-            rows.append((exam, ev, k, co))
-    ws = wb.create_sheet("K-Level Analysis")
-    co_cols = sorted(cos, key=lambda c: (len(c), c))
-    head = ["Class", "Exam", "Subject", "Roll No", "Reg No", "Student"] + \
-           [f"{k} {name}" for k, name in K_LEVELS.items()] + co_cols + ["Total", "Max", "%"]
+            rows.append((exam, ev, {r["key"]: r for r in s["k_levels"]}))
+    ws = wb.create_sheet("Bloom's Level Analysis")
+    head = ["Class", "Exam", "Subject", "Roll No", "Reg No", "Student"] + list(K_LEVELS.values()) + ["Total", "Max", "%"]
     ws.append(head)
     for c in ws[1]:
         c.font = Font(bold=True, color="FFFFFF")
         c.fill = PatternFill("solid", fgColor="18447E")
         c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
     cell = lambda r: f"{r['scored']:g} / {r['max_marks']:g}" if r else ""  # noqa: E731
-    for exam, ev, k, co in rows:
+    for exam, ev, k in rows:
         st = ev.student
         ws.append([exam.school_class.name if exam.school_class else "", exam.name, exam.subject.name if exam.subject else "",
                    st.roll_number, st.registration_number or "", st.name]
-                  + [cell(k.get(lvl)) for lvl in K_LEVELS] + [cell(co.get(c)) for c in co_cols]
+                  + [cell(k.get(lvl)) for lvl in K_LEVELS]
                   + [ev.total_marks, ev.maximum_marks, ev.percentage])
     if not rows:
         ws.append(["No finalized evaluations yet."])
-    for i, w in enumerate([12, 22, 16, 9, 14, 26] + [13] * (len(K_LEVELS) + len(co_cols)) + [8, 8, 8], start=1):
+    for i, w in enumerate([12, 22, 16, 9, 14, 26] + [13] * len(K_LEVELS) + [8, 8, 8], start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = "G2"
 

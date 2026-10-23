@@ -12,9 +12,9 @@ from ..models import (AnswerKey, AnswerKeyDocument, AnswerSheetDocument, AuditLo
                       Student, StudentAnswer, Subject, Teacher)
 from ..ocr.internvl import AIUnavailable, check_model
 from ..security import create_token, current_teacher, verify_password
-from ..serializers import doc_view, evaluation_view, student_view
+from ..serializers import EVALUATION_VIEW_LOAD, doc_view, evaluation_view, student_view
 from ..services.audit import audit
-from ..services.student_io import export_pdf, export_xlsx, import_students, reg_taken
+from ..services.student_io import export_pdf, export_xlsx, import_students, reg_taken, split_class_name
 
 router = APIRouter(prefix="/api")
 
@@ -59,7 +59,7 @@ def ai_status(_: Teacher = Depends(current_teacher)):
 def dashboard(db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     exam_ids = [e.id for e in db.query(Exam.id).filter_by(teacher_id=t.id)]
     class_ids = [c.id for c in db.query(SchoolClass.id).filter_by(teacher_id=t.id)]
-    evs = db.query(Evaluation).filter(Evaluation.exam_id.in_(exam_ids)).all() if exam_ids else []
+    evs = db.query(Evaluation).options(*EVALUATION_VIEW_LOAD).filter(Evaluation.exam_id.in_(exam_ids)).all() if exam_ids else []
     recent_exams = db.query(Exam).filter_by(teacher_id=t.id).order_by(Exam.created_at.desc()).limit(5).all()
     recent_evs = sorted(evs, key=lambda e: e.created_at, reverse=True)[:5]
     return {
@@ -118,29 +118,48 @@ class NameIn(BaseModel):
     code: str | None = None
 
 
+class ClassIn(BaseModel):
+    """A class is a standard plus an optional section, stored as one name: Std '10' + Sec 'A' -> '10-A'."""
+    std: str | None = Field(None, max_length=60)
+    section: str | None = Field(None, max_length=20)
+    name: str | None = Field(None, max_length=100)  # older clients send the whole name
+
+    def full_name(self) -> str:
+        std, sec = (self.std or "").strip(), (self.section or "").strip()
+        name = (f"{std}-{sec}" if sec else std) if std else (self.name or "").strip()
+        if not name:
+            raise err(400, "STD_REQUIRED", "Enter the standard (e.g. 10).")
+        return name
+
+
+def _class_view(db: Session, c: SchoolClass) -> dict:
+    std, sec = split_class_name(c.name)
+    return {"id": c.id, "name": c.name, "std": std, "section": sec,
+            "student_count": db.query(Student).filter_by(class_id=c.id).count()}
+
+
 @router.get("/classes")
 def list_classes(db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
-    return [{"id": c.id, "name": c.name,
-             "student_count": db.query(Student).filter_by(class_id=c.id).count()}
-            for c in db.query(SchoolClass).filter_by(teacher_id=t.id).order_by(SchoolClass.name)]
+    return [_class_view(db, c) for c in db.query(SchoolClass).filter_by(teacher_id=t.id).order_by(SchoolClass.name)]
 
 
 @router.post("/classes", status_code=201)
-def create_class(body: NameIn, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
-    c = SchoolClass(teacher_id=t.id, name=body.name.strip())
+def create_class(body: ClassIn, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    name = body.full_name()
+    c = SchoolClass(teacher_id=t.id, name=name)
     db.add(c)
     db.commit()
-    return {"id": c.id, "name": c.name, "student_count": 0}
+    return _class_view(db, c)
 
 
 @router.patch("/classes/{class_id}")
-def update_class(class_id: str, body: NameIn, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+def update_class(class_id: str, body: ClassIn, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     c = db.get(SchoolClass, class_id)
     if not c or c.teacher_id != t.id:
         raise err(404, "NOT_FOUND", "Class not found.")
-    c.name = body.name.strip()
+    c.name = body.full_name()
     db.commit()
-    return {"id": c.id, "name": c.name, "student_count": db.query(Student).filter_by(class_id=c.id).count()}
+    return _class_view(db, c)
 
 
 @router.delete("/classes/{class_id}")

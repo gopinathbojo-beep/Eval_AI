@@ -1,22 +1,25 @@
 from __future__ import annotations
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, Response
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from ..database import get_db
 from ..deps import err, get_evaluation, get_exam
 from ..models import (AnswerKey, AnswerSheetDocument, AuditLog, Evaluation, EvaluationItem, Exam, ExamQuestion,
-                      StudentAnswer, Teacher)
+                      Student, StudentAnswer, Teacher)
 from ..security import current_teacher
-from ..serializers import answer_view, doc_view, evaluation_view, item_view, question_view
+from ..serializers import (EVALUATION_VIEW_LOAD, answer_view, doc_view, evaluation_view, item_view, question_view,
+                           student_view)
 from ..services.audit import audit
 from ..services.exam_files import purge_exam_files, save_reports_and_schedule, stored_report
-from ..services.evaluation_service import (finalize, finalize_issues, refresh_evaluation_status, run_evaluation)
+from ..services.evaluation_service import (ExamSnapshot, approve_clean_items, finalize, finalize_issues,
+                                           refresh_evaluation_status, review_reasons, run_evaluation)
 from ..services.k_level import summarize as summarize_outcomes
 from ..services.mapping import map_label
 from ..services.mapping_service import apply_student_mapping, exam_questions, mapping_summary
 from ..services.numbering import normalize_question_number
 from ..services.school_reports import build_evaluation_pdf_report
 from ..services.state import set_state
+from ..services.student_identity import in_flight
 from ..config import get_settings
 
 router = APIRouter(prefix="/api")
@@ -30,7 +33,7 @@ def _not_finalized(ev: Evaluation):
 @router.get("/evaluations")
 def list_evaluations(exam_id: str | None = Query(None), db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     exam_ids = [e.id for e in db.query(Exam.id).filter_by(teacher_id=t.id)]
-    q = db.query(Evaluation).filter(Evaluation.exam_id.in_(exam_ids or [""]))
+    q = db.query(Evaluation).options(*EVALUATION_VIEW_LOAD).filter(Evaluation.exam_id.in_(exam_ids or [""]))
     if exam_id:
         q = q.filter(Evaluation.exam_id == exam_id)
     return [evaluation_view(e) for e in q.order_by(Evaluation.created_at.desc())]
@@ -388,21 +391,7 @@ def approve_all(ev_id: str, db: Session = Depends(get_db), t: Teacher = Depends(
     """Approve every cleanly evaluated item and confirm genuine unattempted items."""
     ev = get_evaluation(db, t, ev_id)
     _not_finalized(ev)
-    all_answers = db.query(StudentAnswer).filter_by(evaluation_id=ev.id).all()
-    mapping_complete = not any(a.status in ("UNMAPPED", "NEEDS_REVIEW") for a in all_answers)
-    n = 0
-    for it in db.query(EvaluationItem).filter_by(evaluation_id=ev.id):
-        if it.status == "EVALUATED":
-            it.status = "APPROVED"
-            n += 1
-            if it.student_answer_id and (a := db.get(StudentAnswer, it.student_answer_id)):
-                a.status = "APPROVED"
-        elif it.status == "MISSING" and (it.not_attempted_confirmed or mapping_complete):
-            it.not_attempted_confirmed = True
-            if it.final_marks is None:
-                it.final_marks = 0.0
-            it.status = "APPROVED"
-            n += 1
+    n = approve_clean_items(db, ev)
     audit(db, exam_id=ev.exam_id, teacher_id=t.id, entity_type="evaluation", entity_id=ev.id, action="items_bulk_approved", new=n)
     db.commit()
     refresh_evaluation_status(db, ev)
@@ -506,7 +495,9 @@ def download_evaluation_report(ev_id: str, db: Session = Depends(get_db), t: Tea
 @router.get("/results")
 def list_results(db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     exam_ids = [e.id for e in db.query(Exam.id).filter_by(teacher_id=t.id)]
-    evs = db.query(Evaluation).filter(Evaluation.exam_id.in_(exam_ids or [""]), Evaluation.status == "FINALIZED").order_by(Evaluation.finalized_at.desc())
+    evs = (db.query(Evaluation).options(*EVALUATION_VIEW_LOAD)
+           .filter(Evaluation.exam_id.in_(exam_ids or [""]), Evaluation.status == "FINALIZED")
+           .order_by(Evaluation.finalized_at.desc()))
     return [evaluation_view(e) for e in evs]
 
 
@@ -545,6 +536,71 @@ def exam_outcome_summary(exam_id: str, db: Session = Depends(get_db), t: Teacher
         return list(rows.values())
     return {"finalized_students": len(students), "k_levels": overall("k_levels"),
             "course_outcomes": overall("course_outcomes"), "students": students}
+
+
+_BUSY_DOC = ("UPLOADED", "RENDERING", "OCR_PROCESSING", "EXTRACTING", "IDENTIFYING")
+
+
+def _batch(db: Session, exam: Exam) -> dict:
+    """Every sheet of the exam sorted into: still being worked on, ready to finalize together, or needing the teacher."""
+    loose = db.query(AnswerSheetDocument).filter_by(exam_id=exam.id, is_active=True, student_id=None).all()
+    processing = sum(d.status in _BUSY_DOC or in_flight(d.id) for d in loose)
+    out = {"unassigned": len(loose) - processing, "finalized": 0, "ready": [], "needs_review": []}
+    evs = (db.query(Evaluation).options(selectinload(Evaluation.student).selectinload(Student.school_class))
+           .filter_by(exam_id=exam.id).order_by(Evaluation.created_at).all())
+    open_evs = [ev for ev in evs if ev.status != "FINALIZED"]
+    out["finalized"] = len(evs) - len(open_evs)
+    snap = ExamSnapshot(db, exam.id, open_evs)
+    for ev in open_evs:
+        doc = snap.docs.get(ev.answer_sheet_id)
+        if ev.run_status == "RUNNING" or in_flight(ev.answer_sheet_id) or (doc and doc.status in _BUSY_DOC):
+            processing += 1
+            continue
+        row = {"evaluation_id": ev.id, "student": student_view(ev.student), "status": ev.status, "_ev": ev}
+        reasons = review_reasons(db, ev, snap)
+        if reasons:
+            out["needs_review"].append({**row, "reasons": reasons})
+        else:
+            out["ready"].append(row)
+    return {"total": len(evs) + len(loose), "processing": processing, **out}
+
+
+def _public(batch: dict) -> dict:
+    strip = lambda rows: [{k: v for k, v in r.items() if k != "_ev"} for r in rows]  # noqa: E731
+    return {**batch, "ready": strip(batch["ready"]), "needs_review": strip(batch["needs_review"])}
+
+
+@router.get("/exams/{exam_id}/review-summary")
+def review_summary(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    """Where the uploaded batch stands, with the reasons each held-back sheet needs the teacher."""
+    return _public(_batch(db, get_exam(db, t, exam_id)))
+
+
+@router.post("/exams/{exam_id}/finalize-ready")
+def finalize_ready(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    """The teacher has reviewed the batch: approve the AI marks and finalize every sheet with nothing left to fix.
+
+    Sheets that still need the teacher are skipped and returned with their reasons.
+    """
+    exam = get_exam(db, t, exam_id)
+    batch = _batch(db, exam)
+    if not batch["ready"]:
+        raise err(400, "NOTHING_READY", "No answer sheet is ready to finalize.", [
+            {"question": r["student"]["name"], "reason": r["reasons"][0]["reason"]} for r in batch["needs_review"]])
+    done = []
+    for row in batch["ready"]:
+        ev = row["_ev"]
+        approve_clean_items(db, ev)
+        db.commit()
+        refresh_evaluation_status(db, ev)
+        if finalize_issues(db, ev):  # changed since the summary was built; leave it for the teacher
+            continue
+        finalize(db, ev)
+        audit(db, exam_id=exam.id, teacher_id=t.id, entity_type="evaluation", entity_id=ev.id, action="evaluation_finalized",
+              new={"total": ev.total_marks, "max": ev.maximum_marks, "percentage": ev.percentage, "bulk": True})
+        db.commit()
+        done.append(ev.id)
+    return {**_public(_batch(db, exam)), "finalized_now": len(done)}
 
 
 @router.post("/exams/{exam_id}/finalize")

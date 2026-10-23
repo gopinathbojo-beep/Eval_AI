@@ -134,7 +134,7 @@ export function Classes() {
       ) : !data?.length ? (
         <Empty
           title="No classes added yet"
-          hint="Add a class (e.g. 10-A) before creating exams."
+          hint="Add a class (Std 10, Sec A) before creating exams."
           action={<Button variant="primary" onClick={() => setOpen(true)}>Add Class</Button>}
         />
       ) : (
@@ -166,7 +166,8 @@ export function Classes() {
               <table className="w-full text-left text-sm">
                 <thead className="border-b border-line bg-surface text-xs font-semibold uppercase tracking-wider text-mute">
                   <tr>
-                    <th className="px-4 py-3">Class Cohort</th>
+                    <th className="px-4 py-3">Std</th>
+                    <th className="px-4 py-3">Sec</th>
                     <th className="px-4 py-3">Enrolled Students</th>
                     <th className="px-4 py-3 text-right">Actions</th>
                   </tr>
@@ -174,7 +175,8 @@ export function Classes() {
                 <tbody className="divide-y divide-line text-sm">
                   {table.paginatedData.map((c) => (
                     <tr key={c.id} className="hover:bg-hover">
-                      <td className="px-4 py-3 font-semibold text-ink">{c.name}</td>
+                      <td className="px-4 py-3 font-semibold text-ink">{c.std}</td>
+                      <td className="px-4 py-3 font-semibold text-ink">{c.section || "–"}</td>
                       <td className="px-4 py-3 font-mono text-mute">{c.student_count ?? 0} students</td>
                       <td className="px-4 py-3 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1.5">
@@ -253,53 +255,54 @@ export function Classes() {
   );
 }
 
+/** Std and Sec make up the class name the rest of the app shows: Std 10 + Sec A -> 10-A. */
+function StdSecFields({
+  std, sec, setStd, setSec,
+}: {
+  std: string; sec: string; setStd: (v: string) => void; setSec: (v: string) => void;
+}) {
+  return (
+    <div className="grid gap-4 sm:grid-cols-2">
+      <Field label="Std" hint="e.g. 10, 11 or Grade 12">
+        {(id) => <Input id={id} required value={std} onChange={(e) => setStd(e.target.value)} placeholder="10" />}
+      </Field>
+      <Field label="Sec (optional)" hint="e.g. A, B or Science">
+        {(id) => <Input id={id} value={sec} onChange={(e) => setSec(e.target.value)} placeholder="A" />}
+      </Field>
+    </div>
+  );
+}
+
 function ClassForm({ done, close }: { done: () => void; close: () => void }) {
-  const [name, setName] = useState("");
+  const [std, setStd] = useState("");
+  const [sec, setSec] = useState("");
   return (
     <SimpleForm
       title="Add New Class"
       onClose={close}
       onSubmit={async () => {
-        await api("/classes", { method: "POST", json: { name } });
+        await api("/classes", { method: "POST", json: { std, section: sec } });
         done();
       }}
     >
-      <Field label="Class Name" hint="e.g. 10-A, 11-B, or Grade 12-Science">
-        {(id) => (
-          <Input
-            id={id}
-            required
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="10-A"
-          />
-        )}
-      </Field>
+      <StdSecFields std={std} sec={sec} setStd={setStd} setSec={setSec} />
     </SimpleForm>
   );
 }
 
 function EditClassForm({ cls, done, close }: { cls: ClassRow; done: () => void; close: () => void }) {
-  const [name, setName] = useState(cls.name);
+  const [std, setStd] = useState(cls.std);
+  const [sec, setSec] = useState(cls.section ?? "");
   return (
     <SimpleForm
       title={`Edit Class (${cls.name})`}
       onClose={close}
       onSubmit={async () => {
-        await api(`/classes/${cls.id}`, { method: "PATCH", json: { name } });
+        await api(`/classes/${cls.id}`, { method: "PATCH", json: { std, section: sec } });
         done();
       }}
     >
-      <Field label="Class Name">
-        {(id) => (
-          <Input
-            id={id}
-            required
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-          />
-        )}
-      </Field>
+      <StdSecFields std={std} sec={sec} setStd={setStd} setSec={setSec} />
     </SimpleForm>
   );
 }
@@ -666,8 +669,8 @@ export function Students() {
                     <th className="px-4 py-3">Roll No.</th>
                     <th className="px-4 py-3">Student Name</th>
                     <th className="px-4 py-3">Reg. No.</th>
-                    <th className="px-4 py-3">Class</th>
-                    <th className="px-4 py-3">Section</th>
+                    <th className="px-4 py-3">Std</th>
+                    <th className="px-4 py-3">Sec</th>
                     <th className="px-4 py-3 text-right">Actions</th>
                   </tr>
                 </thead>
@@ -677,7 +680,7 @@ export function Students() {
                       <td className="px-4 py-3 font-mono font-medium text-ink">{s.roll_number}</td>
                       <td className="px-4 py-3 font-semibold text-ink">{s.name}</td>
                       <td className="px-4 py-3 font-mono text-ink">{s.registration_number || "–"}</td>
-                      <td className="px-4 py-3 font-medium text-mute">{s.class_name ?? "–"}</td>
+                      <td className="px-4 py-3 font-medium text-mute">{s.class_std ?? s.class_name ?? "–"}</td>
                       <td className="px-4 py-3 font-medium text-mute">{s.section || "–"}</td>
                       <td className="px-4 py-3 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1.5">
@@ -758,21 +761,58 @@ export function Students() {
   );
 }
 
+/** Pick a student's class as Std, then Sec; a class with no section is the "–" choice. */
+function ClassPicker({ classes, value, onChange }: { classes: ClassRow[]; value: string; onChange: (id: string) => void }) {
+  const [std, setStd] = useState(classes.find((c) => c.id === value)?.std ?? "");
+  const byStd = (x: string) => classes.filter((c) => c.std === x);
+  const stds = [...new Set(classes.map((c) => c.std))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const secs = byStd(std).sort((a, b) => (a.section ?? "").localeCompare(b.section ?? "", undefined, { numeric: true }));
+  return (
+    <div className="grid gap-4 sm:grid-cols-2">
+      <Field label="Std">
+        {(id) => (
+          <Select
+            id={id}
+            required
+            value={std}
+            onChange={(e) => {
+              setStd(e.target.value);
+              const only = byStd(e.target.value);
+              onChange(only.length === 1 ? only[0].id : "");
+            }}
+          >
+            <option value="">Choose std...</option>
+            {stds.map((x) => <option key={x} value={x}>{x}</option>)}
+          </Select>
+        )}
+      </Field>
+      <Field label="Sec">
+        {(id) => (
+          <Select id={id} required disabled={!std} value={value} onChange={(e) => onChange(e.target.value)}>
+            <option value="">Choose sec...</option>
+            {secs.map((c) => <option key={c.id} value={c.id}>{c.section ?? "–"}</option>)}
+          </Select>
+        )}
+      </Field>
+    </div>
+  );
+}
+
 function StudentForm({ done, close }: { done: () => void; close: () => void }) {
   const classes = useApi<ClassRow[]>("/classes");
   const [name, setName] = useState("");
   const [roll, setRoll] = useState("");
   const [cls, setCls] = useState("");
   const [reg, setReg] = useState("");
-  const [section, setSection] = useState("");
   return (
     <SimpleForm
       title="Add New Student"
       onClose={close}
       onSubmit={async () => {
+        const section = classes.data?.find((c) => c.id === cls)?.section ?? null;
         await api("/students", {
           method: "POST",
-          json: { name, roll_number: roll, class_id: cls, registration_number: reg || null, section: section || null },
+          json: { name, roll_number: roll, class_id: cls, registration_number: reg || null, section },
         });
         done();
       }}
@@ -784,25 +824,11 @@ function StudentForm({ done, close }: { done: () => void; close: () => void }) {
         <Field label="Roll Number">
           {(id) => <Input id={id} required placeholder="e.g. 101" value={roll} onChange={(e) => setRoll(e.target.value)} />}
         </Field>
-        <Field label="Registration Number" hint="Recommended: the most reliable way to match answer sheets.">
+        <Field label="Registration Number">
           {(id) => <Input id={id} placeholder="e.g. 2026BIO0142" value={reg} onChange={(e) => setReg(e.target.value)} />}
         </Field>
       </div>
-      <Field label="Section (optional)">
-        {(id) => <Input id={id} placeholder="e.g. A" value={section} onChange={(e) => setSection(e.target.value)} />}
-      </Field>
-      <Field label="Class">
-        {(id) => (
-          <Select id={id} required value={cls} onChange={(e) => setCls(e.target.value)}>
-            <option value="">Choose a class...</option>
-            {classes.data?.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </Select>
-        )}
-      </Field>
+      {classes.data && <ClassPicker classes={classes.data} value={cls} onChange={setCls} />}
     </SimpleForm>
   );
 }
@@ -813,15 +839,16 @@ function EditStudentForm({ student, done, close }: { student: Student; done: () 
   const [roll, setRoll] = useState(student.roll_number);
   const [cls, setCls] = useState(student.class_id);
   const [reg, setReg] = useState(student.registration_number || "");
-  const [section, setSection] = useState(student.section || "");
   return (
     <SimpleForm
       title={`Edit Student (${student.name})`}
       onClose={close}
       onSubmit={async () => {
+        // a class without a section keeps whatever section the student already had
+        const section = classes.data?.find((c) => c.id === cls)?.section ?? student.section ?? null;
         await api(`/students/${student.id}`, {
           method: "PATCH",
-          json: { name, roll_number: roll, class_id: cls, registration_number: reg || null, section: section || null },
+          json: { name, roll_number: roll, class_id: cls, registration_number: reg || null, section },
         });
         done();
       }}
@@ -837,28 +864,13 @@ function EditStudentForm({ student, done, close }: { student: Student; done: () 
           {(id) => <Input id={id} value={reg} onChange={(e) => setReg(e.target.value)} />}
         </Field>
       </div>
-      <Field label="Section (optional)">
-        {(id) => <Input id={id} value={section} onChange={(e) => setSection(e.target.value)} />}
-      </Field>
-      <Field label="Class">
-        {(id) => (
-          <Select id={id} required value={cls} onChange={(e) => setCls(e.target.value)}>
-            {classes.data?.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </Select>
-        )}
-      </Field>
+      {classes.data && <ClassPicker classes={classes.data} value={cls} onChange={setCls} />}
     </SimpleForm>
   );
 }
 
 function ImportStudents({ done, close }: { done: () => void; close: () => void }) {
-  const classes = useApi<ClassRow[]>("/classes");
   const [file, setFile] = useState<File | null>(null);
-  const [cls, setCls] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<unknown>(null);
   const [result, setResult] = useState<ImportSummary | null>(null);
@@ -871,7 +883,6 @@ function ImportStudents({ done, close }: { done: () => void; close: () => void }
     try {
       const form = new FormData();
       form.append("file", file);
-      if (cls) form.append("class_id", cls);
       setResult(await api<ImportSummary>("/students/import", { method: "POST", form }));
       done();
     } catch (x) {
@@ -904,27 +915,18 @@ function ImportStudents({ done, close }: { done: () => void; close: () => void }
         <form onSubmit={go} className="space-y-4">
           <div className="rounded-lg border border-line bg-sunken/50 p-3 text-xs text-mute space-y-1">
             <p>The first sheet needs a header row with these columns (any order):</p>
-            <p className="font-mono text-ink">Name · Roll Number · Registration Number · Class · Section</p>
+            <p className="font-mono text-ink">Name · Roll Number · Registration Number · Std · Sec</p>
             <p>
-              Each class + section becomes its own class (Class 10, Section A → 10-A) and is created if it doesn't exist.
-              Name and Roll Number are required. Existing students are updated (matched by registration number, or class +
-              roll number). Classes that don't exist yet are created. Tip: export your current list to get a ready template.
+              <b className="text-ink">Name, Roll Number and Std are required</b>: answer sheets are matched to students by the
+              roll or registration number written on them. Each Std + Sec becomes its own class (Std 10, Sec A → 10-A) and
+              is created if it doesn't exist. Existing students are updated (matched by registration number, or Std + Sec +
+              roll number). Tip: export your current list to get a ready template.
             </p>
           </div>
           <Field label="Excel file (.xlsx)">
             {(id) => (
               <Input id={id} type="file" required accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
-            )}
-          </Field>
-          <Field label="Class for rows without a Class column (optional)">
-            {(id) => (
-              <Select id={id} value={cls} onChange={(e) => setCls(e.target.value)}>
-                <option value="">Use the Class column in the sheet</option>
-                {classes.data?.map((c) => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
-              </Select>
             )}
           </Field>
           <ErrorPanel error={err} />

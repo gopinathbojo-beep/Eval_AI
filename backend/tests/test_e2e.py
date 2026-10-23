@@ -192,7 +192,7 @@ def test_full_workflow(client, auth):
     assert rep_pdf.status_code == 200 and rep_pdf.content.startswith(b"%PDF")
     from io import BytesIO
     from openpyxl import load_workbook
-    ws = load_workbook(BytesIO(c.get("/api/reports/marksheet", headers=h).content))["K-Level Analysis"]
+    ws = load_workbook(BytesIO(c.get("/api/reports/marksheet", headers=h).content))["Bloom's Level Analysis"]
     row = next(r for r in ws.iter_rows(values_only=True) if r[1] == "Term 1")
     assert row[6:10] == ("2 / 2", "3 / 3", "5 / 5", "1 / 5")   # Q2 retagged K4 above
     # audit trail

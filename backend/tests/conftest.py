@@ -5,7 +5,6 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 _tmp = tempfile.mkdtemp(prefix="adem-test-")
 os.environ["DATA_DIR"] = _tmp
-os.environ["DATABASE_URL"] = "postgresql://unused@127.0.0.1:1/unused"   # overrides .env; replaced by SQLite below
 os.environ["SECRET_KEY"] = "test-secret-at-least-32-bytes-long-for-jwt-security"
 os.environ["PDF_RENDER_DPI"] = "72"
 os.environ["INTERNVL_MAX_RETRIES"] = "1"
@@ -13,20 +12,6 @@ os.environ["INTERNVL_MAX_RETRIES"] = "1"
 import fitz  # noqa: E402  (pymupdf)
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
-from sqlalchemy import create_engine, event  # noqa: E402
-from app import database  # noqa: E402
-
-# Tests never touch Supabase: swap in a throwaway SQLite database before anything connects.
-database.engine = create_engine(f"sqlite:///{_tmp}/test.db", connect_args={"check_same_thread": False})
-database.SessionLocal.configure(bind=database.engine)
-
-
-@event.listens_for(database.engine, "connect")
-def _sqlite_pragmas(dbapi_conn, _):
-    cur = dbapi_conn.cursor()
-    cur.execute("PRAGMA foreign_keys=ON")
-    cur.execute("PRAGMA busy_timeout=5000")
-    cur.close()
 
 MODEL = "blaifa/InternVL3_5:4B"
 BEHAVIOUR = {"garbage_pages": set(), "sheet": "main", "identities": []}   # tweakable per test
@@ -59,6 +44,9 @@ def _reply(system: str, user: str) -> str:
         ans = user.split("STUDENT ANSWER (verbatim transcription)")[1]
         if "OVERSHOOT" in ans:
             return json.dumps({"marks_awarded": mx + 3, "max_marks": mx, "decision": "CORRECT", "feedback": "x"})
+        if "UNSURE" in ans:
+            return json.dumps({"marks_awarded": 1, "max_marks": mx, "decision": "PARTIAL", "feedback": "Hard to tell",
+                               "matched_points": [], "missing_points": [], "confidence": 0.3})
         if "WRONG" in ans:
             return json.dumps({"marks_awarded": 0, "max_marks": mx, "decision": "INCORRECT", "feedback": "No match",
                                "matched_points": [], "missing_points": ["all"], "confidence": 0.8})
@@ -82,6 +70,9 @@ def _reply(system: str, user: str) -> str:
         if BEHAVIOUR["sheet"] == "dup":
             rows = [("1", "Osmosis is water movement"), ("Q1", "Another try at one"), ("2", "Diffusion text"),
                     ("3(a)", "Photosynthesis"), ("3(b)", "Leaf diagram")]
+        elif BEHAVIOUR["sheet"] in ("clean", "unsure"):
+            rows = [("Q1", "Osmosis is movement of water"), ("2", "Diffusion text"), ("3(a)", "Photosynthesis"),
+                    ("3(b)", "UNSURE leaf sketch" if BEHAVIOUR["sheet"] == "unsure" else "Leaf diagram")]
         else:
             rows = [("Q1", "Osmosis is movement of water"), ("Q2", "WRONG diffusion answer"), ("3", "Photosynthesis makes food"),
                     ("3(b)", "OVERSHOOT leaf drawing"), (None, "stray text continued from earlier")]

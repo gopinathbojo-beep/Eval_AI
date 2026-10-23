@@ -1,5 +1,7 @@
 from __future__ import annotations
-from .models import (AnswerKey, Evaluation, EvaluationItem, ExamQuestion, Student, StudentAnswer)
+from sqlalchemy.orm import selectinload
+from .models import (AnswerKey, Evaluation, EvaluationItem, Exam, ExamQuestion, Student, StudentAnswer)
+from .services.student_io import split_class_name
 
 
 def doc_view(doc, kind: str) -> dict | None:
@@ -95,7 +97,17 @@ def item_view(i: EvaluationItem) -> dict:
 def student_view(s: Student) -> dict:
     return {"id": s.id, "name": s.name, "roll_number": s.roll_number, "class_id": s.class_id,
             "registration_number": s.registration_number, "section": s.section,
-            "class_name": s.school_class.name if s.school_class else None}
+            "class_name": s.school_class.name if s.school_class else None,
+            "class_std": split_class_name(s.school_class.name)[0] if s.school_class else None}
+
+
+# The rows evaluation_view() reads, fetched in one query per table for a whole list instead of one per row
+# (the database is remote, so each query is a round trip). Use as query.options(*EVALUATION_VIEW_LOAD).
+EVALUATION_VIEW_LOAD = (
+    selectinload(Evaluation.student).selectinload(Student.school_class),
+    selectinload(Evaluation.exam).selectinload(Exam.school_class),
+    selectinload(Evaluation.exam).selectinload(Exam.subject),
+)
 
 
 def evaluation_view(ev: Evaluation) -> dict:
