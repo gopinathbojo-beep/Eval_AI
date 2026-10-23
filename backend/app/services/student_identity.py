@@ -234,22 +234,40 @@ def run_sheet(doc_id: str) -> None:
         _IN_FLIGHT.discard(doc_id)
 
 
+def _still_ours(doc_id: str, outcome: str) -> bool:
+    """False when the sheet was deleted, or a held sheet was assigned by the teacher (run_sheet reads that one)."""
+    db = SessionLocal()
+    try:
+        doc = db.get(AnswerSheetDocument, doc_id)
+        return bool(doc and doc.is_active and (outcome == ASSIGNED or doc.student_id is None))
+    finally:
+        db.close()
+
+
 def identify_sheets(doc_ids: list[str], teacher_id: str | None) -> None:
+    """Identify every sheet of the batch first, so the teacher sees who each belongs to early; then read them all."""
     _IN_FLIGHT.update(doc_ids)
+    outcomes: dict[str, str] = {}
     for doc_id in doc_ids:
+        with _SHEETS_LOCK:
+            try:
+                outcomes[doc_id] = _identify(doc_id, teacher_id)
+            except Exception:
+                log.exception("Identification crashed for sheet %s", doc_id)
+                _set_hold(doc_id, "Reading the student details failed unexpectedly. Pick the student or retry.")
+                outcomes[doc_id] = STOPPED
+        if outcomes[doc_id] == STOPPED:
+            _IN_FLIGHT.discard(doc_id)
+    for doc_id, outcome in outcomes.items():
+        if outcome == STOPPED:
+            continue
         try:
             with _SHEETS_LOCK:
-                try:
-                    outcome = _identify(doc_id, teacher_id)
-                except Exception:
-                    log.exception("Identification crashed for sheet %s", doc_id)
-                    _set_hold(doc_id, "Reading the student details failed unexpectedly. Pick the student or retry.")
-                    outcome = STOPPED
-                if outcome != STOPPED:
-                    # pages are already rendered, so the pipeline only has to read them. An assigned sheet is graded at
-                    # once; a held one is read now so picking its student later needs no more reading. Either way the
-                    # next sheet starts only when this one is done, never waiting on the teacher.
-                    process_document("answer-sheet", doc_id, True)
+                if not _still_ours(doc_id, outcome):
+                    continue
+                # pages are already rendered, so the pipeline only has to read them. An assigned sheet is graded at
+                # once; a held one is read now so picking its student later needs no more reading.
+                process_document("answer-sheet", doc_id, True)
                 if outcome == ASSIGNED:
                     auto_evaluate_sheet(doc_id)
         finally:
