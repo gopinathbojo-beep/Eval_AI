@@ -1,10 +1,9 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
 import { api, downloadFile } from "../../api/client";
 import { useApi } from "../../hooks/useApi";
 import type { DocInfo } from "../../types";
 import { BUSY_DOC } from "../../utils/format";
-import { Button, Card, ErrorPanel, Loading } from "../../components/ui";
+import { Button, Card, ErrorPanel, LinkButton, Loading } from "../../components/ui";
 import { DocProgress, UploadZone } from "../../components/DocPanel";
 import { useExam } from "../ExamWorkspace";
 
@@ -19,7 +18,7 @@ const KEY_REPLACEABLE = [...QP_EDITABLE, "QUESTIONS_VERIFIED", "ANSWER_KEY_UPLOA
 function LockedCard({ title, text }: { title: string; text: string }) {
   return (
     <Card className="flex items-center gap-3 p-4 text-sm text-mute border-ok/30 bg-ok-soft/30 shadow-soft">
-      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-ok text-white font-bold text-xs">✓</span>
+      <span className="flex h-7 w-7 items-center justify-center rounded-full bg-ok text-surface font-bold text-xs">✓</span>
       <div>
         <p className="font-semibold text-ok">{title}</p>
         <p className="text-xs text-mute mt-0.5">{text}</p>
@@ -128,14 +127,12 @@ export default function QuestionPaper({ onReviewQuestions, onOpenAnswerKey }: Qu
                 </svg>
               </Button>
             ) : (
-              <Link to={`/exams/${exam.id}/questions`}>
-                <Button variant="primary" className="shadow-xs">
-                  <span>Review {exam.question_count} Extracted Questions</span>
-                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
-                  </svg>
-                </Button>
-              </Link>
+              <LinkButton to={`/exams/${exam.id}/questions`} variant="primary" className="shadow-xs">
+                <span>Review {exam.question_count} Extracted Questions</span>
+                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                </svg>
+              </LinkButton>
             )}
           </div>
         )}

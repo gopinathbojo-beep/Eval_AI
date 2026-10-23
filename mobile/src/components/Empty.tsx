@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, ViewStyle } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../theme/ThemeContext";
 import { Button } from "./Button";
+import { fonts } from "../theme/colors";
 
 interface EmptyProps {
   icon?: keyof typeof Ionicons.glyphMap;
@@ -21,19 +22,19 @@ export const Empty: React.FC<EmptyProps> = ({
   onAction,
   style,
 }) => {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
 
   return (
     <View style={[styles.container, style]}>
       <View
         style={[
           styles.iconContainer,
-          { backgroundColor: "rgba(7, 159, 189, 0.1)", borderColor: colors.border },
+          { backgroundColor: isDark ? "rgba(15, 118, 110, 0.12)" : "rgba(15, 118, 110, 0.07)", borderColor: colors.border },
         ]}
       >
         <Ionicons name={icon} size={36} color={colors.primary} />
       </View>
-      <Text style={[styles.title, { color: colors.text }]}>{title}</Text>
+      <Text accessibilityRole="header" style={[styles.title, { color: colors.text }]}>{title}</Text>
       {description && (
         <Text style={[styles.description, { color: colors.textSecondary }]}>
           {description}
@@ -69,6 +70,7 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 16,
+    fontFamily: fonts.display,
     fontWeight: "700",
     textAlign: "center",
   },
@@ -77,6 +79,7 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginTop: 6,
     lineHeight: 18,
+    maxWidth: 300,
   },
   action: {
     marginTop: 16,

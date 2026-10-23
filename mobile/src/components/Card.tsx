@@ -23,9 +23,10 @@ export const Card: React.FC<CardProps> = ({
         styles.card,
         {
           backgroundColor: elevated ? colors.surfaceElevated : colors.surface,
-          borderColor: isDark ? colors.border : "rgba(226, 232, 240, 0.9)",
-          shadowColor: isDark ? "#000" : "#0F172A",
-          shadowOpacity: isDark ? 0.3 : 0.04,
+          borderColor: colors.border,
+          // Index card: a hard offset "sheet underneath" in the rule colour, as on the web
+          shadowColor: isDark ? "#000" : colors.border,
+          shadowOpacity: isDark ? 0.35 : 0.9,
         },
         noPadding && { padding: 0 },
         style,
@@ -38,14 +39,14 @@ export const Card: React.FC<CardProps> = ({
 
 const styles = StyleSheet.create({
   card: {
-    borderRadius: 14,
+    borderRadius: 10,
     borderWidth: 1,
     padding: 16,
     marginBottom: 12,
     ...Platform.select({
       ios: {
-        shadowOffset: { width: 0, height: 2 },
-        shadowRadius: 6,
+        shadowOffset: { width: 3, height: 3 },
+        shadowRadius: 0,
       },
       android: {
         elevation: 1.5,

@@ -4,6 +4,7 @@ import { downloadFile } from "../api/client";
 import { FilteredEmptyState, TablePagination, TableToolbar } from "../components/TableToolbar";
 import { Badge, Button, Card, Empty, ErrorPanel, Loading, MathView, PageHeader, PenScore, StatusBadge } from "../components/ui";
 import { useApi } from "../hooks/useApi";
+import { useCrumbName } from "../context/Crumbs";
 import { useTableState } from "../hooks/useTableState";
 import type { Evaluation, ResultResponse } from "../types";
 import { OutcomeTables } from "../components/OutcomeTables";
@@ -465,6 +466,7 @@ export function ResultPage() {
   const { data, loading, error } = useApi<ResultResponse>(`/evaluations/${id}/result`);
   const [downloading, setDownloading] = useState(false);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  useCrumbName(id, data?.evaluation.student.name);
 
   const handleTabChange = (tab: "breakdown" | "detailed") => {
     setSearchParams(

@@ -49,7 +49,7 @@ export const PenScore: React.FC<PenScoreProps> = ({
         styles.container,
         {
           borderColor: penColor,
-          backgroundColor: "rgba(239, 100, 100, 0.08)",
+          backgroundColor: "rgba(196, 58, 40, 0.08)",
           paddingHorizontal: dims.padding + 4,
           paddingVertical: dims.padding,
         },

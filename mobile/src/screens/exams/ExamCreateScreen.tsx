@@ -19,6 +19,7 @@ import { Button } from "../../components/Button";
 import { Loading } from "../../components/Loading";
 import { CalendarPickerModal } from "../../components/CalendarPickerModal";
 import { SearchablePickerModal, PickerItem } from "../../components/SearchablePickerModal";
+import { fonts } from "../../theme/colors";
 
 interface ExamCreateScreenProps {
   navigation: any;
@@ -182,7 +183,7 @@ export const ExamCreateScreen: React.FC<ExamCreateScreenProps> = ({ navigation }
                 Configure examination settings and link syllabus
               </Text>
             </View>
-            <View style={[styles.badgeIcon, { backgroundColor: "rgba(7, 159, 189, 0.12)" }]}>
+            <View style={[styles.badgeIcon, { backgroundColor: "rgba(15, 118, 110, 0.12)" }]}>
               <Ionicons name="school-outline" size={24} color={colors.primary} />
             </View>
           </View>
@@ -216,7 +217,7 @@ export const ExamCreateScreen: React.FC<ExamCreateScreenProps> = ({ navigation }
                   style={[
                     styles.chip,
                     {
-                      backgroundColor: selected ? "rgba(7, 159, 189, 0.18)" : colors.surface,
+                      backgroundColor: selected ? "rgba(15, 118, 110, 0.18)" : colors.surface,
                       borderColor: selected ? colors.primary : colors.border,
                     },
                   ]}
@@ -250,7 +251,7 @@ export const ExamCreateScreen: React.FC<ExamCreateScreenProps> = ({ navigation }
             ]}
           >
             <View style={styles.dropdownLeft}>
-              <View style={[styles.dropdownIconCircle, { backgroundColor: "rgba(81, 188, 117, 0.15)" }]}>
+              <View style={[styles.dropdownIconCircle, { backgroundColor: "rgba(23, 130, 87, 0.15)" }]}>
                 <Ionicons name="book-outline" size={18} color={colors.brandGreen} />
               </View>
               <View style={{ flex: 1, marginLeft: 10 }}>
@@ -287,7 +288,7 @@ export const ExamCreateScreen: React.FC<ExamCreateScreenProps> = ({ navigation }
             ]}
           >
             <View style={styles.dropdownLeft}>
-              <View style={[styles.dropdownIconCircle, { backgroundColor: "rgba(7, 159, 189, 0.15)" }]}>
+              <View style={[styles.dropdownIconCircle, { backgroundColor: "rgba(15, 118, 110, 0.15)" }]}>
                 <Ionicons name="ribbon-outline" size={18} color={colors.primary} />
               </View>
               <View style={{ flex: 1, marginLeft: 10 }}>
@@ -344,7 +345,7 @@ export const ExamCreateScreen: React.FC<ExamCreateScreenProps> = ({ navigation }
             ]}
           >
             <View style={styles.dropdownLeft}>
-              <View style={[styles.dropdownIconCircle, { backgroundColor: "rgba(240, 182, 90, 0.15)" }]}>
+              <View style={[styles.dropdownIconCircle, { backgroundColor: "rgba(190, 120, 10, 0.15)" }]}>
                 <Ionicons name="calendar-outline" size={18} color={colors.warning} />
               </View>
               <View style={{ flex: 1, marginLeft: 10 }}>
@@ -356,7 +357,7 @@ export const ExamCreateScreen: React.FC<ExamCreateScreenProps> = ({ navigation }
                 </Text>
               </View>
             </View>
-            <View style={[styles.dateActionPill, { backgroundColor: "rgba(7, 159, 189, 0.12)" }]}>
+            <View style={[styles.dateActionPill, { backgroundColor: "rgba(15, 118, 110, 0.12)" }]}>
               <Ionicons name="calendar" size={14} color={colors.primary} />
               <Text style={{ fontSize: 12, fontWeight: "700", color: colors.primary }}>
                 Open Calendar
@@ -462,6 +463,7 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 20,
+    fontFamily: fonts.display,
     fontWeight: "700",
   },
   subtitle: {

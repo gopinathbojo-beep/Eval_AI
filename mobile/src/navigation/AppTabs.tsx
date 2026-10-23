@@ -10,6 +10,7 @@ import { ExamsListScreen } from "../screens/exams/ExamsListScreen";
 import { ExamCreateScreen } from "../screens/exams/ExamCreateScreen";
 import { EvaluationsQueueScreen } from "../screens/evaluations/EvaluationsQueueScreen";
 import { ResultsListScreen } from "../screens/results/ResultsListScreen";
+import { fonts } from "../theme/colors";
 
 const Tab = createBottomTabNavigator();
 
@@ -31,12 +32,12 @@ export const AppTabs: React.FC = () => {
         },
         headerTitleStyle: {
           color: colors.text,
-          fontWeight: "800",
-          fontSize: 18,
-          letterSpacing: 0.3,
+          fontFamily: fonts.display,
+          fontWeight: "700",
+          fontSize: 19,
         },
         tabBarStyle: {
-          backgroundColor: colors.surface,
+          backgroundColor: colors.tabBar,
           borderTopColor: colors.border,
           borderTopWidth: 1,
           height: tabHeight,
@@ -54,7 +55,7 @@ export const AppTabs: React.FC = () => {
             },
           }),
         },
-        tabBarActiveTintColor: colors.primary,
+        tabBarActiveTintColor: colors.tabBarActive,
         tabBarInactiveTintColor: colors.tabBarInactive,
         tabBarLabelStyle: {
           fontSize: 11,
@@ -72,7 +73,7 @@ export const AppTabs: React.FC = () => {
         options={{
           headerTitle: () => (
             <View style={styles.headerTitleRow}>
-              <View style={[styles.headerCrest, { backgroundColor: colors.primary }]}>
+              <View style={[styles.headerCrest, { backgroundColor: colors.primaryFill }]}>
                 <Ionicons name="school" size={14} color="#FFFFFF" />
               </View>
               <Text style={[styles.headerTitleText, { color: colors.text }]}>Eval AI</Text>
@@ -167,6 +168,7 @@ const styles = StyleSheet.create({
   },
   headerTitleText: {
     fontSize: 18,
+    fontFamily: fonts.display,
     fontWeight: "800",
     letterSpacing: 0.3,
   },

@@ -212,7 +212,7 @@ export const ClassesScreen: React.FC<ClassesScreenProps> = ({ navigation }) => {
                 styles.chip,
                 {
                   backgroundColor:
-                    sortKey === "name" ? "rgba(7, 159, 189, 0.15)" : colors.surface,
+                    sortKey === "name" ? "rgba(15, 118, 110, 0.15)" : colors.surface,
                   borderColor: sortKey === "name" ? colors.primary : colors.border,
                 },
               ]}
@@ -233,7 +233,7 @@ export const ClassesScreen: React.FC<ClassesScreenProps> = ({ navigation }) => {
                 styles.chip,
                 {
                   backgroundColor:
-                    sortKey === "count" ? "rgba(7, 159, 189, 0.15)" : colors.surface,
+                    sortKey === "count" ? "rgba(15, 118, 110, 0.15)" : colors.surface,
                   borderColor: sortKey === "count" ? colors.primary : colors.border,
                 },
               ]}
@@ -445,7 +445,7 @@ const styles = StyleSheet.create({
     width: 42,
     height: 42,
     borderRadius: 10,
-    backgroundColor: "rgba(7, 159, 189, 0.12)",
+    backgroundColor: "rgba(15, 118, 110, 0.12)",
     alignItems: "center",
     justifyContent: "center",
   },

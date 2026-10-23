@@ -107,14 +107,19 @@ class _Doc:
         if s["address"]:
             text.append(self.p(_esc(s["address"]), size=self.fs - 0.5, color=MUTE, align=TA_CENTER))
         logo = None
+        # logo_size is the logo's height; wide logos may run up to 2.5x that, but the side columns never take
+        # more than a quarter of the page each, so the school name keeps at least half the width.
+        max_w = min(st["logo_size"] * 2.5, self.width * 0.25 - 8)
         if s["logo"] is not None and st["logo_position"] != "none":
             try:
                 logo = Image(str(s["logo"]))
-                k = min(st["logo_size"] / logo.imageWidth, st["logo_size"] / logo.imageHeight)
+                k = st["logo_size"] / logo.imageHeight
+                if logo.imageWidth * k > max_w and st["logo_position"] != "center":
+                    k = max_w / logo.imageWidth
                 logo.drawWidth, logo.drawHeight = logo.imageWidth * k, logo.imageHeight * k
             except Exception:
                 logo = None
-        side = st["logo_size"] + 8
+        side = (logo.drawWidth if logo is not None else st["logo_size"]) + 8
         if logo is not None and st["logo_position"] == "center":
             rows, widths = [[logo], [text]], [self.width]
         else:

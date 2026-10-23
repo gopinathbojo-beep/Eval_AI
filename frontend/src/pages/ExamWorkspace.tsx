@@ -2,6 +2,7 @@ import { useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate, useOutletContext, useParams } from "react-router-dom";
 import { api } from "../api/client";
 import { useApi } from "../hooks/useApi";
+import { useCrumbName } from "../context/Crumbs";
 import type { ExamDetail } from "../types";
 import { BUSY_DOC } from "../utils/format";
 import { Button, Confirm, ErrorPanel, Loading, PageHeader } from "../components/ui";
@@ -24,6 +25,7 @@ export default function ExamWorkspace() {
   const { data, error, loading, reload } = useApi<ExamDetail>(`/exams/${id}`, (d) =>
     [d.question_paper, d.answer_key_document].some((x) => x && BUSY_DOC.includes(x.status)) ? 2000 : null
   );
+  useCrumbName(id, data?.name);
 
   if (loading) return <Loading />;
   if (error || !data) return <ErrorPanel error={error} />;

@@ -99,7 +99,7 @@ export const SearchBar: React.FC<SearchBarProps> = ({
           style={[
             styles.actionButton,
             {
-              backgroundColor: filterActive ? "rgba(7, 159, 189, 0.15)" : colors.surface,
+              backgroundColor: filterActive ? "rgba(15, 118, 110, 0.15)" : colors.surface,
               borderColor: filterActive ? colors.primary : colors.border,
             },
           ]}

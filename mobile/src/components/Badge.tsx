@@ -17,53 +17,25 @@ export const Badge: React.FC<BadgeProps> = ({
   style,
   withDot = false,
 }) => {
-  const { colors, isDark } = useTheme();
+  const { colors } = useTheme();
 
+  // Rubber-stamp colours as on the web: soft tint fill, ink text, the same ink at ~45% for the rule
+  const tone = (ink: string, bg: string, dot = ink) => ({ bg, text: ink, border: `${ink}73`, dot });
   const getColors = () => {
     switch (variant) {
       case "success":
-        return {
-          bg: isDark ? "rgba(34, 197, 94, 0.16)" : "rgba(22, 163, 74, 0.10)",
-          text: colors.brandGreen,
-          border: isDark ? "rgba(34, 197, 94, 0.3)" : "rgba(22, 163, 74, 0.22)",
-          dot: colors.brandGreen,
-        };
+        return tone(colors.success, colors.successSoft);
       case "warning":
-        return {
-          bg: isDark ? "rgba(251, 191, 36, 0.16)" : "rgba(217, 119, 6, 0.10)",
-          text: colors.warning,
-          border: isDark ? "rgba(251, 191, 36, 0.3)" : "rgba(217, 119, 6, 0.22)",
-          dot: colors.warning,
-        };
+        return tone(colors.warning, colors.warningSoft);
       case "danger":
-        return {
-          bg: isDark ? "rgba(248, 113, 113, 0.16)" : "rgba(220, 38, 38, 0.10)",
-          text: colors.error,
-          border: isDark ? "rgba(248, 113, 113, 0.3)" : "rgba(220, 38, 38, 0.22)",
-          dot: colors.error,
-        };
+        return tone(colors.error, colors.errorSoft);
       case "navy":
       case "teal":
-        return {
-          bg: isDark ? "rgba(96, 165, 250, 0.16)" : "rgba(24, 68, 126, 0.08)",
-          text: colors.primary,
-          border: isDark ? "rgba(96, 165, 250, 0.3)" : "rgba(24, 68, 126, 0.2)",
-          dot: colors.primary,
-        };
+        return tone(colors.primary, colors.primarySoft);
       case "muted":
-        return {
-          bg: isDark ? colors.surfaceElevated : "#F1F5F9",
-          text: colors.textSecondary,
-          border: colors.border,
-          dot: colors.mutedText,
-        };
+        return { ...tone(colors.textSecondary, colors.surfaceElevated, colors.mutedText), border: colors.border };
       default:
-        return {
-          bg: isDark ? colors.surfaceElevated : "#F8FAFC",
-          text: colors.text,
-          border: colors.border,
-          dot: colors.primary,
-        };
+        return { ...tone(colors.text, colors.surfaceElevated, colors.primary), border: colors.border };
     }
   };
 
@@ -176,8 +148,8 @@ export const StatusBadge: React.FC<{
 
 const styles = StyleSheet.create({
   badge: {
-    borderRadius: 20,
-    borderWidth: 1,
+    borderRadius: 4,
+    borderWidth: 1.5,
     alignSelf: "flex-start",
     flexDirection: "row",
     alignItems: "center",
@@ -189,6 +161,6 @@ const styles = StyleSheet.create({
   text: {
     fontWeight: "700",
     textTransform: "uppercase",
-    letterSpacing: 0.3,
+    letterSpacing: 0.8,
   },
 });

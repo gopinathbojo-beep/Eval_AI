@@ -4,6 +4,7 @@ import { NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../theme/ThemeContext";
+import { fonts } from "../theme/colors";
 
 // Screens
 import { LoginScreen } from "../screens/auth/LoginScreen";
@@ -51,8 +52,9 @@ export const RootNavigator: React.FC = () => {
           headerTintColor: colors.primary,
           headerTitleStyle: {
             color: colors.text,
+            fontFamily: fonts.display,
             fontWeight: "700",
-            fontSize: 17,
+            fontSize: 18,
           },
           contentStyle: {
             backgroundColor: colors.background,

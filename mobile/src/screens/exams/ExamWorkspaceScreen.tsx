@@ -41,6 +41,7 @@ import { Input } from "../../components/Input";
 import { ModalDialog } from "../../components/ModalDialog";
 import { DocumentScannerModal, DocumentScannerResult } from "../../components/DocumentScannerModal";
 import { AuthImage } from "../../components/AuthImage";
+import { fonts } from "../../theme/colors";
 import {
   EditQuestionModal,
   SplitQuestionModal,
@@ -1601,7 +1602,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                           style={[
                             styles.progressBarFill,
                             {
-                              backgroundColor: colors.primary,
+                              backgroundColor: colors.primaryFill,
                               width: `${Math.min(
                                 100,
                                 Math.max(
@@ -1675,7 +1676,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                 </View>
               ) : (
                 <View style={styles.scannerPromptCard}>
-                  <View style={[styles.scannerPromptIcon, { backgroundColor: "rgba(7, 159, 189, 0.12)" }]}>
+                  <View style={[styles.scannerPromptIcon, { backgroundColor: "rgba(15, 118, 110, 0.12)" }]}>
                     <Ionicons name="scan-outline" size={44} color={colors.primary} />
                   </View>
                   <Text style={[styles.scannerPromptTitle, { color: colors.text }]}>
@@ -1731,8 +1732,8 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                       {
                         backgroundColor:
                           Math.abs((questionsData.sum_of_marks || 0) - exam.total_marks) > 0.01
-                            ? "rgba(240, 182, 90, 0.15)"
-                            : "rgba(81, 188, 117, 0.15)",
+                            ? "rgba(190, 120, 10, 0.15)"
+                            : "rgba(23, 130, 87, 0.15)",
                       },
                     ]}
                   >
@@ -1860,7 +1861,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                       style={[
                         styles.progressBarFill,
                         {
-                          backgroundColor: colors.primary,
+                          backgroundColor: colors.primaryFill,
                           width: `${Math.min(
                             100,
                             Math.max(
@@ -1965,7 +1966,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                     setCustomTotalMarks(String(questionsData.sum_of_marks));
                     setTotalMarksModalVisible(true);
                   }}
-                  style={[styles.alertBanner, { backgroundColor: "rgba(234, 179, 8, 0.12)", borderColor: colors.warning }]}
+                  style={[styles.alertBanner, { backgroundColor: "rgba(190, 120, 10, 0.12)", borderColor: colors.warning }]}
                 >
                   <Ionicons name="warning-outline" size={18} color={colors.warning} />
                   <View style={{ flex: 1 }}>
@@ -1981,7 +1982,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
 
               {/* Locked Banner */}
               {questionsData?.locked && (
-                <View style={[styles.alertBanner, { backgroundColor: "rgba(81, 188, 117, 0.12)", borderColor: colors.brandGreen }]}>
+                <View style={[styles.alertBanner, { backgroundColor: "rgba(23, 130, 87, 0.12)", borderColor: colors.brandGreen }]}>
                   <Ionicons name="shield-checkmark-outline" size={18} color={colors.brandGreen} />
                   <Text style={[styles.alertText, { color: colors.text }]}>
                     Questions are verified and locked.
@@ -1993,7 +1994,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
               {qs.length === 0 && !isPaperBusy ? (
                 <View>
                   {exam.question_paper?.error_message ? (
-                    <View style={[styles.alertBanner, { backgroundColor: "rgba(239, 68, 68, 0.12)", borderColor: colors.error, marginBottom: 12 }]}>
+                    <View style={[styles.alertBanner, { backgroundColor: "rgba(196, 58, 40, 0.12)", borderColor: colors.error, marginBottom: 12 }]}>
                       <Ionicons name="alert-circle-outline" size={18} color={colors.error} />
                       <Text style={[styles.alertText, { color: colors.text }]}>
                         {exam.question_paper.error_message}
@@ -2083,7 +2084,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
 
                       {/* Review Reason Highlight */}
                       {q.review_reason ? (
-                        <View style={[styles.reviewReasonBanner, { backgroundColor: "rgba(234, 179, 8, 0.12)" }]}>
+                        <View style={[styles.reviewReasonBanner, { backgroundColor: "rgba(190, 120, 10, 0.12)" }]}>
                           <Ionicons name="alert-circle-outline" size={16} color={colors.warning} />
                           <Text style={[styles.reviewReasonText, { color: colors.warning }]}>
                             {q.review_reason}
@@ -2124,7 +2125,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                                 backgroundColor:
                                   q.verification_status === "VERIFIED"
                                     ? "rgba(255,255,255,0.06)"
-                                    : colors.primary,
+                                    : colors.primaryFill,
                                 opacity: q.verification_status === "VERIFIED" ? 0.5 : 1,
                               },
                             ]}
@@ -2231,7 +2232,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
             {keysData?.keys && keysData.keys.length > 0 && !keysData.locked && (
               <Card style={[styles.verifyAllBannerCard, { borderColor: colors.primary, backgroundColor: colors.surfaceElevated, marginBottom: 14 }]}>
                 <View style={styles.verifyAllBannerContent}>
-                  <View style={[styles.verifyAllIconBox, { backgroundColor: "rgba(0, 168, 232, 0.16)" }]}>
+                  <View style={[styles.verifyAllIconBox, { backgroundColor: "rgba(15, 118, 110, 0.16)" }]}>
                     <Ionicons name="shield-checkmark" size={24} color={colors.primary} />
                   </View>
                   <View style={{ flex: 1 }}>
@@ -2269,7 +2270,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
             )}
 
             {keysData?.locked && (
-              <View style={[styles.alertBanner, { backgroundColor: "rgba(81, 188, 117, 0.12)", borderColor: colors.brandGreen }]}>
+              <View style={[styles.alertBanner, { backgroundColor: "rgba(23, 130, 87, 0.12)", borderColor: colors.brandGreen }]}>
                 <Ionicons name="shield-checkmark-outline" size={18} color={colors.brandGreen} />
                 <Text style={[styles.alertText, { color: colors.text }]}>
                   Answer Key is verified and locked. Ready for grading and evaluations.
@@ -2294,7 +2295,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                     style={[
                       styles.progressBarFill,
                       {
-                        backgroundColor: colors.primary,
+                        backgroundColor: colors.primaryFill,
                         width: `${Math.min(
                           100,
                           Math.max(
@@ -2330,7 +2331,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
 
             {(!keysData?.keys || keysData.keys.length === 0) && !isKeyBusy ? (
               <Card style={styles.scannerPromptCard}>
-                <View style={[styles.scannerPromptIcon, { backgroundColor: "rgba(7, 159, 189, 0.12)" }]}>
+                <View style={[styles.scannerPromptIcon, { backgroundColor: "rgba(15, 118, 110, 0.12)" }]}>
                   <Ionicons name="key-outline" size={44} color={colors.primary} />
                 </View>
                 <Text style={[styles.scannerPromptTitle, { color: colors.text }]}>
@@ -2392,7 +2393,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                     style={[
                       styles.itemCard,
                       hasIssue ? { borderColor: colors.warning, borderWidth: 1.5 } : null,
-                      isVerified ? { borderColor: "rgba(37, 200, 120, 0.4)" } : null,
+                      isVerified ? { borderColor: "rgba(23, 130, 87, 0.4)" } : null,
                     ]}
                   >
                     <View style={styles.itemHeader}>
@@ -2418,7 +2419,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
 
                     {/* Prominent Issue Banners */}
                     {k.mark_mismatch && (
-                      <View style={[styles.reviewReasonBanner, { backgroundColor: "rgba(245, 166, 35, 0.14)", borderColor: colors.warning, borderWidth: 1 }]}>
+                      <View style={[styles.reviewReasonBanner, { backgroundColor: "rgba(190, 120, 10, 0.14)", borderColor: colors.warning, borderWidth: 1 }]}>
                         <Ionicons name="alert-circle" size={16} color={colors.warning} />
                         <Text style={[styles.reviewReasonText, { color: colors.warning }]}>
                           Marks Mismatch: Key has {k.marks} marks, Question {mappedQ?.display_number || "?"} is worth {mappedQ?.max_marks || "?"} marks.
@@ -2427,7 +2428,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                     )}
 
                     {isNeedsReview && (
-                      <View style={[styles.reviewReasonBanner, { backgroundColor: "rgba(239, 98, 98, 0.12)", borderColor: colors.error, borderWidth: 1 }]}>
+                      <View style={[styles.reviewReasonBanner, { backgroundColor: "rgba(196, 58, 40, 0.12)", borderColor: colors.error, borderWidth: 1 }]}>
                         <Ionicons name="git-branch-outline" size={16} color={colors.error} />
                         <Text style={[styles.reviewReasonText, { color: colors.error }]}>
                           Needs Review: {k.mapping_note || "Ambiguous question mapping. Resolve to confirm question."}
@@ -2436,7 +2437,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                     )}
 
                     {isUnmapped && (
-                      <View style={[styles.reviewReasonBanner, { backgroundColor: "rgba(239, 98, 98, 0.12)", borderColor: colors.error, borderWidth: 1 }]}>
+                      <View style={[styles.reviewReasonBanner, { backgroundColor: "rgba(196, 58, 40, 0.12)", borderColor: colors.error, borderWidth: 1 }]}>
                         <Ionicons name="help-circle-outline" size={16} color={colors.error} />
                         <Text style={[styles.reviewReasonText, { color: colors.error }]}>
                           Unmapped: Not mapped to any exam question.
@@ -2445,7 +2446,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                     )}
 
                     {isEmptySolution && (
-                      <View style={[styles.reviewReasonBanner, { backgroundColor: "rgba(239, 98, 98, 0.12)", borderColor: colors.error, borderWidth: 1 }]}>
+                      <View style={[styles.reviewReasonBanner, { backgroundColor: "rgba(196, 58, 40, 0.12)", borderColor: colors.error, borderWidth: 1 }]}>
                         <Ionicons name="document-text-outline" size={16} color={colors.error} />
                         <Text style={[styles.reviewReasonText, { color: colors.error }]}>
                           Empty Solution Text: Must enter official solution before verifying.
@@ -2760,8 +2761,8 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
             {failedUploads.length > 0 && (
               <View
                 style={{
-                  backgroundColor: "rgba(220, 38, 38, 0.08)",
-                  borderColor: "rgba(220, 38, 38, 0.3)",
+                  backgroundColor: "rgba(196, 58, 40, 0.08)",
+                  borderColor: "rgba(196, 58, 40, 0.3)",
                   borderWidth: 1,
                   borderRadius: 12,
                   padding: 12,
@@ -2769,8 +2770,8 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                 }}
               >
                 <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 8 }}>
-                  <Ionicons name="cloud-offline" size={16} color="#DC2626" />
-                  <Text style={{ fontSize: 13, fontWeight: "700", color: "#DC2626" }}>
+                  <Ionicons name="cloud-offline" size={16} color="#C43A28" />
+                  <Text style={{ fontSize: 13, fontWeight: "700", color: "#C43A28" }}>
                     {failedUploads.length} Answer Sheet Upload(s) Failed (Network Issue)
                   </Text>
                 </View>
@@ -2783,7 +2784,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                       alignItems: "center",
                       paddingVertical: 6,
                       borderTopWidth: StyleSheet.hairlineWidth,
-                      borderTopColor: "rgba(220, 38, 38, 0.2)",
+                      borderTopColor: "rgba(196, 58, 40, 0.2)",
                     }}
                   >
                     <View style={{ flex: 1, paddingRight: 8 }}>
@@ -2797,7 +2798,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                     <TouchableOpacity
                       onPress={() => handleRetryFailedUpload(f)}
                       style={{
-                        backgroundColor: "#DC2626",
+                        backgroundColor: "#C43A28",
                         paddingHorizontal: 12,
                         paddingVertical: 6,
                         borderRadius: 6,
@@ -2816,7 +2817,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
 
             {evaluations.length === 0 ? (
               <Card style={styles.scannerPromptCard}>
-                <View style={[styles.scannerPromptIcon, { backgroundColor: "rgba(7, 159, 189, 0.12)" }]}>
+                <View style={[styles.scannerPromptIcon, { backgroundColor: "rgba(15, 118, 110, 0.12)" }]}>
                   <Ionicons name="scan-outline" size={44} color={colors.primary} />
                 </View>
                 <Text style={[styles.scannerPromptTitle, { color: colors.text }]}>
@@ -2908,7 +2909,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                       <View
                         style={[
                           styles.docBusyBanner,
-                          { backgroundColor: "rgba(7, 159, 189, 0.1)", borderColor: colors.primary },
+                          { backgroundColor: "rgba(15, 118, 110, 0.1)", borderColor: colors.primary },
                         ]}
                       >
                         <ActivityIndicator size="small" color={colors.primary} />
@@ -2923,11 +2924,11 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                       <View
                         style={[
                           styles.docBusyBanner,
-                          { backgroundColor: "rgba(245, 158, 11, 0.12)", borderColor: "#F59E0B" },
+                          { backgroundColor: "rgba(190, 120, 10, 0.12)", borderColor: "#B7791F" },
                         ]}
                       >
-                        <ActivityIndicator size="small" color="#F59E0B" />
-                        <Text style={[styles.docBusyBannerText, { color: "#F59E0B" }]}>
+                        <ActivityIndicator size="small" color="#B7791F" />
+                        <Text style={[styles.docBusyBannerText, { color: "#B7791F" }]}>
                           Evaluating answers with Ollama AI ({ev.run_progress || 0}%)...
                         </Text>
                       </View>
@@ -2937,7 +2938,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                       <View
                         style={[
                           styles.finalizedReadonlyBadge,
-                          { backgroundColor: "rgba(37, 200, 120, 0.1)", borderColor: colors.brandGreen },
+                          { backgroundColor: "rgba(23, 130, 87, 0.1)", borderColor: colors.brandGreen },
                         ]}
                       >
                         <Ionicons name="lock-closed" size={13} color={colors.brandGreen} />
@@ -3115,7 +3116,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
               </View>
 
               {exam?.status === "FINALIZED" && (
-                <View style={[styles.alertBanner, { backgroundColor: "rgba(37, 200, 120, 0.12)", borderColor: colors.brandGreen, marginBottom: 14 }]}>
+                <View style={[styles.alertBanner, { backgroundColor: "rgba(23, 130, 87, 0.12)", borderColor: colors.brandGreen, marginBottom: 14 }]}>
                   <Ionicons name="checkmark-done-circle" size={18} color={colors.brandGreen} />
                   <Text style={[styles.alertText, { color: colors.text }]}>
                     This exam is finalized and closed. Results and marks are permanently recorded.
@@ -3285,7 +3286,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                   <TouchableOpacity
                     key={k}
                     onPress={() => saveOutcome(outcomeTarget, { k_level: k })}
-                    style={[styles.studentSelectRow, { borderColor: on ? colors.primary : colors.border, backgroundColor: on ? "rgba(7, 159, 189, 0.15)" : colors.surface, width: "47%" }]}
+                    style={[styles.studentSelectRow, { borderColor: on ? colors.primary : colors.border, backgroundColor: on ? "rgba(15, 118, 110, 0.15)" : colors.surface, width: "47%" }]}
                   >
                     <Text style={{ fontWeight: "700", color: on ? colors.primary : colors.text }}>{k}</Text>
                     <Text style={{ fontSize: 12, color: colors.textSecondary }}>{name}</Text>
@@ -3608,7 +3609,7 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
             style={{
               padding: 12,
               borderRadius: 10,
-              backgroundColor: "rgba(7, 159, 189, 0.08)",
+              backgroundColor: "rgba(15, 118, 110, 0.08)",
               borderWidth: 1,
               borderColor: colors.border,
               marginBottom: 10,
@@ -3872,6 +3873,7 @@ const styles = StyleSheet.create({
   },
   examTitle: {
     fontSize: 18,
+    fontFamily: fonts.display,
     fontWeight: "800",
   },
   examSub: {
@@ -3930,6 +3932,7 @@ const styles = StyleSheet.create({
   },
   cardTitle: {
     fontSize: 16,
+    fontFamily: fonts.display,
     fontWeight: "700",
     marginBottom: 12,
   },
@@ -4005,6 +4008,7 @@ const styles = StyleSheet.create({
   },
   tabHeading: {
     fontSize: 16,
+    fontFamily: fonts.display,
     fontWeight: "700",
   },
   warningText: {
@@ -4110,6 +4114,7 @@ const styles = StyleSheet.create({
   },
   scannerPromptTitle: {
     fontSize: 18,
+    fontFamily: fonts.display,
     fontWeight: "700",
     textAlign: "center",
     marginBottom: 8,
@@ -4158,7 +4163,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 5,
     borderRadius: 6,
-    backgroundColor: "rgba(37, 200, 120, 0.12)",
+    backgroundColor: "rgba(23, 130, 87, 0.12)",
   },
   verifiedTagText: {
     fontSize: 12,
@@ -4226,12 +4231,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 6,
-    backgroundColor: "rgba(245, 158, 11, 0.15)",
+    backgroundColor: "rgba(190, 120, 10, 0.15)",
   },
   unresolvedBadgeText: {
     fontSize: 11,
     fontWeight: "700",
-    color: "#F59E0B",
+    color: "#B7791F",
   },
   docBusyBanner: {
     flexDirection: "row",

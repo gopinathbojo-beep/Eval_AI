@@ -1,3 +1,4 @@
+import { useToast } from "../components/Toast";
 import { useMemo, useState, type FormEvent } from "react";
 import { api, downloadFile } from "../api/client";
 import { FilteredEmptyState, TablePagination, TableToolbar } from "../components/TableToolbar";
@@ -69,14 +70,16 @@ export function Classes() {
   const [editingClass, setEditingClass] = useState<ClassRow | null>(null);
   const [deletingClass, setDeletingClass] = useState<ClassRow | null>(null);
   const [cardsFor, setCardsFor] = useState<ClassRow | null>(null);
+  const toast = useToast();
   const [downloading, setDownloading] = useState(false);
 
   const handleDownloadMarksheet = async () => {
     try {
       setDownloading(true);
       await downloadFile("/reports/marksheet", "EvalAI_Student_Marksheet.xlsx");
+      toast("Marksheet downloaded.");
     } catch (err: any) {
-      alert(err.message || "Failed to download marksheet.");
+      toast(err.message || "Failed to download marksheet.", "mark");
     } finally {
       setDownloading(false);
     }

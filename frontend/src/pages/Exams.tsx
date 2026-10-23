@@ -2,7 +2,7 @@ import { useMemo, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { FilteredEmptyState, TablePagination, TableToolbar } from "../components/TableToolbar";
-import {
+import { LinkButton,
   Button,
   Card,
   Confirm,
@@ -108,11 +108,9 @@ export function ExamsList() {
         title="Exams Management"
         sub="Create exams and track their progress."
         actions={
-          <Link to="/exams/new">
-            <Button variant="primary" className="shadow-xs">
+          <LinkButton to="/exams/new" variant="primary" className="shadow-xs">
               <span>Create New Exam</span>
-            </Button>
-          </Link>
+            </LinkButton>
         }
       />
       <ErrorPanel error={error} />
@@ -123,9 +121,7 @@ export function ExamsList() {
           title="No exams created yet"
           hint="Create an exam to get started."
           action={
-            <Link to="/exams/new">
-              <Button variant="primary">Create Exam</Button>
-            </Link>
+            <LinkButton to="/exams/new" variant="primary">Create Exam</LinkButton>
           }
         />
       ) : (
@@ -189,14 +185,12 @@ export function ExamsList() {
                       </td>
                       <td className="px-4 py-3 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1.5">
-                          <Link to={`/exams/${e.id}`}>
-                            <Button small variant="soft">
-                              <span>Open</span>
-                              <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                              </svg>
-                            </Button>
-                          </Link>
+                          <LinkButton to={`/exams/${e.id}`} small variant="soft">
+                            <span>Open</span>
+                            <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                            </svg>
+                          </LinkButton>
                           <Button
                             small
                             variant="ghost"
@@ -373,9 +367,7 @@ export function ExamNew() {
         title="Create New Examination"
         sub="Name, class, subject and marks."
         actions={
-          <Link to="/exams">
-            <Button variant="ghost">Cancel &amp; Return</Button>
-          </Link>
+          <LinkButton to="/exams" variant="ghost">Cancel &amp; Return</LinkButton>
         }
       />
 
@@ -538,9 +530,7 @@ export function ExamNew() {
         <ErrorPanel error={error} />
 
         <div className="flex items-center justify-end gap-3">
-          <Link to="/exams">
-            <Button variant="ghost">Cancel</Button>
-          </Link>
+          <LinkButton to="/exams" variant="ghost">Cancel</LinkButton>
           <Button
             type="submit"
             variant="primary"

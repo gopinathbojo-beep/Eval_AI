@@ -24,6 +24,8 @@ interface ButtonProps {
   fullWidth?: boolean;
   style?: StyleProp<ViewStyle>;
   textStyle?: StyleProp<TextStyle>;
+  /** Spoken label; required for icon-only buttons, defaults to the title */
+  accessibilityLabel?: string;
 }
 
 export const Button: React.FC<ButtonProps> = ({
@@ -38,17 +40,18 @@ export const Button: React.FC<ButtonProps> = ({
   fullWidth = false,
   style,
   textStyle,
+  accessibilityLabel,
 }) => {
   const { colors, isDark } = useTheme();
 
   const getDimensions = () => {
     switch (size) {
       case "small":
-        return { minHeight: 36, paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8 };
+        return { minHeight: 36, paddingVertical: 6, paddingHorizontal: 12, borderRadius: 6 };
       case "large":
-        return { minHeight: 52, paddingVertical: 14, paddingHorizontal: 22, borderRadius: 12 };
+        return { minHeight: 52, paddingVertical: 14, paddingHorizontal: 22, borderRadius: 8 };
       default:
-        return { minHeight: 44, paddingVertical: 10, paddingHorizontal: 16, borderRadius: 10 };
+        return { minHeight: 44, paddingVertical: 10, paddingHorizontal: 16, borderRadius: 7 };
     }
   };
 
@@ -65,6 +68,13 @@ export const Button: React.FC<ButtonProps> = ({
 
   const isDisabled = disabled || loading;
   const dims = getDimensions();
+  const a11y = {
+    accessibilityRole: "button" as const,
+    accessibilityLabel: accessibilityLabel ?? title,
+    accessibilityState: { disabled: isDisabled, busy: loading },
+    // Small buttons are under the 44pt touch target; widen the tappable area without changing layout
+    hitSlop: size === "small" ? { top: 6, bottom: 6, left: 4, right: 4 } : undefined,
+  };
 
   const getTextColor = () => {
     if (variant === "secondary") return colors.text;
@@ -93,7 +103,6 @@ export const Button: React.FC<ButtonProps> = ({
               fontSize: getFontSize(),
               color: getTextColor(),
             },
-            isDisabled && { opacity: 0.65 },
             textStyle,
           ]}
         >
@@ -109,6 +118,7 @@ export const Button: React.FC<ButtonProps> = ({
   if (variant === "gradient" && !isDisabled) {
     return (
       <TouchableOpacity
+        {...a11y}
         onPress={onPress || (() => {})}
         disabled={isDisabled}
         activeOpacity={0.82}
@@ -136,17 +146,17 @@ export const Button: React.FC<ButtonProps> = ({
   }
 
   const getBackgroundColor = () => {
-    if (isDisabled) return isDark ? colors.surfaceElevated : "#E2E8F0";
+    if (isDisabled) return isDark ? colors.surfaceElevated : "#E5DBC3";
     switch (variant) {
       case "primary":
       case "gradient":
-        return colors.primary;
+        return colors.primaryFill;
       case "secondary":
         return colors.surface;
       case "soft":
-        return isDark ? "rgba(96, 165, 250, 0.14)" : "rgba(24, 68, 126, 0.08)";
+        return colors.primarySoft;
       case "danger":
-        return colors.error;
+        return isDark ? "#C43A28" : colors.error;
       case "outline":
       case "ghost":
         return "transparent";
@@ -158,12 +168,13 @@ export const Button: React.FC<ButtonProps> = ({
   const getBorderColor = () => {
     if (variant === "outline") return colors.primary;
     if (variant === "secondary") return colors.border;
-    if (variant === "soft") return isDark ? "rgba(96, 165, 250, 0.25)" : "rgba(24, 68, 126, 0.15)";
+    if (variant === "soft") return isDark ? "rgba(15, 118, 110, 0.25)" : "rgba(15, 118, 110, 0.15)";
     return "transparent";
   };
 
   return (
     <TouchableOpacity
+      {...a11y}
       onPress={onPress}
       disabled={isDisabled}
       activeOpacity={0.78}

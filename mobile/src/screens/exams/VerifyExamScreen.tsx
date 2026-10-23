@@ -17,6 +17,7 @@ import { Card } from "../../components/Card";
 import { Button } from "../../components/Button";
 import { Badge, StatusBadge } from "../../components/Badge";
 import { Loading } from "../../components/Loading";
+import { fonts } from "../../theme/colors";
 
 interface VerifyExamScreenProps {
   route: any;
@@ -547,6 +548,7 @@ const styles = StyleSheet.create({
   },
   examTitle: {
     fontSize: 18,
+    fontFamily: fonts.display,
     fontWeight: "800",
   },
   examMeta: {
@@ -577,6 +579,7 @@ const styles = StyleSheet.create({
   },
   sectionTitle: {
     fontSize: 16,
+    fontFamily: fonts.display,
     fontWeight: "700",
     marginBottom: 12,
   },
@@ -625,6 +628,7 @@ const styles = StyleSheet.create({
   },
   emptyTitle: {
     fontSize: 16,
+    fontFamily: fonts.display,
     fontWeight: "700",
     marginTop: 12,
   },

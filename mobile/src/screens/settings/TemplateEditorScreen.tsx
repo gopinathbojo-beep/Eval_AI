@@ -76,7 +76,7 @@ export const TemplateEditorScreen: React.FC<{ route: any; navigation: any }> = (
 
   if (!draft || !defaults) return <Loading message="Loading templates..." />;
 
-  const chip = (on: boolean) => [styles.chip, { borderColor: on ? colors.primary : colors.border, backgroundColor: on ? "rgba(7,159,189,0.15)" : colors.surface }];
+  const chip = (on: boolean) => [styles.chip, { borderColor: on ? colors.primary : colors.border, backgroundColor: on ? "rgba(15, 118, 110, 0.15)" : colors.surface }];
 
   const toggleList = (key: "sections" | "columns" | "summary", title: string) => {
     const items: Toggle[] = draft[key];
@@ -168,7 +168,7 @@ export const TemplateEditorScreen: React.FC<{ route: any; navigation: any }> = (
         {/* tabs */}
         <View style={[styles.tabs, { borderColor: colors.border, backgroundColor: colors.surface }]}>
           {TABS.map((t) => (
-            <TouchableOpacity key={t} onPress={() => setTab(t)} style={[styles.tab, tab === t && { backgroundColor: colors.primary }]}>
+            <TouchableOpacity key={t} onPress={() => setTab(t)} style={[styles.tab, tab === t && { backgroundColor: colors.primaryFill }]}>
               <Text style={{ fontWeight: "700", fontSize: 12, color: tab === t ? "#FFFFFF" : colors.textSecondary }}>{t}</Text>
             </TouchableOpacity>
           ))}
@@ -216,7 +216,7 @@ export const TemplateEditorScreen: React.FC<{ route: any; navigation: any }> = (
                 </View>
               </View>
             ))}
-            {([["font_size", "Text size", 7, 12, 0.5], ["logo_size", "Logo size", 30, 110, 10]] as const).map(([key, l, lo, hi, step]) => (
+            {([["font_size", "Text size", 7, 12, 0.5], ["logo_size", "Logo size", 30, 160, 10]] as const).map(([key, l, lo, hi, step]) => (
               <View key={key} style={[styles.row, { borderTopWidth: 0 }]}>
                 <Text style={{ flex: 1, color: colors.text }}>{l}: {draft.style[key]}</Text>
                 <Button title="−" size="small" variant="secondary"

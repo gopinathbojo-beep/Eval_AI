@@ -182,7 +182,7 @@ export const CornerAdjustmentModal: React.FC<CornerAdjustmentModalProps> = ({
           top: (p1.y + p2.y) / 2 - 1.5,
           width: length,
           height: 3,
-          backgroundColor: "#10B981",
+          backgroundColor: "#1F8F5F",
           transform: [{ rotate: `${angle}deg` }],
           zIndex: 10,
         }}
@@ -239,7 +239,7 @@ export const CornerAdjustmentModal: React.FC<CornerAdjustmentModalProps> = ({
 
   return (
     <Modal visible={visible} animationType="slide" transparent={false} onRequestClose={onClose}>
-      <StatusBar barStyle="light-content" backgroundColor="#0B132B" />
+      <StatusBar barStyle="light-content" backgroundColor="#0B171B" />
       <SafeAreaView style={styles.container}>
         {/* Top Header Bar */}
         <View style={styles.headerBar}>
@@ -311,7 +311,7 @@ export const CornerAdjustmentModal: React.FC<CornerAdjustmentModalProps> = ({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#0B132B",
+    backgroundColor: "#0B171B",
   },
   headerBar: {
     flexDirection: "row",
@@ -321,7 +321,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     borderBottomWidth: 1,
     borderBottomColor: "rgba(255, 255, 255, 0.12)",
-    backgroundColor: "#0F172A",
+    backgroundColor: "#111827",
   },
   headerButton: {
     padding: 6,
@@ -343,7 +343,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   resetButtonText: {
-    color: "#38BDF8",
+    color: "#0F8A80",
     fontSize: 14,
     fontWeight: "600",
   },
@@ -366,7 +366,7 @@ const styles = StyleSheet.create({
     height: HANDLE_RADIUS * 2,
     borderRadius: HANDLE_RADIUS,
     borderWidth: 3,
-    borderColor: "#10B981",
+    borderColor: "#1F8F5F",
     backgroundColor: "rgba(16, 185, 129, 0.35)",
     justifyContent: "center",
     alignItems: "center",
@@ -390,7 +390,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 5,
     paddingVertical: 1,
     borderWidth: 1,
-    borderColor: "#10B981",
+    borderColor: "#1F8F5F",
   },
   handleLabelText: {
     color: "#FFFFFF",
@@ -403,7 +403,7 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: 20,
     paddingVertical: 16,
-    backgroundColor: "#0F172A",
+    backgroundColor: "#111827",
     borderTopWidth: 1,
     borderTopColor: "rgba(255, 255, 255, 0.12)",
     gap: 12,
@@ -417,7 +417,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   cancelBtnText: {
-    color: "#E2E8F0",
+    color: "#E5DBC3",
     fontSize: 15,
     fontWeight: "600",
   },
@@ -426,11 +426,11 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     paddingVertical: 14,
     borderRadius: 10,
-    backgroundColor: "#10B981",
+    backgroundColor: "#1F8F5F",
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
-    shadowColor: "#10B981",
+    shadowColor: "#1F8F5F",
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 6,

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, ApiError } from "../api/client";
 import { useApi } from "../hooks/useApi";
+import { useCrumbName } from "../context/Crumbs";
 import type { EvalItem, EvalQuestion, EvaluationDetail, StudentAnswer } from "../types";
 import { fmt, label, pct, BUSY_DOC } from "../utils/format";
 import {
@@ -40,6 +41,7 @@ import {
   IconAlertTriangle,
   IconRotateCcw,
   IconEye,
+  IconChevronDown,
   IconChevronRight,
   IconX,
 } from "../components/Icons";
@@ -54,6 +56,7 @@ export default function EvaluationPage() {
     (d) => (d.evaluation.run_status === "RUNNING" || BUSY_DOC.includes(d.document.status) ? 1500 : null)
   );
   const [tab, setTab] = useState<Tab>("mapping");
+  useCrumbName(id, data?.evaluation.student.name);
 
   if (loading) return <Loading text="Loading evaluation workspace..." />;
   if (error || !data) return <ErrorPanel error={error} />;
@@ -118,7 +121,7 @@ export default function EvaluationPage() {
               <IconFileText size={16} />
               <span>1. Mapping Review</span>
               {data.summary.needs_review > 0 && (
-                <span className="rounded-full bg-warn-soft px-1.5 py-0.2 text-[11px] font-bold text-warn">
+                <span className="rounded-full bg-warn-soft px-1.5 py-px text-[11px] font-bold text-warn">
                   {data.summary.needs_review}
                 </span>
               )}
@@ -134,7 +137,7 @@ export default function EvaluationPage() {
               <IconCheckCircle size={16} />
               <span>2. Marks & Finalize</span>
               {data.items.length > 0 && (
-                <span className="rounded-full bg-pen-soft px-1.5 py-0.2 text-[11px] font-bold text-pen">
+                <span className="rounded-full bg-pen-soft px-1.5 py-px text-[11px] font-bold text-pen">
                   {data.items.filter((i) => i.status === "APPROVED").length}/{data.questions.length}
                 </span>
               )}
@@ -290,7 +293,7 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
               >
                 <span>{f}</span>
                 <span
-                  className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
+                  className={`rounded-full px-1.5 py-px text-[10px] font-bold ${
                     active ? "bg-white/20 text-white" : "bg-line/60 text-mute"
                   }`}
                 >
@@ -433,8 +436,11 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
                   >
                     {/* Clickable Header for Card selection */}
                     <button
+                      type="button"
                       className="block w-full text-left"
+                      aria-expanded={isSelected}
                       onClick={() => {
+                        if (isSelected) return setSel(null);
                         setSel(a.id);
                         if (a.page_number) setPage(a.page_number);
                       }}
@@ -490,7 +496,7 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
                       )}
 
                       {/* Extracted Student Answer Text */}
-                      <div className="doc-text mt-2.5 line-clamp-4 rounded-lg border border-line/40 bg-surface p-2.5 text-sm text-ink/90 leading-relaxed">
+                      <div className={`doc-text mt-2.5 ${isSelected ? "" : "line-clamp-4"} rounded-lg border border-line/40 bg-surface p-2.5 text-sm text-ink/90 leading-relaxed`}>
                         {a.answer_text ? (
                           <MathView text={a.answer_text} />
                         ) : (
@@ -504,6 +510,10 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
                           Edited by teacher (original transcription retained in audit).
                         </p>
                       )}
+                      <span className="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold text-pen">
+                        {isSelected ? "Show less" : "Show more"}
+                        <IconChevronDown size={13} className={`transition-transform ${isSelected ? "rotate-180" : ""}`} />
+                      </span>
                     </button>
 
                     {/* What the model read: Approximate Crop Preview */}
@@ -1116,7 +1126,7 @@ function MarksTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<vo
           <ul className="mt-3 space-y-1.5 border-t border-warn/20 pt-2.5 text-xs">
             {d.issues.map((i, k) => (
               <li key={k} className="flex items-baseline gap-2">
-                <span className="rounded bg-warn/15 px-1.5 py-0.2 font-bold text-warn">
+                <span className="rounded bg-warn/15 px-1.5 py-px font-bold text-warn">
                   {i.question}
                 </span>
                 <span className="text-ink">{i.reason}</span>
