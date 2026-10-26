@@ -8,6 +8,7 @@ os.environ["DATA_DIR"] = _tmp
 os.environ["SECRET_KEY"] = "test-secret-at-least-32-bytes-long-for-jwt-security"
 os.environ["PDF_RENDER_DPI"] = "72"
 os.environ["INTERNVL_MAX_RETRIES"] = "1"
+os.environ["JOB_QUEUE_INLINE"] = "true"  # queued GPU jobs finish before the request returns
 
 import fitz  # noqa: E402  (pymupdf)
 import pytest  # noqa: E402

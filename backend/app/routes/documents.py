@@ -14,6 +14,7 @@ from ..security import current_teacher
 from ..serializers import EVALUATION_VIEW_LOAD, doc_view, evaluation_view
 from ..services.audit import audit
 from ..services.pipeline import KINDS, process_document
+from ..services.job_queue import submit
 from ..services.state import set_state
 from ..services.student_identity import assign_student, identify_sheets, run_sheet
 
@@ -61,7 +62,7 @@ async def upload_question_paper(exam_id: str, bg: BackgroundTasks, file: UploadF
     audit(db, exam_id=exam.id, teacher_id=t.id, entity_type="question_paper", entity_id=doc.id, action="question_paper_uploaded",
           new=doc.original_filename)
     db.commit()
-    bg.add_task(process_document, "question-paper", doc.id)
+    bg.add_task(submit, exam.id, process_document, "question-paper", doc.id)
     return doc_view(doc, "question-paper")
 
 
@@ -171,7 +172,7 @@ async def upload_answer_key(exam_id: str, bg: BackgroundTasks, file: UploadFile 
           new=doc.original_filename)
     db.commit()
     if not early:
-        bg.add_task(process_document, "answer-key", doc.id)
+        bg.add_task(submit, exam.id, process_document, "answer-key", doc.id)
     return doc_view(doc, "answer-key")
 
 
@@ -186,7 +187,7 @@ def release_waiting_key(db: Session, exam, bg: BackgroundTasks) -> bool:
     set_state(exam, "ANSWER_KEY_UPLOADED")
     doc.status, doc.stage = "UPLOADED", "Queued"
     db.commit()
-    bg.add_task(process_document, "answer-key", doc.id)
+    bg.add_task(submit, exam.id, process_document, "answer-key", doc.id)
     return True
 
 
@@ -208,7 +209,8 @@ async def upload_answer_sheet(exam_id: str, bg: BackgroundTasks, file: UploadFil
     _require_sheet_state(exam)
     if not (student_id or student_name or roll_number):
         docs = await _save_unassigned(db, t, exam, [file])
-        bg.add_task(identify_sheets, [d.id for d in docs], t.id)
+        for d in docs:
+            bg.add_task(submit, exam.id, identify_sheets, [d.id], t.id)
         return _unassigned_view(db, docs[0])
     if student_id:
         st = db.get(Student, student_id)
@@ -234,7 +236,7 @@ async def upload_answer_sheet(exam_id: str, bg: BackgroundTasks, file: UploadFil
     audit(db, exam_id=exam.id, teacher_id=t.id, entity_type="answer_sheet", entity_id=doc.id,
           action="answer_sheet_uploaded", new={"student": st.name, "roll": st.roll_number})
     db.commit()
-    bg.add_task(process_document, "answer-sheet", doc.id)
+    bg.add_task(submit, exam.id, process_document, "answer-sheet", doc.id)
     db.refresh(ev)
     return {**evaluation_view(ev), "document": doc_view(doc, "answer-sheet")}
 
@@ -289,7 +291,8 @@ async def upload_answer_sheets_bulk(exam_id: str, bg: BackgroundTasks, files: li
     """Many sheets at once. Each is matched to its student from the details written on it, then read as usual."""
     exam = get_exam(db, t, exam_id)
     docs = await _save_unassigned(db, t, exam, files)
-    bg.add_task(identify_sheets, [d.id for d in docs], t.id)
+    for d in docs:  # one job per sheet, so sheets are identified and read in parallel
+        bg.add_task(submit, exam.id, identify_sheets, [d.id], t.id)
     return {"uploaded": len(docs), "documents": [_unassigned_view(db, d) for d in docs]}
 
 
@@ -336,7 +339,7 @@ def assign_sheet_student(doc_id: str, body: AssignBody, bg: BackgroundTasks,
                   f"{st.name} ({st.roll_number}) already has an answer sheet for this exam. Delete it first to assign this one.")
     ev = assign_student(db, doc, st, t.id, "Picked by teacher")
     db.commit()
-    bg.add_task(run_sheet, doc.id)
+    bg.add_task(submit, exam.id, run_sheet, doc.id)
     db.refresh(ev)
     return {**evaluation_view(ev), "document": doc_view(doc, "answer-sheet")}
 
@@ -349,7 +352,7 @@ def retry_identify(doc_id: str, bg: BackgroundTasks, db: Session = Depends(get_d
         raise err(409, "PROCESSING_IN_PROGRESS", "This answer sheet is already being processed.")
     doc.status, doc.stage, doc.error_message = "UPLOADED", "Waiting to read student details", None
     db.commit()
-    bg.add_task(identify_sheets, [doc.id], t.id)
+    bg.add_task(submit, exam.id, identify_sheets, [doc.id], t.id)
     return _unassigned_view(db, doc)
 
 
@@ -475,7 +478,7 @@ def reprocess(kind: str, doc_id: str, bg: BackgroundTasks, db: Session = Depends
     doc.status, doc.stage = "UPLOADED", "Queued"
     doc.error_message = None
     db.commit()
-    bg.add_task(process_document, kind, doc.id, only_failed)
+    bg.add_task(submit, exam.id, process_document, kind, doc.id, only_failed)
     return doc_view(doc, kind)
 
 

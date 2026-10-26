@@ -7,7 +7,7 @@ Anything uncertain is held for the teacher (status NEEDS_STUDENT) with the detai
 from __future__ import annotations
 import logging
 import re
-import threading
+import unicodedata
 from difflib import SequenceMatcher
 from PIL import Image
 from sqlalchemy.orm import Session
@@ -17,16 +17,17 @@ from ..documents.storage import abs_path
 from ..models import AnswerSheetDocument, Evaluation, Exam, Student
 from ..ocr import prompts
 from ..ocr.internvl import AIResponseError, AIUnavailable, chat_structured, check_model
+from ..ocr.indic import IndicResponseError, IndicUnavailable, check_indic, read_identity, uses_indic_ocr
 from ..ocr.schemas import StudentIdentityResult
 from .audit import audit
 from .evaluation_service import auto_evaluate_sheet
+from .job_queue import keyed_lock, submit
 from .pipeline import process_document
 
 log = logging.getLogger("adem.identity")
 
-# One sheet at a time: identification and OCR share the single local model, and a bulk upload of 40 sheets
-# must not start 40 model calls at once.
-_SHEETS_LOCK = threading.Lock()
+# How many sheets run at once is the job queue's business; a sheet's own steps are guarded by keyed_lock("sheet:<id>")
+# so a held sheet the teacher assigns mid-read is not read twice at the same time.
 # Sheets queued or in progress here (identify, read, grade). A sheet's statuses flip between those steps, so this
 # is what tells the teacher's screen that a batch is truly finished.
 _IN_FLIGHT: set[str] = set()
@@ -44,9 +45,13 @@ def _roll_key(v: str | None) -> str:
     return n.lstrip("0") or n
 
 
+def _name_words(v: str | None) -> list[str]:
+    """Words of a name in any script: letters plus vowel signs (Tamil "மாணவர்" keeps its marks), no digits or dots."""
+    return sorted("".join(ch if unicodedata.category(ch)[0] in "LM" else " " for ch in (v or "").casefold()).split())
+
+
 def name_similarity(a: str | None, b: str | None) -> float:
-    ta = sorted(re.findall(r"[a-z]+", (a or "").lower()))
-    tb = sorted(re.findall(r"[a-z]+", (b or "").lower()))
+    ta, tb = _name_words(a), _name_words(b)
     if not ta or not tb:
         return 0.0
     return max(SequenceMatcher(None, " ".join(ta), " ".join(tb)).ratio(),
@@ -145,26 +150,34 @@ def _identity_pages(doc: AnswerSheetDocument) -> list:
     return [abs_path(p["processed_file"]) for p in doc.pages[:IDENTITY_PAGES]]
 
 
-def _read_page(page) -> dict:
+def _internvl_identity(image) -> dict:
+    return chat_structured(prompts.IDENTITY_SYSTEM, prompts.student_identity_prompt(), StudentIdentityResult,
+                           image).parsed.model_dump()
+
+
+def _reader(exam: Exam | None):
+    """Indian-language exams read the header with IndicOCR (Tamil labels such as "பதிவு எண்"), others with InternVL."""
+    return read_identity if exam is not None and exam.subject and uses_indic_ocr(exam.subject.name) else _internvl_identity
+
+
+def _read_page(page, read_fn=_internvl_identity) -> dict:
     crop = page.parent / f"identity-{page.name}"
     with Image.open(page) as img:
         img.crop((0, 0, img.width, max(1, int(img.height * HEADER_FRACTION)))).save(crop)
     try:
-        res = chat_structured(prompts.IDENTITY_SYSTEM, prompts.student_identity_prompt(), StudentIdentityResult, crop)
-        read = _clean_read(res.parsed.model_dump())
+        read = _clean_read(read_fn(crop))
         if not _has_id(read):  # details may sit lower on the page
-            res = chat_structured(prompts.IDENTITY_SYSTEM, prompts.student_identity_prompt(), StudentIdentityResult, page)
-            read = _merge(read, _clean_read(res.parsed.model_dump()))
+            read = _merge(read, _clean_read(read_fn(page)))
         return read
     finally:
         crop.unlink(missing_ok=True)
 
 
-def _read_header(doc: AnswerSheetDocument) -> dict:
+def _read_header(doc: AnswerSheetDocument, read_fn=_internvl_identity) -> dict:
     """Read the details from the first IDENTITY_PAGES pages, stopping at the first page that gives an ID."""
     read: dict = {}
     for page in _identity_pages(doc):
-        read = _merge(read, _read_page(page))
+        read = _merge(read, _read_page(page, read_fn))
         if _has_id(read):
             break
     return read
@@ -174,14 +187,13 @@ def _read_header(doc: AnswerSheetDocument) -> dict:
 ROTATIONS = (90, 270, 180)
 
 
-def _read_rotated(page, angle: int) -> dict:
+def _read_rotated(page, angle: int, read_fn=_internvl_identity) -> dict:
     """Read the details from a whole page turned by `angle` degrees."""
     turned = page.parent / f"identity-r{angle}-{page.name}"
     with Image.open(page) as img:
         img.rotate(angle, expand=True).save(turned)
     try:
-        res = chat_structured(prompts.IDENTITY_SYSTEM, prompts.student_identity_prompt(), StudentIdentityResult, turned)
-        return _clean_read(res.parsed.model_dump())
+        return _clean_read(read_fn(turned))
     finally:
         turned.unlink(missing_ok=True)
 
@@ -191,15 +203,16 @@ def identify_with_rotation(db: Session, exam: Exam, doc: AnswerSheetDocument) ->
 
     Only an AUTO match from a turned page is used; otherwise the upright result (and its note) is kept.
     """
-    result = match_student(db, exam, _read_header(doc))
+    read_fn = _reader(exam)
+    result = match_student(db, exam, _read_header(doc, read_fn))
     # Turning only helps when nothing usable was read; a clear read that conflicts with a record stays held
     if result["match"] == "AUTO" or not result["note"].startswith((NOTE_NO_ID, NOTE_NO_MATCH)):
         return result
     for page in _identity_pages(doc):
         for angle in ROTATIONS:
             try:
-                alt = match_student(db, exam, _read_rotated(page, angle))
-            except AIResponseError:
+                alt = match_student(db, exam, _read_rotated(page, angle, read_fn))
+            except (AIResponseError, IndicResponseError):
                 continue
             if alt["match"] == "AUTO":
                 alt["note"] = f"{alt['note']} (page was photographed rotated)"
@@ -224,10 +237,10 @@ def in_flight(doc_id: str) -> bool:
 
 
 def run_sheet(doc_id: str) -> None:
-    """OCR an already-assigned sheet with the regular pipeline and grade it, one sheet at a time."""
+    """OCR an already-assigned sheet with the regular pipeline and grade it."""
     _IN_FLIGHT.add(doc_id)
     try:
-        with _SHEETS_LOCK:
+        with keyed_lock(f"sheet:{doc_id}"):
             process_document("answer-sheet", doc_id, True)
             auto_evaluate_sheet(doc_id)
     finally:
@@ -245,33 +258,44 @@ def _still_ours(doc_id: str, outcome: str) -> bool:
 
 
 def identify_sheets(doc_ids: list[str], teacher_id: str | None) -> None:
-    """Identify every sheet of the batch first, so the teacher sees who each belongs to early; then read them all."""
+    """Identify each sheet, then queue reading it as its own job. Uploads queue one identify job per sheet, so a
+    batch is identified first (the teacher sees early who each sheet belongs to) and its sheets are read in parallel."""
     _IN_FLIGHT.update(doc_ids)
-    outcomes: dict[str, str] = {}
     for doc_id in doc_ids:
-        with _SHEETS_LOCK:
-            try:
-                outcomes[doc_id] = _identify(doc_id, teacher_id)
-            except Exception:
-                log.exception("Identification crashed for sheet %s", doc_id)
-                _set_hold(doc_id, "Reading the student details failed unexpectedly. Pick the student or retry.")
-                outcomes[doc_id] = STOPPED
-        if outcomes[doc_id] == STOPPED:
-            _IN_FLIGHT.discard(doc_id)
-    for doc_id, outcome in outcomes.items():
-        if outcome == STOPPED:
-            continue
         try:
-            with _SHEETS_LOCK:
-                if not _still_ours(doc_id, outcome):
-                    continue
-                # pages are already rendered, so the pipeline only has to read them. An assigned sheet is graded at
-                # once; a held one is read now so picking its student later needs no more reading.
-                process_document("answer-sheet", doc_id, True)
-                if outcome == ASSIGNED:
-                    auto_evaluate_sheet(doc_id)
-        finally:
+            with keyed_lock(f"sheet:{doc_id}"):
+                outcome = _identify(doc_id, teacher_id)
+        except Exception:
+            log.exception("Identification crashed for sheet %s", doc_id)
+            _set_hold(doc_id, "Reading the student details failed unexpectedly. Pick the student or retry.")
+            outcome = STOPPED
+        if outcome == STOPPED:
             _IN_FLIGHT.discard(doc_id)
+            continue
+        submit(_exam_id(doc_id), _read_sheet, doc_id, outcome)
+
+
+def _exam_id(doc_id: str) -> str | None:
+    db = SessionLocal()
+    try:
+        doc = db.get(AnswerSheetDocument, doc_id)
+        return doc.exam_id if doc else None
+    finally:
+        db.close()
+
+
+def _read_sheet(doc_id: str, outcome: str) -> None:
+    try:
+        with keyed_lock(f"sheet:{doc_id}"):
+            if not _still_ours(doc_id, outcome):
+                return
+            # pages are already rendered, so the pipeline only has to read them. An assigned sheet is graded at
+            # once; a held one is read now so picking its student later needs no more reading.
+            process_document("answer-sheet", doc_id, True)
+            if outcome == ASSIGNED:
+                auto_evaluate_sheet(doc_id)
+    finally:
+        _IN_FLIGHT.discard(doc_id)
 
 
 def _set_hold(doc_id: str, note: str, read: dict | None = None, candidates: list[str] | None = None) -> None:
@@ -309,14 +333,14 @@ def _identify(doc_id: str, teacher_id: str | None) -> str:
                 return STOPPED
             db.commit()
         try:
-            check_model()
+            check_indic() if _reader(exam) is read_identity else check_model()
             result = identify_with_rotation(db, exam, doc)
-        except AIUnavailable:
+        except (AIUnavailable, IndicUnavailable):
             db.rollback()
             _set_hold(doc_id, "The AI model is not available, so the student details could not be read. "
                               "Pick the student or retry once the model is running.")
             return STOPPED
-        except AIResponseError:
+        except (AIResponseError, IndicResponseError):
             db.rollback()
             _set_hold(doc_id, "The student details on this sheet could not be read. Pick the student or retry.")
             return HELD
@@ -325,8 +349,16 @@ def _identify(doc_id: str, teacher_id: str | None) -> str:
             doc.status, doc.stage = "NEEDS_STUDENT", "Pick the student"
             db.commit()
             return HELD
-        assign_student(db, doc, db.get(Student, result["student_id"]), teacher_id, result["note"])
-        db.commit()
+        with keyed_lock(f"exam:{exam.id}"):  # sheets identified in parallel can match the same student
+            st = db.get(Student, result["student_id"])
+            if db.query(Evaluation).filter_by(exam_id=exam.id, student_id=st.id).first():
+                doc.identity = _hold(f"Matched {st.name} ({st.roll_number}), but they already have an answer sheet "
+                                     f"in this exam.", result["read"], [st])
+                doc.status, doc.stage = "NEEDS_STUDENT", "Pick the student"
+                db.commit()
+                return HELD
+            assign_student(db, doc, st, teacher_id, result["note"])
+            db.commit()
         return ASSIGNED
     finally:  
         

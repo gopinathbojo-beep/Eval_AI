@@ -11,6 +11,7 @@ from ..models import (AnswerKey, AnswerKeyDocument, Evaluation, EvaluationItem, 
                       QuestionPaperDocument, Teacher)
 from ..ocr import prompts
 from ..ocr.internvl import chat_structured, check_model
+from ..ocr.indic import text_model_for
 from ..ocr.schemas import GeneratedAnswerKeyResult
 from ..security import current_teacher
 from ..serializers import key_view
@@ -264,7 +265,8 @@ def generate_answer_keys_ai(exam_id: str, db: Session = Depends(get_db), t: Teac
     if not qs:
         raise err(400, "NO_QUESTIONS", "There are no verified questions in this exam to generate answers for.")
 
-    check_model()
+    model = text_model_for(exam.subject.name if exam.subject else None)
+    check_model(model)
 
     q_dicts = [
         {
@@ -303,7 +305,8 @@ def generate_answer_keys_ai(exam_id: str, db: Session = Depends(get_db), t: Teac
         chunk = q_dicts[i:i + batch_size]
         prompt = prompts.generate_answer_key_prompt(exam.name, chunk)
         try:
-            call = chat_structured(prompts.GEN_ANSWER_KEY_SYSTEM, prompt, GeneratedAnswerKeyResult, image_path=img_path)
+            call = chat_structured(prompts.GEN_ANSWER_KEY_SYSTEM, prompt, GeneratedAnswerKeyResult, image_path=img_path,
+                                   model=model)
             for ans in call.parsed.answers:
                 target_q = None
                 if ans.exam_question_id and ans.exam_question_id in by_id:

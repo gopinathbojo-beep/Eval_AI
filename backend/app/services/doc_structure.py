@@ -33,25 +33,72 @@ _HEADING_PATTERNS = [
 _INSTRUCTION_PATTERNS = [
     re.compile(r"^\s*(?:read\s+the\s+(?:following|short|given)?\s*(?:passage|poem|text|extract)|answer\s+(?:all|any|the\s+following)|choose\s+the\s+correct|fill\s+in\s+the\s+blanks?)\b", re.IGNORECASE),
     re.compile(r"^\s*(?:note\s*:|all\s+questions\s+are\s+compulsory|time\s*:\s*\d|maximum\s+marks?\s*:|max\.?\s*marks?\s*:)", re.IGNORECASE),
+    # Tamil: "answer all/any ... questions", "குறிப்பு:" (note), "நேரம்:" (time)
+    re.compile(r"^\s*(?:(?:அனைத்து|ஏதேனும்|எவையேனும்|பின்வரும்).{0,60}விடையளி|குறிப்பு\s*:|நேரம்\s*:)"),
 ]
 
-# Marks rule in section or instruction: e.g. "4 x 2 = 8 marks", "4 questions x 2 marks = 8 marks", "2 marks each"
+# "marks" in English or Tamil (மதிப்பெண் / மதிப்பெண்கள் / மதி.)
+_MARK_WORD = r"(?:marks?|m|மதிப்பெண்கள்|மதிப்பெண்|மதி\.?)"
+
+# Marks rule in section or instruction: e.g. "4 x 2 = 8 marks", "4 questions x 2 marks = 8 marks", "2 marks each",
+# "தலா 2 மதிப்பெண்" / "2 மதிப்பெண்கள் வீதம்" (2 marks each)
 _MARKS_RULE_PATTERNS = [
-    re.compile(r"(\d+)\s*(?:questions?|qn|q)?\s*[×x*]\s*(\d+(?:\.\d+)?)\s*(?:marks?|m)?\s*=\s*(\d+(?:\.\d+)?)\s*(?:marks?|m)?", re.IGNORECASE),
-    re.compile(r"(\d+(?:\.\d+)?)\s*(?:marks?|m)\s+each", re.IGNORECASE),
+    re.compile(rf"(\d+)\s*(?:questions?|qn|q)?\s*[×x*]\s*(\d+(?:\.\d+)?)\s*{_MARK_WORD}?\s*=\s*(\d+(?:\.\d+)?)\s*{_MARK_WORD}?", re.IGNORECASE),
+    re.compile(rf"(\d+(?:\.\d+)?)\s*{_MARK_WORD}\s+(?:each|வீதம்)", re.IGNORECASE),
     re.compile(r"each\s+(?:question\s+)?(?:carries|is\s+worth)\s*(\d+(?:\.\d+)?)\s*(?:marks?|m)?", re.IGNORECASE),
-    re.compile(r"\(\s*(\d+(?:\.\d+)?)\s*(?:marks?|m)\s*each\s*\)", re.IGNORECASE),
+    re.compile(rf"\(\s*(\d+(?:\.\d+)?)\s*{_MARK_WORD}\s*each\s*\)", re.IGNORECASE),
+    re.compile(rf"தலா\s*(\d+(?:\.\d+)?)\s*{_MARK_WORD}"),
 ]
 
 _MAX_MARKS_PATTERN = re.compile(
-    r"(?:maximum|max\.?|total)\s*(?:marks?)?\s*[:=\-]\s*(\d+(?:\.\d+)?)",
+    r"(?:(?:maximum|max\.?|total)\s*(?:marks?)?|(?:மொத்த\s*)?மதிப்பெண்கள்?)\s*[:=\-]\s*(\d+(?:\.\d+)?)",
     re.IGNORECASE,
 )
 
 _INLINE_MARKS_PATTERN = re.compile(
-    r"\(\s*(\d+(?:\.\d+)?)\s*(?:marks?|m)\s*\)\s*$",
+    rf"\(\s*(\d+(?:\.\d+)?)\s*{_MARK_WORD}\s*\)\s*$",
     re.IGNORECASE,
 )
+
+# Tamil section heading: "பகுதி – அ", "பகுதி - I", "பிரிவு 2" (not "பகுதியில்", "பகுதி அனைத்து ...")
+_TAMIL_SECTION = r"(?:பகுதி|பிரிவு)\s*[-–—:]?\s*(?:[அ-ஔ]|[ivxIVX]+|[0-9]+|[A-Za-z])(?![஀-௿\w])"
+_SECTION_LINE = re.compile(rf"^\s*(?:(?:section|part)\s+[a-z0-9ivx]+\b|{_TAMIL_SECTION})", re.IGNORECASE)
+
+# Tamil commands and question words: "விளக்குக" (explain), "எழுதுக"/"எழுதவும்" (write), "ஏன்" (why), "எவ்வாறு" (how)
+_TAMIL_QUESTION_WORD = re.compile(
+    r"[஀-௿]+(?:ுக|க்க|வும்)(?=[\s.?!:,;)]|$)|(?:^|\s)(?:ஏன்|எவ்வாறு|எப்படி|யாவை|யார்|என்ன|எது|எவை|எங்கு|எத்தனை)(?=[\s.?!:,;]|$)"
+)
+_MCQ_OPTION = re.compile(r"(?:^|\s)\(?\s*([அஆஇஈ]|[a-dA-D])\s*[\)\.]")
+
+
+def infer_question_type(text: str, marks: float | None = None) -> str:
+    """Question type from the question text itself (English or Tamil), for OCR engines that do not classify."""
+    return keyword_question_type(text) or default_question_type(text, marks)
+
+
+def keyword_question_type(text: str) -> str | None:
+    """The type a keyword or layout clue proves (பொருத்துக -> match, options (அ)-(ஈ) -> mcq), or None."""
+    t = text or ""
+    if re.search(r"பொருத்துக|பொருத்தவும்|\bmatch\s+the\b", t, re.I):
+        return "match"
+    if re.search(r"சரியா\s*தவறா|சரி\s*(?:அல்லது|/)\s*தவறு|\btrue\s*(?:or|/)\s*false\b", t, re.I):
+        return "true_false"
+    if re.search(r"நிரப்புக|நிரப்பவும்|கோடிட்ட\s*இட|_{3,}|\.{5,}|\bfill\s+in\b", t, re.I):
+        return "fill_blank"
+    opts = {m.group(1).lower() for m in _MCQ_OPTION.finditer(t)}
+    if (len(opts & {"அ", "ஆ", "இ", "ஈ"}) >= 3 or len(opts & {"a", "b", "c", "d"}) >= 4
+            or re.search(r"சரியான\s*விடையைத்?\s*தேர்|\bchoose\s+the\s+correct\b", t, re.I)):
+        return "mcq"
+    if re.search(r"கணக்கிடுக|கணக்கிடவும்|மதிப்பைக்?\s*காண்க|\bcalculate\b|\bfind\s+the\s+value\b", t, re.I):
+        return "numerical"
+    if re.search(r"ஓரிரு\s*சொற்களில்|ஒரு\s*சொல்லில்|சுருக்கமாக|\bin\s+one\s+word\b|\bbriefly\b", t, re.I):
+        return "short_answer"
+    return None
+
+
+def default_question_type(text: str, marks: float | None = None) -> str:
+    """A guess from marks alone, used when no keyword decides the type (the AI labeler may replace it)."""
+    return "short_answer" if marks is not None and marks <= 2 else "descriptive"
 
 
 @dataclass
@@ -69,6 +116,8 @@ class StructuredQuestion:
     ocr_confidence: float | None
     verification_status: str = "UNVERIFIED"
     review_reason: str | None = None
+    # Where question_type came from: "ocr" (the model said), "rule" (a keyword proved it), "default" (marks guess)
+    type_source: str | None = None
 
 
 @dataclass
@@ -101,13 +150,18 @@ def is_heading_or_title(text: str) -> bool:
         return False
     if len(lines) > 1 and any(q_word in lines[1].lower() for q_word in ("why", "how", "what", "which", "where", "who", "explain", "define", "calculate", "write", "find", "draw")):
         return False
-    # Section or Part headings: e.g. "SECTION B: MEDIUM ANSWER QUESTIONS"
-    if re.match(r"^\s*(?:section|part|unit|group)\s+[a-z0-9ivx]+\b", s, re.IGNORECASE):
+    # Section or Part headings: e.g. "SECTION B: MEDIUM ANSWER QUESTIONS", "பகுதி – அ"
+    if re.match(r"^\s*(?:section|part|unit|group)\s+[a-z0-9ivx]+\b", s, re.IGNORECASE) or re.match(rf"^\s*{_TAMIL_SECTION}", s):
         return True
     # Standalone subject or skill headings (only 1 line, short, <= 40 chars)
     if len(lines) == 1 and len(s) <= 40 and any(p.match(s) for p in _HEADING_PATTERNS):
         return True
     return False
+
+
+def is_section_heading_line(line: str) -> bool:
+    """One line that opens a section: "SECTION B ...", "PART II", "பகுதி – அ"."""
+    return bool(_SECTION_LINE.match(line))
 
 
 def is_instruction(text: str) -> bool:
@@ -128,6 +182,8 @@ def is_document_header(text: str) -> bool:
         return False
     has_title_kw = bool(re.search(r"\b(?:QUESTION\s+PAPER|EXAMINATION|TEST\s+PAPER|PERIODIC\s+TEST|ANNUAL\s+EXAM|MID[\s\-]+TERM)\b", s, re.IGNORECASE))
     has_meta_kw = bool(re.search(r"\b(?:Time\s+Allowed|Maximum\s+Marks|Max\.?\s+Marks|Total\s+Marks|Duration\s*:)\b", s, re.IGNORECASE))
+    # Tamil needs a value, so a question that merely mentions "நேரம்" (time) is not a header
+    has_meta_kw = has_meta_kw or bool(re.search(r"(?:நேரம்|மொத்த\s*மதிப்பெண்கள்?|மதிப்பெண்கள்)\s*[:\-]\s*\d", s))
     if (has_title_kw or has_meta_kw) and not re.search(r"\b(?:Calculate|Explain|Differentiate|Define|Prove|Find|Solve|Draw|Write\s+balanced)\b", s, re.IGNORECASE):
         return True
     return False
@@ -187,7 +243,7 @@ def is_passage_block(text: str) -> bool:
         r"\b(?:Draw|Explain|Identify|Calculate|State|Define|Describe|Show|Prove|Differentiate|Find|Solve|Write|Distinguish|Compare|List|Name|Give\s+reasons?)\b",
         s,
         re.IGNORECASE,
-    ):
+    ) or _TAMIL_QUESTION_WORD.search(s):
         return False
     # Check if text is predominantly narrative or descriptive text without question question-mark
     if "?" not in s and ("." in s or "\n" in s) and not re.search(r"^\s*(?:Q\d|\d+[\.\)])", s):
@@ -319,6 +375,8 @@ def _is_numbered_substep_or_item(raw_label: str | None, text: str, last_q: Struc
     last_norm = last_q.normalized_number or last_q.display_number or ""
     last_parent = parent_number(last_norm)
     last_p_int = int(last_parent) if last_parent.isdigit() else 0
+    if num == last_p_int + 1:  # "3." right after Q2 is the next question, not a step of Q2
+        return False
     last_clean = last_q.question_text.rstrip()
     if last_p_int >= 2 or is_sub_question(last_norm) or last_clean.endswith(":"):
         if num <= 5:
@@ -412,7 +470,7 @@ def _consolidate_subquestions(questions: list[StructuredQuestion]) -> list[Struc
             normalized_number=p_num,
             display_number=p_num,
             question_text=combined_text,
-            question_type=first_q.question_type or "descriptive",
+            question_type=first_q.question_type,
             max_marks=parent_marks,
             section=first_q.section,
             page_start=first_q.page_start,
@@ -762,7 +820,7 @@ def _rebuild_from_question_starts(
             normalized_number=str(tq.num),
             display_number=str(tq.num),
             question_text=_deduplicate_question_text("\n".join(tq.texts)),
-            question_type=tq.qtype or "descriptive",
+            question_type=tq.qtype,
             max_marks=marks.get(tq.num),
             section=tq.section,
             page_start=tq.page_start,
@@ -1216,7 +1274,7 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
                 normalized_number=norm,
                 display_number=display_num,
                 question_text=full_text,
-                question_type=q.question_type or "descriptive",
+                question_type=q.question_type,
                 max_marks=assigned_marks,
                 section=current_section or q.section,
                 page_start=page_num,
@@ -1247,4 +1305,12 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
         rebuilt = _rebuild_from_question_starts(page_results, doc_struct.stated_question_count, doc_struct.exam_max_marks)
         if rebuilt:
             doc_struct.questions = rebuilt
+    # OCR engines that do not classify (IndicOCR) leave the type empty: infer it from the merged question text
+    for sq in doc_struct.questions:
+        if sq.question_type:
+            sq.type_source = "ocr"
+        elif kw := keyword_question_type(sq.question_text):
+            sq.question_type, sq.type_source = kw, "rule"
+        else:
+            sq.question_type, sq.type_source = default_question_type(sq.question_text, sq.max_marks), "default"
     return doc_struct

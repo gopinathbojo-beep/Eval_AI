@@ -39,9 +39,10 @@ def _same_model(a: str, b: str) -> bool:
     return a.strip().lower() == b.strip().lower()
 
 
-def check_model() -> dict:
-    """Raises AIUnavailable unless Ollama is up AND the exact model is installed."""
+def check_model(model: str | None = None) -> dict:
+    """Raises AIUnavailable unless Ollama is up AND the exact model (default InternVL) is installed."""
     s = get_settings()
+    model = model or s.internvl_model
     if not s.internvl_enabled:
         raise AIUnavailable("INTERNVL_ENABLED is false")
     try:
@@ -51,18 +52,28 @@ def check_model() -> dict:
         raise AIUnavailable(f"Cannot reach Ollama at {s.internvl_api_url}: {e}") from e
     names = [m.get("name", "") for m in r.json().get("models", [])] + \
             [m.get("model", "") for m in r.json().get("models", [])]
-    if not any(_same_model(n, s.internvl_model) for n in names):
-        raise AIUnavailable(f"Model {s.internvl_model} not found. Installed: {sorted(set(names))}")
-    return {"available": True, "model": s.internvl_model, "url": s.internvl_api_url}
+    if not any(_same_model(n, model) for n in names):
+        raise AIUnavailable(f"Model {model} not found. Installed: {sorted(set(names))}")
+    return {"available": True, "model": model, "url": s.internvl_api_url}
 
 
-def _call_once(system: str, user: str, image_path: Path | None, format: str | None = "json") -> str:
+def unload_model(model: str) -> None:
+    """Free a model's GPU memory in Ollama now (keep_alive 0) instead of after its idle timeout."""
+    s = get_settings()
+    try:
+        httpx.post(f"{s.internvl_api_url}/api/generate", json={"model": model, "keep_alive": 0}, timeout=30)
+    except httpx.HTTPError as e:
+        log.warning("Could not unload %s from Ollama: %s", model, e)
+
+
+def _call_once(system: str, user: str, image_path: Path | None, format: str | None = "json",
+               model: str | None = None) -> str:
     s = get_settings()
     msg: dict = {"role": "user", "content": user}
     if image_path is not None:
         msg["images"] = [base64.b64encode(Path(image_path).read_bytes()).decode()]
     payload: dict = {
-        "model": s.internvl_model,
+        "model": model or s.internvl_model,
         "stream": False,
         "options": {"temperature": 0, "repeat_penalty": 1.15, "num_ctx": s.internvl_num_ctx, "num_predict": s.internvl_num_predict},
         "messages": [{"role": "system", "content": system}, msg],
@@ -183,14 +194,15 @@ def fallback_parse_plain_text(raw_text: str, schema: Type[T]) -> T | None:
     return None
 
 
-def chat_structured(system: str, user: str, schema: Type[T], image_path: Path | None = None) -> AICall:
-    """Call the model, parse + validate against `schema`. Retries with CLAHE and 2-stage fallback on parse failures."""
+def chat_structured(system: str, user: str, schema: Type[T], image_path: Path | None = None,
+                    model: str | None = None) -> AICall:
+    """Call the model (default InternVL), parse + validate against `schema`. Retries with CLAHE and 2-stage fallback on parse failures."""
     s = get_settings()
     attempts = s.internvl_max_retries + 1
     raw, last_err, kind = "", "", "AI_ERROR"
     for i in range(1, attempts + 1):
         try:
-            raw = _call_once(system, user, image_path, format="json")
+            raw = _call_once(system, user, image_path, format="json", model=model)
         except AIUnavailable:
             raise
         except (httpx.TimeoutException, httpx.HTTPError) as e:
@@ -216,7 +228,7 @@ def chat_structured(system: str, user: str, schema: Type[T], image_path: Path | 
                                 bot_path = image_path.parent / f"{image_path.stem}_bot_strip{image_path.suffix}"
                                 cv2.imwrite(str(bot_path), bot_img)
                                 try:
-                                    bot_raw = _call_once(system, user, bot_path, format="json")
+                                    bot_raw = _call_once(system, user, bot_path, format="json", model=model)
                                     bot_obj = extract_json_object(bot_raw)
                                     bot_parsed = schema.model_validate(bot_obj)
                                     if hasattr(bot_parsed, "questions") and bot_parsed.questions:
@@ -246,7 +258,7 @@ def chat_structured(system: str, user: str, schema: Type[T], image_path: Path | 
             log.info("Initiating 2-stage fallback: CLAHE contrast enhancement for %s", image_path)
             enhanced_img = enhance_contrast(Path(image_path))
             try:
-                raw_clahe = _call_once(system, user, enhanced_img, format="json")
+                raw_clahe = _call_once(system, user, enhanced_img, format="json", model=model)
                 obj_clahe = extract_json_object(raw_clahe)
                 parsed_clahe = schema.model_validate(obj_clahe)
                 return AICall(parsed_clahe, raw_clahe, attempts + 1)
@@ -255,7 +267,7 @@ def chat_structured(system: str, user: str, schema: Type[T], image_path: Path | 
 
             # Fallback to plain text transcription if JSON grammar constraint causes failures
             plain_user = user + "\n\nCRITICAL: Transcribe all visible questions and answers in Markdown with labels (e.g. Q1, Q2, 1>, 2>)."
-            raw_plain = _call_once(system, plain_user, enhanced_img, format=None)
+            raw_plain = _call_once(system, plain_user, enhanced_img, format=None, model=model)
             fallback_parsed = fallback_parse_plain_text(raw_plain, schema)
             if fallback_parsed is not None:
                 log.info("Successfully recovered page structure using plain text fallback.")

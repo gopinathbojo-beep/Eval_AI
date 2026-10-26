@@ -1,6 +1,7 @@
 # ADEM: AI-assisted Digital Examination Management and Evaluation
 
 A local exam-marking platform. **InternVL3.5 4B** (via Ollama) reads documents and suggests marks.
+Tamil and other Indian-language subjects are read by **IndicOCR** (Bodhan AI), run locally from `indic_ocr_service/`.
 **The application** owns question identity, mapping, maximum marks, validation, audit and the final result.
 The teacher approves everything that matters.
 
@@ -15,6 +16,15 @@ Teacher login -> exam -> question paper -> OCR -> teacher verifies questions
 - Python 3.10+ (tested 3.12), Node 18+ (tested 22)
 - [Ollama](https://ollama.com) with the model: `ollama pull blaifa/InternVL3_5:4B`
 - LibreOffice (`soffice`) only if you upload **DOCX** files. PDFs and images need nothing extra.
+- For Tamil subjects: Python **3.11**, an NVIDIA GPU (CPU works but is slow), and a Hugging Face account that has
+  accepted the [IndicOCR licence](https://huggingface.co/bodhan-ai/indic-ocr)
+
+## Windows quick start
+1. Double-click **`setup.bat`**: backend, IndicOCR (asks for your Hugging Face token once), web and mobile.
+2. Double-click **`start.bat`**: IndicOCR (:8090), backend (:8000), web (:5173), Expo.
+3. Double-click **`stop.bat`** to stop them all.
+
+Details for the Tamil OCR service: [indic_ocr_service/README.md](indic_ocr_service/README.md).
 
 ## Setup
 ```bash
@@ -39,6 +49,14 @@ npm run dev                      # http://localhost:5173 (proxies /api to :8000)
 cd mobile
 npm install
 npx expo start                   # Press 'a' for Android emulator, scan QR with Expo Go on physical device
+
+# 5. IndicOCR for Tamil subjects (fourth terminal; see indic_ocr_service/README.md)
+cd indic_ocr_service
+py -3.11 -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+.venv\Scripts\hf.exe auth login       # once; licence accepted on Hugging Face first
+.venv\Scripts\python.exe install.py   # model + PyTorch for your GPU
+.venv\Scripts\python.exe -m uvicorn server:app --host 127.0.0.1 --port 8090
 ```
 Production-style: `npm run build`, then `npm run preview` (proxy target is set in `vite.config.ts`).
 
@@ -59,10 +77,14 @@ Production-style: `npm run build`, then `npm run preview` (proxy target is set i
 | `DATA_DIR` | `../data` | SQLite DB (`adem.db`) and all files |
 | `PDF_RENDER_DPI` | `300` | Render resolution for PDFs |
 | `MAX_UPLOAD_MB` | `50` | Upload size limit |
+| `INDIC_OCR_ENABLED` | `false` (`setup.bat` sets `true`) | Read Indian-language subjects with IndicOCR |
+| `INDIC_OCR_URL` | `http://127.0.0.1:8090` | The local IndicOCR service |
+| `INDIC_SUBJECTS` | tamil, தமிழ், hindi, ... | Subject names (substring, any case) that go to IndicOCR |
+| `INDIC_TEXT_MODEL` | empty | Optional Ollama model that grades/labels those subjects; empty = InternVL |
 
 ## Run the tests
 ```bash
-cd backend && pytest -q            # 164 tests, ~30 s
+cd backend && pytest -q            # 185 tests, ~30 s
 cd frontend && npm run build       # type-check + production build
 ```
 The API tests run the **real** HTTP client against a small stand-in for the Ollama server that lives only in `tests/conftest.py`.

@@ -9,6 +9,11 @@ AI_UNAVAILABLE_MESSAGE = (
     "blaifa/InternVL3_5:4B is installed."
 )
 AI_BAD_RESPONSE_MESSAGE = "InternVL3.5 4B failed to return a valid structured response."
+INDIC_UNAVAILABLE_MESSAGE = (
+    "IndicOCR is not available. Start the IndicOCR service (indic_ocr_service) "
+    "and check INDIC_OCR_URL."
+)
+INDIC_BAD_RESPONSE_MESSAGE = "IndicOCR failed to read this page."
 
 
 class Settings(BaseSettings):
@@ -21,6 +26,22 @@ class Settings(BaseSettings):
     internvl_max_retries: int = 2
     internvl_num_ctx: int = 8192
     internvl_num_predict: int = 4096
+
+    # Indian-language subjects are read by IndicOCR instead of InternVL (see indic_ocr_service/)
+    indic_ocr_enabled: bool = False
+    indic_ocr_url: str = "http://127.0.0.1:8090"
+    indic_ocr_timeout: int = 300
+    indic_subjects: str = ("tamil,தமிழ்,hindi,हिन्दी,telugu,kannada,malayalam,marathi,bengali,gujarati,"
+                           "odia,punjabi,assamese,urdu,sanskrit")
+    # Optional Ollama model that grades and labels those subjects. Empty = InternVL grades, AI labeler off.
+    indic_text_model: str = ""
+
+    # GPU jobs run on worker threads, up to this many at once per engine. Keep INTERNVL_PARALLEL_JOBS at or below
+    # OLLAMA_NUM_PARALLEL on the Ollama machine, or Ollama just queues the extra requests.
+    internvl_parallel_jobs: int = 1
+    indic_parallel_jobs: int = 1
+    # Inline runs every job in the caller's thread (tests)
+    job_queue_inline: bool = False
 
     secret_key: str = ""
     access_token_minutes: int = 480

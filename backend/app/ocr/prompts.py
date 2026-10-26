@@ -334,6 +334,7 @@ EVAL_SYSTEM = (
     "11. Never deduct for correct extra information the question did not ask for (e.g. a balanced equation alongside a word equation, naming the anode as well as the cathode). Deduct only if the extra content is wrong or contradicts the answer.\n"
     "12. Accept equivalent notation and wording: x, × and * for multiplication; ^2 and ²; 'Hz' and 'hertz'; synonyms and paraphrases with the same meaning. Do not require details, laws or terms that are not in the answer key.\n"
     "13. The student answer is an OCR transcription of handwriting. A stray or swapped character (e.g. '3001' where the working clearly continues with 300) is most likely a reading error: do not deduct for it when the surrounding working is consistent; mention it in feedback instead.\n"
+    "14. Tamil and other Indian languages: compare meaning, not exact words. Accept different case endings, sandhi joins, spelling variants and synonyms (e.g. 'திருக்குறள்' / 'திருக்குறளை'). Write matched_points, missing_points and feedback in the language of the answer key.\n"
     "Reply with a single JSON object and nothing else."
 )
 
@@ -431,3 +432,52 @@ RULES:
 
 Return JSON in exactly this shape:
 {"name": "...", "roll_number": "...", "registration_number": "...", "class_name": "...", "section": "..."}"""
+
+
+LABELER_SYSTEM = (
+    "You are the labeling assistant for ADEM, an exam evaluation system. Questions, answers and keys may be in "
+    "Tamil, another Indian language, or English. You label what is already written: never invent questions, "
+    "answer content, marks, or points that are not in the text. Reply with a single valid JSON object and nothing else."
+)
+
+
+def question_type_label_prompt(items: list[dict]) -> str:
+    lines = "\n\n".join(f"ID: {it['id']} (marks: {it['marks'] if it['marks'] is not None else 'unknown'})\n{it['text']}"
+                        for it in items)
+    return f"""Classify each exam question below by what kind of answer it asks for.
+
+TYPES:
+- mcq: choose one of the given options
+- fill_blank: fill a gap in a sentence
+- true_false: say whether a statement is true or false
+- match: match items of one list with another
+- numerical: calculate a number
+- short_answer: a word, phrase or one or two sentences (definitions, naming, "who/what/when", short explanations)
+- descriptive: a paragraph or longer answer (explain in detail, describe, essay, letter, compare, discuss)
+- other: none of the above (e.g. draw a diagram, recite a poem)
+
+Use the question wording first; use the marks only to break a tie between short_answer and descriptive.
+
+QUESTIONS:
+{lines}
+
+Return JSON in exactly this shape, one entry per ID:
+{{"labels": [{{"id": "...", "question_type": "short_answer"}}]}}"""
+
+
+def criteria_label_prompt(items: list[dict]) -> str:
+    lines = "\n\n".join(f"ID: {it['id']} (total marks: {it['marks']:g})\nQUESTION: {it['question'] or '(not available)'}\n"
+                        f"OFFICIAL ANSWER:\n{it['answer']}" for it in items)
+    return f"""Split each official answer below into marking points, the way an examiner would award marks.
+
+RULES:
+1. Every point must state something that is written in the OFFICIAL ANSWER. Do not add facts, steps or explanations.
+2. Write each point in the same language as the official answer, short (one idea per point).
+3. Give each point its marks. The marks of an ID's points must add up EXACTLY to its total marks (0.5 steps allowed).
+4. If the answer is a single fact worth all the marks, return one point with the full marks.
+
+ANSWERS:
+{lines}
+
+Return JSON in exactly this shape, one entry per ID:
+{{"keys": [{{"id": "...", "criteria": [{{"point": "...", "marks": 1}}]}}]}}"""

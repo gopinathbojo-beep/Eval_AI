@@ -24,6 +24,17 @@ _ROMAN_VALS = {
 }
 _NULLISH = {"", "null", "none", "unknown", "n/a", "na", "?", "-", "[unclear]", "unclear"}
 
+# Tamil sub-part letters in order: (அ) (ஆ) (இ) ... are (a) (b) (c) ... Stops before ஐ, which would read as roman "i".
+_TAMIL_SUB = "அஆஇஈஉஊஎஏ"
+_TAMIL_SUB_LATIN = str.maketrans(_TAMIL_SUB, "abcdefgh")
+# A Tamil sub-part letter standing alone ("(அ)", "அ)", "1அ"), not the first letter of a word ("அவர்")
+_TAMIL_SUB_TOKEN = re.compile(rf"([{_TAMIL_SUB}])(?![஀-௿])")
+
+
+def latin_subparts(s: str) -> str:
+    """'1 (அ)' -> '1 (a)': Tamil sub-part letters to the Latin letters the rest of the numbering code understands."""
+    return _TAMIL_SUB_TOKEN.sub(lambda m: m.group(1).translate(_TAMIL_SUB_LATIN), s)
+
 
 def subquestion_value(tok: str | None) -> int:
     """Returns integer rank for subquestion token: Roman numerals (i->1, xii->12), letters (a->1, z->26), or digits (1->1)."""
@@ -51,9 +62,10 @@ def _clean_token(tok: str) -> str | None:
 def normalize_question_number(raw: str | int | None) -> str | None:
     if raw is None:
         return None
-    s = str(raw).strip()
+    s = latin_subparts(str(raw).strip())
     if s.lower() in _NULLISH:
         return None
+    s = re.sub(r"^(\s*(?:வினா|கேள்வி|விடை|பதில்))\s*எண்", r"\1", s)  # "வினா எண் 3" (question number 3)
 
     # Measurements / units guard: prevent floats with units (e.g. 1.5 kg, 10 cm, 5 marks) from being parsed as Q numbers
     if _MEASURE_UNITS.match(s):
@@ -170,7 +182,7 @@ def extract_subquestion_token(raw: str | None) -> str | None:
     """Extracts a bare subquestion token (e.g. '(b)' -> 'b', 'b>' -> 'b', '(ii)' -> 'ii') if raw is purely a subquestion label."""
     if raw is None:
         return None
-    s = str(raw).strip()
+    s = latin_subparts(str(raw).strip())
     if s.lower() in _NULLISH:
         return None
     s = _PREFIX.sub("", s).strip()
@@ -193,6 +205,21 @@ def extract_subquestion_token(raw: str | None) -> str | None:
 def extract_label_from_text_prefix(text: str) -> tuple[str | None, str]:
     """Check if question or answer text begins with an explicit question label like '01.', '1.', 'Q1:', 'Q1,', '1>', '01/02', etc."""
     s = text.strip()
+    # Pattern 0: Tamil "வினா 1", "வினா எண் 3 (அ)", "கேள்வி 2:", "விடை 4." (question / answer [number] N)
+    m_ta = re.match(rf"^\s*(?:வினா|கேள்வி|விடை|பதில்)\s*(?:எண்)?\s*[\.\:\-]?\s*([0-9]{{1,3}}(?:\s*\(\s*[{_TAMIL_SUB}a-zA-Z]\s*\))?)[\.\:\)\s\-\,\>\→]*(.*)", s, re.DOTALL)
+    if m_ta:
+        rest = m_ta.group(2).strip()
+        return latin_subparts(re.sub(r"\s+", "", m_ta.group(1))), (rest if rest else s)
+    # Tamil sub-part labels: "3(அ) ...", "3 அ) ...", "(ஆ) ...", "இ) ..."
+    m_ta = re.match(rf"^\s*([0-9]{{1,3}})\s*\(?\s*([{_TAMIL_SUB}])\s*\)[\.\:\s\-]*(.*)", s, re.DOTALL)
+    if m_ta:
+        rest = m_ta.group(3).strip()
+        return f"{m_ta.group(1)}({latin_subparts(m_ta.group(2))})", (rest if rest else s)
+    m_ta = re.match(rf"^\s*(?:\(\s*([{_TAMIL_SUB}])\s*\)|([{_TAMIL_SUB}])\s*[\)\.])[\.\:\s\-]*(.*)", s, re.DOTALL)
+    if m_ta:
+        rest = m_ta.group(3).strip()
+        return f"({latin_subparts(m_ta.group(1) or m_ta.group(2))})", (rest if rest else s)
+
     # Pattern 1: Q1, Q.1, Question 1, Qn 1, etc. with :, ., comma, >, or whitespace
     m_q = re.match(r"^\s*(?:(?:Q(?:uestion)?|Qn|Ques)\.?\s*([0-9]+[a-zA-Z\(\)]*))[\.\:\)\s\-\/\,\>\→]+(.*)", s, re.IGNORECASE | re.DOTALL)
     if m_q:

@@ -5,7 +5,7 @@ import json
 import logging
 from pathlib import Path
 from sqlalchemy.orm import Session
-from ..config import AI_BAD_RESPONSE_MESSAGE, AI_UNAVAILABLE_MESSAGE
+from ..config import AI_BAD_RESPONSE_MESSAGE, AI_UNAVAILABLE_MESSAGE, INDIC_BAD_RESPONSE_MESSAGE, INDIC_UNAVAILABLE_MESSAGE
 from ..database import SessionLocal
 from ..documents import cropping
 from ..documents.renderer import RenderError, page_text as pdf_page_text, render_document
@@ -14,9 +14,12 @@ from ..models import (AnswerKey, AnswerKeyDocument, AnswerSheetDocument, Evaluat
                       QuestionPaperDocument, StudentAnswer)
 from ..ocr import prompts
 from ..ocr.internvl import AIResponseError, AIUnavailable, chat_structured, check_model
+from ..ocr.indic import IndicResponseError, IndicUnavailable, check_indic, read_page, text_model_for, uses_indic_ocr
+from .ai_labeler import label_key_criteria, label_question_types
 from ..ocr.schemas import AnswerKeyPageResult, QuestionPageResult, StudentPageResult
 from .doc_structure import parse_question_paper_structure, StructuredQuestion
 from .key_segmentation import segment_answer_keys
+from .job_queue import keyed_lock
 from .student_segmentation import segment_student_answers
 from .mapping_service import apply_key_mapping, apply_student_mapping
 from .state import set_state
@@ -121,11 +124,15 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
         _handle_cancel(db, doc, doc_id)
         return
 
+    # Indian-language subjects are read by IndicOCR; everything else by InternVL
+    indic = uses_indic_ocr(exam.subject.name if exam.subject else None)
+    unavailable_msg = INDIC_UNAVAILABLE_MESSAGE if indic else AI_UNAVAILABLE_MESSAGE
+    bad_response_msg = INDIC_BAD_RESPONSE_MESSAGE if indic else AI_BAD_RESPONSE_MESSAGE
     try:
-        check_model()
-    except AIUnavailable as e:
+        check_indic() if indic else check_model()
+    except (AIUnavailable, IndicUnavailable) as e:
         log.error("AI unavailable: %s", e.detail)
-        doc.status, doc.error_message, doc.stage = "AI_ERROR", AI_UNAVAILABLE_MESSAGE, "AI service unavailable"
+        doc.status, doc.error_message, doc.stage = "AI_ERROR", unavailable_msg, "AI service unavailable"
         db.commit()
         return
 
@@ -156,21 +163,25 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
                 prompt_kwargs["canonical_questions"] = canonical_qs
         prompt_str = prompt_fn(p["page_number"], p["ocr_width"], p["ocr_height"], **prompt_kwargs)
         try:
-            call = chat_structured(prompts.OCR_SYSTEM, prompt_str,
-                                   schema, img)
+            if indic:
+                call = read_page(img, schema, p["page_number"])
+            else:
+                call = chat_structured(prompts.OCR_SYSTEM, prompt_str,
+                                       schema, img)
             out.write_text(json.dumps({"status": "OK", "raw": call.raw, "parsed": call.parsed.model_dump(),
-                                       "attempts": call.attempts}, ensure_ascii=False, indent=1), encoding="utf-8")
+                                       "attempts": call.attempts, "engine": "indic-ocr" if indic else "internvl"},
+                                      ensure_ascii=False, indent=1), encoding="utf-8")
             _set_pages(db, doc, i, ocr_status="OK", ocr_error=None, ocr_file=rel(out))
-        except AIUnavailable as e:
+        except (AIUnavailable, IndicUnavailable) as e:
             log.error("AI became unavailable mid-run: %s", e.detail)
-            doc.status, doc.error_message = "AI_ERROR", AI_UNAVAILABLE_MESSAGE
+            doc.status, doc.error_message = "AI_ERROR", unavailable_msg
             db.commit()
             return
-        except AIResponseError as e:
+        except (AIResponseError, IndicResponseError) as e:
             log.error("Page %s: %s | raw=%r", p["page_number"], e.detail, e.raw[:500])
             out.write_text(json.dumps({"status": e.kind, "raw": e.raw, "parsed": None, "error": e.detail},
                                       ensure_ascii=False, indent=1), encoding="utf-8")
-            _set_pages(db, doc, i, ocr_status=e.kind, ocr_error=AI_BAD_RESPONSE_MESSAGE, ocr_file=rel(out))
+            _set_pages(db, doc, i, ocr_status=e.kind, ocr_error=bad_response_msg, ocr_file=rel(out))
 
         if is_cancelled(doc_id, db, doc):
             _handle_cancel(db, doc, doc_id)
@@ -190,17 +201,20 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
 
     _progress(db, doc, "Extracting and validating", None, None, "EXTRACTING")
     results = _load_results(doc, schema)
-    if kind == "question-paper":
-        _build_questions(db, doc, exam, wd, results)
-    elif kind == "answer-key":
-        _build_answer_key(db, doc, exam, wd, results)
-    else:
-        _build_student_answers(db, doc, exam, wd, results)
+    # pages of several documents are read in parallel, but building one re-maps the exam's keys and sheets
+    with keyed_lock(f"exam:{exam.id}"):
+        db.refresh(exam)
+        if kind == "question-paper":
+            _build_questions(db, doc, exam, wd, results)
+        elif kind == "answer-key":
+            _build_answer_key(db, doc, exam, wd, results)
+        else:
+            _build_student_answers(db, doc, exam, wd, results)
 
     failed = [p["page_number"] for p in doc.pages if p.get("ocr_status") != "OK"]
     if failed:
         doc.status = "NEEDS_ATTENTION"
-        doc.error_message = f"{AI_BAD_RESPONSE_MESSAGE} Page(s) affected: {', '.join(map(str, failed))}."
+        doc.error_message = f"{bad_response_msg} Page(s) affected: {', '.join(map(str, failed))}."
         doc.stage = "Needs attention"
     else:
         doc.status, doc.stage, doc.error_message = "READY", "Ready for review", None
@@ -261,6 +275,9 @@ def _build_questions(db: Session, doc, exam: Exam, wd: Path, results) -> None:
         db.query(EvaluationItem).filter(EvaluationItem.exam_question_id.in_(existing_q_ids)).delete(synchronize_session=False)
         db.query(ExamQuestion).filter_by(exam_id=exam.id).delete()
     struct = parse_question_paper_structure(results)
+    labeler_model = text_model_for(exam.subject.name if exam.subject else None)
+    if labeler_model:
+        label_question_types(struct.questions, labeler_model)
 
     # Safety Net: If 0 questions were parsed, check if OCR captured any non-empty text blocks (excluding instructions)
     if not struct.questions:
@@ -382,6 +399,9 @@ def _build_answer_key(db: Session, doc, exam: Exam, wd: Path, results) -> None:
     pages_by_num = {p["page_number"]: p for p, _ in results}
     canonical_qs = db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all()
     keys = segment_answer_keys(results, canonical_questions=canonical_qs)
+    labeler_model = text_model_for(exam.subject.name if exam.subject else None)
+    if labeler_model:
+        label_key_criteria(keys, canonical_qs, labeler_model)
     n = 0
     for k in keys:
         n += 1
