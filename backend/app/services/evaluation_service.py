@@ -7,8 +7,10 @@ from dataclasses import dataclass, field
 from ..models import AnswerKey, AnswerSheetDocument, Evaluation, Exam, ExamQuestion, EvaluationItem, StudentAnswer
 from ..ocr import prompts
 from ..ocr.internvl import AIResponseError, AIUnavailable, chat_structured, check_model
+from ..ocr.indic import text_model_for
 from ..ocr.schemas import EvaluationResult
 from .evaluation_rules import EvaluationValidationError, validate_evaluation
+from .job_queue import keyed_lock
 from .mapping_service import exam_questions
 from .numbering import parent_number
 from .state import set_state
@@ -225,7 +227,7 @@ def _reset_item(item: EvaluationItem) -> None:
     item.not_attempted_confirmed = False
 
 
-def evaluate_item(db: Session, ev: Evaluation, q: ExamQuestion, item: EvaluationItem) -> None:
+def evaluate_item(db: Session, ev: Evaluation, q: ExamQuestion, item: EvaluationItem, model: str | None = None) -> None:
     """Evaluate one question. Raises AIUnavailable only; every other failure is recorded on the item."""
     _reset_item(item)
     resolved = resolve_student_answer(db, ev, q)
@@ -243,7 +245,7 @@ def evaluate_item(db: Session, ev: Evaluation, q: ExamQuestion, item: Evaluation
         prompt = prompts.evaluation_prompt(q.display_number, q.question_text, key.answer_text, key.criteria,
                                            key.accepted_answers, key.keywords, q.max_marks, resolved.combined_text)
         try:
-            call = chat_structured(prompts.EVAL_SYSTEM, prompt, EvaluationResult)
+            call = chat_structured(prompts.EVAL_SYSTEM, prompt, EvaluationResult, model=model)
             item.raw_response = call.raw
             res = validate_evaluation(call.parsed, q.max_marks)  # type: ignore[arg-type]
             item.ai_marks, item.ai_decision = res.marks_awarded, res.decision
@@ -288,6 +290,11 @@ def evaluate_item(db: Session, ev: Evaluation, q: ExamQuestion, item: Evaluation
 
 
 def run_evaluation(ev_id: str, only_question_ids: list[str] | None = None) -> None:
+    with keyed_lock(f"evaluation:{ev_id}"):  # jobs run in parallel; one grading run per sheet at a time
+        _run_evaluation(ev_id, only_question_ids)
+
+
+def _run_evaluation(ev_id: str, only_question_ids: list[str] | None) -> None:
     db = SessionLocal()
     try:
         ev = db.get(Evaluation, ev_id)
@@ -297,7 +304,8 @@ def run_evaluation(ev_id: str, only_question_ids: list[str] | None = None) -> No
             set_state(exam, "EVALUATING")
         db.commit()
         try:
-            check_model()
+            model = text_model_for(exam.subject.name if exam.subject else None)  # Tamil etc. graded by a model that reads it
+            check_model(model)
             qs = [q for q in exam_questions(db, ev.exam_id) if not only_question_ids or q.id in only_question_ids]
             ev.run_total, ev.run_progress = len(qs), 0
             db.commit()
@@ -312,14 +320,17 @@ def run_evaluation(ev_id: str, only_question_ids: list[str] | None = None) -> No
                     ev.run_progress += 1
                     db.commit()
                     continue
-                evaluate_item(db, ev, q, item)
+                evaluate_item(db, ev, q, item, model)
                 ev.run_progress += 1
                 db.commit()
             ev.run_status = "DONE"
         except AIUnavailable as e:
             log.error("AI unavailable during evaluation: %s", e.detail)
             ev.run_status = "ERROR"
-        if exam.status == "EVALUATING":
+        db.refresh(exam)
+        others_running = db.query(Evaluation).filter(Evaluation.exam_id == exam.id, Evaluation.id != ev.id,
+                                                     Evaluation.run_status == "RUNNING").first()
+        if exam.status == "EVALUATING" and not others_running:  # the last sheet still grading moves the exam on
             set_state(exam, "REVIEW_REQUIRED")
         db.commit()
         refresh_evaluation_status(db, ev)

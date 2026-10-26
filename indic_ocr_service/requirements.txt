@@ -1,0 +1,5 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+huggingface_hub>=0.24
+# torch / CUDA wheels are installed by IndicOCR's own install.sh (see README.md)

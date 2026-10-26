@@ -57,6 +57,29 @@ _STOP_WORDS = {
     "marks", "mark", "ans", "answer", "total", "solve", "evaluate", "express", "show",
 }
 
+# Tamil case/plural endings, longest first ("திருக்குறளை" and "திருக்குறள்" share the stem "திருக்குறள")
+_TAMIL_SUFFIXES = ("களுக்கு", "களின்", "களில்", "களை", "கள்", "ுக்கு", "க்கு", "ிடம்", "ுடன்", "ோடு",
+                   "ின்", "ில்", "ால்", "ும்", "ுக", "வும்")
+_INDIC_WORD = r"[ऀ-෿]+"
+
+
+def _normalize_indic(w: str) -> str:
+    if w.endswith(("க்", "ச்", "த்", "ப்")) and len(w) > 4:  # sandhi doubling: "குறள்களைக் கொண்டது"
+        w = w[:-2]
+    for suf in _TAMIL_SUFFIXES:
+        if w.endswith(suf) and len(w) - len(suf) >= 3:
+            w = w[:-len(suf)]
+            break
+    return w.rstrip("ாிீுூெேைொோௌ்")  # trailing vowel sign / pulli
+
+
+# Tamil function words and question boilerplate, compared after stemming
+_INDIC_STOP_WORDS = {_normalize_indic(w) for w in (
+    "மற்றும்", "ஒரு", "இது", "அது", "இந்த", "அந்த", "என்று", "என்ன", "எது", "ஆகும்", "உள்ள", "பற்றி",
+    "யாவை", "யார்", "ஏன்", "எவ்வாறு", "வினா", "விடை", "மதிப்பெண்", "எழுதுக", "எழுதவும்", "விளக்குக",
+    "கூறுக", "குறிப்பிடுக", "தருக", "காண்க", "பின்வரும்",
+)}
+
 _SUPERSCRIPT_TRANS = str.maketrans("⁰¹²³⁴⁵⁶⁷⁸⁹", "0123456789")
 
 
@@ -84,7 +107,9 @@ def _tokenize(text: str | None) -> set[str]:
         return set()
     cleaned = _clean_math_text(text)
     words = re.findall(r"\b[a-zA-Z]+[0-9]*\b", cleaned.lower())
-    return {_normalize_word(w) for w in words if len(w) >= 2 and w not in _STOP_WORDS}
+    toks = {_normalize_word(w) for w in words if len(w) >= 2 and w not in _STOP_WORDS}
+    indic = (_normalize_indic(w) for w in re.findall(_INDIC_WORD, cleaned))
+    return toks | {w for w in indic if len(w) >= 2 and w not in _INDIC_STOP_WORDS}
 
 
 def _extract_distinct_numbers(text: str | None) -> set[str]:

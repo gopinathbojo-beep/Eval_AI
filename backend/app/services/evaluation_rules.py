@@ -34,6 +34,9 @@ _OMISSION_IN_FEEDBACK = re.compile(
     r"|missing|missed|omit(?:s|ted)?|lacks?|lacking|incomplete|incorrect(?:ly)?|wrong|no\s+(?:calculation|explanation|answer|attempt|working))\b",
     re.I,
 )
+# The same in Tamil feedback: "-வில்லை" (did not ...), "இல்லை" (not there), "விடுபட்ட" (left out), "தவறு" (wrong),
+# "முழுமையற்ற" (incomplete), "குறைபாடு"/"குறைவு" (lacking)
+_TAMIL_OMISSION_IN_FEEDBACK = re.compile(r"வில்லை|இல்லை|விடுபட|தவற|முழுமையற்ற|முழுமையில்ல|குறைபாடு|குறைவு")
 UNEXPLAINED_DEDUCTION_CAP = 0.5
 UNEXPLAINED_DEDUCTION_NOTE = "Deduction limited to 0.5: the AI named no missing marking point."
 
@@ -47,7 +50,8 @@ def _limit_unexplained_deduction(result: EvaluationResult, official_max: float) 
     named = [p for p in (result.missing_points or []) if str(p).strip()]
     if named or m <= 0 or result.decision in ("INCORRECT", "NOT_ATTEMPTED"):
         return result
-    if _OMISSION_IN_FEEDBACK.search(result.feedback or ""):  # the gap is described, just not listed
+    feedback = result.feedback or ""
+    if _OMISSION_IN_FEEDBACK.search(feedback) or _TAMIL_OMISSION_IN_FEEDBACK.search(feedback):  # described, not listed
         return result
     floor = max(0.0, official_max - UNEXPLAINED_DEDUCTION_CAP)
     if m < floor - 1e-9:

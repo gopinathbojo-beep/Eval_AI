@@ -261,3 +261,32 @@ class StudentIdentityResult(_Base):
 
     _s = field_validator("name", "roll_number", "registration_number", "class_name", "section",
                          mode="before")(lambda cls, v: (_str(v) or "").strip() or None)
+
+
+class QuestionTypeLabel(_Base):
+    id: str
+    question_type: str
+
+    _i = field_validator("id", mode="before")(lambda cls, v: _str(v))
+
+
+class QuestionTypeLabels(_Base):
+    labels: list[QuestionTypeLabel] = Field(default_factory=list)
+
+
+class CriterionPoint(_Base):
+    point: str
+    marks: float
+
+    _m = field_validator("marks", mode="before")(lambda cls, v: _num(v))
+
+
+class KeyCriteriaLabel(_Base):
+    id: str
+    criteria: list[CriterionPoint] = Field(default_factory=list)
+
+    _i = field_validator("id", mode="before")(lambda cls, v: _str(v))
+
+
+class KeyCriteriaLabels(_Base):
+    keys: list[KeyCriteriaLabel] = Field(default_factory=list)

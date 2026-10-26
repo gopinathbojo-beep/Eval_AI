@@ -1,0 +1,6 @@
+{
+  // Open CSS in Tailwind CSS IntelliSense's mode so @tailwind/@apply are understood and classes autocomplete.
+  "files.associations": { "*.css": "tailwindcss" },
+  // Fallback for anyone without the extension: the built-in CSS linter doesn't know Tailwind directives.
+  "css.lint.unknownAtRules": "ignore"
+}

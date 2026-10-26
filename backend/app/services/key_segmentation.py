@@ -28,16 +28,29 @@ class SegmentedKey:
     ocr_confidence: float | None = None
 
 
+# "marks" and "marking scheme" in English or Tamil (மதிப்பெண்(கள்); மதிப்பீட்டுக் குறிப்பு / மதிப்பெண் பகிர்வு)
+_MK = r"(?:marks?|m|மதிப்பெண்கள்|மதிப்பெண்)"
+_MK_WORD = r"(?:marks?|மதிப்பெண்கள்|மதிப்பெண்)"
+_SCHEME = r"(?:Marking\s+Scheme|மதிப்பீட்டுக்?\s*குறிப்பு(?:கள்)?|மதிப்பெண்\s*பகிர்வு|மதிப்பீட்டு\s*முறை)"
+# One marking point: "1 Mark: ...", "1 mark per ...", "(... marks ...)", "1 மதிப்பெண்: ...", "ஒவ்வொன்றுக்கும் 1 மதிப்பெண்"
+_CRITERION = re.compile(
+    rf"(?:^|\n)\s*[o•\-\*]?\s*(\d+(?:\.\d+)?\s*{_MK_WORD}[:\s][^\n]+|1 mark per[^\n]+|\([^\)]+{_MK_WORD}[^\)]*\)[^\n]*|ஒவ்வொ[^\n]*மதிப்பெண்[^\n]*)",
+    re.I,
+)
+# Tamil keys list points without a scheme heading: "• கருத்து – 1 மதிப்பெண்", "1 மதிப்பெண்: கருத்து"
+_TAMIL_POINT = re.compile(r"^\s*[•\-\*]?\s*(?:\d+(?:\.\d+)?\s*மதிப்பெண்\S*\s*[:\-–]\s*\S.*|\S.*[-–:(]\s*\d+(?:\.\d+)?\s*மதிப்பெண்\S*\s*\)?\s*)$", re.M)
+
+
 def parse_criteria_marks(criteria: list[str], text: str = "") -> float | None:
     """Parse question marks from marking scheme criteria or inline totals."""
     # 1. Check for explicit question marking scheme total: e.g. "Marking Scheme (5 Marks Total):"
-    m_tot = re.search(r"Marking\s+Scheme\s*\(\s*(\d+(?:\.\d+)?)\s*(?:marks?|m)\s*(?:Total)?\s*\)", text, re.I)
+    m_tot = re.search(rf"{_SCHEME}\s*\(\s*(\d+(?:\.\d+)?)\s*{_MK}\s*(?:Total|மொத்தம்)?\s*\)", text, re.I)
     if m_tot:
         return float(m_tot.group(1))
 
     # 2. Check each criteria line for explicit total:
     for c in criteria:
-        m_tot = re.search(r"\(\s*(\d+(?:\.\d+)?)\s*(?:marks?|m)\s*Total\s*\)", c, re.I)
+        m_tot = re.search(rf"\(\s*(\d+(?:\.\d+)?)\s*{_MK}\s*(?:Total|மொத்தம்)\s*\)", c, re.I)
         if m_tot:
             return float(m_tot.group(1))
 
@@ -45,19 +58,19 @@ def parse_criteria_marks(criteria: list[str], text: str = "") -> float | None:
     total = 0.0
     found_count = 0
     for c in criteria:
-        # Ignore deduction notes like "(Deduct 1/2 mark...)"
-        if re.search(r"\bdeduct\b", c, re.I):
+        # Ignore deduction notes like "(Deduct 1/2 mark...)", "(... மதிப்பெண் குறைக்கவும்)"
+        if re.search(r"\bdeduct\b|குறைக்க|குறைவு", c, re.I):
             continue
-        # Pattern A: starts with "1 Mark:" or "1.5 Marks:"
-        m_start = re.match(r"^\s*(\d+(?:\.\d+)?)\s*(?:marks?|m)\b\s*[:\-]", c, re.I)
+        # Pattern A: starts with "1 Mark:" or "1.5 Marks:" / "1 மதிப்பெண்:"
+        m_start = re.match(rf"^\s*[•\-\*]?\s*(\d+(?:\.\d+)?)\s*{_MK}(?![a-z])\s*[:\-–]", c, re.I)
         if m_start:
             total += float(m_start.group(1))
             found_count += 1
             continue
-        # Pattern B: ends with "(1 Mark)" or "(1.5 Marks)"
-        m_end = re.search(r"\(\s*(\d+(?:\.\d+)?)\s*(?:marks?|m)\s*\)\s*$", c, re.I)
+        # Pattern B: ends with "(1 Mark)" or "(1.5 Marks)" / "– 1 மதிப்பெண்"
+        m_end = re.search(rf"\(\s*(\d+(?:\.\d+)?)\s*{_MK}\s*\)\s*$|[-–:]\s*(\d+(?:\.\d+)?)\s*மதிப்பெண்\S*\s*$", c, re.I)
         if m_end:
-            total += float(m_end.group(1))
+            total += float(m_end.group(1) or m_end.group(2))
             found_count += 1
             continue
 
@@ -69,15 +82,13 @@ def parse_criteria_marks(criteria: list[str], text: str = "") -> float | None:
 
 def extract_criteria_from_block(text: str) -> tuple[str, list[str]]:
     """Extract clean answer text and itemized criteria if a Marking Scheme is embedded in the block."""
-    ms_match = re.search(r"(?:Marking\s+Scheme\s*(?:\([^\)]+\))?[:\s]*)(.*)", text, re.DOTALL | re.I)
+    ms_match = re.search(rf"(?:{_SCHEME}\s*(?:\([^\)]+\))?[:\s]*)(.*)", text, re.DOTALL | re.I)
     if not ms_match:
-        return text.strip(), []
+        # Tamil point list with marks and no heading: the points are both the answer and the criteria
+        points = [m.group(0).strip() for m in _TAMIL_POINT.finditer(text)]
+        return text.strip(), points
     ans_text = text[:ms_match.start()].strip()
-    crit_items = re.findall(
-        r"(?:^|\n)\s*[o•\-\*]?\s*(\d+(?:\.\d+)?\s*marks?[:\s][^\n]+|1 mark per[^\n]+|\([^\)]+marks?[^\)]*\)[^\n]*)",
-        text[ms_match.start():],
-        re.I,
-    )
+    crit_items = _CRITERION.findall(text[ms_match.start():])
     return ans_text, [c.strip() for c in crit_items if c.strip()]
 
 
@@ -119,7 +130,7 @@ _PAGE_FURNITURE = re.compile(
     re.I | re.M,
 )
 # A line opening the marking scheme ("Marking Scheme (3 Marks):", "KEYWORD MARKING SCHEME")
-_SCHEME_LINE = re.compile(r"^[^\n]*\bMarking\s+Scheme\b[^\n]*$", re.I | re.M)
+_SCHEME_LINE = re.compile(rf"^[^\n]*(?:\bMarking\s+Scheme\b|{_SCHEME})[^\n]*$", re.I | re.M)
 
 
 def _table_criteria(scheme: str) -> list[str]:
@@ -173,11 +184,7 @@ def extract_from_full_pdf_text(full_text: str, norm_num: str) -> tuple[str | Non
     if ms_match:
         answer_text = clean_block[:ms_match.start()].strip()
         scheme = clean_block[ms_match.start():]
-        crit_items = re.findall(
-            r"(?:^|\n)\s*[o•\-\*]?\s*(\d+(?:\.\d+)?\s*marks?[:\s][^\n]+|1 mark per[^\n]+|\([^\)]+marks?[^\)]*\)[^\n]*)",
-            scheme,
-            re.I,
-        )
+        crit_items = _CRITERION.findall(scheme)
         criteria = [c.strip() for c in crit_items if c.strip()] or _table_criteria(scheme)
 
     answer_text = re.sub(r"^\s*(?:Model\s+Answer|Answer\s+Key)\s*:?\s*\n", "", answer_text, flags=re.I)
