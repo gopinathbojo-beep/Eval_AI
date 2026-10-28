@@ -219,3 +219,30 @@ def test_tamil_feedback_explains_a_deduction():
                                                     feedback=feedback), 2).marks_awarded
     assert graded("நூல் பெயர் சரி; ஆசிரியர் பெயர் குறிப்பிடப்படவில்லை.") == 1     # gap described in Tamil: kept
     assert graded("விடை நன்றாக உள்ளது.") == 1.5                                   # no gap named: capped as before
+
+
+def test_misread_reg_label_is_still_an_id():
+    from app.ocr.indic import parse_identity
+    r = parse_identity("NAME: GOPINATH.R\nKey.NO: 23CS17")  # handwritten "Reg.NO" as IndicOCR reads it
+    assert r["name"] == "GOPINATH.R" and r["registration_number"] == "23CS17"
+    assert parse_identity("Rey No 23CS17")["registration_number"] == "23CS17"
+    assert parse_identity("the key to success")["registration_number"] is None
+
+
+def test_handwritten_sheet_header_numbers_and_page_carry_over():
+    """Gopinath's sheet: name/reg. no. header, numbers boxed alone ("3)" then "3)\nஅ) ..."), "$$6)$$"."""
+    def blk(order, text, y):
+        return {"order": order, "type": "Text", "label": "List", "bbox_xyxy": [50, y, 900, y + 80], "text": text}
+    page1 = {"blocks": [blk(0, "NAME: GOPINATH.R\nKey.NO: 23CS17", 10), blk(1, "2)", 100),
+                        blk(2, "அ) எதிர்ச்சொற்கள்:\n• உயர்வு - தாழ்வு", 200), blk(3, "3)", 300),
+                        blk(4, "3)\nஅ) நாம் கல்வி கற்க வேண்டும்", 300), blk(5, "5)\nஅ) தாய்மொழி உதவுகிறது.", 400)]}
+    page2 = {"blocks": [blk(0, "ஆ) இயற்கை நமக்குக் காற்று வழங்குகிறது.", 10), blk(1, "$$6)$$", 100),
+                        blk(2, "அ) சென்றாள் சென்றாள்", 200)]}
+    pages = [({"page_number": 1}, blocks_to_result(page1, StudentPageResult, 1)),
+             ({"page_number": 2}, blocks_to_result(page2, StudentPageResult, 2))]
+    got = {a.normalized_number: a.answer_text for a in segment_student_answers(pages)}
+    assert list(got) == ["2", "3", "5", "6"]                     # no header answer, one answer per number
+    assert "எதிர்ச்சொற்கள்" in got["2"] and got["3"].count("3)") == 0
+    assert "இயற்கை" in got["5"] and "இயற்கை" not in got["6"]   # part ஆ on page 2 stays with question 5
+    assert "சென்றாள்" in got["6"] and "$$" not in got["6"]
+    assert blocks_to_result(page1, StudentPageResult, 1).answers[1].bbox.model_dump()["y"] == 300.0

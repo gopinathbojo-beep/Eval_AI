@@ -7,6 +7,7 @@ from ..deps import err, get_exam
 from ..models import Exam, ExamQuestion, QuestionPaperDocument, Teacher
 from ..security import current_teacher
 from ..serializers import question_view
+from ..services import choices
 from ..services.audit import audit
 from ..services.k_level import K_LEVELS, normalize_course_outcome
 from ..services.k_level import apply_suggestions as apply_k_suggestions
@@ -64,7 +65,7 @@ def list_questions(exam_id: str, db: Session = Depends(get_db), t: Teacher = Dep
     if exam.status == "QUESTION_PAPER_UPLOADED" and qs and (not doc or doc.status in ("READY", "NEEDS_ATTENTION")):
         set_state(exam, "QUESTIONS_EXTRACTED")
         db.commit()
-    total = sum(q.max_marks or 0 for q in qs)
+    total = choices.max_total(qs)
 
     # Read structure.json if available
     struct_info = {}
@@ -80,12 +81,14 @@ def list_questions(exam_id: str, db: Session = Depends(get_db), t: Teacher = Dep
                 pass
 
     sections_summary = {}
-    for q in qs:
+    counts = {q.id for q in choices.counted(qs)}  # an "answer any N" section counts its best N
+    for q in choices.units(qs):  # an either/or choice is one question
         sec = q.section or "General"
         if sec not in sections_summary:
-            sections_summary[sec] = {"section": sec, "count": 0, "marks": 0.0}
+            sections_summary[sec] = {"section": sec, "count": 0, "marks": 0.0, "answer_any": q.answer_any}
         sections_summary[sec]["count"] += 1
-        sections_summary[sec]["marks"] += (q.max_marks or 0.0)
+        if q.id in counts:
+            sections_summary[sec]["marks"] += (q.max_marks or 0.0)
 
     stated_qc = struct_info.get("stated_question_count")
 
@@ -343,7 +346,7 @@ def verify_questions(exam_id: str, bg: BackgroundTasks, db: Session = Depends(ge
 
     # 1. Idempotency: If already verified, return verified count and marks
     if exam.status == "QUESTIONS_VERIFIED":
-        total = sum(q.max_marks or 0 for q in qs)
+        total = choices.max_total(qs)
         return {"verified": len(qs), "sum_of_marks": total,
                 "marks_warning": (f"Questions add up to {total:g} marks but the exam total is {exam.total_marks:g}."
                                   if abs(total - exam.total_marks) > 1e-9 else None)}
@@ -386,7 +389,7 @@ def verify_questions(exam_id: str, bg: BackgroundTasks, db: Session = Depends(ge
     db.commit()
     from .documents import release_waiting_key
     key_started = release_waiting_key(db, exam, bg)
-    total = sum(q.max_marks or 0 for q in qs)
+    total = choices.max_total(qs)
     return {"verified": len(qs), "sum_of_marks": total, "answer_key_started": key_started,
             "marks_warning": (f"Questions add up to {total:g} marks but the exam total is {exam.total_marks:g}."
                               if abs(total - exam.total_marks) > 1e-9 else None)}

@@ -23,7 +23,10 @@ export const K_LEVELS: { key: string; label: string }[] = [
   { key: "K1", label: "Remember" }, { key: "K2", label: "Understand" }, { key: "K3", label: "Apply" },
   { key: "K4", label: "Analyse" }, { key: "K5", label: "Evaluate" }, { key: "K6", label: "Create" },
 ];
-export const kLabel = (k: string | null | undefined) => (k && K_LEVELS.find((l) => l.key === k)?.label) || k || "–";
+export const kLabel = (k: string | null | undefined) => {
+  const name = k && K_LEVELS.find((l) => l.key === k)?.label;
+  return name ? `${k} · ${name}` : k || "–";
+};
 export const fmt = (n: number | null | undefined) => (n === null || n === undefined ? "–" : Number.isInteger(n) ? String(n) : n.toFixed(1));
 export const pct = (c: number | null) => (c === null ? "–" : `${Math.round(c * 100)}%`);
 export const date = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : "–");

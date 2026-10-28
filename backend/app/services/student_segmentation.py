@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from typing import Any
+from . import paper_format
 from .numbering import normalize_question_number, is_sub_question, parent_number, extract_label_from_text_prefix, subquestion_value
 from .ocr_recovery import find_recovery_candidates, _tokenize, _extract_distinct_numbers
 
@@ -418,6 +419,9 @@ def segment_student_answers(
     canonical_questions: list[Any] | None = None,
 ) -> list[SegmentedAnswer]:
     """Segment and group raw OCR blocks into coherent student answers across pages."""
+    if paper_format.active() == paper_format.TAMIL:
+        from . import tamil_answers  # Tamil subjects have their own layout, see tamil_answers.py
+        return tamil_answers.segment(page_results, canonical_questions)
     if canonical_questions:
         rebuilt = _segment_invented_labels(page_results, canonical_questions)
         if rebuilt is not None:
@@ -489,6 +493,20 @@ def segment_student_answers(
                     expanded_items.append((p_lbl, p_txt, a_bb, a_conf))
 
         for raw_lbl, text, bb, conf in expanded_items:
+            # An unnumbered block whose content clearly answers another question is that question's answer with
+            # its number missed by OCR ("4)" lost, leaving "(a) ... (b) ..."), not a bullet of the current answer
+            content_q = _content_question(text, canonical_questions) if not raw_lbl and canonical_questions and text else None
+            if content_q and content_q != (parent_number(curr_norm_num) if curr_norm_num else None):
+                flush_current()
+                curr_norm_num = content_q
+                curr_was_redirected = True  # numbered by content: a following block labelled the same joins it
+                curr_page = page_num
+                curr_text_parts.append(text)
+                curr_bbox = bb
+                if conf is not None:
+                    curr_confs.append(conf)
+                continue
+
             # Check if this item is a content bullet e.g. "1)", "2)", "3)" under an ongoing question
             if curr_norm_num and _is_content_bullet(raw_lbl, text, curr_norm_num, exam_norms):
                 bullet_prefix = f"{raw_lbl} " if raw_lbl else ""
@@ -693,6 +711,7 @@ def segment_student_answers(
             if curr_norm_num and norm == curr_norm_num and (
                 curr_was_redirected or page_num > curr_page or is_explicit_cont
             ):
+                curr_raw_label = curr_raw_label or raw_lbl  # an answer numbered by content takes the written label
                 curr_text_parts.append(text)
                 if bb and curr_page == page_num:
                     curr_bbox = _merge_bboxes(curr_bbox, bb)

@@ -88,6 +88,11 @@ class ExamQuestion(Base):
     question_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     max_marks: Mapped[float | None] = mapped_column(Float, nullable=True)
     section: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    # Either/or alternatives share a group ("38" for 38(a) OR 38(b)); the student answers one, it counts once
+    choice_group: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # The section says "answer any N" (N), and this question must be answered anyway (services/choices.py)
+    answer_any: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    compulsory: Mapped[bool] = mapped_column(Boolean, default=False)
     position: Mapped[int] = mapped_column(Integer, default=0)
     page_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
     page_end: Mapped[int | None] = mapped_column(Integer, nullable=True)

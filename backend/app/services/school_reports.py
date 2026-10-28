@@ -59,6 +59,13 @@ def _esc(t: Any) -> str:
     return html.escape("" if t is None else str(t)).replace("\n", "<br/>")
 
 
+def _k_level(k: str | None) -> str:
+    """"K1 · Remember"; "–" when the question is not tagged."""
+    if not k:
+        return "–"
+    return f"{k} · {K_LEVELS[k]}" if k in K_LEVELS else k
+
+
 def _clean_name(*parts: str) -> str:
     return "_".join(re.sub(r"[^\w\-]", "_", p.strip()) for p in parts if p)
 
@@ -342,7 +349,7 @@ def render_report(data: dict, cfg: dict, school: dict) -> bytes:
                     fb = (fb + "<br/>" if fb else "") + f"<font color='#B45309'>{_esc(note)}</font>"
                 if q.get("not_attempted") and not fb:
                     fb = _esc(L["not_attempted"])
-                cell = {"qno": d.p(f"<b>{_esc(q['no'])}</b>"), "k_level": d.p(_esc(K_LEVELS.get(q["k"], q["k"]) if q["k"] else "–")),
+                cell = {"qno": d.p(f"<b>{_esc(q['no'])}</b>"), "k_level": d.p(_esc(_k_level(q["k"]))),
                         "max": d.p(_m(q["max"]), align=TA_RIGHT), "obtained": d.p(f"<b>{_m(q['obtained'])}</b>", align=TA_RIGHT),
                         "feedback": d.p(fb, **fb_style)}
                 rows.append([cell[c] for c in cols])
@@ -361,7 +368,7 @@ def render_report(data: dict, cfg: dict, school: dict) -> bytes:
                 rows = [r for r in rows if r["key"] != "Untagged"]
                 if rows:
                     col = (d.width - 12) / 2
-                    body = [[d.p(_esc(r["label"])),
+                    body = [[d.p(_esc(_k_level(r["key"]))),
                              d.p(f"{_m(r['scored'])} / {_m(r['max_marks'])}", align=TA_RIGHT),
                              d.p("–" if r["percentage"] is None else f"{r['percentage']:g}%", align=TA_RIGHT)] for r in rows]
                     tables.append(d.table([title, L["col_obtained"], "%"], body, [col * 0.5, col * 0.3, col * 0.2],
@@ -483,21 +490,21 @@ def render_exam_report(data: dict, cfg: dict, school: dict) -> bytes:
 
     # question-wise analysis
     if data["questions"]:
-        rows = [[d.p(f"<b>{_esc(q['no'])}</b>"), d.p(_esc(K_LEVELS.get(q["k"], q["k"]) if q["k"] else "–")),
+        rows = [[d.p(f"<b>{_esc(q['no'])}</b>"), d.p(_esc(_k_level(q["k"]))),
                  d.p(_m(q["max"]), align=TA_RIGHT), d.p(f"{q['average']:g}", align=TA_RIGHT),
                  d.p("–" if q["percentage"] is None else f"{q['percentage']:g}", align=TA_RIGHT),
                  d.p(str(q["full"]), align=TA_RIGHT), d.p(str(q["zero"]), align=TA_RIGHT)] for q in data["questions"]]
         widths = [d.width * x for x in (0.10, 0.30, 0.10, 0.13, 0.12, 0.13, 0.12)]
         story += d.section_title("Question-wise Analysis")
-        story += [d.table(["Q. No.", "Level", "Max", "Avg. Marks", "Avg. %", "Full Marks", "Zero / NA"], rows, widths,
+        story += [d.table(["Q. No.", "K Level", "Max", "Avg. Marks", "Avg. %", "Full Marks", "Zero / NA"], rows, widths,
                           aligns=[TA_LEFT, TA_LEFT] + [TA_RIGHT] * 5), Spacer(1, 10)]
 
     k_rows = [r for r in data["outcomes"]["k_levels"] if r["key"] != "Untagged"]
     if k_rows:
-        body = [[d.p(_esc(r["label"])), d.p(str(r["questions"]), align=TA_RIGHT),
+        body = [[d.p(_esc(_k_level(r["key"]))), d.p(str(r["questions"]), align=TA_RIGHT),
                  d.p("–" if r["percentage"] is None else f"{r['percentage']:g}%", align=TA_RIGHT)] for r in k_rows]
         story += d.section_title("Class Performance by Knowledge Level")
-        story += [d.table(["Level", "Questions", "Class Avg. %"], body, [d.width * 0.5, d.width * 0.25, d.width * 0.25],
+        story += [d.table(["K Level", "Questions", "Class Avg. %"], body, [d.width * 0.5, d.width * 0.25, d.width * 0.25],
                           aligns=[TA_LEFT, TA_RIGHT, TA_RIGHT]), Spacer(1, 6)]
 
     story += d.note() + d.signatures() + d.grade_scale()

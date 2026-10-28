@@ -13,10 +13,12 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from typing import Any
+from . import choices, paper_format, tamil_format
 from .numbering import (
     normalize_question_number,
     is_sub_question,
     parent_number,
+    part_and_number,
     extract_subquestion_token,
     extract_label_from_text_prefix,
     subquestion_value,
@@ -31,67 +33,55 @@ _HEADING_PATTERNS = [
 
 # Patterns for general instructions or group instructions
 _INSTRUCTION_PATTERNS = [
-    re.compile(r"^\s*(?:read\s+the\s+(?:following|short|given)?\s*(?:passage|poem|text|extract)|answer\s+(?:all|any|the\s+following)|choose\s+the\s+correct|fill\s+in\s+the\s+blanks?)\b", re.IGNORECASE),
+    re.compile(r"^\s*(?:read\s+the\s+(?:following|short|given)?\s*(?:passage|poem|text|extract)|(?:answer|attempt)\s+(?:all|any|the\s+following)|choose\s+the\s+correct|fill\s+in\s+the\s+blanks?)\b", re.IGNORECASE),
     re.compile(r"^\s*(?:note\s*:|all\s+questions\s+are\s+compulsory|time\s*:\s*\d|maximum\s+marks?\s*:|max\.?\s*marks?\s*:)", re.IGNORECASE),
-    # Tamil: "answer all/any ... questions", "குறிப்பு:" (note), "நேரம்:" (time)
-    re.compile(r"^\s*(?:(?:அனைத்து|ஏதேனும்|எவையேனும்|பின்வரும்).{0,60}விடையளி|குறிப்பு\s*:|நேரம்\s*:)"),
 ]
 
-# "marks" in English or Tamil (மதிப்பெண் / மதிப்பெண்கள் / மதி.)
-_MARK_WORD = r"(?:marks?|m|மதிப்பெண்கள்|மதிப்பெண்|மதி\.?)"
-
-# Marks rule in section or instruction: e.g. "4 x 2 = 8 marks", "4 questions x 2 marks = 8 marks", "2 marks each",
-# "தலா 2 மதிப்பெண்" / "2 மதிப்பெண்கள் வீதம்" (2 marks each)
+# Marks rule in section or instruction: e.g. "4 x 2 = 8 marks", "4 questions x 2 marks = 8 marks", "2 marks each"
 _MARKS_RULE_PATTERNS = [
-    re.compile(rf"(\d+)\s*(?:questions?|qn|q)?\s*[×x*]\s*(\d+(?:\.\d+)?)\s*{_MARK_WORD}?\s*=\s*(\d+(?:\.\d+)?)\s*{_MARK_WORD}?", re.IGNORECASE),
-    re.compile(rf"(\d+(?:\.\d+)?)\s*{_MARK_WORD}\s+(?:each|வீதம்)", re.IGNORECASE),
+    re.compile(r"(\d+)\s*(?:questions?|qn|q)?\s*[×x*]\s*(\d+(?:\.\d+)?)\s*(?:marks?|m)?\s*=\s*(\d+(?:\.\d+)?)\s*(?:marks?|m)?", re.IGNORECASE),
+    re.compile(r"(\d+(?:\.\d+)?)\s*(?:marks?|m)\s+each", re.IGNORECASE),
     re.compile(r"each\s+(?:question\s+)?(?:carries|is\s+worth)\s*(\d+(?:\.\d+)?)\s*(?:marks?|m)?", re.IGNORECASE),
-    re.compile(rf"\(\s*(\d+(?:\.\d+)?)\s*{_MARK_WORD}\s*each\s*\)", re.IGNORECASE),
-    re.compile(rf"தலா\s*(\d+(?:\.\d+)?)\s*{_MARK_WORD}"),
+    re.compile(r"\(\s*(\d+(?:\.\d+)?)\s*(?:marks?|m)\s*each\s*\)", re.IGNORECASE),
 ]
 
 _MAX_MARKS_PATTERN = re.compile(
-    r"(?:(?:maximum|max\.?|total)\s*(?:marks?)?|(?:மொத்த\s*)?மதிப்பெண்கள்?)\s*[:=\-]\s*(\d+(?:\.\d+)?)",
+    r"(?:maximum|max\.?|total)\s*(?:marks?)?\s*[:=\-]\s*(\d+(?:\.\d+)?)",
     re.IGNORECASE,
 )
 
 _INLINE_MARKS_PATTERN = re.compile(
-    rf"\(\s*(\d+(?:\.\d+)?)\s*{_MARK_WORD}\s*\)\s*$",
+    r"\(\s*(\d+(?:\.\d+)?)\s*(?:marks?|m)\s*\)\s*$",
     re.IGNORECASE,
 )
+_LINE_MARKS_PATTERN = re.compile(r"\(\s*(\d+(?:\.\d+)?)\s*(?:marks?|m)\s*\)[ \t]*$", re.IGNORECASE | re.MULTILINE)
 
-# Tamil section heading: "பகுதி – அ", "பகுதி - I", "பிரிவு 2" (not "பகுதியில்", "பகுதி அனைத்து ...")
-_TAMIL_SECTION = r"(?:பகுதி|பிரிவு)\s*[-–—:]?\s*(?:[அ-ஔ]|[ivxIVX]+|[0-9]+|[A-Za-z])(?![஀-௿\w])"
-_SECTION_LINE = re.compile(rf"^\s*(?:(?:section|part)\s+[a-z0-9ivx]+\b|{_TAMIL_SECTION})", re.IGNORECASE)
-
-# Tamil commands and question words: "விளக்குக" (explain), "எழுதுக"/"எழுதவும்" (write), "ஏன்" (why), "எவ்வாறு" (how)
-_TAMIL_QUESTION_WORD = re.compile(
-    r"[஀-௿]+(?:ுக|க்க|வும்)(?=[\s.?!:,;)]|$)|(?:^|\s)(?:ஏன்|எவ்வாறு|எப்படி|யாவை|யார்|என்ன|எது|எவை|எங்கு|எத்தனை)(?=[\s.?!:,;]|$)"
-)
-_MCQ_OPTION = re.compile(r"(?:^|\s)\(?\s*([அஆஇஈ]|[a-dA-D])\s*[\)\.]")
+_SECTION_LINE =re.compile(r"^\s*(?:section|part)\s+[a-z0-9ivx]+\b", re.IGNORECASE)
+_MCQ_OPTION = re.compile(r"(?:^|\s)\(?\s*([a-dA-D])\s*[\)\.]")
 
 
 def infer_question_type(text: str, marks: float | None = None) -> str:
-    """Question type from the question text itself (English or Tamil), for OCR engines that do not classify."""
+    """Question type from the question text itself, for OCR engines that do not classify."""
     return keyword_question_type(text) or default_question_type(text, marks)
 
 
 def keyword_question_type(text: str) -> str | None:
-    """The type a keyword or layout clue proves (பொருத்துக -> match, options (அ)-(ஈ) -> mcq), or None."""
+    """The type a keyword or layout clue proves ("match the" -> match, options (a)-(d) -> mcq), or None."""
     t = text or ""
-    if re.search(r"பொருத்துக|பொருத்தவும்|\bmatch\s+the\b", t, re.I):
+    if tamil_format.has_tamil(t):
+        return tamil_format.keyword_question_type(t)
+    if re.search(r"\bmatch\s+the\b", t, re.I):
         return "match"
-    if re.search(r"சரியா\s*தவறா|சரி\s*(?:அல்லது|/)\s*தவறு|\btrue\s*(?:or|/)\s*false\b", t, re.I):
+    if re.search(r"\btrue\s*(?:or|/)\s*false\b", t, re.I):
         return "true_false"
-    if re.search(r"நிரப்புக|நிரப்பவும்|கோடிட்ட\s*இட|_{3,}|\.{5,}|\bfill\s+in\b", t, re.I):
+    if re.search(r"_{3,}|\.{5,}|\bfill\s+in\b", t, re.I):
         return "fill_blank"
     opts = {m.group(1).lower() for m in _MCQ_OPTION.finditer(t)}
-    if (len(opts & {"அ", "ஆ", "இ", "ஈ"}) >= 3 or len(opts & {"a", "b", "c", "d"}) >= 4
-            or re.search(r"சரியான\s*விடையைத்?\s*தேர்|\bchoose\s+the\s+correct\b", t, re.I)):
+    if len(opts & {"a", "b", "c", "d"}) >= 4 or re.search(r"\bchoose\s+the\s+correct\b", t, re.I):
         return "mcq"
-    if re.search(r"கணக்கிடுக|கணக்கிடவும்|மதிப்பைக்?\s*காண்க|\bcalculate\b|\bfind\s+the\s+value\b", t, re.I):
+    if re.search(r"\bcalculate\b|\bfind\s+the\s+value\b", t, re.I):
         return "numerical"
-    if re.search(r"ஓரிரு\s*சொற்களில்|ஒரு\s*சொல்லில்|சுருக்கமாக|\bin\s+one\s+word\b|\bbriefly\b", t, re.I):
+    if re.search(r"\bin\s+one\s+word\b|\bbriefly\b", t, re.I):
         return "short_answer"
     return None
 
@@ -118,6 +108,11 @@ class StructuredQuestion:
     review_reason: str | None = None
     # Where question_type came from: "ocr" (the model said), "rule" (a keyword proved it), "default" (marks guess)
     type_source: str | None = None
+    # Either/or alternatives share a group ("38" for 38(a) OR 38(b)), see services/choices.py
+    choice_group: str | None = None
+    # The section says "answer any N": N, and whether this question must be answered anyway (choices.py)
+    answer_any: int | None = None
+    compulsory: bool = False
 
 
 @dataclass
@@ -150,8 +145,10 @@ def is_heading_or_title(text: str) -> bool:
         return False
     if len(lines) > 1 and any(q_word in lines[1].lower() for q_word in ("why", "how", "what", "which", "where", "who", "explain", "define", "calculate", "write", "find", "draw")):
         return False
-    # Section or Part headings: e.g. "SECTION B: MEDIUM ANSWER QUESTIONS", "பகுதி – அ"
-    if re.match(r"^\s*(?:section|part|unit|group)\s+[a-z0-9ivx]+\b", s, re.IGNORECASE) or re.match(rf"^\s*{_TAMIL_SECTION}", s):
+    # Section or Part headings: e.g. "SECTION B: MEDIUM ANSWER QUESTIONS"
+    if re.match(r"^\s*(?:section|part|unit|group)\s+[a-z0-9ivx]+\b", s, re.IGNORECASE):
+        return True
+    if tamil_format.has_tamil(s) and tamil_format.is_section_heading(s):
         return True
     # Standalone subject or skill headings (only 1 line, short, <= 40 chars)
     if len(lines) == 1 and len(s) <= 40 and any(p.match(s) for p in _HEADING_PATTERNS):
@@ -161,7 +158,7 @@ def is_heading_or_title(text: str) -> bool:
 
 def is_section_heading_line(line: str) -> bool:
     """One line that opens a section: "SECTION B ...", "PART II", "பகுதி – அ"."""
-    return bool(_SECTION_LINE.match(line))
+    return bool(_SECTION_LINE.match(line)) or (tamil_format.has_tamil(line) and tamil_format.is_section_heading(line))
 
 
 def is_instruction(text: str) -> bool:
@@ -172,18 +169,19 @@ def is_instruction(text: str) -> bool:
         return True
     if any(p.search(s) for p in _MARKS_RULE_PATTERNS) and "?" not in s and len(s) < 120:
         return True
-    return False
+    return tamil_format.has_tamil(s) and tamil_format.is_instruction(s)
 
 
 def is_document_header(text: str) -> bool:
     """Detect if text block is exam metadata/title/header (e.g. 'CBSE CHEMISTRY QUESTION PAPER\\nTime: 1 hr\\nMax Marks: 30')."""
     s = text.strip()
-    if not s or "?" in s:
+    # a numbered question that mentions an exam ("(5) He is worried ...... examination.") is not the paper's header
+    if not s or "?" in s or re.match(r"^\s*(?:Q\.?\s*)?\(?\d{1,3}\s*[).:\-–](?!\d)", s, re.I):
         return False
     has_title_kw = bool(re.search(r"\b(?:QUESTION\s+PAPER|EXAMINATION|TEST\s+PAPER|PERIODIC\s+TEST|ANNUAL\s+EXAM|MID[\s\-]+TERM)\b", s, re.IGNORECASE))
     has_meta_kw = bool(re.search(r"\b(?:Time\s+Allowed|Maximum\s+Marks|Max\.?\s+Marks|Total\s+Marks|Duration\s*:)\b", s, re.IGNORECASE))
-    # Tamil needs a value, so a question that merely mentions "நேரம்" (time) is not a header
-    has_meta_kw = has_meta_kw or bool(re.search(r"(?:நேரம்|மொத்த\s*மதிப்பெண்கள்?|மதிப்பெண்கள்)\s*[:\-]\s*\d", s))
+    if tamil_format.has_tamil(s) and tamil_format.is_document_header(s):
+        return True
     if (has_title_kw or has_meta_kw) and not re.search(r"\b(?:Calculate|Explain|Differentiate|Define|Prove|Find|Solve|Draw|Write\s+balanced)\b", s, re.IGNORECASE):
         return True
     return False
@@ -203,10 +201,26 @@ def extract_section_marks_rule(text: str) -> float | None:
                     return float(m.group(1))
                 except ValueError:
                     pass
+    if tamil_format.has_tamil(text):
+        return tamil_format.section_marks_rule(text)
     return None
 
 
+def _inline_marks(text: str) -> float | None:
+    """A question's own marks at the end of its text: "(5 marks)". When each part ends with its own mark
+    ("(a) ... (1 mark)\\n(b) ... (1 mark)") the question is worth their sum; an either/or question one alternative's."""
+    found = [float(v) for v in _LINE_MARKS_PATTERN.findall(text)]
+    if len(found) > 1:
+        return max(found) if len(choices.split_alternatives(text)) > 1 else sum(found)
+    m = _INLINE_MARKS_PATTERN.search(text)
+    if m:
+        return float(m.group(1))
+    return tamil_format.inline_marks(text) if tamil_format.has_tamil(text) else None
+
+
 def extract_exam_total_marks(text: str) -> float | None:
+    if tamil_format.has_tamil(text):
+        return tamil_format.exam_total_marks(text)
     m = _MAX_MARKS_PATTERN.search(text)
     if m:
         try:
@@ -243,13 +257,27 @@ def is_passage_block(text: str) -> bool:
         r"\b(?:Draw|Explain|Identify|Calculate|State|Define|Describe|Show|Prove|Differentiate|Find|Solve|Write|Distinguish|Compare|List|Name|Give\s+reasons?)\b",
         s,
         re.IGNORECASE,
-    ) or _TAMIL_QUESTION_WORD.search(s):
+    ) or (tamil_format.has_tamil(s) and tamil_format.has_question_word(s)):
         return False
     # Check if text is predominantly narrative or descriptive text without question question-mark
     if "?" not in s and ("." in s or "\n" in s) and not re.search(r"^\s*(?:Q\d|\d+[\.\)])", s):
         # Likely a reading passage or context paragraph
         return True
     return False
+
+
+_PASSAGE_INTRO = re.compile(r"^\s*read\s+the\s+(?:following|short|given)?\s*(?:passage|poem|text|extract)\b", re.IGNORECASE)
+
+
+def _passage_after_intro(text: str) -> str | None:
+    """The passage of a "Read the passage ...\\n<passage>" block, which OCR often returns as one instruction item."""
+    if not _PASSAGE_INTRO.match(text):
+        return None
+    rest = text.strip().partition("\n")[2].strip()
+    return rest if len(rest) >= 80 and not extract_label_from_text_prefix(rest)[0] else None
+
+
+_LETTERED_ITEM = re.compile(r"^\s*\(?[A-H]\s*[-–)]\s*\S")
 
 
 def _is_question_continuation(
@@ -264,6 +292,9 @@ def _is_question_continuation(
 
     lbl = (raw_label or "").strip()
     is_unnumbered = not lbl or lbl.lower() in ("null", "none", "?", "unknown", "")
+    # Lettered sub-questions or options in a block of their own ("A- What is ...", "B) ...") belong to the question above
+    if is_unnumbered and _LETTERED_ITEM.match(text):
+        return True
 
     # If this block has an explicit new question number that is NOT the same as last_q, it's not a continuation
     if not is_unnumbered and not re.search(r"\b(?:cont|continued|contd)\b", lbl, re.IGNORECASE):
@@ -374,7 +405,7 @@ def _is_numbered_substep_or_item(raw_label: str | None, text: str, last_q: Struc
     num = int(m.group(1))
     last_norm = last_q.normalized_number or last_q.display_number or ""
     last_parent = parent_number(last_norm)
-    last_p_int = int(last_parent) if last_parent.isdigit() else 0
+    last_p_int = (part_and_number(last_parent) or ("", 0))[1]
     if num == last_p_int + 1:  # "3." right after Q2 is the next question, not a step of Q2
         return False
     last_clean = last_q.question_text.rstrip()
@@ -417,7 +448,7 @@ def _consolidate_subquestions(questions: list[StructuredQuestion]) -> list[Struc
 
         # Fully-labelled parts ("Q5(a)", "Q5(b)") are one question when their section fixes marks per question
         # (e.g. "4 questions x 3 marks"); without such a rule each part stays separately scored.
-        has_labelled_parts = rule_mark is not None and p_num.isdigit() and all(
+        has_labelled_parts = rule_mark is not None and part_and_number(p_num) is not None and all(
             sq.raw_question_number and is_sub_question(sq.normalized_number or "") for sq in sub_qs
         )
         if not (has_explicit_parent or has_bare_sub or has_labelled_parts):
@@ -579,6 +610,55 @@ def _deduplicate_question_text(text: str) -> str:
         full_joined = " ".join(clean_sents)
 
     return full_joined.strip()
+
+
+# "PART B", "Part - II", "SECTION C": a part that may restart the numbering at 1 (Part A / I never does)
+_PART_HEADING = re.compile(r"\b(?:PART|SECTION)\s*[-–:]?\s*([B-F]|II|III|IV|V|VI)\b", re.IGNORECASE)
+_PART_LETTERS = {"II": "B", "III": "C", "IV": "D", "V": "E", "VI": "F"}
+
+# A header for several questions sharing one instruction or passage: "Q 1-3: Read the following passage ...",
+# or the label "(14-15)"
+_GROUP_HEADER = re.compile(r"^\s*Q(?:uestions?|s)?\.?\s*(\d{1,3})\s*[-–]\s*(\d{1,3})\s*[:.\-–]?\s*", re.I)
+_GROUP_LABEL = re.compile(r"^\(?\s*(?:Q\.?\s*)?(\d{1,3})\s*[-–]\s*(\d{1,3})\s*\)?$", re.I)
+# A question of the group opening a line: "(1) Which ...", "14- Who ...", "15. Which ..."
+_GROUP_MEMBER = re.compile(r"^[ \t]*\(?(\d{1,3})\s*[).\-–](?!\d)[ \t]*", re.M)
+
+
+def _item_number(label: str | None, text: str) -> int | None:
+    norm = normalize_question_number(label) if label else None
+    if not norm:
+        norm = normalize_question_number(extract_label_from_text_prefix(text)[0])
+    p = parent_number(norm) if norm else ""
+    return int(p) if p.isdigit() else None
+
+
+def _split_question_group(label: str | None, text: str) -> tuple[tuple[int, int, str], list[tuple[str | None, str]]] | None:
+    """A group header with its shared instruction/passage and the group's questions found in the same block:
+    ((first, last, context), items). The instruction comes first as an unlabelled item; each question gets the passage
+    as reading context, and later blocks of the group get it from the caller. None when the block is no group."""
+    m_lbl = _GROUP_LABEL.match(label) if label else None
+    m_head = None if m_lbl else _GROUP_HEADER.match(text)
+    if not (m_lbl or m_head):
+        return None
+    m = m_lbl or m_head
+    lo, hi = int(m.group(1)), int(m.group(2))
+    if not lo < hi <= lo + 30:
+        return None
+    body = text if m_lbl else text[m_head.end():]
+    members, seen = [], set()
+    for mm in _GROUP_MEMBER.finditer(body):
+        n = int(mm.group(1))
+        if lo <= n <= hi and n not in seen:
+            members.append((mm.start(), mm.end(), n))
+            seen.add(n)
+    stem = (body[:members[0][0]] if members else body).strip()
+    instruction, _, passage = stem.partition("\n")
+    context = f"[Reading Passage Context]\n{passage.strip()}\n[/Reading Passage Context]\n" if len(passage.strip()) >= 80 else ""
+    items: list[tuple[str | None, str]] = [(None, stem)] if stem else []
+    for i, (_, end, n) in enumerate(members):
+        nxt = members[i + 1][0] if i + 1 < len(members) else len(body)
+        items.append((str(n), context + body[end:nxt].strip()))
+    return (lo, hi, context), items
 
 
 def split_swallowed_qp_blocks(
@@ -835,23 +915,118 @@ def _rebuild_from_question_starts(
 
 def _structure_is_broken(doc: DocumentStructure) -> bool:
     """Top-level numbering not 1..k, count differs from the stated count, or marks miss the paper total."""
-    parents: list[int] = []
+    parents: list[tuple[str, int]] = []  # (part, number): a part whose numbering restarts counts from 1 again ("B1")
     for q in doc.questions:
-        p = parent_number(q.normalized_number or "")
-        if not p.isdigit():
+        pn = part_and_number(parent_number(q.normalized_number or ""))
+        if pn is None:
             return True
-        if not parents or parents[-1] != int(p):
-            parents.append(int(p))
-    if parents != list(range(1, len(parents) + 1)):
-        return True
+        if not parents or parents[-1] != pn:
+            parents.append(pn)
+    for part in dict.fromkeys(pt for pt, _ in parents):
+        nums = [n for pt, n in parents if pt == part]
+        if nums != list(range(1, len(nums) + 1)):
+            return True
     if doc.stated_question_count and len(parents) != doc.stated_question_count:
         return True
-    total = sum(q.max_marks or 0 for q in doc.questions)
+    total = choices.max_total(doc.questions)
     return bool(doc.exam_max_marks and abs(total - doc.exam_max_marks) > 1e-6)
+
+
+
+_NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
+                 "ten": 10}
+_ANSWER_ANY = re.compile(r"\b(?:answer|attempt)\s+any\s+(\d{1,2}|[a-z]+)\b", re.IGNORECASE)
+_COMPULSORY = re.compile(r"\b(?:question|q)\.?\s*(?:no\.?\s*)?(\d{1,3})\s+is\s+compulsory", re.IGNORECASE)
+_RULE_COUNT = re.compile(r"(\d+)\s*(?:questions?|qn|q)?\s*[×x*]\s*\d+(?:\.\d+)?\s*\S*\s*=\s*\d+", re.IGNORECASE)
+
+
+def _note_answer_rule(rule: dict, text: str) -> None:
+    """Gather a section's "answer any N" from its notes: the words ("answer any four", "எவையேனும் நான்கு"), else the
+    count of its mark rule ("4x2=8"), and the questions it makes compulsory."""
+    m = _ANSWER_ANY.search(text)
+    n = (int(m.group(1)) if m.group(1).isdigit() else _NUMBER_WORDS.get(m.group(1).lower())) if m else None
+    compulsory = {a for a in _COMPULSORY.findall(text)}
+    if tamil_format.has_tamil(text):
+        n = n or tamil_format.answer_any_count(text)
+        compulsory |= tamil_format.compulsory_numbers(text)
+    if n:
+        rule["any"] = n
+    if (c := _RULE_COUNT.search(text)) and "count" not in rule:
+        rule["count"] = int(c.group(1))
+    rule.setdefault("compulsory", set()).update(compulsory)
+
+
+def _apply_answer_rules(questions: list[StructuredQuestion], rules: dict[str, dict]) -> list[StructuredQuestion]:
+    """Mark the questions of each "answer any N" section. A rule's count ("4x2=8") means "any 4" only when the section
+    holds more questions than that; an either/or choice is one question."""
+    for section, rule in rules.items():
+        qs = [q for q in questions if q.section == section]
+        units = len(choices.units(qs))
+        n = rule.get("any") or rule.get("count")
+        if not n or units <= n:
+            continue
+        for q in qs:
+            q.answer_any = n
+            q.compulsory = parent_number(q.normalized_number or "") in rule["compulsory"]
+    return questions
+
+
+def _alternative_token(text: str, i: int, used: set[str]) -> tuple[str, str]:
+    """(normalized, displayed) sub-part token of the i-th alternative: its own label "(b)" / "(ஆ)", else by position."""
+    lbl, _ = extract_label_from_text_prefix(text)
+    tok = extract_subquestion_token(lbl) if lbl else None
+    if not tok or tok in used:
+        tok = "abcdefgh"[i] if i < 8 else str(i + 1)
+    shown = tamil_format.SUB_LETTERS["abcdefgh".index(tok)] if tamil_format.has_tamil(text) and tok in "abcdefgh" else tok
+    return tok, shown
+
+
+def _split_choices(questions: list[StructuredQuestion]) -> list[StructuredQuestion]:
+    """Either/or questions become one question per alternative, grouped by choice_group, each worth the question's
+    marks. A choice inside one question's text ("(a) ... OR (b) ...") is split; parts the parser already kept apart
+    (3(a) ending with "OR", then 3(b)) are grouped."""
+    out: list[StructuredQuestion] = []
+    open_group: str | None = None  # the previous part ended with "OR": the next part of the same question joins it
+    for q in questions:
+        norm = q.normalized_number or ""
+        alts = choices.split_alternatives(q.question_text)
+        if q.choice_group:
+            out.append(q)
+        elif is_sub_question(norm):
+            parent = parent_number(norm)
+            lines = [l for l in q.question_text.splitlines() if l.strip()]
+            joins = open_group == parent or bool(lines and choices.is_either_or_line(lines[0]) and out
+                                                 and parent_number(out[-1].normalized_number or "") == parent)
+            ends_or = bool(lines and choices.is_either_or_line(lines[-1]))
+            if joins or ends_or:
+                q.question_text = "\n".join(l for l in lines if not choices.is_either_or_line(l)).strip()
+                q.choice_group = parent
+                if joins and out and not out[-1].choice_group and parent_number(out[-1].normalized_number or "") == parent:
+                    out[-1].choice_group = parent
+            out.append(q)
+            open_group = parent if ends_or else None
+            continue
+        elif norm and len(alts) >= 2:
+            used: set[str] = set()
+            for i, alt in enumerate(alts):
+                tok, shown = _alternative_token(alt, i, used)
+                used.add(tok)
+                out.append(StructuredQuestion(**{**q.__dict__, "normalized_number": f"{norm}({tok})",
+                                                 "display_number": f"{q.display_number}({shown})",
+                                                 "question_text": alt, "choice_group": norm}))
+        else:
+            out.append(q)
+        open_group = None
+    return out
 
 
 def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> DocumentStructure:
     """Parse raw page extraction results into a unified DocumentStructure model."""
+    if paper_format.active() == paper_format.TAMIL:
+        from . import tamil_paper  # Tamil subjects have their own layout, see tamil_paper.py
+        tamil = tamil_paper.parse(page_results)
+        if tamil.questions:
+            return tamil
     doc_struct = DocumentStructure()
 
     # Step 1: Scan global metadata across all pages
@@ -874,6 +1049,8 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
                 m_tm = re.search(r"\bTime\s*allowed\s*[:\-]?\s*([0-9]+)\s*(?:hours?|hrs?)\b", txt, re.I)
                 if m_tm:
                     doc_struct.exam_duration_minutes = int(m_tm.group(1)) * 60
+                elif tamil_format.has_tamil(txt):
+                    doc_struct.exam_duration_minutes = tamil_format.duration_minutes(txt)
             if not doc_struct.qp_code:
                 m_qp_slash = re.search(r"\b([0-9]{1,3}\/[0-9]{1,3}\/[0-9]{1,3})\b", txt)
                 if m_qp_slash:
@@ -886,7 +1063,15 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
     current_section: str | None = None
     section_marks_rule: float | None = None
     current_passage: str | None = None
+    after_either_or = False
+    # numbering restarts in a later part ("PART B" ... "Q1"): its questions get the part letter, see _PART_HEADING
+    pending_part: str | None = None  # a part heading seen since the last numbered item
+    last_part: str | None = None  # the part of the last numbered item
+    part_prefix, top_seen, part_top = "", 0, 0
+    section_parts: dict[str, str] = {}  # section -> the question its unnumbered part labels make up
+    answer_rules: dict[str, dict] = {}  # section -> its "answer any N" note, see _apply_answer_rules
     pending_topic: tuple[str | None, str] | None = None
+    question_group: tuple[int, int, str] | None = None  # "Q 9-10: read the passage ...": (9, 10, shared context)
 
     for page_info, page_res in page_results:
         page_num = page_info["page_number"]
@@ -917,6 +1102,16 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
         for q in questions_raw:
             q_text = (q.question_text or "").strip()
             q_lbl = (q.raw_question_number or "").strip() or None
+            if (grouped := _split_question_group(q_lbl, q_text)) is not None:
+                question_group, group_items = grouped
+                expanded_items += [(g_lbl, g_txt, q.marks if g_lbl else None, q, False) for g_lbl, g_txt in group_items]
+                continue
+            if question_group:
+                n = _item_number(q_lbl, q_text)
+                if n is not None and question_group[0] <= n <= question_group[1]:
+                    q_text = question_group[2] + q_text  # a question of the group, on a later item or page
+                elif n is not None and n > question_group[1]:
+                    question_group = None
             splits = split_swallowed_qp_blocks(q_lbl, q_text)
 
             # Check if this unnumbered block is a redundant full-page transcription dump
@@ -942,6 +1137,43 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
                 expanded_items.append((s_lbl, s_txt, s_marks, q, len(splits) == 1))
 
         for raw_label, text, marks, q, whole_block in expanded_items:
+            # Either/or: "OR" on its own joins the question above, and so does the alternative after it, unless the
+            # parts are numbered apart (3(a) OR 3(b)); _split_choices then makes one question per alternative
+            if doc_struct.questions and not raw_label and choices.is_either_or_line(text):
+                last_q = doc_struct.questions[-1]
+                last_q.question_text = f"{last_q.question_text}\n{text.strip()}"
+                after_either_or = not is_sub_question(last_q.normalized_number or "")
+                continue
+            if after_either_or and doc_struct.questions:
+                after_either_or = False
+                last_q = doc_struct.questions[-1]
+                tok = extract_subquestion_token(raw_label) if raw_label else None
+                part = f"({tok}) {text}" if tok and not text.lstrip().startswith("(") else text
+                last_q.question_text = f"{last_q.question_text}\n{part.strip()}"
+                last_q.page_end = max(last_q.page_end, page_num)
+                continue
+
+            inferred_number = False
+            # A part whose numbering restarts ("PART B" ... "Q1." after Q20): its questions are B1, B2 ...
+            if not raw_label and (hm := _PART_HEADING.search(text)):
+                pending_part = _PART_LETTERS.get(hm.group(1).upper(), hm.group(1).upper())  # a heading of its own
+            if (n := _item_number(raw_label, text)) is not None and not (raw_label and part_and_number(normalize_question_number(raw_label) or "") and (normalize_question_number(raw_label) or "")[0].isalpha()):
+                sm = _PART_HEADING.search(getattr(q, "section", None) or "")
+                part_here = _PART_LETTERS.get(sm.group(1).upper(), sm.group(1).upper()) if sm else pending_part
+                # restart only where the part changes: numbered steps inside one question never do
+                if (n == 1 and part_here and part_here not in (last_part, part_prefix)
+                        and (top_seen if not part_prefix else part_top) > 1):
+                    part_prefix, part_top = part_here, 0
+                last_part, pending_part = part_here, None
+                if part_prefix:
+                    part_top = max(part_top, n)
+                    lbl = raw_label
+                    if not lbl:
+                        lbl, text = _extract_label_from_text_prefix(text)
+                    raw_label = f"{part_prefix}{normalize_question_number(lbl)}"
+                else:
+                    top_seen = max(top_seen, n)
+
             # Check if block is document header / metadata
             if (raw_label is None or raw_label.lower() in ("null", "none", "?", "unknown", "")) and is_document_header(text):
                 header_max = extract_exam_total_marks(text)
@@ -966,7 +1198,8 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
 
             # Check if this block is a section heading
             if (raw_label is None and is_heading_or_title(text)) or (raw_label and is_heading_or_title(raw_label)):
-                current_section = (raw_label or text or "") if is_heading_or_title(raw_label or "") else (text if len(text) < 80 else (raw_label or text[:80]))
+                heading = (raw_label or text or "") if is_heading_or_title(raw_label or "") else (text if len(text) < 80 else (raw_label or text[:80]))
+                current_section = tamil_format.section_title(heading, current_section) if tamil_format.has_tamil(heading) else heading
                 if current_section and current_section not in doc_struct.sections:
                     doc_struct.sections.append(current_section)
                 rule = extract_section_marks_rule(text) or extract_section_marks_rule(raw_label or "")
@@ -980,6 +1213,11 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
                 rule = extract_section_marks_rule(text)
                 if rule is not None:
                     section_marks_rule = rule
+                if passage := _passage_after_intro(text):
+                    current_passage = passage
+                # a note before the section's first question can say "answer any N" (one about a question's parts can't)
+                if current_section and not any(q.section == current_section for q in doc_struct.questions):
+                    _note_answer_rule(answer_rules.setdefault(current_section, {}), text)
                 continue
 
             # If raw_label is missing or empty, attempt to extract label from start of question text
@@ -1008,12 +1246,9 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
                 last_q.question_text = f"{last_q.question_text}{sep}{text}".strip()
                 last_q.page_end = max(last_q.page_end, page_num)
                 if last_q.max_marks is None:
-                    m_inline = _INLINE_MARKS_PATTERN.search(text)
-                    if m_inline:
-                        try:
-                            last_q.max_marks = float(m_inline.group(1))
-                        except ValueError:
-                            pass
+                    inline_val = _inline_marks(text)
+                    if inline_val is not None:
+                        last_q.max_marks = inline_val
                     elif marks is not None:
                         last_q.max_marks = marks
                 continue
@@ -1147,6 +1382,18 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
                     if sub_tok and doc_struct.questions:
                         last_q = doc_struct.questions[-1]
                         parent = parent_number(last_q.normalized_number or last_q.display_number or "1")
+                        # Part labels under a new section heading with no question number printed ("Grammar" then
+                        # "b) ...", "b) ...", "d) ...") are one new question, not parts of the previous section's last one
+                        item_sec = (getattr(q, "section", None) or "").strip()
+                        if item_sec and section_parts.get(item_sec) == last_q.normalized_number:
+                            last_q.question_text = f"{last_q.question_text}\n({sub_tok}) {full_text}".strip()
+                            last_q.max_marks = (last_q.max_marks or 0) + (marks or 0) or None
+                            last_q.page_end = max(last_q.page_end, page_num)
+                            continue
+                        if item_sec and last_q.section and item_sec != last_q.section and (pn := part_and_number(parent)):
+                            parent, inferred_number = f"{pn[0]}{pn[1] + 1}", True
+                            section_parts[item_sec] = parent
+                            full_text = f"({sub_tok}) {full_text}"
 
                         # Check if parent already has seen this sub_tok or sub_tok sequence reset
                         existing_subtokens = set()
@@ -1162,7 +1409,7 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
                         last_sub = extract_subquestion_token(last_q.raw_question_number or last_q.normalized_number or "")
                         sub_decreased = bool(last_sub and sub_tok.lower() <= last_sub.lower())
 
-                        if parent_has_subtok or sub_decreased:
+                        if (parent_has_subtok or sub_decreased) and not inferred_number:
                             detected_num = None
                             detected_title = None
                             if page_text:
@@ -1192,14 +1439,14 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
 
                             if detected_num:
                                 parent = detected_num
-                            elif parent.isdigit():
-                                parent = str(int(parent) + 1)
+                            elif pn := part_and_number(parent):
+                                parent = f"{pn[0]}{pn[1] + 1}"
 
                             if detected_title:
                                 full_text = f"{detected_title}\n{full_text}"
                             raw_label = f"Q{parent}({sub_tok})"
 
-                        norm = f"{parent}({sub_tok})"
+                        norm = parent if inferred_number else f"{parent}({sub_tok})"
                         display_num = norm
                     else:
                         display_num = raw_label or "?"
@@ -1208,8 +1455,7 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
 
             # Inherit section marks or extract inline marks
             assigned_marks = marks
-            m_inline = _INLINE_MARKS_PATTERN.search(text)
-            inline_val = float(m_inline.group(1)) if m_inline else None
+            inline_val = _inline_marks(text)
             part_val = inline_val if inline_val is not None else marks
             if section_marks_rule is not None and norm and is_sub_question(norm) and part_val is not None and 0 < part_val < section_marks_rule:
                 # A part's own mark ("(a) ... (2 marks)") is a share of the per-question rule, not the whole rule
@@ -1255,7 +1501,7 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
             bbox_dict = q.bbox.model_dump() if getattr(q, "bbox", None) else None
 
             reasons: list[str] = []
-            if norm is None or is_unnumbered:
+            if norm is None or is_unnumbered or inferred_number:
                 reasons.append("Question number missing or inferred")
             if assigned_marks is None:
                 reasons.append("Marks not found")
@@ -1298,13 +1544,13 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
                 if len(sec_lines) > 1:
                     doc_struct.instructions.append("\n".join(sec_lines[1:]))
 
-    doc_struct.questions = _consolidate_subquestions(doc_struct.questions)
+    doc_struct.questions = _apply_answer_rules(_split_choices(_consolidate_subquestions(doc_struct.questions)), answer_rules)
 
     # Fallback for papers whose OCR lost the main question numbers (see _rebuild_from_question_starts)
     if _structure_is_broken(doc_struct):
         rebuilt = _rebuild_from_question_starts(page_results, doc_struct.stated_question_count, doc_struct.exam_max_marks)
         if rebuilt:
-            doc_struct.questions = rebuilt
+            doc_struct.questions = _apply_answer_rules(_split_choices(rebuilt), answer_rules)
     # OCR engines that do not classify (IndicOCR) leave the type empty: infer it from the merged question text
     for sq in doc_struct.questions:
         if sq.question_type:
@@ -1314,3 +1560,77 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
         else:
             sq.question_type, sq.type_source = default_question_type(sq.question_text, sq.max_marks), "default"
     return doc_struct
+
+
+# --- Digital PDFs: the text layer is the question text ----------------------------------------------
+# A typed paper's text layer holds every word and number exactly; the vision model, reading the page image,
+# misreads some ("16 workers" -> "6 workers", "(a+b)" -> "(p+b)") and drops or invents equations. Each
+# question's slice of the text layer replaces the model's text when both clearly hold the same question.
+
+_PDF_HEAD = r"(?m)^[ \t]*(?:Q(?:uestion)?\.?[ \t]*)?{n}[ \t]*[.):][ \t]*"
+_PDF_PART = r"(?m)^[ \t]*\(\s*{t}\s*\)[ \t]*"
+_PDF_STOP = re.compile(r"(?m)^[ \t]*(?:SECTION|PART)\b.*$", re.IGNORECASE)
+_PDF_SAME_QUESTION = 0.5
+
+
+def _words(text: str) -> set[str]:
+    return {w.lower() for w in re.findall(r"[A-Za-z]{4,}", text or "")}
+
+
+def _tidy_pdf_lines(text: str) -> str:
+    """Join wrapped lines back into sentences; keep parts '(a) ...', bullets and lines after a ':' on their own."""
+    out: list[str] = []
+    for line in (ln.strip() for ln in text.splitlines()):
+        if not line:
+            continue
+        if out and out[-1] == "•":
+            out[-1] = f"• {line}"
+        elif out and not re.match(r"^(?:\(\s*[a-zA-Z]{1,4}\s*\)|•|[ivx]+\.)", line) and not out[-1].endswith(":"):
+            out[-1] = f"{out[-1]} {line}"
+        else:
+            out.append(line)
+    return "\n".join(out)
+
+
+def apply_pdf_question_text(questions: list[StructuredQuestion], page_texts: list[str]) -> int:
+    """Replace OCR question text with the PDF text layer where it can be located with certainty. Returns how
+    many questions changed. Scanned papers have no text layer and are left alone."""
+    full = "\n".join(t for t in page_texts if t)
+    if len(_words(full)) < 20:
+        return 0
+    heads: dict[str, tuple[int, int]] = {}  # parent number -> (heading start, text start)
+    pos = 0
+    for q in questions:
+        p = parent_number(q.normalized_number or "")
+        if not p.isdigit() or p in heads:
+            continue
+        m = re.compile(_PDF_HEAD.format(n=p)).search(full, pos)
+        if m:
+            heads[p] = (m.start(), m.end())
+            pos = m.end()
+    starts = sorted(s for s, _ in heads.values())
+    changed = 0
+    for q in questions:
+        p = parent_number(q.normalized_number or "")
+        if p not in heads or (q.question_text or "").startswith("[Reading Passage Context]"):
+            continue
+        start = heads[p][1]
+        end = next((s for s in starts if s > start), len(full))
+        block = full[start:end]
+        if stop := _PDF_STOP.search(block):
+            block = block[:stop.start()]
+        if q.normalized_number != p:  # a part scored on its own: "(a) ..." up to the next part
+            tok = q.normalized_number[len(p) + 1:-1]
+            pm = re.compile(_PDF_PART.format(t=re.escape(tok))).search(block)
+            if not pm:
+                continue
+            nxt = re.compile(r"(?m)^[ \t]*\(\s*[a-zA-Z]{1,4}\s*\)").search(block, pm.end())
+            block = block[pm.end():nxt.start() if nxt else len(block)]
+        text = _tidy_pdf_lines(block)
+        ocr = _words(q.question_text)
+        if not text or (ocr and len(ocr & _words(text)) < _PDF_SAME_QUESTION * len(ocr)):
+            continue
+        if re.sub(r"\s+", " ", text) != re.sub(r"\s+", " ", q.question_text or ""):
+            q.question_text = text
+            changed += 1
+    return changed

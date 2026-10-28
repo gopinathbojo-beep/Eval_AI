@@ -93,3 +93,39 @@ def test_waiting_job_is_passed_over_at_most_max_skips_times(monkeypatch):
     assert jq.MAX_SKIPS == 4
     assert events == ["E0", "E1", "E2", "E3", "E4", "unload blaifa/InternVL3_5:4B", "T",
                       "unload tamil-llm", "release indic", "E5"]
+
+
+def test_uploads_are_not_held_up_while_the_engine_switches(monkeypatch):
+    events = _setup(monkeypatch, {"E1": "internvl", "T1": "indic", "T2": "indic"})
+    unloading, release = threading.Event(), threading.Event()
+
+    def slow_unload(model):
+        unloading.set()
+        release.wait(5)                                    # Ollama on the GPU machine takes its time
+        events.append(f"unload {model}")
+
+    monkeypatch.setattr(jq, "unload_model", slow_unload)
+    monkeypatch.setattr(jq, "_current_engine", "internvl")
+    jq.submit("T1", lambda: events.append("run T1"))
+    assert unloading.wait(5)
+    started = time.monotonic()
+    jq.submit("E1", lambda: events.append("run E1"))     # an upload arriving mid-switch
+    assert time.monotonic() - started < 0.5                # queued at once, not after the unload
+    jq.submit("T2", lambda: events.append("run T2"))
+    assert jq.pending() == 2 and "run T1" not in events     # nothing starts until the switch is done
+    release.set()
+    assert jq.wait_idle(5)
+    assert events[:3] == ["unload blaifa/InternVL3_5:4B", "run T1", "run T2"]
+
+
+def test_a_failed_switch_does_not_stop_the_queue(monkeypatch):
+    events = _setup(monkeypatch, {"T1": "indic", "T2": "indic"})
+
+    def unreachable(model):
+        raise ConnectionError("Ollama is not reachable")
+
+    monkeypatch.setattr(jq, "unload_model", unreachable)
+    jq.submit("T1", lambda: events.append("run T1"))
+    jq.submit("T2", lambda: events.append("run T2"))
+    assert jq.wait_idle(5)
+    assert events == ["run T1", "run T2"]                   # the jobs ran and record the engine error themselves

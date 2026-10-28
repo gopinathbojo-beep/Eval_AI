@@ -7,7 +7,7 @@ const NAMES: Record<string, string> = {
   header: "School header", title: "Title", student_details: "Student details", summary: "Summary box",
   marks_table: "Question-wise marks", subjects_table: "Subject-wise marks", outcomes: "Bloom's level summary",
   note: "Note", remarks: "Remarks", signatures: "Signatures", grade_scale: "Grading scale",
-  qno: "Question no.", k_level: "Level", max: "Max marks", obtained: "Obtained", feedback: "Feedback",
+  qno: "Question no.", k_level: "K level", max: "Max marks", obtained: "Obtained", feedback: "Feedback",
   subject: "Subject", percent: "Percentage", grade: "Grade", percentage: "Percentage", total: "Total", rank: "Class rank",
 };
 const TABS = ["Layout", "Labels", "Style", "Text"] as const;
