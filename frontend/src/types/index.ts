@@ -49,6 +49,9 @@ export interface Question {
   id: string; display_number: string; normalized_number: string | null; question_text: string; raw_ocr_text: string;
   clean_question_text?: string; passage_text?: string | null;
   question_type: string | null; max_marks: number | null; section: string | null; position: number;
+  choice_group?: string | null; // either/or alternatives share it ("34" for 34(அ) OR 34(ஆ)); a choice counts once
+  answer_any?: number | null; // the section says "answer any N"; compulsory questions always count
+  compulsory?: boolean;
   page_start: number | null; page_end?: number | null; bbox: BBox | null; has_crop: boolean; ocr_confidence: number | null;
   verification_status: "UNVERIFIED" | "VERIFIED" | "NEEDS_REVIEW"; review_reason: string | null;
   k_level?: string | null; k_level_source?: "SUGGESTED" | "TEACHER" | null; course_outcome?: string | null;
@@ -57,6 +60,7 @@ export interface SectionSummary {
   section: string;
   count: number;
   marks: number;
+  answer_any?: number | null; // "answer any N" section: marks count its best N
 }
 export interface UnclassifiedBlock {
   page_number: number;

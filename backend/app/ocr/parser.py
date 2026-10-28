@@ -176,7 +176,9 @@ def extract_json_object(raw: str) -> dict:
     if partial:
         return _normalize_extracted_obj(partial)
 
-    if best is not None:
+    # A page reply cut off mid-list (e.g. the model looped until its token limit): one stray question object is not
+    # the page, and accepting it would read as a valid page with no questions
+    if best is not None and not re.search(r'"(?:questions|answers)"\s*:\s*\[', text):
         return _normalize_extracted_obj(best)
 
-    raise ParseError("No complete JSON object found in model response")
+    raise ParseError("No complete JSON object found in model response (the reply was cut off)")

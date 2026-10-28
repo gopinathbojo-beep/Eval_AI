@@ -12,7 +12,8 @@ from typing import Type, TypeVar
 import httpx
 from pydantic import BaseModel
 from ..config import INDIC_BAD_RESPONSE_MESSAGE, INDIC_UNAVAILABLE_MESSAGE, get_settings
-from ..services.doc_structure import is_section_heading_line
+from ..services import choices, tamil_blocks, tamil_format
+from ..services.doc_structure import extract_section_marks_rule, is_document_header, is_section_heading_line
 from ..services.numbering import extract_label_from_text_prefix
 from .internvl import AICall
 from .schemas import AnswerKeyPageResult, QuestionPageResult, StudentPageResult
@@ -25,7 +26,34 @@ T = TypeVar("T", bound=BaseModel)
 _PRINTED_CONFIDENCE = 0.8
 _HANDWRITING_CONFIDENCE = 0.5
 # Not student or question content
-_SKIP_TYPES = {"header", "footer", "page_number", "number", "figure", "image", "chart", "seal", "advertisement"}
+# Block type/label (lower case, letters only): IndicOCR says "PageHeader", "Website-link", "Page-number", ...
+_SKIP_KINDS = {"pageheader", "pagefooter", "header", "footer", "footnote", "websitelink", "dateline",
+               "picture", "figure", "image", "chart", "seal", "advertisement"}
+# Page numbers and paper codes; IndicOCR also files exam header lines ("[ மொத்த மதிப்பெண்கள் : 100") and mark rules
+# ("3x8=24") under these, so those are kept
+_FOLIO_KINDS = {"pagenumber", "folio", "number", "infobox"}
+_ONLY_NUMBERS = re.compile(r"^[\d\s.\-–/]*$")
+_REGISTER_BOX = re.compile(r"^\s*(?:(?:பதிவு|தேர்வு)?\s*எண்|Reg(?:ister|istration)?\.?\s*No\.?)?[\s\d]*$", re.I)
+
+
+def _clean(text: str) -> str:
+    """IndicOCR writes spaces as "▁" (runs of them for wide gaps) and sometimes wraps a handwritten number as math
+    ("$$6)$$"): plain single spaces, no "$$", lines kept."""
+    return "\n".join(re.sub(r"[ \t]{2,}", " ", line.replace("▁", " ").replace("$$", "")).strip()
+                     for line in (text or "").splitlines()).strip()
+
+
+def _kinds(block: dict) -> set[str]:
+    return {re.sub(r"[^a-z]", "", str(block.get(k) or "").lower()) for k in ("type", "label")}
+
+
+def _is_furniture(block: dict, text: str) -> bool:
+    kinds = _kinds(block)
+    if kinds & _SKIP_KINDS or _ONLY_NUMBERS.match(text):
+        return True
+    if "table" in kinds and _REGISTER_BOX.match(re.sub(r"<[^>]+>", " ", text)):  # the candidate's register-number box
+        return True
+    return bool(kinds & _FOLIO_KINDS) and not (is_document_header(text) or extract_section_marks_rule(text) is not None)
 
 
 class IndicUnavailable(Exception):
@@ -123,14 +151,19 @@ def _group_answers(items: list[dict]) -> list[dict]:
 _OPTION_BLOCK = re.compile(r"^\s*\(?\s*(?:[அஆஇஈ]|[a-dA-D])\s*[\)\.]")
 
 
+# A question starts a line with its number: "41. ...", "7) ..." (not "(2)" or "(ii)" inside a note, not "3.00 மணி")
+_QUESTION_START = re.compile(r"^\s*\d{1,3}\s*[.)](?!\d)")
+
+
 def _split_headings(text: str) -> list[str]:
-    """Cut a block at section heading lines ("பகுதி – அ") and at question-number lines, so a heading or its
-    instruction ("... 10 × 1 = 10") never fuses with a question and the section title stays just the heading."""
+    """Cut a block at section heading lines ("பகுதி – அ"), notes ("குறிப்பு : ...") and question-number lines, so a
+    heading or its instruction ("... 10 × 1 = 10") never fuses with a question and the section title stays just the
+    heading. Sub-parts and options ("(அ)", "(ii)") stay inside their question."""
     parts: list[list[str]] = [[]]
     for line in text.splitlines():
         if is_section_heading_line(line):
             parts += [[line], []]
-        elif parts[-1] and extract_label_from_text_prefix(line)[0]:
+        elif parts[-1] and (_QUESTION_START.match(line) or tamil_format.starts_instruction(line)):
             parts.append([line])
         else:
             parts[-1].append(line)
@@ -138,15 +171,19 @@ def _split_headings(text: str) -> list[str]:
 
 
 def _group_options(items: list[dict]) -> list[dict]:
-    """A short "(அ) ..." / "(a) ..." block on its own is an MCQ option of the question above, not a new question."""
+    """A short "(அ) ..." / "(a) ..." block on its own is an MCQ option of the question above, not a new question.
+    An either/or line ("அல்லது", "OR") and the alternative after it also belong to the question above."""
     out: list[dict] = []
+    after_either_or = False
     for it in items:
         src = it.pop("_src")
-        if out and _OPTION_BLOCK.match(src) and len(src) < 120:
+        either_or = choices.is_either_or_line(src)
+        if out and (either_or or after_either_or or (_OPTION_BLOCK.match(src) and len(src) < 120)):
             out[-1]["question_text"] = f"{out[-1]['question_text']}\n{src}"
             out[-1]["bbox"] = _merge_bbox(out[-1]["bbox"], it["bbox"])
         else:
             out.append(it)
+        after_either_or = either_or
     return out
 
 
@@ -155,8 +192,8 @@ def blocks_to_result(page: dict, schema: Type[T], page_number: int) -> T:
     blocks = sorted(page.get("blocks") or [], key=lambda b: b.get("order", 0))
     items = []
     for b in blocks:
-        text = (b.get("text") or "").strip()
-        if not text or str(b.get("type", "")).lower() in _SKIP_TYPES or str(b.get("label", "")).lower() in _SKIP_TYPES:
+        text = tamil_format.strip_page_furniture(_clean(b.get("text")))
+        if not text or _is_furniture(b, text):
             continue
         bbox = _bbox(b.get("bbox_xyxy"))
         if issubclass(schema, QuestionPageResult):
@@ -166,6 +203,8 @@ def blocks_to_result(page: dict, schema: Type[T], page_number: int) -> T:
                               "bbox": bbox, "_src": seg})
             continue
         lbl, rest = extract_label_from_text_prefix(text)
+        if issubclass(schema, StudentPageResult) and lbl is None and _is_identity_block(text):
+            continue  # the student's name and roll no. in the sheet header, not an answer
         if issubclass(schema, AnswerKeyPageResult):
             items.append({"question_number": lbl, "answer_text": rest, "confidence": _PRINTED_CONFIDENCE, "bbox": bbox})
         elif issubclass(schema, StudentPageResult):
@@ -174,7 +213,7 @@ def blocks_to_result(page: dict, schema: Type[T], page_number: int) -> T:
         else:
             raise TypeError(f"IndicOCR cannot fill {schema.__name__}")
     if issubclass(schema, StudentPageResult):
-        items = _group_answers(items)
+        items = _group_answers(tamil_blocks.join_lone_numbers(items))
     elif issubclass(schema, QuestionPageResult):
         items = _group_options(items)
     key = "questions" if issubclass(schema, QuestionPageResult) else "answers"
@@ -185,7 +224,8 @@ def blocks_to_result(page: dict, schema: Type[T], page_number: int) -> T:
 _IDENTITY_LABELS = {
     "name": r"(?<![a-z])name\b|பெயர்",
     "roll_number": r"(?<![a-z])roll\s*(?:no|number)?\.?|வரிசை\s*எண்|தேர்வு\s*எண்|சுட்டெண்",
-    "registration_number": r"(?<![a-z])reg(?:istration|ister|n)?\.?\s*(?:no|number)?\.?|பதிவு\s*எண்",
+    # handwritten "Reg.No" is often read as "Key.NO" / "Rey No"; those only count with the "No" after them
+    "registration_number": r"(?<![a-z])(?:reg(?:istration|ister|n)?\.?\s*(?:no|number)?|[kr]e[yq]\.?\s*no\b)\.?|பதிவு\s*எண்",
     "class_name": r"(?<![a-z])(?:class|std|standard)\b\.?|வகுப்பு",
     "section": r"(?<![a-z])sec(?:tion)?\b\.?|பிரிவு",
 }
@@ -205,10 +245,21 @@ def parse_identity(text: str) -> dict:
     return out
 
 
+def _is_identity_block(text: str) -> bool:
+    """A short block giving the student's name and a roll/registration number."""
+    read = parse_identity(text)
+    return len(text.splitlines()) <= 6 and bool(read["name"]) and bool(read["roll_number"] or read["registration_number"])
+
+
+LEGIBLE_LINES = 3  # this many lines of text read upright: the page is not photographed sideways
+
+
 def read_identity(image_path: Path) -> dict:
+    """parse_identity() of the page, plus "legible": whether it read as ordinary upright text."""
     page = _parse_page(Path(image_path))
     blocks = sorted(page.get("blocks") or [], key=lambda b: b.get("order", 0))
-    return parse_identity("\n".join((b.get("text") or "") for b in blocks))
+    text = "\n".join(_clean(b.get("text")) for b in blocks)
+    return {**parse_identity(text), "legible": sum(1 for line in text.splitlines() if len(line) >= 10) >= LEGIBLE_LINES}
 
 
 def read_page(image_path: Path, schema: Type[T], page_number: int) -> AICall:

@@ -21,6 +21,7 @@ from ..database import SessionLocal
 from ..models import Exam
 from ..ocr.indic import release_indic, uses_indic_ocr
 from ..ocr.internvl import unload_model
+from . import paper_format
 
 log = logging.getLogger("adem.queue")
 
@@ -32,12 +33,14 @@ class _Job:
     engine: str
     fn: Callable
     args: tuple
+    paper_format: str | None = None  # the exam subject's format, see services/paper_format.py
     skips: int = 0
 
 
-_cond = threading.Condition()  # guards _waiting, _running and _current_engine
+_cond = threading.Condition()  # guards _waiting, _running, _switching and _current_engine
 _waiting: list[_Job] = []  # queue order
 _running = 0
+_switching = False  # a worker is changing engines outside the lock: no other job starts until it is done
 _workers: list[threading.Thread] = []
 _inline_lock = threading.RLock()  # inline jobs may queue more jobs (identify -> read), which run in the same thread
 _current_engine: str | None = None  # None: unknown (e.g. after start), so a first switch frees everything else
@@ -57,6 +60,14 @@ def engine_for(exam_id: str | None) -> str:
     try:
         exam = db.get(Exam, exam_id) if exam_id else None
         return "indic" if exam and exam.subject and uses_indic_ocr(exam.subject.name) else "internvl"
+    finally:
+        db.close()
+
+
+def format_for(exam_id: str | None) -> str | None:
+    db = SessionLocal()
+    try:
+        return paper_format.for_exam(db.get(Exam, exam_id) if exam_id else None)
     finally:
         db.close()
 
@@ -87,14 +98,15 @@ def switch_engine(engine: str) -> None:
 
 def _call(job: _Job) -> None:
     try:
-        job.fn(*job.args)
+        with paper_format.use(job.paper_format):
+            job.fn(*job.args)
     except Exception:  # a failed job must never stop the queue; the job itself records errors on its document
         log.exception("Queued job %s%r crashed", getattr(job.fn, "__name__", job.fn), job.args)
 
 
 def _pick() -> _Job | None:
     """The job a free worker should start now, or None. Caller holds _cond."""
-    if not _waiting or (_running and _running >= slots(_current_engine)):
+    if _switching or not _waiting or (_running and _running >= slots(_current_engine)):
         return None
     for i, job in enumerate(_waiting):
         if job.engine == _current_engine:
@@ -108,16 +120,27 @@ def _pick() -> _Job | None:
 
 
 def _work() -> None:
-    global _running
+    global _running, _switching
     while True:
         with _cond:
             while (job := _pick()) is None:
                 _cond.wait()
             _waiting.remove(job)
-            switch_engine(job.engine)  # _pick only hands out another engine's job when nothing is running
+            # _pick only hands out another engine's job when nothing is running
+            switch = _switching = job.engine != _current_engine
             _running += 1
             _cond.notify_all()  # another free worker may start alongside
         try:
+            if switch:
+                # Unloading takes seconds over the network: do it outside the lock so uploads queue meanwhile
+                try:
+                    switch_engine(job.engine)
+                except Exception:  # the job still runs and records the engine error on its document
+                    log.exception("Switching the GPU engine to %s failed", job.engine)
+                finally:
+                    with _cond:
+                        _switching = False
+                        _cond.notify_all()
             _call(job)
         finally:
             with _cond:
@@ -136,7 +159,7 @@ def _ensure_workers() -> None:
 
 def submit(exam_id: str | None, fn: Callable, *args: Any) -> None:
     """Queue `fn(*args)` for the GPU. `exam_id` decides which engine the job runs on."""
-    job = _Job(engine_for(exam_id), fn, args)
+    job = _Job(engine_for(exam_id), fn, args, format_for(exam_id))
     if get_settings().job_queue_inline:  # run in the caller's thread (tests: the result is there when the request returns)
         with _inline_lock:
             switch_engine(job.engine)

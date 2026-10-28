@@ -9,6 +9,7 @@ from ..models import (AnswerKey, AnswerSheetDocument, AuditLog, Evaluation, Eval
 from ..security import current_teacher
 from ..serializers import (EVALUATION_VIEW_LOAD, answer_view, doc_view, evaluation_view, item_view, question_view,
                            student_view)
+from ..services import choices
 from ..services.audit import audit
 from ..services.job_queue import submit
 from ..services.exam_files import purge_exam_files, save_reports_and_schedule, stored_report
@@ -58,7 +59,8 @@ def evaluation_detail(ev_id: str, db: Session = Depends(get_db), t: Teacher = De
         "items": [item_view(i) for i in items],
         "summary": mapping_summary(db, ev),
         "issues": [] if ev.status == "FINALIZED" else finalize_issues(db, ev),
-        "outcomes": summarize_outcomes(qs, {i.exam_question_id: i.final_marks for i in items}),
+        "outcomes": summarize_outcomes(choices.counted(qs, marks := {i.exam_question_id: i.final_marks for i in items}),
+                                       marks),
     }
 
 
@@ -452,13 +454,17 @@ def result(ev_id: str, db: Session = Depends(get_db), t: Teacher = Depends(curre
     answers = {a.id: a for a in db.query(StudentAnswer).filter_by(evaluation_id=ev.id)}
     rows, total, maxm = [], 0.0, 0.0
     qs = exam_questions(db, ev.exam_id)
+    marks = {qid: it.final_marks for qid, it in items.items()}
+    counts = {q.id for q in choices.counted(qs, marks)}
     for q in qs:
         it = items.get(q.id)
         a = answers.get(it.student_answer_id) if it and it.student_answer_id else None
         fm = it.final_marks if it else None
-        total += fm or 0
-        maxm += q.max_marks or 0
+        if q.id in counts:
+            total += fm or 0
+            maxm += q.max_marks or 0
         rows.append({"question_id": q.id, "question": q.display_number, "question_text": q.question_text,
+                     "choice_group": q.choice_group, "counted": q.id in counts,
                      "max_marks": q.max_marks, "final_marks": fm, "ai_marks": it.ai_marks if it else None,
                      "k_level": q.k_level, "course_outcome": q.course_outcome,
                      "teacher_overridden": bool(it and it.teacher_overridden),
@@ -472,7 +478,7 @@ def result(ev_id: str, db: Session = Depends(get_db), t: Teacher = Depends(curre
             "maximum_marks": ev.maximum_marks if ev.status == "FINALIZED" else maxm,
             "percentage": ev.percentage if ev.status == "FINALIZED" else (round(100 * total / maxm, 2) if maxm else 0),
             "questions": rows,
-            "outcomes": summarize_outcomes(qs, {qid: it.final_marks for qid, it in items.items()})}
+            "outcomes": summarize_outcomes(choices.counted(qs, marks), marks)}
 
 
 @router.get("/evaluations/{ev_id}/report.pdf")
@@ -531,7 +537,7 @@ def exam_outcome_summary(exam_id: str, db: Session = Depends(get_db), t: Teacher
     for ev in evs:
         marks = {i.exam_question_id: i.final_marks for i in db.query(EvaluationItem).filter_by(evaluation_id=ev.id)}
         students.append({"evaluation_id": ev.id, "student_id": ev.student_id, "name": ev.student.name,
-                         "roll_number": ev.student.roll_number, **summarize_outcomes(qs, marks)})
+                         "roll_number": ev.student.roll_number, **summarize_outcomes(choices.counted(qs, marks), marks)})
 
     def overall(key: str) -> list[dict]:
         if not students:

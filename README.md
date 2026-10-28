@@ -84,7 +84,7 @@ Production-style: `npm run build`, then `npm run preview` (proxy target is set i
 
 ## Run the tests
 ```bash
-cd backend && pytest -q            # 185 tests, ~30 s
+cd backend && pytest -q            # 208 tests, ~35 s
 cd frontend && npm run build       # type-check + production build
 ```
 The API tests run the **real** HTTP client against a small stand-in for the Ollama server that lives only in `tests/conftest.py`.
@@ -94,6 +94,8 @@ Tests run on a throwaway SQLite database in a temp `DATA_DIR`. The application i
 | Rule | File |
 |---|---|
 | Number normalisation (`Q1`, `3 (a)`, `3-a`, `3a` -> `3(a)`) | `backend/app/services/numbering.py` |
+| Tamil paper format (பகுதி/பிரிவு, மதிப்பெண், (அ)-(ஈ), அல்லது); used only for text in Tamil script | `backend/app/services/tamil_format.py` |
+| Either/or questions (`OR` / `அல்லது`): one question per alternative, counted once, higher mark wins; "answer any N" sections (`எவையேனும் நான்கு`): compulsory questions plus the best answers up to N | `backend/app/services/choices.py` |
 | Deterministic mapping, never guessing | `backend/app/services/mapping.py` |
 | JSON extraction from model output | `backend/app/ocr/parser.py` |
 | Rejecting impossible AI marks | `backend/app/services/evaluation_rules.py` |

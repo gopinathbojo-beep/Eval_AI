@@ -19,7 +19,9 @@ _VERBS: dict[str, tuple[str, ...]] = {
            "what happens", "what do you mean", "what do you understand", "translate", "predict", "relate", "rewrite"),
     "K3": ("solve", "calculate", "compute", "find", "determine", "apply", "use", "demonstrate", "show that", "prove",
            "draw", "sketch", "simplify", "factorise", "factorize", "convert", "verify", "complete", "balance", "plot",
-           "construct", "measure", "how many", "how much", "frame", "change the", "transform"),
+           "construct", "measure", "how many", "how much", "frame", "change the", "transform", "write balanced",
+           "write the balanced", "write a balanced", "write the chemical equation", "write chemical equation",
+           "write the equation", "write the word equation", "write word equation"),
     "K4": ("analyse", "analyze", "compare", "contrast", "differentiate", "distinguish", "examine", "categorise",
            "categorize", "infer", "investigate", "break down", "relationship between", "difference between"),
     "K5": ("justify", "assess", "critique", "criticise", "criticize", "judge", "defend", "appraise", "argue",
@@ -30,22 +32,27 @@ _VERBS: dict[str, tuple[str, ...]] = {
 }
 _PATTERNS = [(lvl, re.compile(r"\b" + re.escape(v) + r"\b")) for lvl, verbs in _VERBS.items() for v in verbs]
 _MATH_EVALUATE = re.compile(r"\bevaluate\b[^a-z]{0,6}[\d(\[√∫]")
+# "Expand and simplify (3x+4y)²" is algebra (K3), not expanding an abbreviation (K1)
+_MATH_EXPAND = re.compile(r"\bexpand\b(?=[^.?]*(?:simplif|identit|[\d²³]))")
+DEFAULT_K_LEVEL = "K1"  # no command verb ("Calorific value of a fuel?"): a recall question
 
 
 def suggest_k_level(text: str | None) -> str | None:
-    """The level of the command verb that appears first in the question, or None when no command verb is found."""
+    """The level of the command verb that appears first in the question; K1 when there is text but no command
+    verb, so every question gets a suggestion. None only for empty text."""
     t = (text or "").lower()
-    if not t.strip():
+    if not re.search(r"[^\W\d_]", t):
         return None
     if _MATH_EVALUATE.search(t):  # "Evaluate 3² + 4²" is a calculation, not a judgement
         t = _MATH_EVALUATE.sub(" calculate ", t)
+    t = _MATH_EXPAND.sub(" simplify ", t)
     best: tuple[int, int, str] | None = None
     for lvl, pat in _PATTERNS:
         m = pat.search(t)
         # earliest verb wins; at the same position prefer the longer phrase ("write a letter" over "write")
         if m and (best is None or (m.start(), -len(m.group())) < best[:2]):
             best = (m.start(), -len(m.group()), lvl)
-    return best[2] if best else None
+    return best[2] if best else DEFAULT_K_LEVEL
 
 
 def normalize_course_outcome(v: str | None) -> str | None:

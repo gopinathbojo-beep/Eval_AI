@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { api, downloadFile } from "../../api/client";
 import { useApi } from "../../hooks/useApi";
 import type { Question, QuestionsResponse } from "../../types";
@@ -11,6 +11,22 @@ import { SaveToVerifiedCollectionModal } from "../../components/SaveToVerifiedCo
 import { useExam } from "../ExamWorkspace";
 
 type Dlg = { kind: "edit" | "split" | "merge" | "delete" | "review" | "add"; q?: Question } | null;
+
+// Either/or alternatives share choice_group; a choice counts once in marks and question counts
+const countedOnce = (list: Question[]) =>
+  list.filter((q, i) => !q.choice_group || list.findIndex((x) => x.choice_group === q.choice_group) === i);
+
+// A section's marks as the paper counts them: each choice once, and for "answer any N" the compulsory questions
+// plus the highest-mark rest up to N (backend services/choices.py)
+const sectionMarks = (list: Question[]) => {
+  const units = countedOnce(list);
+  const n = units.find((q) => q.answer_any)?.answer_any;
+  const marks = (qs: Question[]) => qs.reduce((sum, q) => sum + (q.max_marks || 0), 0);
+  if (!n) return marks(units);
+  const must = units.filter((q) => q.compulsory);
+  const rest = units.filter((q) => !q.compulsory).sort((a, b) => (b.max_marks || 0) - (a.max_marks || 0));
+  return marks(must) + marks(rest.slice(0, Math.max(0, n - must.length)));
+};
 
 export default function Questions() {
   const { exam, reload: reloadExam } = useExam();
@@ -171,10 +187,10 @@ export default function Questions() {
               small
               variant="soft"
               busy={busy === "k-levels"}
-              title="Accept every suggested level as correct"
+              title="Accept every suggested K level as correct"
               onClick={() => run("k-levels", () => api(`/exams/${exam.id}/questions/confirm-k-levels`, { method: "POST" }))}
             >
-              Confirm Suggested Levels
+              Confirm Suggested K Levels
             </Button>
           )}
 
@@ -284,8 +300,8 @@ export default function Questions() {
             }`}>
               <span>
                 {data.stated_question_count
-                  ? `${qs.length} of ${data.stated_question_count} questions detected`
-                  : `${qs.length} questions detected`}
+                  ? `${countedOnce(qs).length} of ${data.stated_question_count} questions detected`
+                  : `${countedOnce(qs).length} questions detected`}
               </span>
             </div>
           </div>
@@ -303,7 +319,7 @@ export default function Questions() {
               <span className="font-medium text-ink">{s.section}</span>
               <span className="text-mute">·</span>
               <b className="text-pen">{fmt(s.marks)}m</b>
-              <span className="text-mute">({s.count} Qs)</span>
+              <span className="text-mute">({s.answer_any ? `any ${s.answer_any} of ${s.count}` : `${s.count} Qs`})</span>
             </div>
           ))}
         </div>
@@ -362,7 +378,9 @@ export default function Questions() {
             }, {} as Record<string, Question[]>);
 
             return Object.entries(groupedSections).map(([secName, secQuestions]) => {
-              const secMarks = secQuestions.reduce((sum, q) => sum + (q.max_marks || 0), 0);
+              const secCounted = countedOnce(secQuestions);
+              const secMarks = sectionMarks(secQuestions);
+              const answerAny = secCounted.find((q) => q.answer_any)?.answer_any;
               const hasPassages = secQuestions.some((q) => !!q.passage_text);
               const isPassageOpen = openSectionPassages[secName] ?? true;
 
@@ -376,7 +394,9 @@ export default function Questions() {
                     </div>
                     <div className="flex items-center gap-2 text-xs">
                       <Badge tone="pen">{fmt(secMarks)} marks</Badge>
-                      <span className="text-mute">{secQuestions.length} questions</span>
+                      <span className="text-mute">
+                        {answerAny ? `answer any ${answerAny} of ${secCounted.length}` : `${secCounted.length} questions`}
+                      </span>
                     </div>
                   </div>
 
@@ -427,14 +447,22 @@ export default function Questions() {
                   )}
 
                   {/* Section Questions */}
-                  {secQuestions.map((q) => {
+                  {secQuestions.map((q, i) => {
                     const isSelected = sel === q.id;
                     const hasPassage = !!q.passage_text;
                     const isPassageExpanded = expandedPassages[q.id];
+                    const orBefore = !!q.choice_group && secQuestions[i - 1]?.choice_group === q.choice_group;
 
                     return (
+                      <Fragment key={q.id}>
+                      {orBefore && (
+                        <div className="flex items-center gap-3 px-2 text-xs font-bold text-pen" aria-hidden="true">
+                          <span className="h-px flex-1 bg-pen/30" />
+                          OR / அல்லது
+                          <span className="h-px flex-1 bg-pen/30" />
+                        </div>
+                      )}
                       <Card
-                        key={q.id}
                         className={`p-4 transition-all shadow-soft ${
                           isSelected ? "border-pen ring-2 ring-pen/20" : "hover:border-line"
                         } ${q.verification_status === "NEEDS_REVIEW" ? "border-mark/50 bg-mark-soft/10" : ""}`}
@@ -455,6 +483,8 @@ export default function Questions() {
                             </span>
                             <div className="flex items-center gap-1.5">
                               <Badge tone="pen">{fmt(q.max_marks)} marks</Badge>
+                              {q.choice_group && <Badge tone="mark">Either/or · answer one</Badge>}
+                              {q.compulsory && <Badge tone="warn">Compulsory</Badge>}
                               {q.ocr_confidence !== null && q.ocr_confidence < 0.6 && (
                                 <Badge tone="warn">Low confidence {pct(q.ocr_confidence)}</Badge>
                               )}
@@ -553,6 +583,7 @@ export default function Questions() {
                           </div>
                         </div>
                       </Card>
+                      </Fragment>
                     );
                   })}
                 </div>
@@ -927,7 +958,7 @@ function ReviewDlg({ q, onClose, onDone }: { q: Question; onClose: () => void; o
   );
 }
 
-/** Bloom's level for one question. Suggested levels stay marked until the teacher confirms them. */
+/** Bloom's K level for one question. Suggested levels stay marked until the teacher confirms them. */
 function OutcomeTags({
   q, disabled, onSaved, onError,
 }: {
@@ -945,9 +976,9 @@ function OutcomeTags({
   return (
     <div className="mt-2.5 flex flex-wrap items-center gap-2 text-xs">
       <label className="flex items-center gap-1.5">
-        <span className="font-semibold text-mute">Level</span>
+        <span className="font-semibold text-mute">K level</span>
         <select
-          aria-label={`Bloom's level for question ${q.display_number}`}
+          aria-label={`K level for question ${q.display_number}`}
           className={`rounded-md border bg-surface px-1.5 py-0.5 text-xs ${suggested ? "border-warn/60" : "border-line"}`}
           value={q.k_level || ""}
           disabled={disabled}
@@ -955,7 +986,7 @@ function OutcomeTags({
         >
           <option value="">–</option>
           {K_LEVELS.map((k) => (
-            <option key={k.key} value={k.key}>{k.label}</option>
+            <option key={k.key} value={k.key}>{k.key} · {k.label}</option>
           ))}
         </select>
       </label>

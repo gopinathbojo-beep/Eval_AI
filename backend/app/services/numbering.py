@@ -6,6 +6,7 @@ Unparseable input returns None (never a guess).
 """
 from __future__ import annotations
 import re
+from . import tamil_format
 
 _PREFIX = re.compile(
     r"^\s*(?:(?:section|part|unit|group|sec)\s+[a-z0-9ivx]+\s*[\-\:\–\—]?\s*)?"
@@ -23,17 +24,6 @@ _ROMAN_VALS = {
     "xi": 11, "xii": 12, "xiii": 13, "xiv": 14, "xv": 15,
 }
 _NULLISH = {"", "null", "none", "unknown", "n/a", "na", "?", "-", "[unclear]", "unclear"}
-
-# Tamil sub-part letters in order: (அ) (ஆ) (இ) ... are (a) (b) (c) ... Stops before ஐ, which would read as roman "i".
-_TAMIL_SUB = "அஆஇஈஉஊஎஏ"
-_TAMIL_SUB_LATIN = str.maketrans(_TAMIL_SUB, "abcdefgh")
-# A Tamil sub-part letter standing alone ("(அ)", "அ)", "1அ"), not the first letter of a word ("அவர்")
-_TAMIL_SUB_TOKEN = re.compile(rf"([{_TAMIL_SUB}])(?![஀-௿])")
-
-
-def latin_subparts(s: str) -> str:
-    """'1 (அ)' -> '1 (a)': Tamil sub-part letters to the Latin letters the rest of the numbering code understands."""
-    return _TAMIL_SUB_TOKEN.sub(lambda m: m.group(1).translate(_TAMIL_SUB_LATIN), s)
 
 
 def subquestion_value(tok: str | None) -> int:
@@ -59,13 +49,28 @@ def _clean_token(tok: str) -> str | None:
     return None
 
 
+# A question of a part whose numbering restarts: "B1", "B-5(a)", "Part B 3" (capital part letter; Part A keeps plain
+# numbers). Lower case is left alone: "b1" is more likely a misread sub-part than a part.
+_PART_NUMBER = re.compile(r"^(?:part\s*)?([B-F])\s*[-–.]?\s*(\d{1,3}(?!\d).*)$")
+
+
+def part_and_number(normalized: str | None) -> tuple[str, int] | None:
+    """("B", 5) for "B5" / "B5(a)", ("", 5) for "5(a)"; None when the number is not a question number."""
+    m = re.match(r"^([B-F]?)(\d{1,3})(?:\(|$)", normalized or "")
+    return (m.group(1), int(m.group(2))) if m else None
+
+
 def normalize_question_number(raw: str | int | None) -> str | None:
     if raw is None:
         return None
-    s = latin_subparts(str(raw).strip())
+    s = str(raw).strip()
+    if tamil_format.has_tamil(s):
+        s = tamil_format.latin_label(s)
     if s.lower() in _NULLISH:
         return None
-    s = re.sub(r"^(\s*(?:வினா|கேள்வி|விடை|பதில்))\s*எண்", r"\1", s)  # "வினா எண் 3" (question number 3)
+    if m := _PART_NUMBER.match(re.sub(r"(?i)^part\b", "part", s)):
+        inner = normalize_question_number(m.group(2))
+        return f"{m.group(1)}{inner}" if inner and inner[0].isdigit() else None
 
     # Measurements / units guard: prevent floats with units (e.g. 1.5 kg, 10 cm, 5 marks) from being parsed as Q numbers
     if _MEASURE_UNITS.match(s):
@@ -182,7 +187,9 @@ def extract_subquestion_token(raw: str | None) -> str | None:
     """Extracts a bare subquestion token (e.g. '(b)' -> 'b', 'b>' -> 'b', '(ii)' -> 'ii') if raw is purely a subquestion label."""
     if raw is None:
         return None
-    s = latin_subparts(str(raw).strip())
+    s = str(raw).strip()
+    if tamil_format.has_tamil(s):
+        s = tamil_format.latin_subparts(s)
     if s.lower() in _NULLISH:
         return None
     s = _PREFIX.sub("", s).strip()
@@ -205,20 +212,8 @@ def extract_subquestion_token(raw: str | None) -> str | None:
 def extract_label_from_text_prefix(text: str) -> tuple[str | None, str]:
     """Check if question or answer text begins with an explicit question label like '01.', '1.', 'Q1:', 'Q1,', '1>', '01/02', etc."""
     s = text.strip()
-    # Pattern 0: Tamil "வினா 1", "வினா எண் 3 (அ)", "கேள்வி 2:", "விடை 4." (question / answer [number] N)
-    m_ta = re.match(rf"^\s*(?:வினா|கேள்வி|விடை|பதில்)\s*(?:எண்)?\s*[\.\:\-]?\s*([0-9]{{1,3}}(?:\s*\(\s*[{_TAMIL_SUB}a-zA-Z]\s*\))?)[\.\:\)\s\-\,\>\→]*(.*)", s, re.DOTALL)
-    if m_ta:
-        rest = m_ta.group(2).strip()
-        return latin_subparts(re.sub(r"\s+", "", m_ta.group(1))), (rest if rest else s)
-    # Tamil sub-part labels: "3(அ) ...", "3 அ) ...", "(ஆ) ...", "இ) ..."
-    m_ta = re.match(rf"^\s*([0-9]{{1,3}})\s*\(?\s*([{_TAMIL_SUB}])\s*\)[\.\:\s\-]*(.*)", s, re.DOTALL)
-    if m_ta:
-        rest = m_ta.group(3).strip()
-        return f"{m_ta.group(1)}({latin_subparts(m_ta.group(2))})", (rest if rest else s)
-    m_ta = re.match(rf"^\s*(?:\(\s*([{_TAMIL_SUB}])\s*\)|([{_TAMIL_SUB}])\s*[\)\.])[\.\:\s\-]*(.*)", s, re.DOTALL)
-    if m_ta:
-        rest = m_ta.group(3).strip()
-        return f"({latin_subparts(m_ta.group(1) or m_ta.group(2))})", (rest if rest else s)
+    if tamil_format.has_tamil(s) and (tamil := tamil_format.extract_label_prefix(s)) is not None:
+        return tamil
 
     # Pattern 1: Q1, Q.1, Question 1, Qn 1, etc. with :, ., comma, >, or whitespace
     m_q = re.match(r"^\s*(?:(?:Q(?:uestion)?|Qn|Ques)\.?\s*([0-9]+[a-zA-Z\(\)]*))[\.\:\)\s\-\/\,\>\→]+(.*)", s, re.IGNORECASE | re.DOTALL)
@@ -248,3 +243,45 @@ def extract_label_from_text_prefix(text: str) -> tuple[str | None, str]:
 
     return None, s
 
+
+_PART_MARK = re.compile(r"\b(?:PART|SECTION)\s*[-–:]?\s*([B-F]|II|III|IV|V|VI)\b", re.IGNORECASE)
+_PART_LETTERS = {"II": "B", "III": "C", "IV": "D", "V": "E", "VI": "F"}
+
+
+def part_labels(items: list, qs: list) -> list[str | None]:
+    """Labels for answers or keys (in sheet order) that belong to a part whose numbering restarts ("Q1" in Part B ->
+    "B1"); None for the rest. Answers need raw_question_number and answer_text.
+
+    Students rarely write the part. In order of strength: a part written in the label or the answer's opening ("B1",
+    "Part B"); a number the student has already answered in this part (a second "1" starts the next part); a long
+    written answer under a number whose earlier-part question is a multiple choice."""
+    letters = sorted({pn[0] for q in qs if (pn := part_and_number(parent_number(q.normalized_number or ""))) and pn[0]})
+    if not letters:
+        return [None] * len(items)
+    order = [""] + letters
+    by_num = {q.normalized_number: q for q in qs}
+    idx, used, out = 0, set(), []
+    for a in items:
+        out.append(None)
+        if getattr(a, "status", None) == "IGNORED":
+            continue
+        if m := _PART_MARK.search(f"{a.raw_question_number or ''} {(a.answer_text or '')[:40]}"):
+            letter = _PART_LETTERS.get(m.group(1).upper(), m.group(1).upper())
+            if letter in order and order.index(letter) != idx:
+                idx, used = order.index(letter), set()
+        norm = normalize_question_number(a.raw_question_number) if a.raw_question_number else None
+        pn = part_and_number(norm)
+        if not pn or pn[0]:
+            if pn:
+                idx, used = order.index(pn[0]) if pn[0] in order else idx, used
+            continue
+        if norm in used and idx + 1 < len(order):
+            idx, used = idx + 1, set()
+        if not order[idx] and idx + 1 < len(order) and f"{order[idx + 1]}{norm}" in by_num:
+            q = by_num.get(norm)
+            if q is not None and getattr(q, "question_type", None) == "mcq" and len((a.answer_text or "").split()) > 8:
+                idx, used = idx + 1, set()  # a written answer under an MCQ's number: the student is in the next part
+        used.add(norm)
+        if order[idx]:
+            out[-1] = f"{order[idx]}{norm}"
+    return out

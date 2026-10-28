@@ -3,6 +3,8 @@ from __future__ import annotations
 import shutil
 import subprocess
 import tempfile
+import unicodedata
+from dataclasses import dataclass
 from pathlib import Path
 import pymupdf
 from PIL import Image, ImageOps
@@ -16,29 +18,114 @@ class RenderError(Exception):
     pass
 
 
-_SUPERSCRIPT = str.maketrans("0123456789+-=()n", "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿ")
-_SUPERSCRIPT_FLAG = 1  # PyMuPDF span flag bit for superscript text
+_SUPERSCRIPT = str.maketrans("0123456789+-−=()n", "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁻⁼⁽⁾ⁿ")
+_SUBSCRIPT = str.maketrans("0123456789", "₀₁₂₃₄₅₆₇₈₉")
+
+
+@dataclass
+class _Span:
+    text: str
+    x0: float
+    x1: float
+    cy: float
+    size: float
+
+
+def _plain(t: str) -> str:
+    """Math italic letters (𝑥, 𝜋, ℎ) as ordinary ones (x, π, h); everything else unchanged."""
+    return "".join(unicodedata.normalize("NFKC", c) if 0x1D400 <= ord(c) <= 0x1D7FF or c == "ℎ" else c for c in t)
+
+
+def _wrap(t: str) -> str:
+    return f"({t})" if len(t) > 1 and any(c in t for c in " +-−×÷/") else t
+
+
+def _raised(t: str) -> str:
+    return t.translate(_SUPERSCRIPT) if all(c in "0123456789+-−=()n" for c in t) else f"^{_wrap(t)}"
+
+
+def _lowered(t: str) -> str:
+    return t.translate(_SUBSCRIPT) if t.isdigit() else f"_{t}" if t.isalnum() else _wrap(t)
+
+
+def _linear(spans: list[_Span]) -> str:
+    """One visual line as text. Word/PDF equations lay fractions out as a numerator above the line and a
+    denominator below it, and exponents as small raised text: these become 'num/den', '²' or '^(...)'."""
+    if not spans:
+        return ""
+    ref = max(spans, key=lambda s: (bool(s.text.strip()), round(s.size, 1), len(s.text.strip())))
+
+    def on_line(s: _Span) -> bool:  # smaller text needs only a slight shift to be a raised/lowered piece
+        return (not s.text.strip()  # a space's box says nothing about its level
+                or abs(s.cy - ref.cy) <= (0.25 if s.size >= 0.9 * ref.size else 0.15) * ref.size)
+
+    base = [s for s in spans if on_line(s)]
+    off = sorted((s for s in spans if not on_line(s)), key=lambda s: s.x0)
+    groups: list[list[_Span]] = []  # raised/lowered pieces that touch horizontally belong together
+    for s in off:
+        if groups and s.x0 <= max(g.x1 for g in groups[-1]) + 0.5:
+            groups[-1].append(s)
+        else:
+            groups.append([s])
+    items = [(s.x0, s.text) for s in base]
+    for g in groups:
+        up = [s for s in g if s.cy < ref.cy]
+        down = [s for s in g if s.cy > ref.cy]
+        num, den = _linear(up).strip(), _linear(down).strip()
+        if num and den:
+            t = f"{_wrap(num)}/{_wrap(den)}"
+        else:
+            t = _raised(num) if num else _lowered(den)
+        items.append((min(s.x0 for s in g), t))
+    return "".join(t for _, t in sorted(items, key=lambda i: i[0]))
+
+
+def _block_lines(spans: list[_Span]) -> list[str]:
+    rows: list[list[_Span]] = []
+    for s in sorted(spans, key=lambda s: s.cy):
+        if rows and s.cy - rows[-1][0].cy <= 0.3 * max(s.size, rows[-1][0].size):
+            rows[-1].append(s)
+        else:
+            rows.append([s])
+    # A short row just above/below a fuller one (numerators, denominators, exponents) belongs to that line;
+    # ordinary lines are at least ~1 font size apart.
+    # Fuller rows claim them first; a claimed row extends its line, so an exponent above a numerator joins too.
+    chars = [sum(len(s.text.strip()) for s in r) for r in rows]
+    owner = list(range(len(rows)))
+    size = [max(s.size for s in r) for r in rows]
+    x0 = [min(s.x0 for s in r) for r in rows]
+    x1 = [max(s.x1 for s in r) for r in rows]
+    changed = True
+    while changed:
+        changed = False
+        for i in sorted(range(len(rows)), key=lambda k: chars[k]):
+            if owner[i] != i or any(owner[k] == i for k in range(len(rows)) if k != i):
+                continue  # already attached, or already owns pieces
+            best = None
+            for j in range(len(rows)):
+                o = owner[j]
+                if (o != i and chars[o] > chars[i] and abs(rows[j][0].cy - rows[i][0].cy) < 0.85 * size[o]
+                        and x0[o] - 2 <= x0[i] and x1[i] <= x1[o] + 2
+                        and (best is None or abs(rows[j][0].cy - rows[i][0].cy) < best[0])):
+                    best = (abs(rows[j][0].cy - rows[i][0].cy), o)
+            if best:
+                owner[i], changed = best[1], True
+    return [_linear([s for k, r in enumerate(rows) if owner[k] == i for s in r])
+            for i in range(len(rows)) if owner[i] == i]
 
 
 def page_text(page) -> str:
-    """Plain page text like page.get_text(), but keeps superscripts: '2³ + 4³' instead of '23 + 43'."""
+    """Plain page text like page.get_text(), but with equations kept readable from their layout: superscripts
+    ('2³ + 4³', not '23 + 43') and fractions ('(2/3)^(−2)', '1/x²') instead of numbers stacked on separate lines."""
     try:
         blocks = page.get_text("dict")["blocks"]
     except Exception:
         return page.get_text()
-    out: list[str] = []
-    for b in blocks:
-        if b.get("type") != 0:
-            continue
-        for line in b.get("lines", []):
-            parts = []
-            for span in line.get("spans", []):
-                t = span.get("text", "")
-                if span.get("flags", 0) & _SUPERSCRIPT_FLAG and t.strip() and all(ch in "0123456789+-=()n " for ch in t):
-                    t = t.translate(_SUPERSCRIPT)
-                parts.append(t)
-            out.append("".join(parts))
-    return "\n".join(out) + "\n"
+    # Word puts each equation piece in its own block, so lines are rebuilt across the whole page
+    spans = [_Span(_plain(s["text"]), s["bbox"][0], s["bbox"][2], (s["bbox"][1] + s["bbox"][3]) / 2, s["size"])
+             for b in blocks if b.get("type") == 0
+             for line in b.get("lines", []) for s in line.get("spans", []) if s.get("text")]
+    return "\n".join(_block_lines(spans)) + "\n"
 
 
 def _docx_to_pdf(src: Path, out_dir: Path) -> Path:

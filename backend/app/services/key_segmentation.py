@@ -11,7 +11,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from typing import Any
-from .numbering import normalize_question_number, parent_number
+from . import choices, paper_format, tamil_format
+from .numbering import normalize_question_number, parent_number, part_labels, subpart_path
 
 
 @dataclass
@@ -28,29 +29,25 @@ class SegmentedKey:
     ocr_confidence: float | None = None
 
 
-# "marks" and "marking scheme" in English or Tamil (மதிப்பெண்(கள்); மதிப்பீட்டுக் குறிப்பு / மதிப்பெண் பகிர்வு)
-_MK = r"(?:marks?|m|மதிப்பெண்கள்|மதிப்பெண்)"
-_MK_WORD = r"(?:marks?|மதிப்பெண்கள்|மதிப்பெண்)"
-_SCHEME = r"(?:Marking\s+Scheme|மதிப்பீட்டுக்?\s*குறிப்பு(?:கள்)?|மதிப்பெண்\s*பகிர்வு|மதிப்பீட்டு\s*முறை)"
-# One marking point: "1 Mark: ...", "1 mark per ...", "(... marks ...)", "1 மதிப்பெண்: ...", "ஒவ்வொன்றுக்கும் 1 மதிப்பெண்"
+# One marking point: "1 Mark: ...", "1 mark per ...", "(... marks ...)"
 _CRITERION = re.compile(
-    rf"(?:^|\n)\s*[o•\-\*]?\s*(\d+(?:\.\d+)?\s*{_MK_WORD}[:\s][^\n]+|1 mark per[^\n]+|\([^\)]+{_MK_WORD}[^\)]*\)[^\n]*|ஒவ்வொ[^\n]*மதிப்பெண்[^\n]*)",
+    r"(?:^|\n)\s*[o•\-\*]?\s*(\d+(?:\.\d+)?\s*marks?[:\s][^\n]+|1 mark per[^\n]+|\([^\)]+marks?[^\)]*\)[^\n]*)",
     re.I,
 )
-# Tamil keys list points without a scheme heading: "• கருத்து – 1 மதிப்பெண்", "1 மதிப்பெண்: கருத்து"
-_TAMIL_POINT = re.compile(r"^\s*[•\-\*]?\s*(?:\d+(?:\.\d+)?\s*மதிப்பெண்\S*\s*[:\-–]\s*\S.*|\S.*[-–:(]\s*\d+(?:\.\d+)?\s*மதிப்பெண்\S*\s*\)?\s*)$", re.M)
 
 
 def parse_criteria_marks(criteria: list[str], text: str = "") -> float | None:
     """Parse question marks from marking scheme criteria or inline totals."""
+    if tamil_format.has_tamil(text) or any(tamil_format.has_tamil(c) for c in criteria):
+        return tamil_format.parse_criteria_marks(criteria, text)
     # 1. Check for explicit question marking scheme total: e.g. "Marking Scheme (5 Marks Total):"
-    m_tot = re.search(rf"{_SCHEME}\s*\(\s*(\d+(?:\.\d+)?)\s*{_MK}\s*(?:Total|மொத்தம்)?\s*\)", text, re.I)
+    m_tot = re.search(r"Marking\s+Scheme\s*\(\s*(\d+(?:\.\d+)?)\s*(?:marks?|m)\s*(?:Total)?\s*\)", text, re.I)
     if m_tot:
         return float(m_tot.group(1))
 
     # 2. Check each criteria line for explicit total:
     for c in criteria:
-        m_tot = re.search(rf"\(\s*(\d+(?:\.\d+)?)\s*{_MK}\s*(?:Total|மொத்தம்)\s*\)", c, re.I)
+        m_tot = re.search(r"\(\s*(\d+(?:\.\d+)?)\s*(?:marks?|m)\s*Total\s*\)", c, re.I)
         if m_tot:
             return float(m_tot.group(1))
 
@@ -58,19 +55,19 @@ def parse_criteria_marks(criteria: list[str], text: str = "") -> float | None:
     total = 0.0
     found_count = 0
     for c in criteria:
-        # Ignore deduction notes like "(Deduct 1/2 mark...)", "(... மதிப்பெண் குறைக்கவும்)"
-        if re.search(r"\bdeduct\b|குறைக்க|குறைவு", c, re.I):
+        # Ignore deduction notes like "(Deduct 1/2 mark...)"
+        if re.search(r"\bdeduct\b", c, re.I):
             continue
-        # Pattern A: starts with "1 Mark:" or "1.5 Marks:" / "1 மதிப்பெண்:"
-        m_start = re.match(rf"^\s*[•\-\*]?\s*(\d+(?:\.\d+)?)\s*{_MK}(?![a-z])\s*[:\-–]", c, re.I)
+        # Pattern A: starts with "1 Mark:" or "1.5 Marks:"
+        m_start = re.match(r"^\s*[•\-\*]?\s*(\d+(?:\.\d+)?)\s*(?:marks?|m)(?![a-z])\s*[:\-–]", c, re.I)
         if m_start:
             total += float(m_start.group(1))
             found_count += 1
             continue
-        # Pattern B: ends with "(1 Mark)" or "(1.5 Marks)" / "– 1 மதிப்பெண்"
-        m_end = re.search(rf"\(\s*(\d+(?:\.\d+)?)\s*{_MK}\s*\)\s*$|[-–:]\s*(\d+(?:\.\d+)?)\s*மதிப்பெண்\S*\s*$", c, re.I)
+        # Pattern B: ends with "(1 Mark)" or "(1.5 Marks)"
+        m_end = re.search(r"\(\s*(\d+(?:\.\d+)?)\s*(?:marks?|m)\s*\)\s*$", c, re.I)
         if m_end:
-            total += float(m_end.group(1) or m_end.group(2))
+            total += float(m_end.group(1))
             found_count += 1
             continue
 
@@ -82,11 +79,11 @@ def parse_criteria_marks(criteria: list[str], text: str = "") -> float | None:
 
 def extract_criteria_from_block(text: str) -> tuple[str, list[str]]:
     """Extract clean answer text and itemized criteria if a Marking Scheme is embedded in the block."""
-    ms_match = re.search(rf"(?:{_SCHEME}\s*(?:\([^\)]+\))?[:\s]*)(.*)", text, re.DOTALL | re.I)
+    if tamil_format.has_tamil(text):
+        return tamil_format.extract_criteria_from_block(text)
+    ms_match = re.search(r"(?:Marking\s+Scheme\s*(?:\([^\)]+\))?[:\s]*)(.*)", text, re.DOTALL | re.I)
     if not ms_match:
-        # Tamil point list with marks and no heading: the points are both the answer and the criteria
-        points = [m.group(0).strip() for m in _TAMIL_POINT.finditer(text)]
-        return text.strip(), points
+        return text.strip(), []
     ans_text = text[:ms_match.start()].strip()
     crit_items = _CRITERION.findall(text[ms_match.start():])
     return ans_text, [c.strip() for c in crit_items if c.strip()]
@@ -130,7 +127,7 @@ _PAGE_FURNITURE = re.compile(
     re.I | re.M,
 )
 # A line opening the marking scheme ("Marking Scheme (3 Marks):", "KEYWORD MARKING SCHEME")
-_SCHEME_LINE = re.compile(rf"^[^\n]*(?:\bMarking\s+Scheme\b|{_SCHEME})[^\n]*$", re.I | re.M)
+_SCHEME_LINE = re.compile(r"^[^\n]*\bMarking\s+Scheme\b[^\n]*$", re.I | re.M)
 
 
 def _table_criteria(scheme: str) -> list[str]:
@@ -178,13 +175,14 @@ def extract_from_full_pdf_text(full_text: str, norm_num: str) -> tuple[str | Non
     block = rest[:next_idx].strip() if next_idx is not None else rest.strip()
     clean_block = block.strip()
 
-    ms_match = _SCHEME_LINE.search(clean_block)
+    tamil = tamil_format.has_tamil(clean_block)
+    ms_match = (tamil_format.SCHEME_LINE if tamil else _SCHEME_LINE).search(clean_block)
     criteria = []
     answer_text = clean_block
     if ms_match:
         answer_text = clean_block[:ms_match.start()].strip()
         scheme = clean_block[ms_match.start():]
-        crit_items = _CRITERION.findall(scheme)
+        crit_items = (tamil_format.CRITERION if tamil else _CRITERION).findall(scheme)
         criteria = [c.strip() for c in crit_items if c.strip()] or _table_criteria(scheme)
 
     answer_text = re.sub(r"^\s*(?:Model\s+Answer|Answer\s+Key)\s*:?\s*\n", "", answer_text, flags=re.I)
@@ -197,6 +195,11 @@ def segment_answer_keys(
     canonical_questions: list[Any] | None = None,
 ) -> list[SegmentedKey]:
     """Segment and group answer key blocks across pages, merging continuations and computing marks."""
+    if paper_format.active() == paper_format.TAMIL:
+        from . import tamil_paper  # Tamil subjects have their own layout, see tamil_paper.py
+        tamil = tamil_paper.segment_keys(page_results, canonical_questions)
+        if tamil:
+            return tamil
     grouped: list[SegmentedKey] = []
     full_text = ""
 
@@ -387,6 +390,11 @@ def segment_answer_keys(
             if c_marks is not None:
                 k.marks = c_marks
 
+    # A part whose numbering restarts ("PART B ... Q1"): its keys are B1, B2 ... before same-numbered keys merge
+    for k, label in zip(grouped, part_labels(grouped, canonical_questions or [])):
+        if label:
+            k.raw_question_number, k.normalized_number = label, normalize_question_number(label)
+
     # Deduplicate and consolidate subparts by normalized_number
     deduped: list[SegmentedKey] = []
     seen_map: dict[str, SegmentedKey] = {}
@@ -434,7 +442,67 @@ def segment_answer_keys(
     if rebuilt:
         grouped = rebuilt
 
-    return grouped
+    return _split_part_keys(_split_choice_keys(grouped, canonical_questions), canonical_questions)
+
+
+def _split_by_part_labels(text: str, tokens: list[str]) -> list[str] | None:
+    """The text of each part when the text opens with "(a)" and holds the other labels in order; None otherwise."""
+    starts, pos = [], 0
+    for tok in tokens:
+        m = re.compile(rf"(?:^|(?<=\s))\(?[ \t]*{re.escape(tok)}[ \t]*\)", re.I).search(text, pos)
+        if not m:
+            return None
+        starts.append(m.start())
+        pos = m.end()
+    if text[:starts[0]].strip():
+        return None
+    return [text[s:e].strip() for s, e in zip(starts, starts[1:] + [len(text)])]
+
+
+def _split_part_keys(keys: list[SegmentedKey], canonical_questions: list[Any] | None) -> list[SegmentedKey]:
+    """A key for question 3 holding its parts' answers ("(a) ... (b) ...") when the exam has only 3(a) and 3(b)
+    becomes a key per part, each worth its question's marks."""
+    numbers = {q.normalized_number for q in canonical_questions or []}
+    parts: dict[str, list[Any]] = {}
+    for q in canonical_questions or []:
+        n = q.normalized_number or ""
+        if len(subpart_path(n)) == 1 and not getattr(q, "choice_group", None) and parent_number(n) not in numbers:
+            parts.setdefault(parent_number(n), []).append(q)
+    out: list[SegmentedKey] = []
+    for k in keys:
+        qs = parts.get(k.normalized_number or "", [])
+        texts = _split_by_part_labels(k.answer_text, [subpart_path(q.normalized_number)[0] for q in qs]) if len(qs) >= 2 else None
+        if not texts:
+            out.append(k)
+            continue
+        for q, part in zip(qs, texts):
+            answer, criteria = extract_criteria_from_block(part)
+            out.append(SegmentedKey(raw_question_number=k.raw_question_number, normalized_number=q.normalized_number,
+                                    answer_text=answer or part, marks=getattr(q, "max_marks", None), criteria=criteria,
+                                    page_number=k.page_number, bbox=k.bbox, ocr_confidence=k.ocr_confidence))
+    return out
+
+
+def _split_choice_keys(keys: list[SegmentedKey], canonical_questions: list[Any] | None) -> list[SegmentedKey]:
+    """A key for either/or question 38 holding both alternatives ("(a) ... OR (b) ...") becomes keys for 38(a) and
+    38(b), so each alternative is graded against its own answer."""
+    groups: dict[str, list[str]] = {}
+    for q in canonical_questions or []:
+        if getattr(q, "choice_group", None):
+            groups.setdefault(q.choice_group, []).append(q.normalized_number)
+    out: list[SegmentedKey] = []
+    for k in keys:
+        alt_numbers = groups.get(k.normalized_number or "", [])
+        parts = choices.split_alternatives(k.answer_text) if len(alt_numbers) >= 2 else []
+        if len(parts) != len(alt_numbers) or len(parts) < 2:
+            out.append(k)
+            continue
+        for number, part in zip(alt_numbers, parts):
+            answer, criteria = extract_criteria_from_block(part)
+            out.append(SegmentedKey(raw_question_number=k.raw_question_number, normalized_number=number,
+                                    answer_text=answer or part, marks=k.marks, criteria=criteria,
+                                    page_number=k.page_number, bbox=k.bbox, ocr_confidence=k.ocr_confidence))
+    return out
 
 
 def _canonical_top_numbers(canonical_questions: list[Any] | None) -> list[tuple[str, float | None]] | None:

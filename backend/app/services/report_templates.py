@@ -28,7 +28,7 @@ DEFAULTS: dict[str, dict] = {
                    "title": "Examination Report", "exam": "Examination", "subject": "Subject", "exam_type": "Exam Type",
                    "year": "Academic Year", "date": "Exam Date", "finalized": "Finalized",
                    "obtained": "Marks Obtained", "marks_section": "Question-wise Marks",
-                   "col_qno": "Q. No.", "col_k_level": "Level", "col_max": "Max", "col_obtained": "Obtained",
+                   "col_qno": "Q. No.", "col_k_level": "K Level", "col_max": "Max", "col_obtained": "Obtained",
                    "col_feedback": "Feedback", "by_k": "By Knowledge Level",
                    "adjusted": "Adjusted by teacher", "not_attempted": "Not attempted"},
         "signers": ["Subject Teacher", "Principal", "Parent / Guardian"],

@@ -25,6 +25,7 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from sqlalchemy.orm import Session
 
 from ..models import SchoolClass, Subject, Student, Exam, Evaluation, EvaluationItem, ExamQuestion, Teacher
+from . import choices
 
 # Theme Colors (ADEM Executive Palette)
 NAVY_HEADER = "1E3A8A"       # Primary deep navy header
@@ -172,9 +173,9 @@ def build_outcome_sheet(wb: openpyxl.Workbook, db: Session, class_ids: list[str]
         evs = db.query(Evaluation).filter_by(exam_id=exam.id, status="FINALIZED").all()
         for ev in evs:
             marks = {i.exam_question_id: i.final_marks for i in db.query(EvaluationItem).filter_by(evaluation_id=ev.id)}
-            s = summarize(qs, marks)
+            s = summarize(choices.counted(qs, marks), marks)
             rows.append((exam, ev, {r["key"]: r for r in s["k_levels"]}))
-    ws = wb.create_sheet("Bloom's Level Analysis")
+    ws = wb.create_sheet("K-Level Analysis")
     head = ["Class", "Exam", "Subject", "Roll No", "Reg No", "Student"] + list(K_LEVELS.values()) + ["Total", "Max", "%"]
     ws.append(head)
     for c in ws[1]:

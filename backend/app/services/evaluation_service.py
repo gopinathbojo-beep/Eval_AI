@@ -9,6 +9,7 @@ from ..ocr import prompts
 from ..ocr.internvl import AIResponseError, AIUnavailable, chat_structured, check_model
 from ..ocr.indic import text_model_for
 from ..ocr.schemas import EvaluationResult
+from . import choices, paper_format
 from .evaluation_rules import EvaluationValidationError, validate_evaluation
 from .job_queue import keyed_lock
 from .mapping_service import exam_questions
@@ -242,15 +243,31 @@ def evaluate_item(db: Session, ev: Evaluation, q: ExamQuestion, item: Evaluation
         for a in resolved.constituent_answers:
             a.status = "EVALUATING"
         db.commit()
-        prompt = prompts.evaluation_prompt(q.display_number, q.question_text, key.answer_text, key.criteria,
-                                           key.accepted_answers, key.keywords, q.max_marks, resolved.combined_text)
+        attempts = [(None, resolved.combined_text)]
+        tamil_answers = None
+        if paper_format.active() == paper_format.TAMIL:
+            from . import tamil_answers  # "write on any one topic" answered on several: each graded, the best counts
+            attempts = tamil_answers.one_of_attempts(q.question_text, resolved.combined_text) or attempts
         try:
-            call = chat_structured(prompts.EVAL_SYSTEM, prompt, EvaluationResult, model=model)
-            item.raw_response = call.raw
-            res = validate_evaluation(call.parsed, q.max_marks)  # type: ignore[arg-type]
+            graded = []
+            for title, text in attempts:
+                prompt = prompts.evaluation_prompt(q.display_number, q.question_text, key.answer_text, key.criteria,
+                                                   key.accepted_answers, key.keywords, q.max_marks, text)
+                call = chat_structured(prompts.EVAL_SYSTEM, prompt, EvaluationResult, model=model)
+                item.raw_response = call.raw
+                res = validate_evaluation(call.parsed, q.max_marks)  # type: ignore[arg-type]
+                if tamil_answers:  # a deduction the student's own text contradicts is undone
+                    res = tamil_answers.check_deductions(res, text, key.answer_text, q.max_marks)
+                graded.append((title, res, call.raw))
+            title, res, _ = max(graded, key=lambda g: g[1].marks_awarded)  # the first of equal best
             item.ai_marks, item.ai_decision = res.marks_awarded, res.decision
             item.matched_points, item.missing_points = res.matched_points, res.missing_points
             item.ai_feedback, item.ai_confidence = res.feedback, res.confidence
+            if len(graded) > 1:
+                item.raw_response = "\n\n".join(f"--- {t} ---\n{raw}" for t, _, raw in graded)
+                scores = "; ".join(f"{t}: {r.marks_awarded:g}/{q.max_marks:g}" for t, r, _ in graded)
+                item.ai_feedback = (f"Asked for one topic; {len(graded)} were answered. Each was graded and the best "
+                                    f"counts: {title}. Scores: {scores}.\n{res.feedback or ''}").strip()
             item.final_marks = res.marks_awarded  # proposal; becomes official only on teacher approval
             item.status = "EVALUATED"
             for a in resolved.constituent_answers:
@@ -277,7 +294,12 @@ def evaluate_item(db: Session, ev: Evaluation, q: ExamQuestion, item: Evaluation
         item.status = "MISSING"
         item.final_marks = 0.0
         item.not_attempted_confirmed = True
-        item.ai_feedback = "Question was not attempted by student."
+        if q.choice_group:
+            item.ai_feedback = f"Either/or question {q.choice_group}: this alternative was not answered; only one counts."
+        elif q.answer_any and not q.compulsory:
+            item.ai_feedback = f"Not answered. The section asks for any {q.answer_any}; the best {q.answer_any} count."
+        else:
+            item.ai_feedback = "Question was not attempted by student."
         item.error = None
         db.commit()
         return
@@ -513,8 +535,9 @@ def review_reasons(db: Session, ev: Evaluation, snap: ExamSnapshot) -> list[dict
 def finalize(db: Session, ev: Evaluation) -> None:
     qs = exam_questions(db, ev.exam_id)
     items = {i.exam_question_id: i for i in db.query(EvaluationItem).filter_by(evaluation_id=ev.id).all()}
-    ev.total_marks = sum((items[q.id].final_marks or 0.0) for q in qs)
-    ev.maximum_marks = sum((q.max_marks or 0.0) for q in qs)
+    counted_qs = choices.counted(qs, {qid: it.final_marks for qid, it in items.items()})
+    ev.total_marks = sum((items[q.id].final_marks or 0.0) for q in counted_qs)
+    ev.maximum_marks = sum((q.max_marks or 0.0) for q in counted_qs)
     ev.percentage = round(100.0 * ev.total_marks / ev.maximum_marks, 2) if ev.maximum_marks else 0.0
     ev.status, ev.finalized_at = "FINALIZED", datetime.now(timezone.utc)
     db.commit()

@@ -88,6 +88,14 @@ def match_student(db: Session, exam: Exam, read: dict) -> dict:
     if not (reg or roll):
         return _hold(NOTE_NO_ID, read, ranked)
 
+    swapped = ""
+    if not (by_reg or by_roll):  # students often write the roll number under "Reg. No" (or the reverse)
+        alt_roll = [s for s in students if reg and _roll_key(s.roll_number) == _roll_key(reg)]
+        alt_reg = [s for s in students if roll and s.registration_number and norm_id(s.registration_number) == norm_id(roll)]
+        if alt_roll or alt_reg:
+            reg, roll, by_reg, by_roll = roll, reg, alt_reg, alt_roll
+            swapped = " (written under the other label on the sheet)"
+
     if len(by_reg) == 1:
         st = by_reg[0]
         if by_roll and st not in by_roll:
@@ -112,7 +120,7 @@ def match_student(db: Session, exam: Exam, read: dict) -> dict:
     if st.id in taken:
         return _hold(f"Matched {st.name} ({st.roll_number}) by {how}, but they already have an answer sheet "
                      f"in this exam.", read, [st, *ranked])
-    return {"match": "AUTO", "student_id": st.id, "note": f"Matched by {how}.", "read": read, "candidates": []}
+    return {"match": "AUTO", "student_id": st.id, "note": f"Matched by {how}{swapped}.", "read": read, "candidates": []}
 
 
 # The printed label read as the value: "Roll no", "Roll No.", "Rollinco" (handwritten "Roll no:"), "Reg. No"
@@ -193,7 +201,9 @@ def _read_rotated(page, angle: int, read_fn=_internvl_identity) -> dict:
     with Image.open(page) as img:
         img.rotate(angle, expand=True).save(turned)
     try:
-        return _clean_read(read_fn(turned))
+        read = _clean_read(read_fn(turned))
+        read.pop("legible", None)
+        return read
     finally:
         turned.unlink(missing_ok=True)
 
@@ -204,9 +214,11 @@ def identify_with_rotation(db: Session, exam: Exam, doc: AnswerSheetDocument) ->
     Only an AUTO match from a turned page is used; otherwise the upright result (and its note) is kept.
     """
     read_fn = _reader(exam)
-    result = match_student(db, exam, _read_header(doc, read_fn))
+    read = _read_header(doc, read_fn)
+    legible = read.pop("legible", False)  # IndicOCR only: the page read as upright text, so turning it cannot help
+    result = match_student(db, exam, read)
     # Turning only helps when nothing usable was read; a clear read that conflicts with a record stays held
-    if result["match"] == "AUTO" or not result["note"].startswith((NOTE_NO_ID, NOTE_NO_MATCH)):
+    if result["match"] == "AUTO" or legible or not result["note"].startswith((NOTE_NO_ID, NOTE_NO_MATCH)):
         return result
     for page in _identity_pages(doc):
         for angle in ROTATIONS:

@@ -305,7 +305,7 @@ function BatchReview({
           <p className="text-xs text-mute">
             {summary.processing > 0 ? (
               <span className="animate-pulse">
-                Reading and grading sheets one after another: {summary.processing} still in progress…
+                Reading and grading sheets: {summary.processing} still in progress…
               </span>
             ) : (
               <>

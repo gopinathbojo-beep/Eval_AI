@@ -662,7 +662,7 @@ export function ResultPage() {
             <thead className="border-b border-line bg-surface text-xs font-semibold uppercase tracking-wider text-mute">
               <tr>
                 <th className="px-4 py-3">Question</th>
-                <th className="px-4 py-3">Level</th>
+                <th className="px-4 py-3">K Level</th>
                 <th className="px-4 py-3">Marks Awarded</th>
                 <th className="px-4 py-3">Max Marks</th>
                 <th className="px-4 py-3">Evaluation Status</th>

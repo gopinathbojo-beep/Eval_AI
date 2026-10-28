@@ -17,12 +17,13 @@ from ..ocr.internvl import AIResponseError, AIUnavailable, chat_structured, chec
 from ..ocr.indic import IndicResponseError, IndicUnavailable, check_indic, read_page, text_model_for, uses_indic_ocr
 from .ai_labeler import label_key_criteria, label_question_types
 from ..ocr.schemas import AnswerKeyPageResult, QuestionPageResult, StudentPageResult
-from .doc_structure import parse_question_paper_structure, StructuredQuestion
+from .doc_structure import apply_pdf_question_text, parse_question_paper_structure, StructuredQuestion
 from .key_segmentation import segment_answer_keys
 from .job_queue import keyed_lock
 from .student_segmentation import segment_student_answers
 from .mapping_service import apply_key_mapping, apply_student_mapping
 from .state import set_state
+from . import tamil_paper
 
 log = logging.getLogger("adem.pipeline")
 
@@ -236,7 +237,7 @@ def _load_results(doc, schema):
         if p.get("ocr_status") != "OK":
             continue
         p_dict = dict(p)
-        if pdf_doc:  # re-read so earlier uploads get current extraction (e.g. superscripts kept)
+        if pdf_doc and tamil_paper.uses_pdf_text():  # re-read so earlier uploads get current extraction (e.g. superscripts kept)
             p_num = p_dict.get("page_number", 1)
             if 1 <= p_num <= len(pdf_doc):
                 try:
@@ -275,6 +276,7 @@ def _build_questions(db: Session, doc, exam: Exam, wd: Path, results) -> None:
         db.query(EvaluationItem).filter(EvaluationItem.exam_question_id.in_(existing_q_ids)).delete(synchronize_session=False)
         db.query(ExamQuestion).filter_by(exam_id=exam.id).delete()
     struct = parse_question_paper_structure(results)
+    apply_pdf_question_text(struct.questions, [p.get("page_text") or "" for p, _ in results])
     labeler_model = text_model_for(exam.subject.name if exam.subject else None)
     if labeler_model:
         label_question_types(struct.questions, labeler_model)
@@ -337,6 +339,9 @@ def _build_questions(db: Session, doc, exam: Exam, wd: Path, results) -> None:
             question_type=q.question_type,
             max_marks=q.max_marks,
             section=q.section,
+            choice_group=q.choice_group,
+            answer_any=q.answer_any,
+            compulsory=q.compulsory,
             position=pos,
             page_start=q.page_start,
             page_end=q.page_end,

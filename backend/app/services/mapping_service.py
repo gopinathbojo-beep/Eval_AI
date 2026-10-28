@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from ..config import get_settings
 from ..models import AnswerKey, Evaluation, ExamQuestion, StudentAnswer
 from .mapping import MAPPED, NEEDS_REVIEW, UNMAPPED, flag_duplicates, map_label, detect_mapping_anomalies
+from .numbering import part_labels
 
 DUP_NOTE = "DUPLICATE_MAPPING: another answer also maps to this question"
 _RECOMPUTABLE = {"UNMAPPED", "NEEDS_REVIEW", "MAPPED"}
@@ -19,6 +20,7 @@ def apply_student_mapping(db: Session, ev: Evaluation) -> None:
     minc = get_settings().min_label_confidence
     answers = db.query(StudentAnswer).filter_by(evaluation_id=ev.id).order_by(StudentAnswer.position).all()
     total_ans = len(answers)
+    in_part = dict(zip((a.id for a in answers), part_labels(answers, qs)))
     prev_qid = None
     suggested: list[tuple[StudentAnswer, list[dict]]] = []  # unlabelled answers placed by content alone
     for a in answers:
@@ -31,7 +33,7 @@ def apply_student_mapping(db: Session, ev: Evaluation) -> None:
             prev_qid = a.exam_question_id
             continue
         res = map_label(
-            a.raw_question_number,
+            in_part.get(a.id) or a.raw_question_number,
             qs,
             a.ocr_confidence,
             minc,
@@ -57,7 +59,34 @@ def apply_student_mapping(db: Session, ev: Evaluation) -> None:
             a.status, a.mapping_note = "NEEDS_REVIEW", DUP_NOTE
         elif a.status == "NEEDS_REVIEW" and (a.mapping_note or "").startswith("DUPLICATE_MAPPING"):
             a.status, a.mapping_note = "MAPPED", None
+    _confirm_content_mappings(live, qs, suggested)
     db.flush()
+
+
+AUTO_MIN_SCORE = 0.75
+AUTO_MARGIN = 0.15
+
+
+def _confirm_content_mappings(answers: list, qs: list, suggested: list[tuple[Any, list[dict]]]) -> None:
+    """Map an unlabelled answer without review when every piece of evidence agrees: a strong content match that
+    clearly beats any other question, no other answer on that question, and its place in the answer order (between
+    the questions confidently answered before and after it). Anything short of that stays NEEDS_REVIEW."""
+    qpos = {q.id: q.position for q in qs}
+    for a, det in sorted(suggested, key=lambda x: x[0].position or 0):
+        if a.status != "NEEDS_REVIEW" or not det or a.exam_question_id != det[0].get("id"):
+            continue  # a duplicate, or moved by _spread_content_suggestions: the teacher decides
+        top = det[0].get("score") or 0
+        runner = max((d.get("score") or 0 for d in det[1:] if d.get("num") != det[0].get("num")), default=0)
+        if top < AUTO_MIN_SCORE or top - runner < AUTO_MARGIN:
+            continue
+        if any(x is not a and x.exam_question_id == a.exam_question_id for x in answers):
+            continue
+        confident = [x for x in answers if x.status == "MAPPED" and x.exam_question_id in qpos]
+        lo = max((qpos[x.exam_question_id] for x in confident if x.position < a.position), default=-1)
+        hi = min((qpos[x.exam_question_id] for x in confident if x.position > a.position), default=10**9)
+        if lo < qpos.get(a.exam_question_id, -2) < hi:
+            a.status = "MAPPED"  # counts as a confident neighbour for the answers after it
+            a.mapping_note = f"No readable number: mapped to Q{a.normalized_number} by content and answer order"
 
 
 SUGGESTION_MARGIN = 0.15

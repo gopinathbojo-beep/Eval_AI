@@ -2,6 +2,7 @@
 from __future__ import annotations
 import base64
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Type, TypeVar
@@ -194,6 +195,19 @@ def fallback_parse_plain_text(raw_text: str, schema: Type[T]) -> T | None:
     return None
 
 
+# The same few characters over and over at the end of a reply: the model is stuck in a loop (it reached its token
+# limit repeating text it cannot read, e.g. a Hindi passage in an English paper)
+_LOOP = re.compile(r"(.{4,200}?)\1{5,}", re.DOTALL)
+LOOP_HINT = ("\n\nIMPORTANT: your previous reply for this page repeated the same text until it was cut off. If a passage is "
+             "in a script you cannot read reliably (e.g. Hindi), do not transcribe it: write [Hindi passage] (or the "
+             "language's name) in its place, and transcribe everything else on the page.")
+
+
+def is_looping(raw: str) -> bool:
+    """A repeated unit with letters in it: dotted blanks ("..........") are not a loop."""
+    return any(sum(c.isalnum() for c in m.group(1)) >= 3 for m in _LOOP.finditer((raw or "")[-4000:]))
+
+
 def chat_structured(system: str, user: str, schema: Type[T], image_path: Path | None = None,
                     model: str | None = None) -> AICall:
     """Call the model (default InternVL), parse + validate against `schema`. Retries with CLAHE and 2-stage fallback on parse failures."""
@@ -201,6 +215,8 @@ def chat_structured(system: str, user: str, schema: Type[T], image_path: Path | 
     attempts = s.internvl_max_retries + 1
     raw, last_err, kind = "", "", "AI_ERROR"
     for i in range(1, attempts + 1):
+        if i > 1 and is_looping(raw) and LOOP_HINT not in user:
+            user += LOOP_HINT  # the same prompt would loop the same way again (temperature 0)
         try:
             raw = _call_once(system, user, image_path, format="json", model=model)
         except AIUnavailable:

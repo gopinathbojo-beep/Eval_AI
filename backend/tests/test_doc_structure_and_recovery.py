@@ -11,6 +11,7 @@ from app.services.doc_structure import (
     is_instruction,
     is_table_block,
 )
+from app.services import choices
 from app.services.student_segmentation import segment_student_answers
 from app.services.key_segmentation import segment_answer_keys
 from app.services.ocr_recovery import find_recovery_candidates
@@ -1119,16 +1120,18 @@ def test_scanned_paper_without_main_numbers_is_rebuilt_from_question_starts():
     ])
     doc = parse_question_paper_structure([({"page_number": 1}, p1), ({"page_number": 2}, p2)])
     nums = [q.display_number for q in doc.questions]
-    assert nums == ["1", "2", "3", "4", "5", "6"]
+    assert nums == ["1", "2", "3", "4(a)", "4(b)", "5", "6"]          # Q4 "(A) ... OR (B) ..." is an either/or choice
     by = {q.display_number: q for q in doc.questions}
     assert "(ii) Read the given line" in by["1"].question_text
-    assert "(B) Write a letter to the editor." in by["4"].question_text
+    assert by["4(a)"].question_text.endswith("Write a letter to the Commissioner of Traffic Police.")
+    assert by["4(b)"].question_text == "(B) Write a letter to the editor."
+    assert by["4(a)"].choice_group == by["4(b)"].choice_group == "4"
     assert "(iv) Explain why the speaker" in by["5"].question_text
     assert by["6"].question_text.startswith("Answer ANY TWO")
     # Q1-Q4 print their own totals; Q5/Q6 do not, so they share the rest of the 40 and need review
-    assert [by[n].max_marks for n in nums] == [10, 10, 10, 5, 2.5, 2.5]
+    assert [by[n].max_marks for n in nums] == [10, 10, 10, 5, 5, 2.5, 2.5]
     assert [by[n].verification_status for n in ("5", "6")] == ["NEEDS_REVIEW", "NEEDS_REVIEW"]
-    assert sum(q.max_marks or 0 for q in doc.questions) == 40
+    assert choices.max_total(doc.questions) == 40                     # the either/or choice counts once
 
 
 def test_answer_key_parts_with_answers_in_labels_rebuilt_from_pdf_headings():
@@ -1216,3 +1219,84 @@ def test_genuine_short_raw_labels_are_trusted():
     ])
     seg = segment_student_answers([({"page_number": 1}, page)], canonical_questions=exam_qs)
     assert [a.raw_question_number for a in seg][0] == "Q5"
+
+
+def test_unnumbered_blocks_answering_other_questions_are_not_folded_into_previous_answer():
+    """English sheet: OCR missed "4)", "Q5)" and "6)", leaving blocks that open with "(a)". They must not be folded
+    into Q2 as bullets (the whole blob was then remapped to Q4); each becomes its own answer."""
+    exam_qs = [
+        DummyQuestion("q1", "1", 1, "Why did the author go to Bridport in The Best Christmas Present in the World?"),
+        DummyQuestion("q2", "2", 2, 'Change the following sentences as directed: (a) She said, "I am reading a book." (Convert into Indirect Speech) (b) The teacher corrected the mistake. (Convert into Passive Voice)'),
+        DummyQuestion("q3", "3", 3, "According to the poet in The Ant and the Cricket, why did the cricket go to the ant, and how did the ant respond?"),
+        DummyQuestion("q4", "4", 4, "Fill in the blanks with appropriate prepositions/conjunctions: (a) He has been living in Delhi ______ 2018. (since / for) (b) Work hard ______ you will not pass the test. (and / otherwise)"),
+        DummyQuestion("q5", "5", 5, "Literature: In The Tsunami, how did Ignesious's wife and children lose their lives, and what lesson does the story convey about nature's power?"),
+        DummyQuestion("q6", "6", 6, "Grammar (Editing): The following passage has an error in each line. Identify the error and write the correction alongside: Line Incorrect Word Correct Word (a) Reading books is a good habits. (b) It help in improving knowledge. (c) Every student should read daily."),
+        DummyQuestion("q7", "7", 7, "Reading Comprehension: Trees are essential for maintaining life on Earth. (a) Mention two environmental benefits of trees given in the text."),
+    ]
+    page = StudentPageResult(page_number=1, answers=[
+        StudentAnswerItem(question_number="Q1", answer_text="The author went to Bridport to buy a roll-up deck at an auction. He later discovered a letter written by Tim Macpherson inside the deck."),
+        StudentAnswerItem(question_number="Q2", answer_text="(a) She said that she was reading a Book.\n(b) The mistakes were corrected by the teacher."),
+        StudentAnswerItem(question_number=None, answer_text="(a) He has been living in Delhi since 2018.\n(b) Work hard otherwise you will not pass the test."),
+        StudentAnswerItem(question_number=None, answer_text="(a) The Tsunami\nIgneous's wife and children were swept away by the tsunami while they were sleeping. The powerful waves destroyed their home and carried them away. The story teaches us that nature can be extremely powerful and unpredictable, so we must respect nature and be prepared for natural disasters."),
+        StudentAnswerItem(question_number=None, answer_text="(a) Incorrect word: habit\nCorrection: habits\n(b) Incorrect word: help\nCorrection: helps"),
+    ])
+    res = segment_student_answers([({"page_number": 1}, page)], canonical_questions=exam_qs)
+    assert [a.normalized_number for a in res] == ["1", "2", "4", "5", "6"]
+    assert "Delhi" not in res[1].answer_text
+    assert "habit" in res[4].answer_text and "helps" in res[4].answer_text
+    m = map_label(res[1].raw_question_number, exam_qs, answer_text=res[1].answer_text)
+    assert m.status == MAPPED and m.question_id == "q2"
+
+
+def test_pdf_page_text_rebuilds_stacked_fractions_and_exponents():
+    """Word equations put numerators/denominators on their own lines and exponents in small raised text."""
+    import pymupdf
+    from app.documents.renderer import page_text
+
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_text((50, 100), "If x+", fontsize=11)
+    page.insert_text((78, 94), "1", fontsize=8)
+    page.insert_text((78, 106), "x", fontsize=8)
+    page.insert_text((88, 100), "= 6, find the value. ", fontsize=11)
+    page.insert_text((50, 140), "((", fontsize=11)
+    page.insert_text((62, 132), "2", fontsize=11)
+    page.insert_text((62, 148), "3", fontsize=11)
+    page.insert_text((70, 140), ")", fontsize=11)
+    page.insert_text((75, 130), "-2", fontsize=8)
+    page.insert_text((88, 140), ") : 5", fontsize=11)
+    txt = page_text(page)
+    assert "If x+1/x" in txt and "= 6, find the value." in txt
+    assert "((2/3)⁻²):5" in txt.replace(" ", "")
+
+
+def test_pdf_text_layer_replaces_misread_question_text():
+    """A typed paper's text layer wins over vision misreads ("6 workers" for "16 workers", "(p+b)" for "(a+b)")."""
+    from app.services.doc_structure import apply_pdf_question_text, StructuredQuestion
+
+    def sq(n, text):
+        return StructuredQuestion(raw_question_number=f"Q{n}", normalized_number=n, display_number=n, question_text=text,
+                                  question_type=None, max_marks=2, section=None, page_start=1, page_end=1, bbox=None,
+                                  ocr_confidence=0.9)
+    qs = [sq("3", "Direct and Inverse Variations:\nA team of 12 workers can construct a boundary wall in 20 days working 8 hours a day. Calculate how many days 6 workers will take to complete the same wall working 6 hours a day."),
+          sq("4", "Factorisation:\nFactorise the expression completely using the identity a^2 - b^2 = (a - b)(p + b):"),
+          sq("5", "Something the text layer does not hold at all")]
+    pdf = ("SECTION A: SHORT ANSWER QUESTIONS\nQ3. Direct and Inverse Variations:\nA team of 12 workers can construct a boundary wall in 20 days working 8 hours a day. \n"
+           "Calculate how many days 16 workers will take to complete the same wall working 6 hours a day.\n \n"
+           "Q4. Factorisation:\nFactorise the expression completely using the identity a² −b² = (a−b)(a+ b):\n16x⁴ −81y⁴\n"
+           "SECTION B: MEDIUM ANSWER QUESTIONS\n(4 questions × 3 marks = 12 Marks)\nQ5. Mensuration of a canal cross-section trapezium area volume earth\n")
+    assert apply_pdf_question_text(qs, [pdf]) == 2
+    assert "16 workers" in qs[0].question_text and "\n" not in qs[0].question_text.split(":", 1)[1].strip()
+    assert qs[1].question_text.endswith("(a−b)(a+ b):\n16x⁴ −81y⁴")
+    assert qs[2].question_text == "Something the text layer does not hold at all"
+
+
+@pytest.mark.parametrize("text,level", [
+    ("Write balanced word equations for the following chemical reactions:", "K3"),
+    ("Expand and simplify the combined expression using suitable algebraic identities (a + b)²", "K3"),
+    ("Expand the abbreviation CNG.", "K1"),
+    ("Calorific value of a fuel and its SI unit?", "K1"),
+])
+def test_k_level_suggested_for_every_question(text, level):
+    from app.services.k_level import suggest_k_level
+    assert suggest_k_level(text) == level

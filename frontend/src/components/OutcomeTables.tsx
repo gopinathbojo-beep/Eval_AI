@@ -22,7 +22,8 @@ function Table({ title, first, rows, average }: { title: string; first: string; 
           {rows.map((r) => (
             <tr key={r.key}>
               <td className="px-4 py-2.5 font-semibold text-ink">
-                {r.label}
+                {r.key}
+                {r.label !== r.key && <span className="ml-1.5 font-normal text-mute">{r.label}</span>}
               </td>
               <td className="px-4 py-2.5 font-mono text-mute">{r.questions}</td>
               <td className="px-4 py-2.5 font-mono font-semibold text-pen">{fmt(average ? r.average_scored : r.scored)}</td>
@@ -47,8 +48,8 @@ function Table({ title, first, rows, average }: { title: string; first: string; 
   );
 }
 
-/** Marks grouped by Bloom's level. Hidden when no question is tagged. */
+/** Marks grouped by Bloom's K level. Hidden when no question is tagged. */
 export function OutcomeTables({ outcomes, average }: { outcomes: Outcomes; average?: boolean }) {
   if (!outcomes.k_levels.some((r) => r.key !== "Untagged")) return null;
-  return <Table title="Performance by Knowledge Level (Bloom's)" first="Level" rows={outcomes.k_levels} average={average} />;
+  return <Table title="Performance by Knowledge Level (Bloom's)" first="K Level" rows={outcomes.k_levels} average={average} />;
 }

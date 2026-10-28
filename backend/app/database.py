@@ -1,6 +1,6 @@
 from __future__ import annotations
 import logging
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from .config import get_settings
 
@@ -39,3 +39,20 @@ def init_db():
     from . import models  # noqa: F401
     logging.getLogger("adem").info("Database: %s", engine.url.database)
     Base.metadata.create_all(engine)
+    _add_missing_columns()
+
+
+# Columns added after a table first shipped. create_all never alters an existing table, so they are added here.
+_ADDED_COLUMNS = {"exam_questions": {"choice_group": "VARCHAR(50)", "answer_any": "INTEGER",
+                                     "compulsory": "BOOLEAN NOT NULL DEFAULT 0"}}
+
+
+def _add_missing_columns() -> None:
+    insp = inspect(engine)
+    with engine.begin() as conn:
+        for table, cols in _ADDED_COLUMNS.items():
+            have = {c["name"] for c in insp.get_columns(table)}
+            for name, sql_type in cols.items():
+                if name not in have:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}"))
+                    logging.getLogger("adem").info("Database: added %s.%s", table, name)
