@@ -1573,6 +1573,7 @@ def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> Docu
 # question's slice of the text layer replaces the model's text when both clearly hold the same question.
 
 _PDF_HEAD = r"(?m)^[ \t]*(?:Q(?:uestion)?\.?[ \t]*)?{n}[ \t]*[.):][ \t]*"
+_PDF_GAP_HEAD = r"(?m)^[ \t]*Q(?:uestion)?\.?[ \t]*{n}[ \t]*[.):][ \t]*"  # only a "Q"-labelled head can add a question
 _PDF_PART = r"(?m)^[ \t]*\(\s*{t}\s*\)[ \t]*"
 _PDF_STOP = re.compile(r"(?m)^[ \t]*(?:SECTION|PART)\b.*$", re.IGNORECASE)
 _PDF_SAME_QUESTION = 0.5
@@ -1597,6 +1598,33 @@ def _tidy_pdf_lines(text: str) -> str:
     return "\n".join(out)
 
 
+def _recover_skipped_questions(questions: list[StructuredQuestion], full: str,
+                               heads: dict[str, tuple[int, int]]) -> dict[str, set[str]]:
+    """A typed "Q8." between Q7 and Q9 that the vision model merged into Q7 becomes a question of its own,
+    inserted after Q7 and flagged for review. Returns, per merged question, the words that belong to the
+    recovered ones (so the merged question's OCR text still matches its own slice of the text layer)."""
+    absorbed: dict[str, set[str]] = {}
+    known = sorted((int(p), p) for p in heads if p.isdigit())
+    for (a, pa), (b, pb) in zip(known, known[1:]):
+        lo, hi = heads[pa][1], heads[pb][0]
+        prev = pa
+        for n in range(a + 1, b):
+            m = re.compile(_PDF_GAP_HEAD.format(n=n)).search(full, lo, hi)
+            if not m:
+                continue
+            idx = max(i for i, q in enumerate(questions) if parent_number(q.normalized_number or "") == prev)
+            tpl = questions[idx]
+            questions.insert(idx + 1, StructuredQuestion(
+                raw_question_number=f"Q{n}", normalized_number=str(n), display_number=str(n), question_text="",
+                question_type=None, max_marks=None if is_sub_question(tpl.normalized_number or "") else tpl.max_marks,
+                section=tpl.section, page_start=tpl.page_end, page_end=tpl.page_end, bbox=None, ocr_confidence=None,
+                verification_status="NEEDS_REVIEW", review_reason="Question found only in the PDF text layer"))
+            heads[str(n)] = (m.start(), m.end())
+            absorbed.setdefault(pa, set()).update(_words(full[m.end():hi]))
+            lo, prev = m.end(), str(n)
+    return absorbed
+
+
 def apply_pdf_question_text(questions: list[StructuredQuestion], page_texts: list[str]) -> int:
     """Replace OCR question text with the PDF text layer where it can be located with certainty. Returns how
     many questions changed. Scanned papers have no text layer and are left alone."""
@@ -1613,6 +1641,7 @@ def apply_pdf_question_text(questions: list[StructuredQuestion], page_texts: lis
         if m:
             heads[p] = (m.start(), m.end())
             pos = m.end()
+    absorbed = _recover_skipped_questions(questions, full, heads)
     starts = sorted(s for s, _ in heads.values())
     changed = 0
     for q in questions:
@@ -1632,7 +1661,7 @@ def apply_pdf_question_text(questions: list[StructuredQuestion], page_texts: lis
             nxt = re.compile(r"(?m)^[ \t]*\(\s*[a-zA-Z]{1,4}\s*\)").search(block, pm.end())
             block = block[pm.end():nxt.start() if nxt else len(block)]
         text = _tidy_pdf_lines(block)
-        ocr = _words(q.question_text)
+        ocr = _words(q.question_text) - absorbed.get(p, set())
         if not text or (ocr and len(ocr & _words(text)) < _PDF_SAME_QUESTION * len(ocr)):
             continue
         if re.sub(r"\s+", " ", text) != re.sub(r"\s+", " ", q.question_text or ""):

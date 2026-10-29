@@ -87,6 +87,28 @@ def test_doc_structure_parser_headings_and_section_marks():
     assert "Line | Incorrect Word" in q6.question_text
 
 
+def test_student_labels_read_one_behind_after_skipped_question():
+    """Q3 skipped; OCR read "4)" as "3>" and "5)" as "4>". The first is moved to Q4 by content, so the second's
+    content decides too: Q5, not a continuation of Q4."""
+    from types import SimpleNamespace as S
+    qs = [S(id=f"q{n}", normalized_number=str(n), display_number=str(n), position=n, max_marks=2, question_text=t)
+          for n, t in [(3, "According to the poet in The Ant and the Cricket, why did the cricket go to the ant?"),
+                       (4, "Fill in the blanks: (a) He has been living in Delhi ______ 2018. (b) Work hard ______ you will not pass the test."),
+                       (5, "In The Tsunami, how did Ignesious's wife and children lose their lives, and what lesson "
+                           "does the story convey about nature's power?"),
+                       (6, "The following passage has an error in each line. Identify the error.")]]
+    page_res = StudentPageResult(page_number=1, answers=[
+        StudentAnswerItem(question_number="3>", answer_text="(a) He has been living in Delhi since 2018.\n(b) Work hard otherwise you will not pass the test."),
+        # the sheet's own OCR: "Tsunami" read as "Current", "Ignesious's" as "Ignorant's" (scores 0.72 for Q5)
+        StudentAnswerItem(question_number="4>", answer_text="(a) The Current: Ignorant's wife and children were saved away by "
+                          "the powerful waves while they were sleeping. The strong destructive homes and carried them "
+                          "across. The story teaches us that nature can be extremely Powerful and unpredictable, so we "
+                          "must respect nature and be Prepared for natural disasters."),
+    ])
+    res = segment_student_answers([({"page_number": 1}, page_res)], qs)
+    assert [(a.normalized_number, a.answer_text[:12]) for a in res] == [("4", "(a) He has b"), ("5", "(a) The Curr")]
+
+
 def test_student_answer_segmentation_bullets():
     """Verify Q7 with content bullets 1) and 2) is grouped into a single Q7(a) answer."""
     page_res = StudentPageResult(
@@ -1289,6 +1311,31 @@ def test_pdf_text_layer_replaces_misread_question_text():
     assert "16 workers" in qs[0].question_text and "\n" not in qs[0].question_text.split(":", 1)[1].strip()
     assert qs[1].question_text.endswith("(a−b)(a+ b):\n16x⁴ −81y⁴")
     assert qs[2].question_text == "Something the text layer does not hold at all"
+
+
+def test_pdf_text_layer_recovers_question_merged_into_previous():
+    """OCR folded "Q8." into an unnumbered Q7; the typed paper's "Q8." heading makes it a question again."""
+    from app.formatter.common.paper import apply_pdf_question_text, StructuredQuestion
+
+    def sq(n, text):
+        return StructuredQuestion(raw_question_number=f"Q{n}", normalized_number=n, display_number=n, question_text=text,
+                                  question_type=None, max_marks=3, section="SECTION B", page_start=1, page_end=1,
+                                  bbox=None, ocr_confidence=0.9)
+    q7 = ("Reading Comprehension:\nRead the short passage and answer the questions that follow: Trees are essential "
+          "for maintaining life on Earth.\n(a) Mention two environmental benefits of trees given in the text. (1 mark)\n"
+          "Q8. Literature:\nWhy did Jody want to bring the fawn home in This is Jody's Fawn? How did he persuade his father?")
+    qs = [sq("7", q7), sq("9", "Writing Skills (Notice Writing):\nDraft a notice about the debate competition.")]
+    pdf = ("Q7. Reading Comprehension:\nRead the short passage and answer the questions that follow:\n"
+           "Trees are essential for maintaining life on Earth.\n"
+           "(a) Mention two environmental benefits of trees given in the text. (1 mark)\n"
+           "Q8. Literature:\nWhy did Jody want to bring the fawn home in This is Jody's Fawn? How did he persuade his father?\n"
+           "SECTION C: LONG ANSWER & WRITING SKILLS\n"
+           "Q9. Writing Skills (Notice Writing):\nDraft a notice about the debate competition.\n")
+    apply_pdf_question_text(qs, [pdf])
+    assert [q.normalized_number for q in qs] == ["7", "8", "9"]
+    assert "Jody" not in qs[0].question_text and qs[0].question_text.endswith("(1 mark)")
+    assert qs[1].question_text.startswith("Literature:\nWhy did Jody") and qs[1].max_marks == 3
+    assert qs[1].verification_status == "NEEDS_REVIEW" and "SECTION C" not in qs[1].question_text
 
 
 @pytest.mark.parametrize("text,level", [
