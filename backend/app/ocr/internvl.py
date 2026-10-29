@@ -69,29 +69,6 @@ def unload_model(model: str) -> None:
         log.warning("Could not unload %s from Ollama: %s", model, e)
 
 
-def load_model(model: str) -> None:
-    """Load a model into Ollama now, with the context size every call uses (another size would load it again)."""
-    s = get_settings()
-    try:
-        httpx.post(f"{s.internvl_api_url}/api/generate", timeout=s.internvl_timeout,
-                   json={"model": model, "keep_alive": s.internvl_keep_alive, "options": {"num_ctx": s.internvl_num_ctx}})
-    except httpx.HTTPError as e:
-        log.warning("Could not preload %s in Ollama: %s", model, e)
-
-
-def models_off_gpu() -> set[str]:
-    """Ollama models loaded now that are not wholly in GPU memory (Ollama puts a model on the CPU, slowly, when it loads
-    while the GPU is full, and keeps it there until it is unloaded)."""
-    s = get_settings()
-    try:
-        r = httpx.get(f"{s.internvl_api_url}/api/ps", timeout=10)
-        r.raise_for_status()
-    except httpx.HTTPError as e:
-        log.warning("Could not list Ollama's loaded models: %s", e)
-        return set()
-    return {m["name"] for m in r.json().get("models") or [] if (m.get("size_vram") or 0) < (m.get("size") or 0)}
-
-
 def _call_once(system: str, user: str, image_path: Path | None, format: str | None = "json",
                model: str | None = None) -> str:
     s = get_settings()
@@ -104,7 +81,6 @@ def _call_once(system: str, user: str, image_path: Path | None, format: str | No
         "options": {"temperature": 0, "repeat_penalty": 1.15, "num_ctx": s.internvl_num_ctx, "num_predict": s.internvl_num_predict},
         "messages": [{"role": "system", "content": system}, msg],
         "logprobs": True,  # each token's probability: the measured reading confidence (confidence.py)
-        "keep_alive": s.internvl_keep_alive,
     }
     if format:
         payload["format"] = format

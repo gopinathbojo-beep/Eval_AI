@@ -497,8 +497,7 @@ def auto_evaluate_sheet(doc_id: str) -> None:
     """Grade a freshly read sheet straight away when nothing needs the teacher first (pages read, answers mapped).
 
     Sheets with unread pages or unmapped answers are left for the teacher; review_reasons() lists why. Grading is
-    queued as its own job, on its grading model's engine: a Tamil sheet's reading job must not hold IndicOCR on the
-    GPU while InternVL grades it (Ollama would then load InternVL on the CPU).
+    queued as its own job on the grading model's engine, so a Tamil sheet is graded once InternVL is back on the GPU.
     """
     db = SessionLocal()
     try:
@@ -515,7 +514,7 @@ def auto_evaluate_sheet(doc_id: str) -> None:
         ev_id, exam_id = ev.id, ev.exam_id
     finally:
         db.close()
-    submit(exam_id, run_evaluation, ev_id, reads_pages=False)
+    submit(exam_id, run_evaluation, ev_id, grading=True)
 
 
 def review_reasons(db: Session, ev: Evaluation, snap: ExamSnapshot) -> list[dict]:

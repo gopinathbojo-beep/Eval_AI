@@ -56,7 +56,7 @@ def test_english_paper_parses_the_same_under_every_format():
 
 def test_queued_job_runs_with_its_exam_format(monkeypatch):
     seen = []
-    monkeypatch.setattr(job_queue, "engine_for", lambda exam_id, reads_pages=True: "internvl")
+    monkeypatch.setattr(job_queue, "engine_for", lambda exam_id, grading=False: "internvl")
     monkeypatch.setattr(job_queue, "format_for", lambda exam_id: paper_format.ENGLISH)
     monkeypatch.setattr(job_queue, "switch_engine", lambda engine: None)
     job_queue.submit("exam-1", lambda: seen.append(paper_format.active()))

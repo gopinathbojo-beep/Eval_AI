@@ -6,7 +6,7 @@ POST /parse   (multipart "image") -> {"image", "width", "height",
               conf is the layout model's certainty about the box; text_conf is the recognizer's about the text in it
               (confidence.py), low_words the words it doubted
 POST /release -> frees GPU memory once running pages finish; the backend calls it when its job queue switches to InternVL
-GET  /health  -> {"status": "ok", "model": "bodhan-ai/indic-ocr", "loaded": bool}
+GET  /health  -> {"status": "ok", "model": "bodhan-ai/indic-ocr", "loaded": bool, "gpu": GPU name, or null on the CPU}
 The model loads on the first page after start or release. Pages from parallel backend jobs are read at the same time
 on the one loaded model; the backend's INDIC_PARALLEL_JOBS sets how many.
 """
@@ -53,7 +53,9 @@ app = FastAPI(title="ADEM IndicOCR service")
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "model": MODEL_REPO, "loaded": _parser is not None}
+    import torch
+    gpu = torch.cuda.get_device_name(0) if torch.cuda.is_available() else None
+    return {"status": "ok", "model": MODEL_REPO, "loaded": _parser is not None, "gpu": gpu}
 
 
 @app.post("/release")
