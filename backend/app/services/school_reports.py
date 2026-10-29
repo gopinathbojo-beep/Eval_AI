@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 from ..deps import err, get_evaluation, get_exam
 from ..documents.storage import abs_path
 from ..models import AuditLog, Evaluation, EvaluationItem, Exam, ExamQuestion, SchoolClass, SchoolProfile, Student, Teacher
-from .k_level import K_LEVELS, summarize as summarize_outcomes
+from ..formatter.common.k_level import K_LEVELS, summarize as summarize_outcomes
 from .report_generator import BASE_FONT, BOLD_FONT
 from .report_templates import active_config
 

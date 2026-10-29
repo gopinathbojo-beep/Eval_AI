@@ -3,12 +3,14 @@ from __future__ import annotations
 import base64
 import logging
 import re
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Type, TypeVar
 import httpx
 from pydantic import BaseModel, ValidationError
 from ..config import AI_BAD_RESPONSE_MESSAGE, AI_UNAVAILABLE_MESSAGE, get_settings
+from . import confidence
 from .parser import ParseError, extract_json_object
 
 log = logging.getLogger("adem.ai")
@@ -67,6 +69,29 @@ def unload_model(model: str) -> None:
         log.warning("Could not unload %s from Ollama: %s", model, e)
 
 
+def load_model(model: str) -> None:
+    """Load a model into Ollama now, with the context size every call uses (another size would load it again)."""
+    s = get_settings()
+    try:
+        httpx.post(f"{s.internvl_api_url}/api/generate", timeout=s.internvl_timeout,
+                   json={"model": model, "keep_alive": s.internvl_keep_alive, "options": {"num_ctx": s.internvl_num_ctx}})
+    except httpx.HTTPError as e:
+        log.warning("Could not preload %s in Ollama: %s", model, e)
+
+
+def models_off_gpu() -> set[str]:
+    """Ollama models loaded now that are not wholly in GPU memory (Ollama puts a model on the CPU, slowly, when it loads
+    while the GPU is full, and keeps it there until it is unloaded)."""
+    s = get_settings()
+    try:
+        r = httpx.get(f"{s.internvl_api_url}/api/ps", timeout=10)
+        r.raise_for_status()
+    except httpx.HTTPError as e:
+        log.warning("Could not list Ollama's loaded models: %s", e)
+        return set()
+    return {m["name"] for m in r.json().get("models") or [] if (m.get("size_vram") or 0) < (m.get("size") or 0)}
+
+
 def _call_once(system: str, user: str, image_path: Path | None, format: str | None = "json",
                model: str | None = None) -> str:
     s = get_settings()
@@ -78,6 +103,8 @@ def _call_once(system: str, user: str, image_path: Path | None, format: str | No
         "stream": False,
         "options": {"temperature": 0, "repeat_penalty": 1.15, "num_ctx": s.internvl_num_ctx, "num_predict": s.internvl_num_predict},
         "messages": [{"role": "system", "content": system}, msg],
+        "logprobs": True,  # each token's probability: the measured reading confidence (confidence.py)
+        "keep_alive": s.internvl_keep_alive,
     }
     if format:
         payload["format"] = format
@@ -89,7 +116,17 @@ def _call_once(system: str, user: str, image_path: Path | None, format: str | No
         raise AIUnavailable(f"Ollama 404 (model missing?): {r.text[:300]}")
     r.raise_for_status()
     body = r.json()
+    _last.logprobs = body.get("logprobs")
     return (body.get("message") or {}).get("content", "") or ""
+
+
+_last = threading.local()  # the token log-probabilities of this thread's last reply
+
+
+def _measured(parsed: T, raw: str) -> T:
+    """The page's items with the confidence measured from the reply just received, not the one the model wrote."""
+    confidence.apply(parsed, raw, getattr(_last, "logprobs", None))
+    return parsed
 
 
 def enhance_contrast(image_path: Path) -> Path:
@@ -227,7 +264,7 @@ def chat_structured(system: str, user: str, schema: Type[T], image_path: Path | 
             continue
         try:
             obj = extract_json_object(raw)
-            parsed = schema.model_validate(obj)
+            parsed = _measured(schema.model_validate(obj), raw)
             # Check if this is a tall document page where the model only extracted items in the upper portion
             if image_path is not None and hasattr(parsed, "questions") and parsed.questions:
                 try:
@@ -246,7 +283,7 @@ def chat_structured(system: str, user: str, schema: Type[T], image_path: Path | 
                                 try:
                                     bot_raw = _call_once(system, user, bot_path, format="json", model=model)
                                     bot_obj = extract_json_object(bot_raw)
-                                    bot_parsed = schema.model_validate(bot_obj)
+                                    bot_parsed = _measured(schema.model_validate(bot_obj), bot_raw)
                                     if hasattr(bot_parsed, "questions") and bot_parsed.questions:
                                         seen_texts = {q.question_text.strip().lower()[:50] for q in parsed.questions if q.question_text}
                                         for bq in bot_parsed.questions:
@@ -276,7 +313,7 @@ def chat_structured(system: str, user: str, schema: Type[T], image_path: Path | 
             try:
                 raw_clahe = _call_once(system, user, enhanced_img, format="json", model=model)
                 obj_clahe = extract_json_object(raw_clahe)
-                parsed_clahe = schema.model_validate(obj_clahe)
+                parsed_clahe = _measured(schema.model_validate(obj_clahe), raw_clahe)
                 return AICall(parsed_clahe, raw_clahe, attempts + 1)
             except Exception:
                 pass

@@ -2,8 +2,11 @@
 
 Every job that uses a model (reading papers/keys/sheets, identifying students, grading) is queued here instead of
 running as its own background task. The engine its exam needs is the only one on the GPU:
-  internvl : InternVL in Ollama
-  indic    : IndicOCR service + INDIC_TEXT_MODEL in Ollama (InternVL if no text model is set)
+  internvl   : InternVL in Ollama
+  indic      : IndicOCR service, which reads Indian-language pages (+ INDIC_TEXT_MODEL, or InternVL, to label them)
+  indic-text : INDIC_TEXT_MODEL in Ollama, grading Indian-language exams (InternVL grades them when it is unset:
+               those jobs run on "internvl")
+Grading reads no page, so it never holds IndicOCR on the GPU beside the grading model.
 Up to INTERNVL_PARALLEL_JOBS / INDIC_PARALLEL_JOBS jobs run at once on the loaded engine. A waiting job for the loaded
 engine may start ahead of older jobs for the other engine, so an English, Tamil, English, Tamil upload runs both English
 jobs, switches once, then both Tamil jobs. A job is passed over at most MAX_SKIPS times; then the running jobs finish,
@@ -20,7 +23,8 @@ from ..config import get_settings
 from ..database import SessionLocal
 from ..models import Exam
 from ..ocr.indic import release_indic, uses_indic_ocr
-from ..ocr.internvl import unload_model
+from ..ocr.internvl import load_model, models_off_gpu, unload_model
+from .. import formatter
 from . import paper_format
 
 log = logging.getLogger("adem.queue")
@@ -34,6 +38,7 @@ class _Job:
     fn: Callable
     args: tuple
     paper_format: str | None = None  # the exam subject's format, see services/paper_format.py
+    subject: str | None = None  # the exam subject's formatter, see app/formatter
     skips: int = 0
 
 
@@ -44,6 +49,7 @@ _switching = False  # a worker is changing engines outside the lock: no other jo
 _workers: list[threading.Thread] = []
 _inline_lock = threading.RLock()  # inline jobs may queue more jobs (identify -> read), which run in the same thread
 _current_engine: str | None = None  # None: unknown (e.g. after start), so a first switch frees everything else
+_cpu_only: set[str] = set()  # Ollama models that load on the CPU even on a free GPU: reloading them gains nothing
 
 _key_locks: dict[str, threading.RLock] = {}
 _key_guard = threading.Lock()
@@ -55,11 +61,15 @@ def keyed_lock(key: str) -> threading.RLock:
         return _key_locks.setdefault(key, threading.RLock())
 
 
-def engine_for(exam_id: str | None) -> str:
+def engine_for(exam_id: str | None, reads_pages: bool = True) -> str:
     db = SessionLocal()
     try:
         exam = db.get(Exam, exam_id) if exam_id else None
-        return "indic" if exam and exam.subject and uses_indic_ocr(exam.subject.name) else "internvl"
+        if not (exam and exam.subject and uses_indic_ocr(exam.subject.name)):
+            return "internvl"
+        if reads_pages:
+            return "indic"
+        return "indic-text" if get_settings().indic_text_model.strip() else "internvl"
     finally:
         db.close()
 
@@ -72,6 +82,18 @@ def format_for(exam_id: str | None) -> str | None:
         db.close()
 
 
+def subject_for(exam_id: str | None) -> str | None:
+    if not exam_id:
+        return None
+    db = SessionLocal()
+    try:
+        return formatter.for_exam(db.get(Exam, exam_id))
+    except Exception:  # no database (scripts, some tests): the paper format alone still picks Tamil
+        return None
+    finally:
+        db.close()
+
+
 def slots(engine: str) -> int:
     s = get_settings()
     return max(1, s.indic_parallel_jobs if engine == "indic" else s.internvl_parallel_jobs)
@@ -79,26 +101,49 @@ def slots(engine: str) -> int:
 
 def _ollama_models(engine: str) -> set[str]:
     s = get_settings()
-    return {s.indic_text_model.strip() or s.internvl_model} if engine == "indic" else {s.internvl_model}
+    if engine in ("indic", "indic-text"):
+        return {s.indic_text_model.strip() or s.internvl_model}
+    return {s.internvl_model}
 
 
 def switch_engine(engine: str) -> None:
-    """Make `engine` the only one holding GPU memory. No-op when it already is. Call only with no job running."""
+    """Make `engine` the only one holding GPU memory. No-op when it already is. Call only with no job running.
+    IndicOCR loads onto an empty GPU (every Ollama model is unloaded first; the labeler's model loads after it), and
+    a model the new engine keeps but that sits on the CPU is unloaded too, so its next call loads it onto the GPU."""
     global _current_engine
     if engine == _current_engine:
         return
-    previous = [_current_engine] if _current_engine else ["internvl", "indic"]
-    for model in set().union(*(_ollama_models(p) for p in previous)) - _ollama_models(engine):
+    previous = [_current_engine] if _current_engine else ["internvl", "indic", "indic-text"]
+    keep = set() if engine == "indic" else _ollama_models(engine)
+    for model in set().union(*(_ollama_models(p) for p in previous)) - keep:
         unload_model(model)
     if engine != "indic" and "indic" in previous:
         release_indic()
+    for model in (models_off_gpu() & keep) - _cpu_only:
+        log.info("%s is loaded on the CPU: unloading it so it reloads onto the GPU", model)
+        unload_model(model)
+    if keep:  # load the engine's model while its first job prepares its pages (PDF rendering, preprocessing)
+        threading.Thread(target=_preload, args=(keep,), name="gpu-preload", daemon=True).start()
     log.info("GPU engine: %s -> %s", _current_engine or "unknown", engine)
     _current_engine = engine
 
 
+def _preload(models: set[str]) -> None:
+    for model in models:
+        load_model(model)
+    off = models_off_gpu()
+    for model in models:
+        if model in off and model not in _cpu_only:
+            log.error("%s loaded on the CPU although the GPU is free: every page will be slow. On the GPU server, "
+                      "check `ollama ps` and `nvidia-smi` (driver, CUDA, another process holding GPU memory).", model)
+            _cpu_only.add(model)
+        elif model not in off:
+            _cpu_only.discard(model)
+
+
 def _call(job: _Job) -> None:
     try:
-        with paper_format.use(job.paper_format):
+        with paper_format.use(job.paper_format), formatter.use(job.subject):
             job.fn(*job.args)
     except Exception:  # a failed job must never stop the queue; the job itself records errors on its document
         log.exception("Queued job %s%r crashed", getattr(job.fn, "__name__", job.fn), job.args)
@@ -157,9 +202,10 @@ def _ensure_workers() -> None:
         _workers.append(w)
 
 
-def submit(exam_id: str | None, fn: Callable, *args: Any) -> None:
-    """Queue `fn(*args)` for the GPU. `exam_id` decides which engine the job runs on."""
-    job = _Job(engine_for(exam_id), fn, args, format_for(exam_id))
+def submit(exam_id: str | None, fn: Callable, *args: Any, reads_pages: bool = True) -> None:
+    """Queue `fn(*args)` for the GPU. `exam_id` decides which engine the job runs on; a job that reads no page
+    (grading) runs on its grading model's engine."""
+    job = _Job(engine_for(exam_id, reads_pages), fn, args, format_for(exam_id), subject_for(exam_id))
     if get_settings().job_queue_inline:  # run in the caller's thread (tests: the result is there when the request returns)
         with _inline_lock:
             switch_engine(job.engine)

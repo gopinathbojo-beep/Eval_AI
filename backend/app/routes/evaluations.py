@@ -9,16 +9,16 @@ from ..models import (AnswerKey, AnswerSheetDocument, AuditLog, Evaluation, Eval
 from ..security import current_teacher
 from ..serializers import (EVALUATION_VIEW_LOAD, answer_view, doc_view, evaluation_view, item_view, question_view,
                            student_view)
-from ..services import choices
+from ..formatter.common import choices
 from ..services.audit import audit
 from ..services.job_queue import submit
 from ..services.exam_files import purge_exam_files, save_reports_and_schedule, stored_report
 from ..services.evaluation_service import (ExamSnapshot, approve_clean_items, finalize, finalize_issues,
                                            refresh_evaluation_status, review_reasons, run_evaluation)
-from ..services.k_level import summarize as summarize_outcomes
-from ..services.mapping import map_label
+from ..formatter.common.k_level import summarize as summarize_outcomes
+from ..formatter.common.mapping import map_label
 from ..services.mapping_service import apply_student_mapping, exam_questions, mapping_summary
-from ..services.numbering import normalize_question_number
+from ..formatter.common.numbering import normalize_question_number
 from ..services.school_reports import build_evaluation_pdf_report, build_exam_pdf_report
 from ..services.state import set_state
 from ..services.student_identity import in_flight
@@ -189,7 +189,7 @@ def patch_mapping(ev_id: str, answer_id: str, body: MappingPatch, bg: Background
     if rerun and ev.run_status == "DONE":
         ev.run_status = "RUNNING"
         db.commit()
-        bg.add_task(submit, ev.exam_id, run_evaluation, ev.id, rerun)
+        bg.add_task(submit, ev.exam_id, run_evaluation, ev.id, rerun, reads_pages=False)
     return {**answer_view(a), "evaluation_status": ev.status, "reevaluating": bool(rerun and ev.run_status == "RUNNING")}
 
 
@@ -314,7 +314,7 @@ def run(ev_id: str, bg: BackgroundTasks, db: Session = Depends(get_db), t: Teach
         raise err(400, "MAPPING_INCOMPLETE", f"{len(issues)} issue(s) must be resolved before evaluation can run.", issues)
     ev.run_status, ev.run_progress = "RUNNING", 0
     db.commit()
-    bg.add_task(submit, ev.exam_id, run_evaluation, ev.id)
+    bg.add_task(submit, ev.exam_id, run_evaluation, ev.id, reads_pages=False)
     return {"run_status": "RUNNING"}
 
 
@@ -414,7 +414,7 @@ def rerun_item(ev_id: str, item_id: str, bg: BackgroundTasks, db: Session = Depe
           old={"ai": it.ai_marks, "final": it.final_marks})
     ev.run_status = "RUNNING"
     db.commit()
-    bg.add_task(submit, ev.exam_id, run_evaluation, ev.id, [it.exam_question_id])
+    bg.add_task(submit, ev.exam_id, run_evaluation, ev.id, [it.exam_question_id], reads_pages=False)
     return {"run_status": "RUNNING"}
 
 

@@ -5,9 +5,9 @@ from sqlalchemy import create_engine, inspect, text
 
 from app.ocr.indic import blocks_to_result
 from app.ocr.schemas import AnswerKeyItem, AnswerKeyPageResult, QuestionItem, QuestionPageResult
-from app.services import choices
-from app.services.doc_structure import parse_question_paper_structure
-from app.services.key_segmentation import segment_answer_keys
+from app.formatter.common import choices
+from app.formatter.common.paper import parse_question_paper_structure
+from app.formatter.common.keys import segment_answer_keys
 
 
 def _paper(*items, total=None):

@@ -3,8 +3,8 @@ from types import SimpleNamespace
 
 from app.ocr.indic import blocks_to_result
 from app.ocr.schemas import QuestionItem, QuestionPageResult
-from app.services import choices
-from app.services.doc_structure import parse_question_paper_structure
+from app.formatter.common import choices
+from app.formatter.common.paper import parse_question_paper_structure
 
 
 def _q(label, text, marks=None):

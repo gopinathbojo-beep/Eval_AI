@@ -8,6 +8,7 @@ import { DocProgress, UploadZone } from "../../components/DocPanel";
 import { PageViewer } from "../../components/PageViewer";
 import { IconChevronDown } from "../../components/Icons";
 import { CriteriaEditor } from "../../components/CriteriaEditor";
+import { RubricView } from "../../components/RubricView";
 import { SaveToVerifiedCollectionModal } from "../../components/SaveToVerifiedCollectionModal";
 import { useExam } from "../ExamWorkspace";
 
@@ -290,7 +291,7 @@ export default function AnswerKey() {
                     key={r.id}
                     className={`p-4 transition-all shadow-soft ${
                       isSelected ? "border-pen ring-2 ring-pen/20" : "hover:border-line"
-                    } ${r.mapping_status !== "MAPPED" || r.mark_mismatch ? "border-mark/50 bg-mark-soft/10" : ""}`}
+                    } ${r.mapping_status !== "MAPPED" || r.mark_mismatch || (r.rubric?.problems.length ?? 0) > 0 ? "border-mark/50 bg-mark-soft/10" : ""}`}
                   >
                     <button
                       type="button"
@@ -319,7 +320,13 @@ export default function AnswerKey() {
                       <div className={`doc-text mt-2.5 text-sm text-ink/90 ${isSelected ? "" : "line-clamp-4"}`}>
                         <MathView text={r.answer_text} />
                       </div>
-                      {r.criteria.length > 0 && (
+                      {r.rubric ? (
+                        <RubricView
+                          rubric={r.rubric}
+                          status={r.rubric_status}
+                          questionMarks={k.questions?.find((q) => q.id === r.exam_question_id)?.max_marks}
+                        />
+                      ) : r.criteria.length > 0 && (
                         <div className="mt-2.5 space-y-1">
                           <div className="flex flex-wrap items-center gap-1.5">
                             <span className="text-[11px] text-mute font-semibold uppercase tracking-wider">Criteria:</span>

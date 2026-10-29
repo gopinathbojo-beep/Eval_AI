@@ -17,13 +17,13 @@ from ..ocr.internvl import AIResponseError, AIUnavailable, chat_structured, chec
 from ..ocr.indic import IndicResponseError, IndicUnavailable, check_indic, read_page, text_model_for, uses_indic_ocr
 from .ai_labeler import label_key_criteria, label_question_types
 from ..ocr.schemas import AnswerKeyPageResult, QuestionPageResult, StudentPageResult
-from .doc_structure import apply_pdf_question_text, parse_question_paper_structure, StructuredQuestion
-from .key_segmentation import segment_answer_keys
+from ..formatter.common.paper import apply_pdf_question_text, parse_question_paper_structure, StructuredQuestion
+from ..formatter.common.keys import segment_answer_keys
 from .job_queue import keyed_lock
-from .student_segmentation import segment_student_answers
+from ..formatter.common.answers import segment_student_answers
 from .mapping_service import apply_key_mapping, apply_student_mapping
 from .state import set_state
-from . import tamil_paper
+from .. import formatter
 
 log = logging.getLogger("adem.pipeline")
 
@@ -237,7 +237,7 @@ def _load_results(doc, schema):
         if p.get("ocr_status") != "OK":
             continue
         p_dict = dict(p)
-        if pdf_doc and tamil_paper.uses_pdf_text():  # re-read so earlier uploads get current extraction (e.g. superscripts kept)
+        if pdf_doc and formatter.current().uses_pdf_text():  # re-read so earlier uploads get current extraction (e.g. superscripts kept)
             p_num = p_dict.get("page_number", 1)
             if 1 <= p_num <= len(pdf_doc):
                 try:

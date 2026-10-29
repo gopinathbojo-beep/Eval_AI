@@ -70,6 +70,7 @@ def key_view(k: AnswerKey) -> dict:
         "mapping_status": k.mapping_status, "mapping_note": k.mapping_note,
         "mapping_candidates": k.mapping_candidates, "mark_mismatch": k.mark_mismatch,
         "verification_status": k.verification_status,
+        "rubric": k.rubric, "rubric_status": k.rubric_status,
     }
 
 

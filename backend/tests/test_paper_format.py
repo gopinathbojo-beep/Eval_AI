@@ -3,10 +3,11 @@ under any non-Tamil subject; a Tamil paper keeps its rules."""
 import threading
 
 from app.ocr.schemas import AnswerKeyItem, AnswerKeyPageResult, QuestionItem, QuestionPageResult
-from app.services import choices, job_queue, paper_format
-from app.services.doc_structure import parse_question_paper_structure
-from app.services.key_segmentation import segment_answer_keys
-from app.services.numbering import normalize_question_number
+from app.services import job_queue, paper_format
+from app.formatter.common import choices
+from app.formatter.common.paper import parse_question_paper_structure
+from app.formatter.common.keys import segment_answer_keys
+from app.formatter.common.numbering import normalize_question_number
 
 
 def _q(label, text, marks=None):
@@ -55,7 +56,7 @@ def test_english_paper_parses_the_same_under_every_format():
 
 def test_queued_job_runs_with_its_exam_format(monkeypatch):
     seen = []
-    monkeypatch.setattr(job_queue, "engine_for", lambda exam_id: "internvl")
+    monkeypatch.setattr(job_queue, "engine_for", lambda exam_id, reads_pages=True: "internvl")
     monkeypatch.setattr(job_queue, "format_for", lambda exam_id: paper_format.ENGLISH)
     monkeypatch.setattr(job_queue, "switch_engine", lambda engine: None)
     job_queue.submit("exam-1", lambda: seen.append(paper_format.active()))

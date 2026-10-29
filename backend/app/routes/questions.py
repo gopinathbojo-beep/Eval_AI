@@ -7,11 +7,11 @@ from ..deps import err, get_exam
 from ..models import Exam, ExamQuestion, QuestionPaperDocument, Teacher
 from ..security import current_teacher
 from ..serializers import question_view
-from ..services import choices
+from ..formatter.common import choices
 from ..services.audit import audit
-from ..services.k_level import K_LEVELS, normalize_course_outcome
-from ..services.k_level import apply_suggestions as apply_k_suggestions
-from ..services.numbering import normalize_question_number
+from ..formatter.common.k_level import K_LEVELS, normalize_course_outcome
+from ..formatter.common.k_level import apply_suggestions as apply_k_suggestions
+from ..formatter.common.numbering import normalize_question_number
 from ..services.state import set_state
 
 router = APIRouter(prefix="/api")

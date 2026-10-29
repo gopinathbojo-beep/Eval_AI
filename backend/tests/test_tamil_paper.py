@@ -1,7 +1,7 @@
 import pytest
 from app.ocr.schemas import QuestionPageResult, QuestionItem
 from app.services import paper_format
-from app.services.doc_structure import parse_question_paper_structure
+from app.formatter.common.paper import parse_question_paper_structure
 
 
 def _page(n, items):
@@ -45,7 +45,7 @@ def test_questions_inside_one_ocr_block_are_split():
 def test_key_answers_inside_one_ocr_block_are_split():
     """Class 8 Tamil key via IndicOCR: Q1's answer block held வினா 2's key, and a பகுதி heading held வினா 5's."""
     from app.ocr.schemas import AnswerKeyPageResult, AnswerKeyItem
-    from app.services import tamil_paper
+    from app.formatter.tamil import paper as tamil_paper
 
     def page(n, items):
         return ({"page_number": n}, AnswerKeyPageResult(page_number=n, answers=[AnswerKeyItem(**i) for i in items]))
@@ -74,7 +74,7 @@ def test_student_answers_rebuilt_from_tamil_question_numbers():
     """Handwritten Tamil sheet via IndicOCR: headings inside other blocks ("வினா 4." under Q3, "அனா 7." / "வானா 8." /
     "வினா 9." misread or buried), parts as (a)/(b)/(c), continuation blocks across pages, a title before Q1."""
     from app.ocr.schemas import StudentPageResult, StudentAnswerItem
-    from app.services.student_segmentation import segment_student_answers
+    from app.formatter.common.answers import segment_student_answers
 
     def page(n, items):
         return ({"page_number": n}, StudentPageResult(page_number=n, answers=[StudentAnswerItem(**i) for i in items]))
@@ -114,7 +114,7 @@ Q10_ANSWER = ("கீழ்க்கண்ட தலைப்புகளில�
 
 
 def test_any_one_topic_answered_on_several_splits_per_topic():
-    from app.services.tamil_answers import one_of_attempts
+    from app.formatter.tamil.answers import one_of_attempts
     got = one_of_attempts(Q10, Q10_ANSWER)
     assert [t for t, _ in got] == ["அ) சுற்றுச்சூழல் பாதுகாப்பு", "ஆ) கல்வியின் முக்கியத்துவம்", "இ) எனக்குப் பிடித்த திருவிழா"]
     assert got[1][1] == "ஆ) கல்வியின் முக்கியத்துவம்\nகல்வி மனிதனின் வாழ்க்கையில் மிகவும் முக்கியமானது."
@@ -155,7 +155,7 @@ def test_student_headings_misread_or_without_full_stop_and_ocr_noise():
     """"வினா 1. படித்துப் புரிந்து ..." after Q6 is Q7 (7 read as 1, its title says so); "வினா 9 கடிதம்" has no full stop;
     a line in Bengali script is OCR noise; a wrapped பகுதி heading leaves no line behind."""
     from app.ocr.schemas import StudentPageResult, StudentAnswerItem
-    from app.services.student_segmentation import segment_student_answers
+    from app.formatter.common.answers import segment_student_answers
 
     sheet = [({"page_number": 1}, StudentPageResult(page_number=1, answers=[StudentAnswerItem(**i) for i in [
         {"question_number": "6", "answer_text": "இலக்கணம் - பிழை திருத்துதல்"},
@@ -186,7 +186,7 @@ Q1_MISSING = ["1 மதிப்பெண் - ஒழுக்கம் அல�
 
 def test_deduction_contradicted_by_the_answer_is_undone():
     """Answer word-for-word the key, graded 1.5/2 for a "missing" point it contains: full marks."""
-    from app.services.tamil_answers import check_deductions
+    from app.formatter.tamil.answers import check_deductions
     assert check_deductions(_graded(1.5, Q1_MISSING), Q1_STUDENT, Q1_KEY, 2.0).marks_awarded == 2.0
     # without the key the named point alone is checked (reworded and misspelled by the grader)
     r = check_deductions(_graded(1.5, Q1_MISSING), Q1_STUDENT, None, 2.0)
@@ -194,7 +194,7 @@ def test_deduction_contradicted_by_the_answer_is_undone():
 
 
 def test_real_deductions_stand():
-    from app.services.tamil_answers import check_deductions
+    from app.formatter.tamil.answers import check_deductions
     key6 = "| அ) அவன் பள்ளிக்குச் சென்றாள். | சென்றாள் | சென்றான் |"
     assert check_deductions(_graded(2, ["சென்றான்"]), "அ) சென்றாள் சென்றாள்", key6, 3.0).marks_awarded == 2  # wrong ending
     key4 = "அ) திருக்குறளை இயற்றியவர் - திருவள்ளுவர்.\nஆ) தமிழின் பழமையான இலக்கண நூல் - தொல்காப்பியம்."
@@ -211,12 +211,12 @@ def test_real_deductions_stand():
     ("இலக்கணம்:\nஅ) கீழ்க்கண்ட சொற்களின் எதிர்ச்சொற்களை எழுதுக. (1)", "points"),
 ])
 def test_tamil_question_kind(question, kind):
-    from app.services.tamil_rubric import question_kind
+    from app.formatter.tamil.rubric import question_kind
     assert question_kind(question) == kind
 
 
 def test_open_question_rubric_keeps_criteria_and_notes_apart():
-    from app.services.tamil_rubric import build_rubric
+    from app.formatter.tamil.rubric import build_rubric
     key = ("கட்டுரை எழுதுதல் (5 மதிப்பெண்கள்)\n• மாதிரி விடை: சுற்றுச்சூழல் பாதுகாப்பு\nசுற்றுச்சூழல் என்பது ...\n"
            "குறிப்பு: வினா 10-இல் மாணவர்கள் தேர்ந்தெடுக்கும் தலைப்புக்கு ஏற்ற சரியான,")
     crit = ["தலைப்புக்குப் பொருத்தமான கருத்துகள் – 2 மதிப்பெண்கள்.", "கருத்துகளின் தொடர்ச்சி மற்றும் அமைப்பு – 1 மதிப்பெண்.",
@@ -228,3 +228,39 @@ def test_open_question_rubric_keeps_criteria_and_notes_apart():
     bad = build_rubric("கடிதம் எழுதுதல் (5)", "கடிதம் எழுதுதல் (5 மதிப்பெண்கள்)\n• மாதிரி விடை:\nகுமார்.",
                        ["கடித வடிவம் – 1 மதிப்பெண்.", "பொருத்தமான உள்ளடக்கம் – 2 மதிப்பெண்கள்."], 5.0)
     assert bad.kind == "letter" and any("add up to 3" in p for p in bad.problems) and any("model letter" in p for p in bad.problems)
+
+
+def test_point_question_rubric_from_the_keys_parts():
+    from app.formatter.tamil.rubric import build_rubric
+    pairs = build_rubric("இலக்கணம் (2)", "இலக்கணம் (2 மதிப்பெண்கள்)\nவிடைகள்:\nஅ) எதிர்ச்சொற்கள்: உயர்வு - தாழ்வு; நன்மை - தீமை\n"
+                         "ஆ) பன்மை வடிவங்கள்: மரம் - மரங்கள்; மாணவன் - மாணவர்கள்", ["ஒவ்வொரு சரியான விடைக்கும் ½ மதிப்பெண்."], 2.0)
+    assert [(c.part, c.kind, c.expected, c.marks) for c in pairs.criteria] == [
+        ("அ", "exact", ["தாழ்வு"], 0.5), ("அ", "exact", ["தீமை"], 0.5),
+        ("ஆ", "exact", ["மரங்கள்"], 0.5), ("ஆ", "exact", ["மாணவர்கள்"], 0.5)] and not pairs.problems
+    table = build_rubric("பிழை திருத்துதல் (3)", "இலக்கணம் - பிழை திருத்துதல் (3 மதிப்பெண்கள்)\n• விடை:\n"
+                         "| வாக்கியம் | பிழையான சொல் | சரியான சொல் |\n| --- | --- | --- |\n"
+                         "| அ) அவன் பள்ளிக்குச் சென்றாள். | சென்றாள் | சென்றான் |\n"
+                         "| ஆ) மரங்கள் நமக்கு நிழல் தருகிறான். | தருகிறான் | தருகின்றன |\n"
+                         "| இ) மாணவர்கள் பாடம் படித்தான். | படித்தான் | படித்தார்கள் |",
+                         ["ஒவ்வொரு சரியான பிழைத் திருத்தத்திற்கும் 1 மதிப்பெண்."], 3.0)
+    assert [c.expected for c in table.criteria] == [["சென்றான்"], ["தருகின்றன"], ["படித்தார்கள்"]] and table.total == 3
+    asked = build_rubric("குறுவிடைகள் (3)", "குறுவிடைகள் (3 மதிப்பெண்கள்)\n• விடைகள்:\n• அ) தாய்மொழியின் முக்கியத்துவம் என்ன? (1)\n"
+                         "• விடை: தாய்மொழி நமது எண்ணங்களை வெளிப்படுத்த உதவுகிறது.\n• ஆ) இயற்கையை நாம் ஏன் பாதுகாக்க வேண்டும்? (2)\n"
+                         "• விடை: இயற்கை நமக்குக் காற்று, நீர், உணவு ஆகியவற்றை வழங்குகிறது.",
+                         ["தாய்மொழியின் முக்கியத்துவம் – 1 மதிப்பெண்.", "இயற்கையின் பயன்கள் மற்றும் பாதுகாப்பின் அவசியம் – 2 மதிப்பெண்கள்."], 3.0)
+    assert [(c.part, c.kind, c.marks) for c in asked.criteria] == [("அ", "meaning", 1), ("ஆ", "meaning", 2)] and not asked.problems
+    assert "எண்ணங்களை" in asked.criteria[0].text and "என்ன?" not in asked.criteria[0].text
+    whole = build_rubric("கல்வியின் சிறப்புகள் (2)", Q1_KEY, ["1 மதிப்பெண் - கல்வியின் மூலம் அறிவு பெறுதல்.",
+                         "1 மதிப்பெண் - ஒழுக்கம் அல்லது வாழ்க்கை முன்னேற்றத்தைக் குறிப்பிடுதல்."], 2.0)
+    assert [c.marks for c in whole.criteria] == [1, 1] and whole.criteria[0].kind == "meaning"
+
+
+def test_key_note_keeps_its_continuation_line():
+    from app.formatter.tamil import format as tamil_format
+    with paper_format.use(paper_format.TAMIL):
+        answer, criteria = tamil_format.extract_criteria_from_block(
+            "கட்டுரை எழுதுதல் (5 மதிப்பெண்கள்)\n• மாதிரி விடை: ...\n• மதிப்பீட்டுத் திட்டம்:\n"
+            "• கருத்துகள் – 2 மதிப்பெண்கள்.\nகுறிப்பு: வினா 10-இல் மாணவர்கள் தேர்ந்தெடுக்கும் தலைப்புக்கு ஏற்ற சரியான,\n"
+            "பொருத்தமான கட்டுரைக்கும் இதே மதிப்பீட்டுத் திட்டத்தைப் பயன்படுத்தலாம்.")
+    assert criteria == ["கருத்துகள் – 2 மதிப்பெண்கள்."]
+    assert answer.endswith("ஏற்ற சரியான, பொருத்தமான கட்டுரைக்கும் இதே மதிப்பீட்டுத் திட்டத்தைப் பயன்படுத்தலாம்.")

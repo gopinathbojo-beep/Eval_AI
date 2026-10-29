@@ -90,7 +90,7 @@ class ExamQuestion(Base):
     section: Mapped[str | None] = mapped_column(String(100), nullable=True)
     # Either/or alternatives share a group ("38" for 38(a) OR 38(b)); the student answers one, it counts once
     choice_group: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    # The section says "answer any N" (N), and this question must be answered anyway (services/choices.py)
+    # The section says "answer any N" (N), and this question must be answered anyway (formatter/common/choices.py)
     answer_any: Mapped[int | None] = mapped_column(Integer, nullable=True)
     compulsory: Mapped[bool] = mapped_column(Boolean, default=False)
     position: Mapped[int] = mapped_column(Integer, default=0)
@@ -165,6 +165,9 @@ class AnswerKey(Base):
     mapping_note: Mapped[str | None] = mapped_column(String(300), nullable=True)
     mapping_candidates: Mapped[list] = mapped_column(JSON, default=list)
     mark_mismatch: Mapped[bool] = mapped_column(Boolean, default=False)
+    # The marking rubric built from this key (formatter build_rubric): points, notes, deductions, problems
+    rubric: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    rubric_status: Mapped[str] = mapped_column(String(20), default="UNREVIEWED")  # UNREVIEWED|CONFIRMED
     verification_status: Mapped[str] = mapped_column(String(20), default="UNVERIFIED")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
