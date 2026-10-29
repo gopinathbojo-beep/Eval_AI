@@ -33,7 +33,9 @@ py -3.11 -m venv .venv
 
 ## Run
 
-`start.bat` starts it in its own window on http://127.0.0.1:8090, and `stop.bat` stops it. By hand:
+On the GPU server, double-click `start.bat`: it stops any other program on port 8090 (such as a standalone
+"IndicOCR Inference Server"), installs the service on first run, and starts it for the network on port 8090.
+By hand:
 ```
 cd indic_ocr_service
 .venv\Scripts\python.exe -m uvicorn server:app --host 127.0.0.1 --port 8090
