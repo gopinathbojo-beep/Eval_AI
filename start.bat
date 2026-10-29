@@ -16,19 +16,7 @@ for /f "tokens=1,* delims==" %%a in ('findstr /b /c:"INTERNVL_API_URL=" backend\
 for /f "tokens=1,* delims==" %%a in ('findstr /b /c:"INDIC_OCR_URL=" backend\.env 2^>nul') do set "INDIC_URL=%%b"
 
 echo [1/4] Models ...
-echo !INDIC_URL! | findstr /i "127.0.0.1 localhost" >nul
-if !errorlevel! equ 0 (
-    if exist "%~dp0indic_ocr_service\.venv\Scripts\python.exe" (
-        start "ADEM - IndicOCR (:8090)" cmd /k "cd /d "%~dp0indic_ocr_service" && .venv\Scripts\python.exe -m uvicorn server:app --host 127.0.0.1 --port 8090"
-        echo  - Started local IndicOCR on !INDIC_URL!
-        timeout /t 2 /nobreak >nul
-    ) else (
-        echo  - Skipped local IndicOCR: not installed. Run setup.bat to read Tamil subjects.
-    )
-) else (
-    echo  - IndicOCR runs on another machine: !INDIC_URL!
-    call :check "IndicOCR" "!INDIC_URL!/health"
-)
+call :check "IndicOCR" "!INDIC_URL!/health"
 call :check "Ollama  " "!INTERNVL_URL!/api/tags"
 
 echo [2/4] Starting Backend on http://0.0.0.0:8000 ...
