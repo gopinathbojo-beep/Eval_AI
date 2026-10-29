@@ -13,10 +13,13 @@ def _setup(monkeypatch, engines, internvl_slots=1, indic_slots=1):
     monkeypatch.setattr(s, "internvl_parallel_jobs", internvl_slots)
     monkeypatch.setattr(s, "indic_parallel_jobs", indic_slots)
     monkeypatch.setattr(jq, "_current_engine", "internvl")
-    monkeypatch.setattr(jq, "engine_for", lambda exam_id: engines[exam_id])
+    monkeypatch.setattr(jq, "engine_for", lambda exam_id, reads_pages=True: engines[exam_id])
     events = []
     monkeypatch.setattr(jq, "unload_model", lambda m: events.append(f"unload {m}"))
     monkeypatch.setattr(jq, "release_indic", lambda: events.append("release indic"))
+    monkeypatch.setattr(jq, "models_off_gpu", lambda: set())
+    monkeypatch.setattr(jq, "load_model", lambda m: None)
+    monkeypatch.setattr(jq, "_cpu_only", set())
     return events
 
 
@@ -129,3 +132,31 @@ def test_a_failed_switch_does_not_stop_the_queue(monkeypatch):
     jq.submit("T2", lambda: events.append("run T2"))
     assert jq.wait_idle(5)
     assert events == ["run T1", "run T2"]                   # the jobs ran and record the engine error themselves
+
+
+def test_switch_frees_the_gpu_for_indicocr_and_reloads_a_model_stuck_on_the_cpu(monkeypatch):
+    events = _setup(monkeypatch, {})
+    monkeypatch.setattr(get_settings(), "indic_text_model", "")
+    jq.switch_engine("indic")                              # IndicOCR loads onto an empty GPU: InternVL leaves too
+    assert events == ["unload blaifa/InternVL3_5:4B"]
+    events.clear()
+    monkeypatch.setattr(jq, "models_off_gpu", lambda: {"blaifa/InternVL3_5:4B"})
+    monkeypatch.setattr(jq, "load_model", lambda m: events.append(f"preload {m}"))
+    monkeypatch.setattr(jq.threading, "Thread", _NowThread)
+    jq.switch_engine("internvl")                           # InternVL was loaded beside IndicOCR, on the CPU
+    assert events == ["release indic", "unload blaifa/InternVL3_5:4B", "preload blaifa/InternVL3_5:4B"]
+    assert jq._cpu_only == {"blaifa/InternVL3_5:4B"}       # still on the CPU on a free GPU: the GPU server is at fault
+    events.clear()
+    jq.switch_engine("indic")
+    jq.switch_engine("internvl")                           # so later switches stop reloading it for nothing
+    assert "unload blaifa/InternVL3_5:4B" not in events[1:]
+
+
+class _NowThread:
+    """A thread that runs its target at start(), so the test sees the preload's effects in order."""
+
+    def __init__(self, target, args=(), **_):
+        self.target, self.args = target, args
+
+    def start(self):
+        self.target(*self.args)

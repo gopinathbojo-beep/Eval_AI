@@ -67,7 +67,7 @@ def _linear(spans: list[_Span]) -> str:
             groups[-1].append(s)
         else:
             groups.append([s])
-    items = [(s.x0, s.text) for s in base]
+    items = [(s.x0, s.x1, s.text, True) for s in base]  # (start, end, text, on the line)
     for g in groups:
         up = [s for s in g if s.cy < ref.cy]
         down = [s for s in g if s.cy > ref.cy]
@@ -76,8 +76,16 @@ def _linear(spans: list[_Span]) -> str:
             t = f"{_wrap(num)}/{_wrap(den)}"
         else:
             t = _raised(num) if num else _lowered(den)
-        items.append((min(s.x0 for s in g), t))
-    return "".join(t for _, t in sorted(items, key=lambda i: i[0]))
+        items.append((min(s.x0 for s in g), max(s.x1 for s in g), t, False))
+    out, prev = [], None
+    for item in sorted(items, key=lambda i: i[0]):
+        # words drawn as separate pieces with a gap and no space character ("Marks" "Awarded"): the gap is a space
+        if (prev and prev[3] and item[3] and item[0] - prev[1] > 0.2 * ref.size
+                and not prev[2].endswith(" ") and not item[2].startswith(" ")):
+            out.append(" ")
+        out.append(item[2])
+        prev = item
+    return "".join(out)
 
 
 def _block_lines(spans: list[_Span]) -> list[str]:
@@ -93,8 +101,9 @@ def _block_lines(spans: list[_Span]) -> list[str]:
     chars = [sum(len(s.text.strip()) for s in r) for r in rows]
     owner = list(range(len(rows)))
     size = [max(s.size for s in r) for r in rows]
-    x0 = [min(s.x0 for s in r) for r in rows]
-    x1 = [max(s.x1 for s in r) for r in rows]
+    inked = [[s for s in r if s.text.strip()] or r for r in rows]  # a trailing space says nothing about a row's extent
+    x0 = [min(s.x0 for s in r) for r in inked]
+    x1 = [max(s.x1 for s in r) for r in inked]
     changed = True
     while changed:
         changed = False
@@ -104,8 +113,9 @@ def _block_lines(spans: list[_Span]) -> list[str]:
             best = None
             for j in range(len(rows)):
                 o = owner[j]
+                # an exponent may hang past the line's last letter by about one character ("b³")
                 if (o != i and chars[o] > chars[i] and abs(rows[j][0].cy - rows[i][0].cy) < 0.85 * size[o]
-                        and x0[o] - 2 <= x0[i] and x1[i] <= x1[o] + 2
+                        and x0[o] - 2 <= x0[i] and x1[i] <= x1[o] + size[o]
                         and (best is None or abs(rows[j][0].cy - rows[i][0].cy) < best[0])):
                     best = (abs(rows[j][0].cy - rows[i][0].cy), o)
             if best:

@@ -44,13 +44,16 @@ def init_db():
 
 # Columns added after a table first shipped. create_all never alters an existing table, so they are added here.
 _ADDED_COLUMNS = {"exam_questions": {"choice_group": "VARCHAR(50)", "answer_any": "INTEGER",
-                                     "compulsory": "BOOLEAN NOT NULL DEFAULT 0"}}
+                                     "compulsory": "BOOLEAN NOT NULL DEFAULT 0"},
+                 "answer_keys": {"rubric": "JSON", "rubric_status": "VARCHAR(20) NOT NULL DEFAULT 'UNREVIEWED'"}}
 
 
 def _add_missing_columns() -> None:
     insp = inspect(engine)
     with engine.begin() as conn:
         for table, cols in _ADDED_COLUMNS.items():
+            if not insp.has_table(table):
+                continue  # created later with all its columns
             have = {c["name"] for c in insp.get_columns(table)}
             for name, sql_type in cols.items():
                 if name not in have:

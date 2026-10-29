@@ -6,15 +6,9 @@ from __future__ import annotations
 import html
 import os
 import re
-from typing import Any
 
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.styles import ParagraphStyle
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.pdfgen import canvas
-from reportlab.platypus import Paragraph
 
 
 def _init_fonts() -> tuple[str, str]:
@@ -72,51 +66,6 @@ def _init_fonts() -> tuple[str, str]:
 
 
 BASE_FONT, BOLD_FONT = _init_fonts()
-
-
-class NumberedCanvas(canvas.Canvas):
-    """Two-pass canvas that adds running headers and page numbers ('Page X of Y')."""
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self._saved_page_states: list[dict[str, Any]] = []
-        self.doc_title: str = "ADEM Examination Evaluation Report"
-        self.header_text: str = ""
-
-    def showPage(self) -> None:
-        self._saved_page_states.append(dict(self.__dict__))
-        self._startPage()
-
-    def save(self) -> None:
-        num_pages = len(self._saved_page_states)
-        for state in self._saved_page_states:
-            self.__dict__.update(state)
-            self.draw_decorations(num_pages)
-            super().showPage()
-        super().save()
-
-    def draw_decorations(self, num_pages: int) -> None:
-        width, height = A4
-        margin = 36
-
-        self.saveState()
-        self.setFont(BASE_FONT, 8)
-        self.setFillColor(colors.HexColor("#64748B"))
-
-        # Footer on all pages
-        self.setStrokeColor(colors.HexColor("#CBD5E1"))
-        self.setLineWidth(0.5)
-        self.line(margin, 36, width - margin, 36)
-        self.drawString(margin, 24, "ADEM · Digital Examination Management & Evaluation System")
-        self.drawRightString(width - margin, 24, f"Page {self._pageNumber} of {num_pages}")
-
-        # Running header on page 2 and later
-        if self._pageNumber > 1 and self.header_text:
-            self.line(margin, height - 34, width - margin, height - 34)
-            self.drawString(margin, height - 26, self.header_text)
-            self.drawRightString(width - margin, height - 26, "Official Student Evaluation")
-
-        self.restoreState()
 
 
 def format_math_text(raw_text: str | None) -> str:
@@ -181,17 +130,3 @@ def format_math_text(raw_text: str | None) -> str:
 
     return text
 
-
-def _safe_paragraph(content: str, style: ParagraphStyle, fallback_text: str = "") -> Paragraph:
-    """Create a Paragraph, safely falling back to plain escaped text if XML parsing fails."""
-    try:
-        return Paragraph(content, style)
-    except Exception:
-        fallback = html.escape(fallback_text or content).replace("\n", "<br/>")
-        return Paragraph(fallback, style)
-
-
-def _fmt_marks(v: float | None) -> str:
-    if v is None:
-        return "–"
-    return f"{v:g}"

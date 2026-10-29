@@ -1,7 +1,7 @@
 from app.config import get_settings
 from app.ocr.indic import blocks_to_result, uses_indic_ocr
 from app.ocr.schemas import AnswerKeyPageResult, QuestionPageResult, StudentPageResult
-from app.services.student_segmentation import segment_student_answers
+from app.formatter.common.answers import segment_student_answers
 
 PAGE = {
     "image": "page.png", "width": 1000, "height": 1400,
@@ -78,7 +78,7 @@ TAMIL_QP = {"blocks": [
 
 
 def test_tamil_question_paper_marks_sections_types():
-    from app.services.doc_structure import parse_question_paper_structure
+    from app.formatter.common.paper import parse_question_paper_structure
     res = blocks_to_result(TAMIL_QP, QuestionPageResult, 1)
     s = parse_question_paper_structure([({"page_number": 1}, res)])
     got = {q.display_number: (q.question_type, q.max_marks, q.section) for q in s.questions}
@@ -92,7 +92,7 @@ def test_tamil_question_paper_marks_sections_types():
 
 
 def test_tamil_answer_key_marks_and_criteria():
-    from app.services.key_segmentation import extract_criteria_from_block, parse_criteria_marks
+    from app.formatter.common.keys import extract_criteria_from_block, parse_criteria_marks
     t = "திருவள்ளுவர் திருக்குறளை இயற்றினார்.\n• ஆசிரியர் பெயர் – 1 மதிப்பெண்\n• நூல் பெயர் – 1 மதிப்பெண்"
     _, crit = extract_criteria_from_block(t)
     assert len(crit) == 2 and parse_criteria_marks(crit, t) == 2
@@ -103,7 +103,7 @@ def test_tamil_answer_key_marks_and_criteria():
 
 
 def test_tamil_words_match_across_inflections():
-    from app.services.ocr_recovery import _tokenize
+    from app.formatter.common.recovery import _tokenize
     q = _tokenize("திருக்குறளை இயற்றியவர் யார்? விளக்குக")
     a = _tokenize("திருவள்ளுவர் திருக்குறள் எழுதினார்")
     assert q & a == {"திருக்குறள"}                     # same word, different case ending; "யார்"/"விளக்குக" are stop words
@@ -130,7 +130,7 @@ def test_grading_model_only_for_indian_language_subjects(monkeypatch):
 
 
 def test_tamil_question_labels():
-    from app.services.numbering import extract_label_from_text_prefix as label, normalize_question_number as norm
+    from app.formatter.common.numbering import extract_label_from_text_prefix as label, normalize_question_number as norm
     assert label("வினா 1. திருக்குறளை இயற்றியவர் யார்?") == ("1", "திருக்குறளை இயற்றியவர் யார்?")
     assert label("வினா எண் 3 (அ) கம்பர்") == ("3(a)", "கம்பர்")
     assert label("கேள்வி 2: பாடல்") == ("2", "பாடல்")
@@ -151,7 +151,7 @@ def test_student_tamil_labels_map_to_subparts():
 
 
 def _q(text, marks=None, source="default", qtype="descriptive"):
-    from app.services.doc_structure import StructuredQuestion
+    from app.formatter.common.paper import StructuredQuestion
     return StructuredQuestion(None, None, "1", text, qtype, marks, None, 1, 1, None, None, type_source=source)
 
 
@@ -181,7 +181,7 @@ def test_labeler_marking_points_are_checked(monkeypatch):
     from types import SimpleNamespace
     from app.ocr.schemas import KeyCriteriaLabels
     from app.services import ai_labeler
-    from app.services.key_segmentation import SegmentedKey
+    from app.formatter.common.keys import SegmentedKey
     keys = [SegmentedKey("1", "1", "திருக்குறளை எழுதியவர் திருவள்ளுவர். அது 1330 குறள்களைக் கொண்டது.", None),
             SegmentedKey("2", "2", "சிலப்பதிகாரம் இளங்கோவடிகள் இயற்றியது.", None),
             SegmentedKey("3", "3", "கம்பர் இராமாயணம் இயற்றினார்.", None)]
@@ -212,7 +212,7 @@ def test_labeler_outage_keeps_rule_results(monkeypatch):
 
 def test_tamil_feedback_explains_a_deduction():
     from app.ocr.schemas import EvaluationResult
-    from app.services.evaluation_rules import validate_evaluation
+    from app.formatter.common.mark_rules import validate_evaluation
 
     def graded(feedback):
         return validate_evaluation(EvaluationResult(marks_awarded=1, decision="PARTIALLY_CORRECT",
@@ -246,3 +246,25 @@ def test_handwritten_sheet_header_numbers_and_page_carry_over():
     assert "இயற்கை" in got["5"] and "இயற்கை" not in got["6"]   # part ஆ on page 2 stays with question 5
     assert "சென்றாள்" in got["6"] and "$$" not in got["6"]
     assert blocks_to_result(page1, StudentPageResult, 1).answers[1].bbox.model_dump()["y"] == 300.0
+
+
+def test_boxed_model_letter_is_content_not_a_folio():
+    letter = ("அனுப்புநர்:\nஅ.▁குமார்,\n8ஆம்▁வகுப்பு,\nஅரசு▁மேல்நிலைப்பள்ளி,\nமதுரை.\nபெறுநர்:\nஅ.▁ரவி,\n12,▁பாரதி▁தெரு,\nசென்னை.\n"
+              "அன்புள்ள▁நண்பா▁ரவி,\nநலம்▁நலமறிய▁ஆவல்.▁நான்▁இங்கு▁நலமாக▁இருக்கிறேன்.▁எங்கள்▁பள்ளியில்▁கடந்த▁வாரம்▁விளையாட்டுப்▁போட்டி▁விழா▁நடைபெற்றது.")
+    page = {"blocks": [{"order": 0, "type": "Text", "label": "List", "text": "•▁மாதிரி▁விடை:"},
+                       {"order": 1, "type": "Text", "label": "Infobox", "text": letter},
+                       {"order": 2, "type": "Text", "label": "Infobox", "text": "TAM/08/2026"}]}
+    k = blocks_to_result(page, AnswerKeyPageResult, 3)
+    assert [a.answer_text.partition("\n")[0] for a in k.answers] == ["• மாதிரி விடை:", "அனுப்புநர்:"]
+
+
+def test_confidence_is_the_recognizers_measured_text_confidence():
+    page = {"blocks": [{"order": 0, "type": "Text", "text": "1)▁நான்▁பள்ளிக்குச்▁சென்றேன்.", "conf": 0.95, "text_conf": 0.42},
+                       {"order": 1, "type": "Text", "text": "இது▁தொடர்ச்சி▁ஆகும்▁இங்கே▁நான்கு▁சொற்கள்", "conf": 0.9,
+                        "text_conf": 0.9}]}
+    k = blocks_to_result(page, AnswerKeyPageResult, 1)
+    assert [a.confidence for a in k.answers] == [0.42, 0.9]  # the text's, not the layout box's "conf"
+    s = blocks_to_result(page, StudentPageResult, 1)
+    assert len(s.answers) == 1 and abs(s.answers[0].ocr_confidence - (0.42 * 3 + 0.9 * 6) / 9) < 1e-9  # per word
+    old = {"blocks": [{"order": 0, "type": "Text", "text": "1)▁விடை", "conf": 0.9}]}  # a service without text_conf
+    assert blocks_to_result(old, AnswerKeyPageResult, 1).answers[0].confidence == 0.8

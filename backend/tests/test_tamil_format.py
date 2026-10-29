@@ -1,9 +1,9 @@
 """Tamil format rules, against the layout of the TN SSLC Tamil paper (8501, 2025), and their separation from English."""
 from app.ocr.indic import blocks_to_result
 from app.ocr.schemas import QuestionPageResult
-from app.services import tamil_format
-from app.services.doc_structure import extract_exam_total_marks, is_document_header, keyword_question_type
-from app.services.numbering import extract_label_from_text_prefix
+from app.formatter.tamil import format as tamil_format
+from app.formatter.common.paper import extract_exam_total_marks, is_document_header, keyword_question_type
+from app.formatter.common.numbering import extract_label_from_text_prefix
 
 # Page 1 and 4 of the sample paper, as IndicOCR returns them
 SSLC_QP = [
@@ -35,7 +35,7 @@ SSLC_QP = [
 
 
 def _parse(pages):
-    from app.services.doc_structure import parse_question_paper_structure
+    from app.formatter.common.paper import parse_question_paper_structure
     return parse_question_paper_structure(
         [({"page_number": i + 1}, blocks_to_result(p, QuestionPageResult, i + 1)) for i, p in enumerate(pages)])
 
@@ -130,7 +130,7 @@ def test_glide_before_case_ending_shares_the_stem():
 
 def test_answer_labelled_5_stays_on_question_5():
     from types import SimpleNamespace
-    from app.services.mapping import MAPPED, map_label
+    from app.formatter.common.mapping import MAPPED, map_label
     qs = [SimpleNamespace(id=f"q{n}", normalized_number=str(n), section=None, question_text=t) for n, t in (
         (5, "கீழ்க்கண்ட வினாக்களுக்கு விடையளிக்கவும். (3)\nஅ) தாய்மொழியின் முக்கியத்துவம் என்ன? (1)\n"
             "ஆ) இயற்கையை நாம் ஏன் பாதுகாக்க வேண்டும்? (2)"),

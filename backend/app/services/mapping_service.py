@@ -2,10 +2,11 @@
 from __future__ import annotations
 from typing import Any
 from sqlalchemy.orm import Session
+from .. import formatter
 from ..config import get_settings
 from ..models import AnswerKey, Evaluation, ExamQuestion, StudentAnswer
-from .mapping import MAPPED, NEEDS_REVIEW, UNMAPPED, flag_duplicates, map_label, detect_mapping_anomalies
-from .numbering import part_labels
+from ..formatter.common.mapping import MAPPED, NEEDS_REVIEW, UNMAPPED, flag_duplicates, map_label, detect_mapping_anomalies
+from ..formatter.common.numbering import part_labels
 
 DUP_NOTE = "DUPLICATE_MAPPING: another answer also maps to this question"
 _RECOMPUTABLE = {"UNMAPPED", "NEEDS_REVIEW", "MAPPED"}
@@ -164,7 +165,19 @@ def refresh_key_state(db: Session, exam_id: str) -> None:
         k.mark_mismatch = bool(
             q and k.marks is not None and q.max_marks is not None and abs(k.marks - q.max_marks) > 1e-9
         )
+        refresh_rubric(k, q)
     db.flush()
+
+
+def refresh_rubric(key: AnswerKey, q: ExamQuestion | None) -> None:
+    """Rebuild the key's marking rubric with the subject's formatter. A rubric that comes out different from the one
+    the teacher confirmed needs confirming again; the same rubric keeps its confirmation."""
+    if q is None:
+        return
+    built = formatter.current().build_rubric(q.question_text, key.answer_text, list(key.criteria or []), q.max_marks)
+    new = built.to_dict() if built is not None else None
+    if new != key.rubric:
+        key.rubric, key.rubric_status = new, "UNREVIEWED"
 
 
 def mapping_summary(db: Session, ev: Evaluation) -> dict:

@@ -1,6 +1,6 @@
 from io import BytesIO
 from openpyxl import Workbook, load_workbook
-from app.services.k_level import suggest_k_level
+from app.formatter.common.k_level import suggest_k_level
 from .conftest import BEHAVIOUR, make_pdf, make_png
 
 

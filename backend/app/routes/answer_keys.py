@@ -16,9 +16,9 @@ from ..ocr.schemas import GeneratedAnswerKeyResult
 from ..security import current_teacher
 from ..serializers import key_view
 from ..services.audit import audit
-from ..services.mapping import map_label
-from ..services.mapping_service import exam_questions, refresh_key_state
-from ..services.numbering import normalize_question_number
+from ..formatter.common.mapping import map_label
+from ..services.mapping_service import exam_questions, refresh_key_state, refresh_rubric
+from ..formatter.common.numbering import normalize_question_number
 from ..services.state import set_state
 
 router = APIRouter(prefix="/api")
@@ -45,6 +45,14 @@ def list_keys(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depends(
     doc = db.query(AnswerKeyDocument).filter_by(exam_id=exam.id, is_active=True).order_by(AnswerKeyDocument.uploaded_at.desc()).first()
     covered = {k.exam_question_id for k in keys if k.mapping_status == "MAPPED" and k.exam_question_id}
     is_locked = exam.status in ("ANSWER_KEY_VERIFIED", "READY_FOR_EVALUATION", "EVALUATING", "REVIEW_REQUIRED", "FINALIZED")
+    qmap = {q.id: q for q in qs}
+    missing_rubric = [k for k in keys if k.rubric is None and k.exam_question_id in qmap]
+    for k in missing_rubric:  # keys from before rubrics existed: build theirs now
+        refresh_rubric(k, qmap[k.exam_question_id])
+        if k.verification_status == "VERIFIED" and k.rubric is not None:
+            k.rubric_status = "CONFIRMED"  # the teacher already reviewed this key
+    if missing_rubric:
+        db.commit()
     return {"keys": [key_view(k) for k in keys], "document_id": doc.id if doc else None,
             "questions": [{"id": q.id, "display_number": q.display_number, "max_marks": q.max_marks,
                            "question_text": q.question_text} for q in qs],
@@ -604,6 +612,11 @@ def verify_all_keys(exam_id: str, db: Session = Depends(get_db), t: Teacher = De
             if not primary_issue_type:
                 primary_issue_type = "mark_mismatch"
 
+        for problem in (k.rubric or {}).get("problems") or []:
+            reasons.append(f"Rubric: {problem}")
+            if not primary_issue_type:
+                primary_issue_type = "rubric"
+
         if reasons:
             if doc_failed:
                 failed_keys.append(k.id)
@@ -632,6 +645,8 @@ def verify_all_keys(exam_id: str, db: Session = Depends(get_db), t: Teacher = De
                       action="answer_key_verification_status_changed", old="UNVERIFIED", new="VERIFIED",
                       reason="auto_verified_eligible_answer")
                 newly_verified += 1
+            if k.rubric is not None:
+                k.rubric_status = "CONFIRMED"
             verified_keys.append(k.id)
 
     # Check for questions lacking answer keys
@@ -698,6 +713,8 @@ def verify_keys(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depend
             issues.append({"question": label, "reason": "Answer text is empty"})
         if k.mark_mismatch:
             issues.append({"question": label, "reason": "MARK MISMATCH: key marks differ from the question's maximum marks"})
+        for problem in (k.rubric or {}).get("problems") or []:
+            issues.append({"question": label, "reason": f"Rubric: {problem}"})
     by_q: dict[str, int] = {}
     for k in keys:
         if k.mapping_status == "MAPPED" and k.exam_question_id:
@@ -712,6 +729,8 @@ def verify_keys(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depend
         raise err(400, "ANSWER_KEY_NOT_READY", f"{len(issues)} issue(s) must be resolved before the answer key can be verified.", issues)
     for k in keys:
         k.verification_status = "VERIFIED"
+        if k.rubric is not None:
+            k.rubric_status = "CONFIRMED"  # the teacher's one-time review of the marking rubric
     set_state(exam, "ANSWER_KEY_VERIFIED")
     if db.query(Evaluation).filter_by(exam_id=exam.id).first():
         set_state(exam, "READY_FOR_EVALUATION")

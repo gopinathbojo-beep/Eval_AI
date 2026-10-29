@@ -12,19 +12,28 @@ from typing import Type, TypeVar
 import httpx
 from pydantic import BaseModel
 from ..config import INDIC_BAD_RESPONSE_MESSAGE, INDIC_UNAVAILABLE_MESSAGE, get_settings
-from ..services import choices, tamil_blocks, tamil_format
-from ..services.doc_structure import extract_section_marks_rule, is_document_header, is_section_heading_line
-from ..services.numbering import extract_label_from_text_prefix
+from ..formatter.common import choices
+from ..formatter.tamil import blocks as tamil_blocks
+from ..formatter.tamil import format as tamil_format
+from ..formatter.common.paper import extract_section_marks_rule, is_document_header, is_section_heading_line
+from ..formatter.common.numbering import extract_label_from_text_prefix
 from .internvl import AICall
 from .schemas import AnswerKeyPageResult, QuestionPageResult, StudentPageResult
 
 log = logging.getLogger("adem.indic")
 T = TypeVar("T", bound=BaseModel)
 
-# IndicOCR gives no recognition confidence (block `conf` is layout detection). Printed text reads reliably;
-# handwriting is still "work in progress" upstream, so keep it below LOW_CONF and a teacher checks every answer.
+# Recognition confidence is measured by the service (indic_ocr_service/confidence.py): a block's `text_conf` is the mean
+# probability of its words as the recognizer read them; `conf` is only the layout model's certainty about the box.
+# A service from before that measurement sends no text_conf: printed text then counts as read reliably, handwriting
+# (still "work in progress" upstream) stays below LOW_CONF so a teacher checks every answer.
 _PRINTED_CONFIDENCE = 0.8
 _HANDWRITING_CONFIDENCE = 0.5
+
+
+def _confidence(block: dict, fallback: float) -> float:
+    measured = block.get("text_conf")
+    return float(measured) if isinstance(measured, (int, float)) else fallback
 # Not student or question content
 # Block type/label (lower case, letters only): IndicOCR says "PageHeader", "Website-link", "Page-number", ...
 _SKIP_KINDS = {"pageheader", "pagefooter", "header", "footer", "footnote", "websitelink", "dateline",
@@ -32,6 +41,7 @@ _SKIP_KINDS = {"pageheader", "pagefooter", "header", "footer", "footnote", "webs
 # Page numbers and paper codes; IndicOCR also files exam header lines ("[ மொத்த மதிப்பெண்கள் : 100") and mark rules
 # ("3x8=24") under these, so those are kept
 _FOLIO_KINDS = {"pagenumber", "folio", "number", "infobox"}
+_CONTENT_WORDS = 20  # a folio-kind block this long is text (page numbers and paper codes are a few words)
 _ONLY_NUMBERS = re.compile(r"^[\d\s.\-–/]*$")
 _REGISTER_BOX = re.compile(r"^\s*(?:(?:பதிவு|தேர்வு)?\s*எண்|Reg(?:ister|istration)?\.?\s*No\.?)?[\s\d]*$", re.I)
 
@@ -53,6 +63,8 @@ def _is_furniture(block: dict, text: str) -> bool:
         return True
     if "table" in kinds and _REGISTER_BOX.match(re.sub(r"<[^>]+>", " ", text)):  # the candidate's register-number box
         return True
+    if kinds & _FOLIO_KINDS and len(text.split()) >= _CONTENT_WORDS:
+        return False  # a boxed model letter or passage the layout model calls an "Infobox": content, not a folio
     return bool(kinds & _FOLIO_KINDS) and not (is_document_header(text) or extract_section_marks_rule(text) is not None)
 
 
@@ -141,6 +153,8 @@ def _group_answers(items: list[dict]) -> list[dict]:
     out: list[dict] = []
     for it in items:
         if it["question_number"] is None and out and out[-1]["question_number"] is not None:
+            a, b = (len(x["answer_text"].split()) or 1 for x in (out[-1], it))
+            out[-1]["ocr_confidence"] = (out[-1]["ocr_confidence"] * a + it["ocr_confidence"] * b) / (a + b)  # per word
             out[-1]["answer_text"] = f"{out[-1]['answer_text']}\n{it['answer_text']}"
             out[-1]["bbox"] = _merge_bbox(out[-1]["bbox"], it["bbox"])
         else:
@@ -199,17 +213,19 @@ def blocks_to_result(page: dict, schema: Type[T], page_number: int) -> T:
         if issubclass(schema, QuestionPageResult):
             for seg in _split_headings(text):
                 lbl, rest = extract_label_from_text_prefix(seg)
-                items.append({"raw_question_number": lbl, "question_text": rest, "confidence": _PRINTED_CONFIDENCE,
+                items.append({"raw_question_number": lbl, "question_text": rest, "confidence": _confidence(b, _PRINTED_CONFIDENCE),
                               "bbox": bbox, "_src": seg})
             continue
         lbl, rest = extract_label_from_text_prefix(text)
         if issubclass(schema, StudentPageResult) and lbl is None and _is_identity_block(text):
             continue  # the student's name and roll no. in the sheet header, not an answer
         if issubclass(schema, AnswerKeyPageResult):
-            items.append({"question_number": lbl, "answer_text": rest, "confidence": _PRINTED_CONFIDENCE, "bbox": bbox})
+            items.append({"question_number": lbl, "answer_text": rest, "confidence": _confidence(b, _PRINTED_CONFIDENCE),
+                          "bbox": bbox})
         elif issubclass(schema, StudentPageResult):
             items.append({"question_number": lbl, "raw_question_label": lbl, "answer_text": rest, "bbox": bbox,
-                          "mapping_status": "UNMAPPED", "ocr_confidence": _HANDWRITING_CONFIDENCE, "page_number": page_number})
+                          "mapping_status": "UNMAPPED", "ocr_confidence": _confidence(b, _HANDWRITING_CONFIDENCE),
+                          "page_number": page_number})
         else:
             raise TypeError(f"IndicOCR cannot fill {schema.__name__}")
     if issubclass(schema, StudentPageResult):

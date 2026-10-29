@@ -12,8 +12,8 @@ from typing import Any
 from ..ocr import prompts
 from ..ocr.internvl import AIResponseError, AIUnavailable, chat_structured
 from ..ocr.schemas import KeyCriteriaLabels, QuestionTypeLabels
-from .numbering import normalize_question_number
-from .ocr_recovery import _extract_distinct_numbers, _tokenize
+from ..formatter.common.numbering import normalize_question_number
+from ..formatter.common.recovery import _extract_distinct_numbers, _tokenize
 
 log = logging.getLogger("adem.labeler")
 

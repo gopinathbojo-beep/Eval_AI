@@ -1,7 +1,10 @@
 """IndicOCR (Bodhan AI / AI4Bharat) over HTTP for the ADEM backend.
 
 Runs in its own venv on the GPU machine: IndicOCR ships its own CUDA wheels, which must not mix with the backend's.
-POST /parse   (multipart "image") -> {"image", "width", "height", "blocks": [{order, label, type, bbox_xyxy, conf, text}]}
+POST /parse   (multipart "image") -> {"image", "width", "height",
+              "blocks": [{order, label, type, bbox_xyxy, conf, text, text_conf, low_words}]}
+              conf is the layout model's certainty about the box; text_conf is the recognizer's about the text in it
+              (confidence.py), low_words the words it doubted
 POST /release -> frees GPU memory once running pages finish; the backend calls it when its job queue switches to InternVL
 GET  /health  -> {"status": "ok", "model": "bodhan-ai/indic-ocr", "loaded": bool}
 The model loads on the first page after start or release. Pages from parallel backend jobs are read at the same time
@@ -25,6 +28,7 @@ log = logging.getLogger("indic_ocr_service")
 _repo = snapshot_download(MODEL_REPO)
 sys.path.insert(0, _repo)
 from indic_ocr import IndicOCR  # noqa: E402  (shipped inside the model repo)
+import confidence  # noqa: E402
 
 _parser = None
 _load_lock = threading.Lock()
@@ -40,6 +44,7 @@ def _get_parser():
         if _parser is None:
             # The backend stores tables as Markdown everywhere; IndicOCR defaults to HTML.
             _parser = IndicOCR.from_pretrained(_repo, table_format="markdown")
+            confidence.install()
         return _parser
 
 
@@ -84,7 +89,11 @@ def parse(image: UploadFile = File(...)):
             _state.wait_for(lambda: not _releasing)
             _active += 1
         try:
+            confidence.start()
             page = _get_parser().parse(str(path))
+            measured = confidence.results()
+            for block in page.get("blocks") or []:
+                block.update(measured.get(block.get("order"), {}))
         except Exception as e:
             log.exception("IndicOCR failed on %s", image.filename)
             raise HTTPException(500, f"IndicOCR failed: {type(e).__name__}: {e}")

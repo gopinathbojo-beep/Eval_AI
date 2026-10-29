@@ -33,10 +33,3 @@ def set_state(exam: Exam, new: str) -> None:
 def at_least(exam: Exam, state: str) -> bool:
     return STATES.index(exam.status) >= STATES.index(state)
 
-
-def require_at_least(exam: Exam, state: str, what: str) -> None:
-    if not at_least(exam, state):
-        raise HTTPException(409, detail={
-            "code": "EXAM_STATE_TOO_EARLY",
-            "message": f"{what} is not available until the exam reaches {state.replace('_', ' ').title()} "
-                       f"(currently {exam.status.replace('_', ' ').title()})."})

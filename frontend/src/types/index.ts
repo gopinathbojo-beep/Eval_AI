@@ -95,6 +95,17 @@ export interface AnswerKeyRow {
   page_number: number | null; bbox: BBox | null; has_crop: boolean; ocr_confidence: number | null;
   mapping_status: string; mapping_note: string | null; mapping_candidates: string[]; mark_mismatch: boolean;
   verification_status: string;
+  rubric: Rubric | null; rubric_status: "UNREVIEWED" | "CONFIRMED";
+}
+/** A question's marking rubric, built from its answer key (backend formatter build_rubric). */
+export interface RubricPoint {
+  id: string; marks: number | null; text: string;
+  kind: "number" | "unit" | "equation" | "exact" | "meaning" | "criterion";
+  part: string | null; expected: string[];
+}
+export interface Rubric {
+  kind: string; points: RubricPoint[]; notes: string[]; deductions: string[]; problems: string[];
+  stated_total: number | null; total: number;
 }
 export interface KeysResponse {
   keys: AnswerKeyRow[]; document_id: string | null; locked: boolean; missing_question_ids: string[];

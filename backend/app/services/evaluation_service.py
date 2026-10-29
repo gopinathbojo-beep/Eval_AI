@@ -9,11 +9,12 @@ from ..ocr import prompts
 from ..ocr.internvl import AIResponseError, AIUnavailable, chat_structured, check_model
 from ..ocr.indic import text_model_for
 from ..ocr.schemas import EvaluationResult
-from . import choices, paper_format
-from .evaluation_rules import EvaluationValidationError, validate_evaluation
-from .job_queue import keyed_lock
+from .. import formatter
+from ..formatter.common import choices
+from ..formatter.common.mark_rules import EvaluationValidationError, validate_evaluation
+from .job_queue import keyed_lock, submit
 from .mapping_service import exam_questions
-from .numbering import parent_number
+from ..formatter.common.numbering import parent_number
 from .state import set_state
 
 log = logging.getLogger("adem.evaluation")
@@ -208,16 +209,27 @@ def active_key_for(db: Session, exam_id: str, question_id: str) -> AnswerKey | N
                                           mapping_status="MAPPED").first())
 
 
-def answer_for(db: Session, ev_id: str, question_id: str) -> StudentAnswer | None:
-    ev = db.get(Evaluation, ev_id)
-    q = db.get(ExamQuestion, question_id)
-    if ev and q:
-        res = resolve_student_answer(db, ev, q)
-        if res.status == STUDENT_ANSWER_FOUND:
-            return res.primary_answer
-    return (db.query(StudentAnswer).filter(StudentAnswer.evaluation_id == ev_id,
-                                           StudentAnswer.exam_question_id == question_id,
-                                           StudentAnswer.status.in_(_ANSWER_STATES)).first())
+_POINT_CHECK = {"number": "final value", "unit": "SI unit", "equation": "equation", "exact": "exact answer",
+                "meaning": "same meaning", "criterion": "band"}
+
+
+def rubric_criteria(key: AnswerKey) -> list[str]:
+    """The marking points the grader is given: the key's rubric as "[1 mark] (a) exact answer: since - Correct
+    preposition choice", or the key's criteria lines when it has no rubric."""
+    rubric = getattr(key, "rubric", None) or {}
+    points = rubric.get("points") or []
+    if not points:
+        return list(key.criteria or [])
+    out = []
+    for p in points:
+        m = p.get("marks")
+        mark = f"{m:g} mark{'' if m == 1 else 's'}" if isinstance(m, (int, float)) else "marks"
+        part = f" ({p['part']})" if p.get("part") else ""
+        expects = f": {' / '.join(p['expected'])}" if p.get("expected") else ""
+        out.append(f"[{mark}]{part} {_POINT_CHECK.get(p.get('kind'), 'same meaning')}{expects} - {p.get('text', '')}")
+    for d in rubric.get("deductions") or []:
+        out.append(f"[deduction] {d}")
+    return out
 
 
 def _reset_item(item: EvaluationItem) -> None:
@@ -243,21 +255,18 @@ def evaluate_item(db: Session, ev: Evaluation, q: ExamQuestion, item: Evaluation
         for a in resolved.constituent_answers:
             a.status = "EVALUATING"
         db.commit()
-        attempts = [(None, resolved.combined_text)]
-        tamil_answers = None
-        if paper_format.active() == paper_format.TAMIL:
-            from . import tamil_answers  # "write on any one topic" answered on several: each graded, the best counts
-            attempts = tamil_answers.one_of_attempts(q.question_text, resolved.combined_text) or attempts
+        fmt = formatter.current()  # the subject's own grading rules, see app/formatter
+        # "write on any one topic" answered on several: each graded, the best counts
+        attempts = fmt.grading_attempts(q.question_text, resolved.combined_text) or [(None, resolved.combined_text)]
         try:
             graded = []
             for title, text in attempts:
-                prompt = prompts.evaluation_prompt(q.display_number, q.question_text, key.answer_text, key.criteria,
+                prompt = prompts.evaluation_prompt(q.display_number, q.question_text, key.answer_text, rubric_criteria(key),
                                                    key.accepted_answers, key.keywords, q.max_marks, text)
                 call = chat_structured(prompts.EVAL_SYSTEM, prompt, EvaluationResult, model=model)
                 item.raw_response = call.raw
                 res = validate_evaluation(call.parsed, q.max_marks)  # type: ignore[arg-type]
-                if tamil_answers:  # a deduction the student's own text contradicts is undone
-                    res = tamil_answers.check_deductions(res, text, key.answer_text, q.max_marks)
+                res = fmt.check_deductions(res, text, key.answer_text, q.max_marks)
                 graded.append((title, res, call.raw))
             title, res, _ = max(graded, key=lambda g: g[1].marks_awarded)  # the first of equal best
             item.ai_marks, item.ai_decision = res.marks_awarded, res.decision
@@ -487,7 +496,9 @@ _EVALUATABLE_EXAM = ("READY_FOR_EVALUATION", "EVALUATING", "REVIEW_REQUIRED")
 def auto_evaluate_sheet(doc_id: str) -> None:
     """Grade a freshly read sheet straight away when nothing needs the teacher first (pages read, answers mapped).
 
-    Sheets with unread pages or unmapped answers are left for the teacher; review_reasons() lists why.
+    Sheets with unread pages or unmapped answers are left for the teacher; review_reasons() lists why. Grading is
+    queued as its own job, on its grading model's engine: a Tamil sheet's reading job must not hold IndicOCR on the
+    GPU while InternVL grades it (Ollama would then load InternVL on the CPU).
     """
     db = SessionLocal()
     try:
@@ -501,10 +512,10 @@ def auto_evaluate_sheet(doc_id: str) -> None:
             return
         ev.run_status, ev.run_progress = "RUNNING", 0
         db.commit()
-        ev_id = ev.id
+        ev_id, exam_id = ev.id, ev.exam_id
     finally:
         db.close()
-    run_evaluation(ev_id)
+    submit(exam_id, run_evaluation, ev_id, reads_pages=False)
 
 
 def review_reasons(db: Session, ev: Evaluation, snap: ExamSnapshot) -> list[dict]:

@@ -7,9 +7,10 @@ import pytest
 
 from app.ocr.indic import blocks_to_result
 from app.ocr.schemas import AnswerKeyPageResult, QuestionPageResult
-from app.services import choices, paper_format
-from app.services.doc_structure import parse_question_paper_structure
-from app.services.key_segmentation import segment_answer_keys
+from app.services import paper_format
+from app.formatter.common import choices
+from app.formatter.common.paper import parse_question_paper_structure
+from app.formatter.common.keys import segment_answer_keys
 
 QP = [[
     "எட்டாம் வகுப்பு – தமிழ் வினாத்தாள்\nபாடம்: தமிழ்\nதேர்வு நேரம்: 1 மணி\nமொத்த மதிப்பெண்கள்: 30",

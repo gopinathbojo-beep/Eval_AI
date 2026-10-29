@@ -25,7 +25,7 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from sqlalchemy.orm import Session
 
 from ..models import SchoolClass, Subject, Student, Exam, Evaluation, EvaluationItem, ExamQuestion, Teacher
-from . import choices
+from ..formatter.common import choices
 
 # Theme Colors (ADEM Executive Palette)
 NAVY_HEADER = "1E3A8A"       # Primary deep navy header
@@ -165,7 +165,7 @@ def generate_marksheet_workbook(db: Session, teacher_id: str | None = None) -> o
 
 
 def build_outcome_sheet(wb: openpyxl.Workbook, db: Session, class_ids: list[str]) -> None:
-    from .k_level import K_LEVELS, summarize
+    from ..formatter.common.k_level import K_LEVELS, summarize
     exams = db.query(Exam).filter(Exam.class_id.in_(class_ids or [""])).order_by(Exam.created_at).all()
     rows = []
     for exam in exams:
