@@ -21,7 +21,7 @@ export function RubricView({ rubric, status, questionMarks }: { rubric: Rubric; 
       <div className="flex flex-wrap items-center gap-1.5">
         <span className="text-[11px] text-mute font-semibold uppercase tracking-wider">Marking rubric</span>
         <Badge tone={adds ? "ok" : "mark"}>{marks(rubric.total)} marks</Badge>
-        {status === "CONFIRMED" ? <Badge tone="ok">Confirmed</Badge> : <Badge tone="warn">Not reviewed</Badge>}
+        {status === "CONFIRMED" && <Badge tone="ok">Confirmed</Badge>}
       </div>
       <ul className="space-y-1">
         {rubric.points.map((p) => {

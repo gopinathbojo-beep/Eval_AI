@@ -51,3 +51,5 @@ yarn-error.*
 
 # generated marksheets (written by /api/reports/marksheet)
 /Student_Marksheet*.xlsx
+
+gpu_server/ollama.log*

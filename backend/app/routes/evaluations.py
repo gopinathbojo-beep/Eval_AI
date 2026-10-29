@@ -189,7 +189,7 @@ def patch_mapping(ev_id: str, answer_id: str, body: MappingPatch, bg: Background
     if rerun and ev.run_status == "DONE":
         ev.run_status = "RUNNING"
         db.commit()
-        bg.add_task(submit, ev.exam_id, run_evaluation, ev.id, rerun, reads_pages=False)
+        bg.add_task(submit, ev.exam_id, run_evaluation, ev.id, rerun, grading=True)
     return {**answer_view(a), "evaluation_status": ev.status, "reevaluating": bool(rerun and ev.run_status == "RUNNING")}
 
 
@@ -314,7 +314,7 @@ def run(ev_id: str, bg: BackgroundTasks, db: Session = Depends(get_db), t: Teach
         raise err(400, "MAPPING_INCOMPLETE", f"{len(issues)} issue(s) must be resolved before evaluation can run.", issues)
     ev.run_status, ev.run_progress = "RUNNING", 0
     db.commit()
-    bg.add_task(submit, ev.exam_id, run_evaluation, ev.id, reads_pages=False)
+    bg.add_task(submit, ev.exam_id, run_evaluation, ev.id, grading=True)
     return {"run_status": "RUNNING"}
 
 
@@ -414,7 +414,7 @@ def rerun_item(ev_id: str, item_id: str, bg: BackgroundTasks, db: Session = Depe
           old={"ai": it.ai_marks, "final": it.final_marks})
     ev.run_status = "RUNNING"
     db.commit()
-    bg.add_task(submit, ev.exam_id, run_evaluation, ev.id, [it.exam_question_id], reads_pages=False)
+    bg.add_task(submit, ev.exam_id, run_evaluation, ev.id, [it.exam_question_id], grading=True)
     return {"run_status": "RUNNING"}
 
 
