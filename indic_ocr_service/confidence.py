@@ -54,9 +54,9 @@ def block_stats(ids: list[int], logprobs: list[float], starts_word, decode) -> d
 def install() -> None:
     """Measure confidence in the recognizer that ships with the model, without editing its files: record the block
     order of every crop it builds, and decode with a logits processor that keeps the chosen token's probability."""
-    import idp_recognizer
-    import torch
-    from transformers import LogitsProcessor, LogitsProcessorList
+    import idp_recognizer  # pyright: ignore[reportMissingImports]  (shipped inside the model repo)
+    import torch  # pyright: ignore[reportMissingImports]  (installed on the GPU server by install.py)
+    from transformers import LogitsProcessor, LogitsProcessorList  # pyright: ignore[reportMissingImports]
 
     if getattr(idp_recognizer, "_confidence_installed", False):
         return

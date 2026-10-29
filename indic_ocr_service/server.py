@@ -27,7 +27,7 @@ log = logging.getLogger("indic_ocr_service")
 
 _repo = snapshot_download(MODEL_REPO)
 sys.path.insert(0, _repo)
-from indic_ocr import IndicOCR  # noqa: E402  (shipped inside the model repo)
+from indic_ocr import IndicOCR  # noqa: E402  # pyright: ignore[reportMissingImports]  (shipped inside the model repo)
 import confidence  # noqa: E402
 
 _parser = None
@@ -53,7 +53,7 @@ app = FastAPI(title="ADEM IndicOCR service")
 
 @app.get("/health")
 def health():
-    import torch
+    import torch  # pyright: ignore[reportMissingImports]  (installed on the GPU server by install.py)
     gpu = torch.cuda.get_device_name(0) if torch.cuda.is_available() else None
     return {"status": "ok", "model": MODEL_REPO, "loaded": _parser is not None, "gpu": gpu}
 
@@ -70,7 +70,7 @@ def release():
                     _parser = None
                     gc.collect()
                     try:
-                        import torch
+                        import torch  # pyright: ignore[reportMissingImports]
                         torch.cuda.empty_cache()
                     except Exception:  # CPU-only install or no torch: nothing more to free
                         pass

@@ -174,3 +174,19 @@ def test_k_level_suggestions():
     assert suggest_k_level("Design an experiment to show transpiration.") == "K6"
     assert suggest_k_level("Write a letter to the editor about pollution.") == "K6"
     assert suggest_k_level("") is None
+
+
+def test_k_level_suggestion_reads_tamil_command_words():
+    """Tamil papers have no English verbs; without the Tamil words every question fell back to K1."""
+    from app import formatter
+    with formatter.use("tamil"):
+        assert suggest_k_level("அ) கல்வியின் சிறப்புகள் யாவை? (2)") == "K1"
+        assert suggest_k_level("அ) கீழ்க்கண்ட சொற்களின் எதிர்ச்சொற்களை எழுதுக. ஆ) பன்மை வடிவங்களை எழுதுக.") == "K1"
+        assert suggest_k_level("ஆ) இயற்கையை நாம் ஏன் பாதுகாக்க வேண்டும்?") == "K2"
+        assert suggest_k_level("படித்துப் புரிந்து விடையளித்தல் (3)") == "K2"
+        assert suggest_k_level("கீழ்க்காணும் சொற்களுக்குப் பன்மை வடிவம் எழுதுக.") == "K3"
+        assert suggest_k_level("கடிதம் எழுதுதல் (5) / நண்பருக்குக் கடிதம் எழுதுக.") == "K6"
+        assert suggest_k_level("கட்டுரை எழுதுதல் (5)") == "K6"
+        assert suggest_k_level("அவன் தயார் நிலையில் இருந்தான்.") == "K1"  # "யார்" inside "தயார்" is no question word
+    with formatter.use("english"):
+        assert suggest_k_level("கட்டுரை எழுதுதல்") == "K1"  # Tamil words only under a Tamil subject

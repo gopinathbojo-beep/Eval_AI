@@ -6,6 +6,9 @@ teacher as suggestions until confirmed.
 from __future__ import annotations
 import re
 from collections import OrderedDict
+from functools import lru_cache
+from importlib import import_module
+from ... import formatter
 
 K_LEVELS = OrderedDict([("K1", "Remember"), ("K2", "Understand"), ("K3", "Apply"),
                         ("K4", "Analyse"), ("K5", "Evaluate"), ("K6", "Create")])
@@ -37,6 +40,12 @@ _MATH_EXPAND = re.compile(r"\bexpand\b(?=[^.?]*(?:simplif|identit|[\d²³]))")
 DEFAULT_K_LEVEL = "K1"  # no command verb ("Calorific value of a fuel?"): a recall question
 
 
+@lru_cache(maxsize=None)
+def _subject_patterns(module: str) -> list[tuple[str, re.Pattern]]:
+    """The subject formatter's own command words (Tamil "எழுதுக", "ஏன்" ...), see its k_level_verbs hook."""
+    return [(lvl, re.compile(p)) for lvl, pats in import_module(module).k_level_verbs().items() for p in pats]
+
+
 def suggest_k_level(text: str | None) -> str | None:
     """The level of the command verb that appears first in the question; K1 when there is text but no command
     verb, so every question gets a suggestion. None only for empty text."""
@@ -47,7 +56,7 @@ def suggest_k_level(text: str | None) -> str | None:
         t = _MATH_EVALUATE.sub(" calculate ", t)
     t = _MATH_EXPAND.sub(" simplify ", t)
     best: tuple[int, int, str] | None = None
-    for lvl, pat in _PATTERNS:
+    for lvl, pat in _PATTERNS + _subject_patterns(formatter.current().__name__):
         m = pat.search(t)
         # earliest verb wins; at the same position prefer the longer phrase ("write a letter" over "write")
         if m and (best is None or (m.start(), -len(m.group())) < best[:2]):

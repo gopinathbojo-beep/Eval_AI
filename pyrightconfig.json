@@ -1,0 +1,9 @@
+{
+  // Same checking level Pylance uses without this file.
+  "typeCheckingMode": "off",
+  // The IndicOCR service has its own venv; let Pylance find its packages (huggingface_hub, fastapi) there.
+  "executionEnvironments": [
+    { "root": "indic_ocr_service", "extraPaths": ["indic_ocr_service/.venv/Lib/site-packages"] },
+    { "root": "." }
+  ]
+}

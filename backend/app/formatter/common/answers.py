@@ -436,9 +436,10 @@ def segment_student_answers(
     curr_bbox: dict | None = None
     curr_confs: list[float] = []
     curr_was_redirected: bool = False
+    curr_label_moved = False  # the current answer's written label was misread: its content moved it here
 
     def flush_current():
-        nonlocal curr_raw_label, curr_norm_num, curr_text_parts, curr_bbox, curr_confs, curr_was_redirected
+        nonlocal curr_raw_label, curr_norm_num, curr_text_parts, curr_bbox, curr_confs, curr_was_redirected, curr_label_moved
         if not curr_text_parts and not curr_raw_label:
             return
         full_text = "\n".join(curr_text_parts).strip()
@@ -464,6 +465,7 @@ def segment_student_answers(
         curr_bbox = None
         curr_confs = []
         curr_was_redirected = False
+        curr_label_moved = False
 
     for page_info, page_res in page_results:
         page_num = page_info["page_number"]
@@ -595,8 +597,16 @@ def segment_student_answers(
                     top_dist_nums = (ans_nums & top_nums) - exact_nums - generic_consts
                     exact_dist_nums = (ans_nums & exact_nums) - top_nums - generic_consts
 
+                    # Labels read one behind ("4)" as "3>", "5)" as "4>" after a skipped Q3): the answer before
+                    # was moved by content onto this very number, so this one's content decides too
+                    shifted = (curr_label_moved and curr_norm_num is not None
+                               and parent_number(curr_norm_num) == parent_number(norm)
+                               and not any(g.normalized_number and parent_number(g.normalized_number) == top_p
+                                           for g in grouped))
                     should_redirect = False
                     if not exact_match and top.score >= 0.70:
+                        should_redirect = True
+                    elif shifted and top.score >= 0.65:
                         should_redirect = True
                     elif already_mapped and top.score >= 0.75:
                         should_redirect = True
@@ -723,7 +733,7 @@ def segment_student_answers(
             flush_current()
             curr_raw_label = raw_lbl
             curr_norm_num = norm
-            curr_was_redirected = is_redirected
+            curr_was_redirected = curr_label_moved = is_redirected
             curr_page = page_num
             if text:
                 curr_text_parts.append(text)
