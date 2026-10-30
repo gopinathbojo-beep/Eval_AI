@@ -7,11 +7,10 @@ from ..deps import err, get_exam
 from ..models import Exam, ExamQuestion, QuestionPaperDocument, Teacher
 from ..security import current_teacher
 from ..serializers import question_view
-from ..formatter.common import choices
+from ..cbse.formatter.common import choices
 from ..services.audit import audit
-from ..formatter.common.k_level import K_LEVELS, normalize_course_outcome
-from ..formatter.common.k_level import apply_suggestions as apply_k_suggestions
-from ..formatter.common.numbering import normalize_question_number
+from ..cbse.formatter.common.outcomes import normalize_course_outcome
+from ..cbse.formatter.common.numbering import normalize_question_number
 from ..services.state import set_state
 
 router = APIRouter(prefix="/api")
@@ -59,8 +58,6 @@ def list_questions(exam_id: str, db: Session = Depends(get_db), t: Teacher = Dep
     exam = get_exam(db, t, exam_id)
     qs = db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all()
     doc = db.query(QuestionPaperDocument).filter_by(exam_id=exam.id, is_active=True).order_by(QuestionPaperDocument.uploaded_at.desc()).first()
-    if exam.status != "FINALIZED" and apply_k_suggestions(qs):
-        db.commit()
     # Reconcile state if extraction completed and questions exist but exam status is still QUESTION_PAPER_UPLOADED
     if exam.status == "QUESTION_PAPER_UPLOADED" and qs and (not doc or doc.status in ("READY", "NEEDS_ATTENTION")):
         set_state(exam, "QUESTIONS_EXTRACTED")
@@ -172,26 +169,17 @@ def patch_question(qid: str, body: QuestionPatch, db: Session = Depends(get_db),
 
 
 class OutcomePatch(BaseModel):
-    k_level: str | None = None
     course_outcome: str | None = None
 
 
 @router.patch("/exam-questions/{qid}/outcome")
 def patch_question_outcome(qid: str, body: OutcomePatch, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
-    """K level / course outcome tags. They never change marks, so they stay editable until the exam is finalized."""
+    """Course outcome tag. It never changes marks, so it stays editable until the exam is finalized."""
     q = _get_q(db, t, qid)
     exam = get_exam(db, t, q.exam_id)
     if exam.status == "FINALIZED":
         raise err(409, "EXAM_FINALIZED", "This exam is finalized.")
     data = body.model_dump(exclude_unset=True)
-    if "k_level" in data:
-        k = (data["k_level"] or "").strip().upper() or None
-        if k is not None and k not in K_LEVELS:
-            raise err(400, "INVALID_K_LEVEL", "K level must be one of K1 to K6.")
-        if k != q.k_level or q.k_level_source != "TEACHER":
-            audit(db, exam_id=exam.id, teacher_id=t.id, entity_type="exam_question", entity_id=q.id,
-                  action="question_k_level_set", old=q.k_level, new=k)
-        q.k_level, q.k_level_source = k, "TEACHER"
     if "course_outcome" in data:
         co = normalize_course_outcome(data["course_outcome"])
         if co != q.course_outcome:
@@ -200,22 +188,6 @@ def patch_question_outcome(qid: str, body: OutcomePatch, db: Session = Depends(g
         q.course_outcome = co
     db.commit()
     return question_view(q)
-
-
-@router.post("/exams/{exam_id}/questions/confirm-k-levels")
-def confirm_k_levels(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
-    """Accept every suggested K level as the teacher's own."""
-    exam = get_exam(db, t, exam_id)
-    if exam.status == "FINALIZED":
-        raise err(409, "EXAM_FINALIZED", "This exam is finalized.")
-    qs = db.query(ExamQuestion).filter_by(exam_id=exam.id, k_level_source="SUGGESTED").all()
-    for q in qs:
-        q.k_level_source = "TEACHER"
-    if qs:
-        audit(db, exam_id=exam.id, teacher_id=t.id, entity_type="exam", entity_id=exam.id,
-              action="k_levels_confirmed", new=len(qs))
-    db.commit()
-    return {"confirmed": len(qs)}
 
 
 class QuestionCreate(BaseModel):

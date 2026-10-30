@@ -2,11 +2,11 @@
 from __future__ import annotations
 from typing import Any
 from sqlalchemy.orm import Session
-from .. import formatter
+from ..cbse import formatter
 from ..config import get_settings
 from ..models import AnswerKey, Evaluation, ExamQuestion, StudentAnswer
-from ..formatter.common.mapping import MAPPED, NEEDS_REVIEW, UNMAPPED, flag_duplicates, map_label, detect_mapping_anomalies
-from ..formatter.common.numbering import part_labels
+from ..cbse.formatter.common.mapping import MAPPED, NEEDS_REVIEW, UNMAPPED, flag_duplicates, map_label, detect_mapping_anomalies
+from ..cbse.formatter.common.numbering import part_labels
 
 DUP_NOTE = "DUPLICATE_MAPPING: another answer also maps to this question"
 _RECOMPUTABLE = {"UNMAPPED", "NEEDS_REVIEW", "MAPPED"}

@@ -5,7 +5,7 @@ from app.database import SessionLocal
 from app.models import (AnswerSheetDocument, Evaluation, EvaluationItem, Exam, ExamQuestion, SchoolClass, Student, Subject,
                         Teacher)
 from app.services.report_templates import normalize
-from app.services.school_reports import cbse_grade
+from app.cbse import grading
 from .conftest import make_png
 
 
@@ -20,10 +20,24 @@ def _text(pdf: bytes) -> str:
     return re.sub(r"\s+", " ", "".join(p.get_text() for p in doc)), doc.page_count
 
 
-def test_cbse_grades():
-    assert [cbse_grade(p) for p in (100, 91, 90.5, 90.4, 81, 71, 61, 51, 41, 33, 32.4, 0)] == \
-        ["A1", "A1", "A1", "A2", "A2", "B1", "B2", "C1", "C2", "D", "E", "E"]
-    assert cbse_grade(None) == "–"
+def test_cbse_grades_by_rank_among_passed():
+    # 16 passed students with distinct scores: two per eighth, A1 for the top two ... D2 for the last two
+    g = grading.grades({**{i: 100.0 - i for i in range(15)}, "borderline": 32.5, "fail": 32.4, "absent": None})
+    assert [g[i] for i in range(15)] == [grading.GRADES[i // 2] for i in range(15)]
+    assert g["borderline"] == "D2"                       # 32.5% rounds to the 33% pass mark
+    assert (g["fail"], g["absent"]) == ("E", "–")        # E is Essential Repeat; no marks, no grade
+
+
+def test_cbse_grades_keep_ties_together():
+    # 16 passed; three tied at positions 3-5 fall in A2, B1, B1: the larger part wins, so all three get B1
+    g = grading.grades({0: 99, 1: 98, 2: 97, 3: 90, 4: 90, 5: 90, **{i: 80 - i for i in range(6, 16)}})
+    assert [g[i] for i in range(7)] == ["A1", "A1", "A2", "B1", "B1", "B1", "B2"]
+    # 8 passed; three tied at positions 1-3 fall in A2, B1, B2: no larger part, so the group goes up to A2
+    g = grading.grades({"a": 90, "b": 80, "c": 80, "d": 80, "e": 70, "f": 60, "g": 50, "h": 40})
+    assert [g[k] for k in "abcdefgh"] == ["A1", "A2", "A2", "A2", "C1", "C2", "D1", "D2"]
+    # 4 passed: one per other eighth (A1, B1, C1, D1); a tie of the last two goes up to C1
+    g = grading.grades({"a": 90, "b": 80, "c": 70, "d": 70})
+    assert [g[k] for k in "abcd"] == ["A1", "B1", "C1", "C1"]
 
 
 def test_template_normalize_keeps_known_keys_only():
@@ -99,7 +113,7 @@ def test_school_profile_templates_and_report_cards(client, auth):
     assert r.status_code == 200 and "Asha" in r.headers["content-disposition"]
     text, pages = _text(r.content)
     assert pages == 1 and "Green Valley School" in text and "Progress Report · Term 1 · 2026-27" in text
-    assert "122 / 160" in text and "76.25%" in text and "B1" in text and "Dr. R. Iyer" in text
+    assert "122 / 160" in text and "76.25%" in text and "A1" in text and "Dr. R. Iyer" in text  # top of 2
     assert "Class Rank" not in text                                             # hidden by the template
     whole = c.get(f"/api/classes/{cls_id}/report-cards?academic_year=2026-27&exam_type=Term 1", headers=h)
     text, pages = _text(whole.content)
@@ -127,8 +141,8 @@ def test_exam_wise_report(client, auth):
               exam_type="Unit Test", total_marks=20, status="FINALIZED")
     db.add(ex)
     db.flush()
-    q1 = ExamQuestion(exam_id=ex.id, display_number="1", max_marks=10, position=0, k_level="K1")
-    q2 = ExamQuestion(exam_id=ex.id, display_number="2", max_marks=10, position=1, k_level="K3")
+    q1 = ExamQuestion(exam_id=ex.id, display_number="1", max_marks=10, position=0)
+    q2 = ExamQuestion(exam_id=ex.id, display_number="2", max_marks=10, position=1)
     db.add_all([q1, q2])
     db.commit()
     empty = c.get(f"/api/exams/{ex.id}/report.pdf", headers=h)
@@ -154,4 +168,4 @@ def test_exam_wise_report(client, auth):
     assert "Exam Result Analysis" in text and "Maths Unit Test" in text and "2 evaluated, 1 pending" in text
     assert "Meena" in text and "Arjun" in text and "Kavya" in text and "Not evaluated" in text
     assert "55%" in text and "1 / 2" in text and "50%" in text                  # average, passed, pass %
-    assert "Question-wise Analysis" in text and "Knowledge Level" in text
+    assert "Question-wise Analysis" in text and "Knowledge Level" not in text

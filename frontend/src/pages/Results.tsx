@@ -7,8 +7,7 @@ import { useApi } from "../hooks/useApi";
 import { useCrumbName } from "../context/Crumbs";
 import { useTableState } from "../hooks/useTableState";
 import type { Evaluation, ResultResponse } from "../types";
-import { OutcomeTables } from "../components/OutcomeTables";
-import { date, fmt, kLabel } from "../utils/format";
+import { date, fmt } from "../utils/format";
 
 export function EvaluationsList() {
   const { data, loading, error } = useApi<Evaluation[]>("/evaluations");
@@ -655,14 +654,12 @@ export function ResultPage() {
       </div>
 
       {/* Tab 1 Content: Marks Breakdown by Question */}
-      {activeTab === "breakdown" && data.outcomes && <OutcomeTables outcomes={data.outcomes} />}
       {activeTab === "breakdown" && (
         <Card className="overflow-x-auto shadow-soft">
           <table className="w-full text-left text-sm">
             <thead className="border-b border-line bg-surface text-xs font-semibold uppercase tracking-wider text-mute">
               <tr>
                 <th className="px-4 py-3">Question</th>
-                <th className="px-4 py-3">K Level</th>
                 <th className="px-4 py-3">Marks Awarded</th>
                 <th className="px-4 py-3">Max Marks</th>
                 <th className="px-4 py-3">Evaluation Status</th>
@@ -672,7 +669,6 @@ export function ResultPage() {
               {data.questions.map((q) => (
                 <tr key={q.question_id} className="hover:bg-hover">
                   <td className="px-4 py-3 font-bold text-ink">Question {q.question}</td>
-                  <td className="px-4 py-3 text-ink">{kLabel(q.k_level)}</td>
                   <td className="px-4 py-3 font-mono font-bold text-pen">{fmt(q.final_marks)}</td>
                   <td className="px-4 py-3 font-mono text-mute">{fmt(q.max_marks)}</td>
                   <td className="px-4 py-3">

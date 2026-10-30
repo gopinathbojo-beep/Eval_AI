@@ -28,12 +28,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.ocr.schemas import AnswerKeyPageResult, QuestionPageResult, StudentPageResult  # noqa: E402
 from app.services import paper_format  # noqa: E402
-from app.formatter.common.paper import parse_question_paper_structure  # noqa: E402
-from app.formatter.common.keys import segment_answer_keys  # noqa: E402
-from app.formatter.common.mapping import MAPPED, map_label  # noqa: E402
-from app.formatter.common.numbering import parent_number  # noqa: E402
-from app.formatter.common.recovery import _tokenize  # noqa: E402
-from app.formatter.common.answers import segment_student_answers  # noqa: E402
+from app.cbse.formatter.common.paper import parse_question_paper_structure  # noqa: E402
+from app.cbse.formatter.common.keys import segment_answer_keys  # noqa: E402
+from app.cbse.formatter.common.mapping import MAPPED, map_label  # noqa: E402
+from app.cbse.formatter.common.numbering import parent_number  # noqa: E402
+from app.cbse.formatter.common.recovery import _tokenize  # noqa: E402
+from app.cbse.formatter.common.answers import segment_student_answers  # noqa: E402
 
 DATA = Path(__file__).resolve().parents[2] / "data"
 MIN_TOKENS = 4      # answers shorter than this are too thin to judge against the key

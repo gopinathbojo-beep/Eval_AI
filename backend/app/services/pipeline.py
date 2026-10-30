@@ -17,13 +17,13 @@ from ..ocr.internvl import AIResponseError, AIUnavailable, chat_structured, chec
 from ..ocr.indic import IndicResponseError, IndicUnavailable, check_indic, read_page, text_model_for, uses_indic_ocr
 from .ai_labeler import label_key_criteria, label_question_types
 from ..ocr.schemas import AnswerKeyPageResult, QuestionPageResult, StudentPageResult
-from ..formatter.common.paper import apply_pdf_question_text, parse_question_paper_structure, StructuredQuestion
-from ..formatter.common.keys import segment_answer_keys
+from ..cbse.formatter.common.paper import apply_pdf_question_text, parse_question_paper_structure, StructuredQuestion
+from ..cbse.formatter.common.keys import segment_answer_keys
 from .job_queue import keyed_lock
-from ..formatter.common.answers import segment_student_answers
+from ..cbse.formatter.common.answers import segment_student_answers
 from .mapping_service import apply_key_mapping, apply_student_mapping
 from .state import set_state
-from .. import formatter
+from ..cbse import formatter
 
 log = logging.getLogger("adem.pipeline")
 

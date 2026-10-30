@@ -187,10 +187,6 @@ interface ExamWorkspaceScreenProps {
   navigation: any;
 }
 
-const K_LEVEL_NAMES: Record<string, string> = {
-  K1: "Remember", K2: "Understand", K3: "Apply", K4: "Analyse", K5: "Evaluate", K6: "Create",
-};
-
 type TabType = "overview" | "paper" | "questions" | "answerKey" | "students" | "submissions" | "evaluations" | "results";
 
 export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
@@ -1094,14 +1090,14 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
     }
   };
 
-  // Bloom's K level / course outcome tags; they never change marks, so they stay editable until finalized
-  const saveOutcome = async (q: Question, json: { k_level?: string | null; course_outcome?: string | null }) => {
+  // Course outcome tag; it never changes marks, so it stays editable until finalized
+  const saveOutcome = async (q: Question, json: { course_outcome?: string | null }) => {
     try {
       const updated = await api<Question>(`/exam-questions/${q.id}/outcome`, { method: "PATCH", json });
       setOutcomeTarget((cur) => (cur && cur.id === q.id ? updated : cur));
       await loadTabData("questions");
     } catch (err: any) {
-      Alert.alert("Could Not Save", err.message || "Failed to save the K level / course outcome.");
+      Alert.alert("Could Not Save", err.message || "Failed to save the course outcome.");
     }
   };
 
@@ -2070,14 +2066,6 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
                         }}
                         style={{ flexDirection: "row", alignItems: "center", gap: 6, marginTop: 6 }}
                       >
-                        <Badge
-                          label={q.k_level ? `${q.k_level} ${K_LEVEL_NAMES[q.k_level] || ""}` : "K level –"}
-                          variant={q.k_level_source === "SUGGESTED" ? "warning" : q.k_level ? "teal" : "muted"}
-                          size="small"
-                        />
-                        {q.k_level_source === "SUGGESTED" && (
-                          <Text style={{ fontSize: 11, color: colors.warning }}>Suggested</Text>
-                        )}
                         <Badge label={q.course_outcome || "CO –"} variant={q.course_outcome ? "teal" : "muted"} size="small" />
                         {exam.status !== "FINALIZED" && <Ionicons name="pencil-outline" size={13} color={colors.primary} />}
                       </TouchableOpacity>
@@ -3252,12 +3240,12 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
         )}
       </ModalDialog>
 
-      {/* K level + course outcome for one question */}
+      {/* Course outcome for one question */}
       <ModalDialog
         visible={!!outcomeTarget}
         onClose={() => setOutcomeTarget(null)}
         title={outcomeTarget ? `Question ${outcomeTarget.display_number}` : ""}
-        subtitle="Bloom's knowledge level and course outcome"
+        subtitle="Course outcome"
         footer={
           <Button
             title="Done"
@@ -3274,26 +3262,6 @@ export const ExamWorkspaceScreen: React.FC<ExamWorkspaceScreenProps> = ({
       >
         {outcomeTarget && (
           <View style={{ gap: 12 }}>
-            {outcomeTarget.k_level_source === "SUGGESTED" && (
-              <Text style={{ fontSize: 12, color: colors.warning }}>
-                {outcomeTarget.k_level} was suggested from the question's wording. Tap a level to confirm or change it.
-              </Text>
-            )}
-            <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
-              {Object.entries(K_LEVEL_NAMES).map(([k, name]) => {
-                const on = outcomeTarget.k_level === k;
-                return (
-                  <TouchableOpacity
-                    key={k}
-                    onPress={() => saveOutcome(outcomeTarget, { k_level: k })}
-                    style={[styles.studentSelectRow, { borderColor: on ? colors.primary : colors.border, backgroundColor: on ? "rgba(15, 118, 110, 0.15)" : colors.surface, width: "47%" }]}
-                  >
-                    <Text style={{ fontWeight: "700", color: on ? colors.primary : colors.text }}>{k}</Text>
-                    <Text style={{ fontSize: 12, color: colors.textSecondary }}>{name}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
             <Input
               label="Course Outcome"
               placeholder="e.g. CO1"

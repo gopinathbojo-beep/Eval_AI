@@ -3,14 +3,14 @@
 
 A hook returning None means the shared parser does the work: paper.py for question papers, keys.py for answer
 keys, answers.py for answer sheets. The rest of common/ is shared by them and by the subjects: numbering.py (question
-numbers), choices.py (either/or, answer any N), recovery.py and mapping.py (answers to questions), k_level.py,
+numbers), choices.py (either/or, answer any N), recovery.py and mapping.py (answers to questions), outcomes.py,
 mark_rules.py (checks on the grader's marks).
 """
 from __future__ import annotations
 from typing import Any
 
 __all__ = ["parse_paper", "segment_keys", "segment_answers", "grading_attempts", "check_deductions",
-           "uses_pdf_text", "build_rubric", "k_level_verbs"]
+           "uses_pdf_text", "build_rubric"]
 
 
 def parse_paper(page_results: list[tuple[dict, Any]]) -> Any | None:
@@ -41,12 +41,6 @@ def check_deductions(result: Any, answer_text: str, key_text: str | None, max_ma
 def uses_pdf_text() -> bool:
     """Whether a PDF's own text layer may be read (it is exact for typed papers)."""
     return True
-
-
-def k_level_verbs() -> dict[str, tuple[str, ...]]:
-    """Command words of the subject's own language, as regex patterns per K level ("K2": (...)), matched in the
-    question text alongside the English verbs of common/k_level.py; {} when English alone is enough."""
-    return {}
 
 
 def build_rubric(question_text: str | None, key_text: str | None, key_criteria: list[str] | None,

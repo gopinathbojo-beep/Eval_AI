@@ -43,11 +43,6 @@ def uses_pdf_text() -> bool:
     return False
 
 
-def k_level_verbs() -> dict[str, tuple[str, ...]]:
-    from .format import K_LEVEL_VERBS
-    return K_LEVEL_VERBS
-
-
 def build_rubric(question_text: str | None, key_text: str | None, key_criteria: list[str] | None,
                  max_marks: float | None) -> Any:
     from .rubric import build_rubric as build

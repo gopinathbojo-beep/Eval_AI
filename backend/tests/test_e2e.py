@@ -178,23 +178,16 @@ def test_full_workflow(client, auth):
     assert res["finalized"] and [(q["question"], q["final_marks"], q["max_marks"]) for q in res["questions"]] == \
         [("1", 2, 2), ("2", 1, 5), ("3(a)", 3, 3), ("3(b)", 5, 5)]
     assert res["questions"][1]["ai_marks"] == 0 and res["questions"][1]["official_answer"]
-    # K levels suggested from the question wording: Define->K1, Explain/Describe->K2, Draw->K3
-    assert [q["k_level"] for q in res["questions"]] == ["K1", "K2", "K2", "K3"]
-    k = {r["key"]: (r["scored"], r["max_marks"]) for r in res["outcomes"]["k_levels"]}
-    assert k == {"K1": (2, 2), "K2": (1 + 3, 5 + 3), "K3": (5, 5)}
-    j(c.patch(f"/api/exam-questions/{qid['2']}/outcome", json={"k_level": "k4", "course_outcome": "2"}, headers=h), 200)
-    assert c.patch(f"/api/exam-questions/{qid['2']}/outcome", json={"k_level": "K9"}, headers=h).status_code == 400
+    assert "k_level" not in res["questions"][0] and "k_levels" not in res["outcomes"]
+    j(c.patch(f"/api/exam-questions/{qid['2']}/outcome", json={"course_outcome": "2"}, headers=h), 200)
     summ = j(c.get(f"/api/exams/{eid}/outcome-summary", headers=h), 200)
-    assert summ["finalized_students"] == 1
-    assert {r["key"]: r["percentage"] for r in summ["k_levels"]} == {"K1": 100.0, "K2": 100.0, "K3": 100.0, "K4": 20.0}
+    assert summ["finalized_students"] == 1 and "k_levels" not in summ
     assert [r["key"] for r in summ["course_outcomes"]] == ["CO2", "Untagged"]
     rep_pdf = c.get(f"/api/evaluations/{evid}/report.pdf", headers=h)
     assert rep_pdf.status_code == 200 and rep_pdf.content.startswith(b"%PDF")
     from io import BytesIO
     from openpyxl import load_workbook
-    ws = load_workbook(BytesIO(c.get("/api/reports/marksheet", headers=h).content))["K-Level Analysis"]
-    row = next(r for r in ws.iter_rows(values_only=True) if r[1] == "Term 1")
-    assert row[6:10] == ("2 / 2", "3 / 3", "5 / 5", "1 / 5")   # Q2 retagged K4 above
+    assert "K-Level Analysis" not in load_workbook(BytesIO(c.get("/api/reports/marksheet", headers=h).content)).sheetnames
     # audit trail
     logs = j(c.get(f"/api/exams/{eid}/audit-logs", headers=h), 200)
     actions = {l["action"] for l in logs}

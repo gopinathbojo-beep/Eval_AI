@@ -32,12 +32,11 @@ function OutcomeCard({ title, rows }: { title: string; rows: OutcomeRow[] }) {
   );
 }
 
-/** Marks grouped by Bloom's K level and by course outcome; a table is hidden when no question is tagged for it. */
+/** Marks grouped by course outcome; hidden when no question is tagged. */
 export const OutcomeTables: React.FC<{ outcomes: Outcomes }> = ({ outcomes }) => {
   const tagged = (rows: OutcomeRow[]) => rows.some((r) => r.key !== "Untagged");
   return (
     <>
-      {tagged(outcomes.k_levels) && <OutcomeCard title="Performance by Knowledge Level (Bloom's)" rows={outcomes.k_levels} />}
       {tagged(outcomes.course_outcomes) && <OutcomeCard title="Performance by Course Outcome" rows={outcomes.course_outcomes} />}
     </>
   );

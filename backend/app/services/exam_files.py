@@ -2,7 +2,7 @@
 
 Deleted after a grace period: uploaded originals, rendered page images, answer crops and raw AI output.
 The database (questions, answer text, marks, feedback, audit log) is kept, so results, the marksheet and
-K-level analysis keep working.
+course-outcome analysis keep working.
 """
 from __future__ import annotations
 import logging

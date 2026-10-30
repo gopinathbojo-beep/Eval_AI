@@ -9,16 +9,16 @@ from ..models import (AnswerKey, AnswerSheetDocument, AuditLog, Evaluation, Eval
 from ..security import current_teacher
 from ..serializers import (EVALUATION_VIEW_LOAD, answer_view, doc_view, evaluation_view, item_view, question_view,
                            student_view)
-from ..formatter.common import choices
+from ..cbse.formatter.common import choices
 from ..services.audit import audit
 from ..services.job_queue import submit
 from ..services.exam_files import purge_exam_files, save_reports_and_schedule, stored_report
 from ..services.evaluation_service import (ExamSnapshot, approve_clean_items, finalize, finalize_issues,
                                            refresh_evaluation_status, review_reasons, run_evaluation)
-from ..formatter.common.k_level import summarize as summarize_outcomes
-from ..formatter.common.mapping import map_label
+from ..cbse.formatter.common.outcomes import summarize as summarize_outcomes
+from ..cbse.formatter.common.mapping import map_label
 from ..services.mapping_service import apply_student_mapping, exam_questions, mapping_summary
-from ..formatter.common.numbering import normalize_question_number
+from ..cbse.formatter.common.numbering import normalize_question_number
 from ..services.school_reports import build_evaluation_pdf_report, build_exam_pdf_report
 from ..services.state import set_state
 from ..services.student_identity import in_flight
@@ -466,7 +466,7 @@ def result(ev_id: str, db: Session = Depends(get_db), t: Teacher = Depends(curre
         rows.append({"question_id": q.id, "question": q.display_number, "question_text": q.question_text,
                      "choice_group": q.choice_group, "counted": q.id in counts,
                      "max_marks": q.max_marks, "final_marks": fm, "ai_marks": it.ai_marks if it else None,
-                     "k_level": q.k_level, "course_outcome": q.course_outcome,
+                     "course_outcome": q.course_outcome,
                      "teacher_overridden": bool(it and it.teacher_overridden),
                      "student_answer": a.answer_text if a else None,
                      "official_answer": keys[q.id].answer_text if q.id in keys else None,
@@ -529,7 +529,7 @@ def exam_results(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depen
 
 @router.get("/exams/{exam_id}/outcome-summary")
 def exam_outcome_summary(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
-    """Class performance per Bloom's K level and course outcome, over evaluations with finalized marks."""
+    """Class performance per course outcome, over evaluations with finalized marks."""
     exam = get_exam(db, t, exam_id)
     qs = exam_questions(db, exam.id)
     evs = db.query(Evaluation).filter_by(exam_id=exam.id, status="FINALIZED").all()
@@ -554,7 +554,7 @@ def exam_outcome_summary(exam_id: str, db: Session = Depends(get_db), t: Teacher
             a["percentage"] = round(100.0 * a["average_scored"] / a["max_marks"], 1) if a["max_marks"] else None
             del a["scored"]
         return list(rows.values())
-    return {"finalized_students": len(students), "k_levels": overall("k_levels"),
+    return {"finalized_students": len(students),
             "course_outcomes": overall("course_outcomes"), "students": students}
 
 

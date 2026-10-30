@@ -43,6 +43,8 @@ class Settings(BaseSettings):
     # Inline runs every job in the caller's thread (tests)
     job_queue_inline: bool = False
 
+    # Empty = SQLite in the data dir. Postgres: postgresql+psycopg://user:password@host:5432/dbname
+    database_url: str = ""
     secret_key: str = ""
     access_token_minutes: int = 480
     data_dir: str = "../data"

@@ -3,7 +3,7 @@ import pytest
 from dataclasses import dataclass
 from typing import Any
 from app.ocr.schemas import QuestionPageResult, QuestionItem, StudentPageResult, StudentAnswerItem, AnswerKeyPageResult, AnswerKeyItem
-from app.formatter.common.paper import (
+from app.cbse.formatter.common.paper import (
     parse_question_paper_structure,
     extract_section_marks_rule,
     extract_exam_total_marks,
@@ -11,12 +11,12 @@ from app.formatter.common.paper import (
     is_instruction,
     is_table_block,
 )
-from app.formatter.common import choices
-from app.formatter.common.answers import segment_student_answers
-from app.formatter.common.keys import segment_answer_keys
-from app.formatter.common.recovery import find_recovery_candidates
-from app.formatter.common.mapping import map_label, MAPPED, NEEDS_REVIEW, UNMAPPED
-from app.formatter.common.numbering import normalize_question_number
+from app.cbse.formatter.common import choices
+from app.cbse.formatter.common.answers import segment_student_answers
+from app.cbse.formatter.common.keys import segment_answer_keys
+from app.cbse.formatter.common.recovery import find_recovery_candidates
+from app.cbse.formatter.common.mapping import map_label, MAPPED, NEEDS_REVIEW, UNMAPPED
+from app.cbse.formatter.common.numbering import normalize_question_number
 
 
 class DummyQuestion:
@@ -622,7 +622,7 @@ def test_answer_key_numbered_step_not_duplicate_q1():
 
 def test_physics_student_answers_with_cross_page_continuations():
     """Verify 4-page Physics student answer sheet with 'Q1, topic :' format and cross-page continuations."""
-    from app.formatter.common.answers import segment_student_answers
+    from app.cbse.formatter.common.answers import segment_student_answers
 
     @dataclass
     class DummyOCRBlock:
@@ -688,7 +688,7 @@ def test_physics_student_answers_with_cross_page_continuations():
 
 def test_maths_student_answers_with_skipped_questions():
     """Verify 4-page Mathematics student answer sheet with angle-bracket format and non-consecutive questions."""
-    from app.formatter.common.answers import segment_student_answers
+    from app.cbse.formatter.common.answers import segment_student_answers
 
     @dataclass
     class DummyOCRBlock:
@@ -1034,7 +1034,7 @@ _SUBPART_SHEETS = {
 @pytest.mark.parametrize("exam_nums", [["4", "5", "6"], ["4", "5(a)", "5(b)", "6"]], ids=["exam-Q5", "exam-5a-5b"])
 @pytest.mark.parametrize("sheet", list(_SUBPART_SHEETS), ids=list(_SUBPART_SHEETS))
 def test_student_subpart_layouts_map_without_duplicates(sheet, exam_nums):
-    from app.formatter.common.mapping import flag_duplicates
+    from app.cbse.formatter.common.mapping import flag_duplicates
 
     exam_qs = [DummyQuestion(f"q{n}", n, i, _SUBPART_QT[n]) for i, n in enumerate(exam_nums)]
     pages = [({"page_number": i + 1}, StudentPageResult(page_number=i + 1, answers=[StudentAnswerItem(question_number=l, answer_text=t) for l, t in pg]))
@@ -1294,7 +1294,7 @@ def test_pdf_page_text_rebuilds_stacked_fractions_and_exponents():
 
 def test_pdf_text_layer_replaces_misread_question_text():
     """A typed paper's text layer wins over vision misreads ("6 workers" for "16 workers", "(p+b)" for "(a+b)")."""
-    from app.formatter.common.paper import apply_pdf_question_text, StructuredQuestion
+    from app.cbse.formatter.common.paper import apply_pdf_question_text, StructuredQuestion
 
     def sq(n, text):
         return StructuredQuestion(raw_question_number=f"Q{n}", normalized_number=n, display_number=n, question_text=text,
@@ -1315,7 +1315,7 @@ def test_pdf_text_layer_replaces_misread_question_text():
 
 def test_pdf_text_layer_recovers_question_merged_into_previous():
     """OCR folded "Q8." into an unnumbered Q7; the typed paper's "Q8." heading makes it a question again."""
-    from app.formatter.common.paper import apply_pdf_question_text, StructuredQuestion
+    from app.cbse.formatter.common.paper import apply_pdf_question_text, StructuredQuestion
 
     def sq(n, text):
         return StructuredQuestion(raw_question_number=f"Q{n}", normalized_number=n, display_number=n, question_text=text,
@@ -1336,14 +1336,3 @@ def test_pdf_text_layer_recovers_question_merged_into_previous():
     assert "Jody" not in qs[0].question_text and qs[0].question_text.endswith("(1 mark)")
     assert qs[1].question_text.startswith("Literature:\nWhy did Jody") and qs[1].max_marks == 3
     assert qs[1].verification_status == "NEEDS_REVIEW" and "SECTION C" not in qs[1].question_text
-
-
-@pytest.mark.parametrize("text,level", [
-    ("Write balanced word equations for the following chemical reactions:", "K3"),
-    ("Expand and simplify the combined expression using suitable algebraic identities (a + b)²", "K3"),
-    ("Expand the abbreviation CNG.", "K1"),
-    ("Calorific value of a fuel and its SI unit?", "K1"),
-])
-def test_k_level_suggested_for_every_question(text, level):
-    from app.formatter.common.k_level import suggest_k_level
-    assert suggest_k_level(text) == level

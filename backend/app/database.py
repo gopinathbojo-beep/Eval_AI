@@ -10,7 +10,10 @@ class Base(DeclarativeBase):
 
 
 def _make_engine():
-    eng = create_engine(f"sqlite:///{get_settings().data_path / 'adem.db'}", connect_args={"check_same_thread": False})
+    settings = get_settings()
+    if settings.database_url:  # e.g. Postgres on RDS
+        return create_engine(settings.database_url, pool_pre_ping=True, pool_size=10, max_overflow=10)
+    eng = create_engine(f"sqlite:///{settings.data_path / 'adem.db'}", connect_args={"check_same_thread": False})
 
     @event.listens_for(eng, "connect")
     def _pragmas(dbapi_conn, _):  # enforce FKs and WAL mode in SQLite
@@ -44,7 +47,7 @@ def init_db():
 
 # Columns added after a table first shipped. create_all never alters an existing table, so they are added here.
 _ADDED_COLUMNS = {"exam_questions": {"choice_group": "VARCHAR(50)", "answer_any": "INTEGER",
-                                     "compulsory": "BOOLEAN NOT NULL DEFAULT 0"},
+                                     "compulsory": "BOOLEAN NOT NULL DEFAULT FALSE"},
                  "answer_keys": {"rubric": "JSON", "rubric_status": "VARCHAR(20) NOT NULL DEFAULT 'UNREVIEWED'"}}
 
 

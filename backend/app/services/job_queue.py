@@ -25,7 +25,7 @@ from ..database import SessionLocal
 from ..models import Exam
 from ..ocr.indic import release_indic, uses_indic_ocr
 from ..ocr.internvl import unload_model
-from .. import formatter
+from ..cbse import formatter
 from . import paper_format
 
 log = logging.getLogger("adem.queue")
