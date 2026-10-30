@@ -205,3 +205,11 @@ def test_password_account_links_google_only_from_authenticated_flow(google_provi
         response = browser.get("/api/auth/google/callback", params={"code":"linked", "state":params["state"][0]}, follow_redirects=False)
         assert response.headers["location"].endswith("/dashboard")
         assert browser.get("/api/auth/me").json()["email_verified"]
+
+
+def test_google_start_behind_vercel_proxy_does_not_redirect_in_a_loop(google_provider, monkeypatch):
+    monkeypatch.setattr(get_settings(), "public_web_url", "http://localhost:5173")
+    with TestClient(app, base_url="https://backend.onrender.com") as browser:
+        response = browser.get("/api/auth/google/start", follow_redirects=False)
+        assert response.status_code == 302
+        assert urlsplit(response.headers["location"]).hostname == "provider.test"

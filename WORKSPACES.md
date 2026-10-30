@@ -1,6 +1,6 @@
 # School and family workspaces
 
-Eval AI supports CBSE Classes 10 and 12. This release uses SQLite, local document storage and the existing in-process AI queue. AWS, PostgreSQL, S3, durable workers and payments are separate future work.
+Eval AI supports CBSE Classes 10 and 12. It supports SQLite/local storage or PostgreSQL/private Supabase storage, with optional persistent job records for a single API service. See [CLOUD_DEPLOYMENT.md](CLOUD_DEPLOYMENT.md) for Render, Vercel and OpenRouter setup. AWS, S3, separate worker services and payments remain future work.
 
 ## Start using the application
 

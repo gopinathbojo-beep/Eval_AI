@@ -4,6 +4,11 @@ import tempfile
 
 os.environ["DATA_DIR"] = tempfile.mkdtemp(prefix="eval-browser-test-")
 os.environ["ENVIRONMENT"] = "development"
+os.environ["DATABASE_URL"] = ""
+os.environ["AI_PROVIDER"] = "ollama"
+os.environ["STORAGE_PROVIDER"] = "local"
+os.environ["DURABLE_JOBS"] = "false"
+os.environ["AUTO_MIGRATE"] = "false"
 os.environ["COOKIE_SECURE"] = "false"
 os.environ["SECRET_KEY"] = "browser-test-secret-only-not-for-production"
 os.environ["INTERNVL_ENABLED"] = "false"

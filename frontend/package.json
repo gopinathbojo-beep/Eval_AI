@@ -6,6 +6,7 @@
   "engines": { "node": ">=24.0.0 <25" },
   "scripts": {
     "dev": "vite",
+    "configure:api": "node scripts/configure-render.mjs",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",

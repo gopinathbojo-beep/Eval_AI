@@ -1,5 +1,7 @@
 # Deploy the web application
 
+For **Render backend + Vercel frontend + Supabase PostgreSQL/storage + OpenRouter**, follow [CLOUD_DEPLOYMENT.md](CLOUD_DEPLOYMENT.md). The instructions below describe the separate Docker/SQLite deployment option.
+
 The supported topology is **one Linux server, one API process, SQLite on a persistent Docker volume**, and an existing private Ollama/IndicOCR host. Caddy terminates HTTPS, Nginx serves the compiled web app and proxies `/api`. Only ports 80 and 443 are published. No mobile build is involved.
 
 Do not add API workers or replicas: the GPU queue and locks are in-process, and startup recovery/purge scheduling must run once. For multiple servers, migrate to a shared database, object storage and a durable external job queue first. Restarting the current API interrupts queued AI jobs; startup recovery makes interrupted work available for teacher review/retry.

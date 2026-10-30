@@ -5,6 +5,12 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 _tmp = tempfile.mkdtemp(prefix="adem-test-")
 os.environ["DATA_DIR"] = _tmp
+os.environ["DATABASE_URL"] = ""
+os.environ["AI_PROVIDER"] = "ollama"
+os.environ["STORAGE_PROVIDER"] = "local"
+os.environ["DURABLE_JOBS"] = "false"
+os.environ["AUTO_MIGRATE"] = "false"
+os.environ["INDIC_OCR_ENABLED"] = "false"
 os.environ["SECRET_KEY"] = "test-secret-at-least-32-bytes-long-for-jwt-security"
 os.environ["PDF_RENDER_DPI"] = "72"
 os.environ["INTERNVL_MAX_RETRIES"] = "1"

@@ -1,0 +1,62 @@
+services:
+  - type: web
+    name: eval-ai-api
+    runtime: docker
+    plan: free
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/ready
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_SSLMODE
+        value: require
+      - key: AUTO_MIGRATE
+        value: "true"
+      - key: DURABLE_JOBS
+        value: "true"
+      - key: DATA_DIR
+        value: /tmp/eval-ai
+      - key: STORAGE_PROVIDER
+        value: supabase
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_STORAGE_BUCKET
+        value: eval-ai-documents
+      - key: AI_PROVIDER
+        value: openrouter
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
+        value: qwen/qwen3-vl-8b-instruct
+      - key: AI_REQUEST_LOGPROBS
+        value: "true"
+      - key: INDIC_OCR_ENABLED
+        value: "false"
+      - key: INTERNVL_PARALLEL_JOBS
+        value: "1"
+      - key: PDF_RENDER_DPI
+        value: "120"
+      - key: OCR_MAX_SIDE
+        value: "1600"
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_REDIRECT_URI
+        sync: false
+      - key: PUBLIC_WEB_URL
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: ALLOWED_HOSTS
+        sync: false

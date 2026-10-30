@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Type, TypeVar
 import httpx
 from pydantic import BaseModel, ValidationError
-from ..config import AI_BAD_RESPONSE_MESSAGE, AI_UNAVAILABLE_MESSAGE, get_settings
+from ..config import AI_BAD_RESPONSE_MESSAGE, AI_UNAVAILABLE_MESSAGE, get_settings, ai_unavailable_message, ai_bad_response_message
 from . import confidence
 from .parser import ParseError, extract_json_object
 
@@ -20,14 +20,14 @@ T = TypeVar("T", bound=BaseModel)
 class AIUnavailable(Exception):
     """Ollama unreachable, disabled, or the required model is not installed."""
     def __init__(self, detail: str = ""):
-        super().__init__(AI_UNAVAILABLE_MESSAGE)
+        super().__init__(ai_unavailable_message())
         self.detail = detail
 
 
 class AIResponseError(Exception):
     """Model answered but not with usable structured output. `kind` is FAILED_PARSE or AI_ERROR."""
     def __init__(self, kind: str, detail: str, raw: str = ""):
-        super().__init__(AI_BAD_RESPONSE_MESSAGE)
+        super().__init__(ai_bad_response_message())
         self.kind, self.detail, self.raw = kind, detail, raw
 
 
@@ -45,6 +45,12 @@ def _same_model(a: str, b: str) -> bool:
 def check_model(model: str | None = None) -> dict:
     """Raises AIUnavailable unless Ollama is up AND the exact model (default InternVL) is installed."""
     s = get_settings()
+    if s.ai_provider != "ollama":
+        from .remote import status
+        try:
+            return status()
+        except (httpx.HTTPError, ValueError, RuntimeError):
+            raise AIUnavailable("Remote AI provider is unavailable or its configured vision model cannot be used.") from None
     model = model or s.internvl_model
     if not s.internvl_enabled:
         raise AIUnavailable("INTERNVL_ENABLED is false")
@@ -63,6 +69,8 @@ def check_model(model: str | None = None) -> dict:
 def unload_model(model: str) -> None:
     """Free a model's GPU memory in Ollama now (keep_alive 0) instead of after its idle timeout."""
     s = get_settings()
+    if s.ai_provider != "ollama":
+        return
     try:
         httpx.post(f"{s.internvl_api_url}/api/generate", json={"model": model, "keep_alive": 0}, timeout=30)
     except httpx.HTTPError as e:
@@ -72,6 +80,20 @@ def unload_model(model: str) -> None:
 def _call_once(system: str, user: str, image_path: Path | None, format: str | None = "json",
                model: str | None = None) -> str:
     s = get_settings()
+    if s.ai_provider != "ollama":
+        from .remote import call
+        try:
+            raw, probabilities = call(system, user, Path(image_path) if image_path else None, bool(format), model)
+        except (httpx.ConnectError, httpx.ConnectTimeout):
+            raise AIUnavailable("Cannot connect to the remote AI provider.") from None
+        except httpx.HTTPStatusError as error:
+            if error.response.status_code in {401, 402, 403}:
+                raise AIUnavailable("The AI provider rejected access. Check the API key, model access and available credits.") from None
+            raise
+        except ValueError as error:
+            raise AIResponseError("FAILED_PARSE", str(error)) from None
+        _last.logprobs = probabilities
+        return raw
     msg: dict = {"role": "user", "content": user}
     if image_path is not None:
         msg["images"] = [base64.b64encode(Path(image_path).read_bytes()).decode()]
@@ -102,6 +124,15 @@ _last = threading.local()  # the token log-probabilities of this thread's last r
 def _measured(parsed: T, raw: str) -> T:
     """The page's items with the confidence measured from the reply just received, not the one the model wrote."""
     confidence.apply(parsed, raw, getattr(_last, "logprobs", None))
+    if get_settings().ai_provider != "ollama" and not getattr(_last, "logprobs", None):
+        # Do not represent the model's self-reported number as measured OCR confidence.
+        # Conservative values require human review when the provider supplies no token probabilities.
+        for name in ("questions", "answers"):
+            for item in getattr(parsed, name, []) or []:
+                if hasattr(item, "ocr_confidence"):
+                    item.ocr_confidence = min(item.ocr_confidence or 0.5, 0.5)
+                elif hasattr(item, "confidence"):
+                    item.confidence = min(item.confidence or 0.5, 0.5)
     return parsed
 
 

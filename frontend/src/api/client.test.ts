@@ -32,4 +32,28 @@ describe("API session handling", () => {
     vi.mocked(fetch).mockRejectedValue(new TypeError("Failed to fetch"));
     await expect(api("/dashboard")).rejects.toMatchObject({ code: "NETWORK" });
   });
+
+  it("uploads files straight to private storage using a one-object URL and completes through the authenticated API", async () => {
+    vi.resetModules();
+    const fresh = await import("./client");
+    const file = new File(["%PDF-example"], "paper.pdf", {type:"application/pdf"});
+    const form = new FormData();form.append("file",file);
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if(input === "/api/auth/providers") return new Response(JSON.stringify({direct_uploads:true}));
+      if(input === "/api/exams/exam-id/uploads") {
+        expect(JSON.parse(String(init?.body))).toMatchObject({kind:"question-paper",filename:"paper.pdf",file_size:file.size});
+        return new Response(JSON.stringify({id:"upload-id",upload_url:"https://storage.example/upload?token=one-object",content_type:"application/pdf"}));
+      }
+      if(input === "https://storage.example/upload?token=one-object") {
+        expect(init?.body).toBe(file);
+        expect(init?.credentials).toBeUndefined();
+        expect(init?.headers).not.toHaveProperty("Authorization");
+        return new Response("{}");
+      }
+      if(input === "/api/uploads/upload-id/complete") return new Response(JSON.stringify({id:"document-id"}));
+      throw new Error("Unexpected request");
+    });
+    expect(await fresh.api("/exams/exam-id/question-paper",{method:"POST",form})).toEqual({id:"document-id"});
+    expect(fetch).toHaveBeenCalledTimes(4);
+  });
 });

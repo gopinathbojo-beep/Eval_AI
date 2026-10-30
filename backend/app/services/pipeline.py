@@ -5,7 +5,7 @@ import json
 import logging
 from pathlib import Path
 from sqlalchemy.orm import Session
-from ..config import AI_BAD_RESPONSE_MESSAGE, AI_UNAVAILABLE_MESSAGE, INDIC_BAD_RESPONSE_MESSAGE, INDIC_UNAVAILABLE_MESSAGE
+from ..config import AI_BAD_RESPONSE_MESSAGE, AI_UNAVAILABLE_MESSAGE, INDIC_BAD_RESPONSE_MESSAGE, INDIC_UNAVAILABLE_MESSAGE, ai_unavailable_message, ai_bad_response_message
 from ..database import SessionLocal
 from ..documents import cropping
 from ..documents.renderer import RenderError, page_text as pdf_page_text, render_document
@@ -127,8 +127,8 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
 
     # Indian-language subjects are read by IndicOCR; everything else by InternVL
     indic = uses_indic_ocr(exam.subject.name if exam.subject else None)
-    unavailable_msg = INDIC_UNAVAILABLE_MESSAGE if indic else AI_UNAVAILABLE_MESSAGE
-    bad_response_msg = INDIC_BAD_RESPONSE_MESSAGE if indic else AI_BAD_RESPONSE_MESSAGE
+    unavailable_msg = INDIC_UNAVAILABLE_MESSAGE if indic else ai_unavailable_message()
+    bad_response_msg = INDIC_BAD_RESPONSE_MESSAGE if indic else ai_bad_response_message()
     try:
         check_indic() if indic else check_model()
     except (AIUnavailable, IndicUnavailable) as e:

@@ -39,6 +39,7 @@ def login_error(code: str):
 def providers():
     s = get_settings()
     return {"google": bool(s.google_client_id and s.google_client_secret),
+            "direct_uploads": s.storage_provider == "supabase",
             "google_start_url": f"{public_origin()}/api/auth/google/start"}
 
 
@@ -48,7 +49,7 @@ async def google_start(request: Request):
     if not s.google_client_id or not s.google_client_secret:
         return login_error("not_configured")
     # Always set the OAuth cookie on the callback hostname, including when opened via 127.0.0.1.
-    if request.headers.get("host") != urlsplit(s.google_redirect_uri).netloc:
+    if not s.public_web_url and request.headers.get("host") != urlsplit(s.google_redirect_uri).netloc:
         return RedirectResponse(f"{public_origin()}/api/auth/google/start", status_code=303)
     request.session.clear()
     try:

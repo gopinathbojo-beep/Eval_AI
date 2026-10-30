@@ -29,11 +29,16 @@ def safe_join(base: Path, *parts: str) -> Path:
 
 
 def rel(path: Path) -> str:
-    return str(Path(path).resolve().relative_to(data_root()))
+    from .cloud import sync_file
+    path = Path(path).resolve()
+    key = path.relative_to(data_root()).as_posix()
+    sync_file(path)
+    return key
 
 
 def abs_path(relative: str) -> Path:
-    return safe_join(data_root(), relative)
+    from .cloud import hydrate
+    return hydrate(safe_join(data_root(), relative.replace("\\", "/")))
 
 
 def doc_dir(kind: str, exam_id: str, doc_id: str, student_id: str | None = None) -> Path:

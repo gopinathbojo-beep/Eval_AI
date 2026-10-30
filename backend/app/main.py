@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from .config import get_settings
 from .database import init_db
-from .routes import admin, answer_keys, core, documents, evaluations, google_auth, questions, reference_collection, registration, school, management
+from .routes import admin, answer_keys, core, documents, evaluations, google_auth, questions, reference_collection, registration, school, management, uploads
 from .services.admin_accounts import ensure_owner
 from .services.exam_files import start_purge_scheduler
 from .services.recovery import recover_interrupted_jobs
@@ -36,9 +36,17 @@ logging.getLogger("uvicorn.access").addFilter(PrivateAccessLog())
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
+    if get_settings().storage_provider == "supabase":
+        from .documents.cloud import SupabaseStorage
+        if SupabaseStorage().bucket_info().get("public") is not False:
+            raise RuntimeError("The document storage bucket must be private.")
     with SessionLocal() as db:
         ensure_owner(db)
-    recover_interrupted_jobs()
+    if get_settings().durable_jobs:
+        from .services.persistent_queue import start_recovery
+        start_recovery()
+    else:
+        recover_interrupted_jobs()
     start_purge_scheduler()
     yield
 
@@ -97,8 +105,13 @@ def create_app() -> FastAPI:
         return JSONResponse({"code": "SERVER_ERROR", "message": "Something went wrong on the server. Details are in the server log."},
                             status_code=500)
 
+    from .documents.cloud import StorageError
+    @app.exception_handler(StorageError)
+    async def storage_error(_: Request, exc: StorageError):
+        return JSONResponse({"code": "STORAGE_UNAVAILABLE", "message": str(exc)}, status_code=503)
+
     for r in (core.router, documents.router, questions.router, answer_keys.router, evaluations.router, reference_collection.router,
-              school.router, admin.router, google_auth.router, registration.router, management.router):
+              school.router, admin.router, google_auth.router, registration.router, management.router, uploads.router):
         app.include_router(r)
 
     @app.get("/api/health")

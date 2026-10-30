@@ -2,9 +2,9 @@ name: Web deployment checks
 
 on:
   push:
-    paths: ["frontend/**", "backend/**", "deploy/**", "compose.yaml", ".github/workflows/web-ci.yml"]
+    paths: ["frontend/**", "backend/**", "deploy/**", "compose.yaml", "render.yaml", ".github/workflows/web-ci.yml"]
   pull_request:
-    paths: ["frontend/**", "backend/**", "deploy/**", "compose.yaml", ".github/workflows/web-ci.yml"]
+    paths: ["frontend/**", "backend/**", "deploy/**", "compose.yaml", "render.yaml", ".github/workflows/web-ci.yml"]
   workflow_dispatch:
 
 permissions:

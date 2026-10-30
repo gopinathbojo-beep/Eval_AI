@@ -52,6 +52,8 @@ def save_reports_and_schedule(db: Session, teacher: Teacher, exam: Exam) -> int:
         for old in out.glob(f"{ev.id}__*.pdf"):
             old.unlink()
         (out / f"{ev.id}__{filename}").write_bytes(pdf)
+        from ..documents.cloud import sync_file
+        sync_file(out / f"{ev.id}__{filename}")
         n += 1
     exam.files_purge_at = _now() + GRACE
     audit(db, exam_id=exam.id, teacher_id=teacher.id, entity_type="exam", entity_id=exam.id, action="exam_reports_saved",
@@ -62,6 +64,8 @@ def save_reports_and_schedule(db: Session, teacher: Teacher, exam: Exam) -> int:
 def purge_exam_files(db: Session, exam: Exam, teacher_id: str | None = None) -> int:
     """Delete the exam's files from disk, keeping saved reports. Returns how many entries were removed."""
     root = exam_dir(exam.id)
+    from ..documents.cloud import remove_prefix
+    remove_prefix(f"exams/{exam.id}", keep_reports=True)
     removed = 0
     if root.is_dir():
         for child in root.iterdir():
@@ -79,6 +83,8 @@ def purge_due() -> int:
     db = SessionLocal()
     n = 0
     try:
+        from ..routes.uploads import purge_expired_uploads
+        purge_expired_uploads(db)
         for exam in db.query(Exam).filter(Exam.status == "FINALIZED", Exam.files_purge_at.isnot(None),
                                           Exam.files_purged_at.is_(None)).all():
             if _aware(exam.files_purge_at) <= _now():

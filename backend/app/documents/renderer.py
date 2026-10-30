@@ -10,6 +10,7 @@ import pymupdf
 from PIL import Image, ImageOps
 from ..config import get_settings
 from .preprocessing import make_ocr_copy
+from .storage import rel
 
 Image.MAX_IMAGE_PIXELS = 400_000_000
 
@@ -173,8 +174,8 @@ def render_document(src: Path, ext: str, work_dir: Path) -> list[dict]:
         ocr_path, info = make_ocr_copy(img, proc_dir / name, s.ocr_max_side)
         entry = {
             "page_number": n, "width": img.width, "height": img.height,
-            "source_file": str(page_path.relative_to(s.data_path)),
-            "processed_file": str(ocr_path.relative_to(s.data_path)),
+            "source_file": rel(page_path),
+            "processed_file": rel(ocr_path),
             "ocr_width": info["ocr_width"], "ocr_height": info["ocr_height"],
             "content_bbox": info["content_bbox"],
             "ocr_status": "PENDING", "ocr_error": None,

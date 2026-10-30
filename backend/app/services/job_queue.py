@@ -48,6 +48,7 @@ class _Job:
     skips: int = 0
     actor_id: str | None = None
     session_version: int | None = None
+    job_id: str | None = None
 
 
 _cond = threading.Condition()  # guards _waiting, _running, _switching and _current_engine
@@ -55,6 +56,7 @@ _waiting: list[_Job] = []  # queue order
 _running = 0
 _switching = False  # a worker is changing engines outside the lock: no other job starts until it is done
 _workers: list[threading.Thread] = []
+_scheduled: set[str] = set()
 _inline_lock = threading.RLock()  # inline jobs may queue more jobs (identify -> read), which run in the same thread
 _current_engine: str | None = None  # None: unknown (e.g. after start), so a first switch frees everything else
 
@@ -114,6 +116,9 @@ def _ollama_models(engine: str) -> set[str]:
 def switch_engine(engine: str) -> None:
     """Make `engine` the only one holding GPU memory. No-op when it already is. Call only with no job running."""
     global _current_engine
+    if get_settings().ai_provider != "ollama" and not get_settings().indic_ocr_enabled:
+        _current_engine = engine
+        return
     if engine == _current_engine:
         return
     previous = [_current_engine] if _current_engine else ["internvl", "indic"]
@@ -126,6 +131,19 @@ def switch_engine(engine: str) -> None:
 
 
 def _call(job: _Job) -> None:
+    from . import persistent_queue
+    stopped, outcome = threading.Event(), "COMPLETED"
+    if job.job_id:
+        try:
+            claimed = persistent_queue.claim(job.job_id)
+        except Exception:
+            claimed = False
+            log.warning("Could not claim durable job; recovery will retry.")
+        if not claimed:
+            with _cond:
+                _scheduled.discard(job.job_id)
+            return
+        threading.Thread(target=persistent_queue.heartbeat, args=(job.job_id, stopped), daemon=True).start()
     context = actor_id.set(job.actor_id)
     try:
         if job.actor_id:
@@ -133,6 +151,7 @@ def _call(job: _Job) -> None:
                 user = db.get(Teacher, job.actor_id)
                 exam = db.get(Exam, job.exam_id) if job.exam_id else None
                 if not user or user.session_version != job.session_version or (exam and not can_access_exam(db, user, exam)):
+                    outcome = "CANCELLED"
                     log.warning("Skipped job after access changed: %s", job.exam_id)
                     if exam:
                         from ..models import Evaluation, QuestionPaperDocument, AnswerKeyDocument, AnswerSheetDocument
@@ -147,8 +166,17 @@ def _call(job: _Job) -> None:
         with paper_format.use(job.paper_format), formatter.use(job.subject):
             job.fn(*job.args)
     except Exception:  # a failed job must never stop the queue; the job itself records errors on its document
+        outcome = "FAILED"
         log.exception("Queued job %s%r crashed", getattr(job.fn, "__name__", job.fn), job.args)
     finally:
+        stopped.set()
+        if job.job_id:
+            try:
+                persistent_queue.finish(job.job_id, outcome)
+            except Exception:
+                log.warning("Could not save background job completion")
+            with _cond:
+                _scheduled.discard(job.job_id)
         actor_id.reset(context)
 
 
@@ -217,6 +245,13 @@ def submit(exam_id: str | None, fn: Callable, *args: Any, grading: bool = False)
         with SessionLocal() as db:
             user = db.get(Teacher, job.actor_id)
             job.session_version = user.session_version if user else None
+    if get_settings().durable_jobs:
+        from .persistent_queue import persist
+        job.job_id = persist(job)
+        if not job.job_id:
+            return
+        with _cond:
+            _scheduled.add(job.job_id)
     if get_settings().job_queue_inline:  # run in the caller's thread (tests: the result is there when the request returns)
         with _inline_lock:
             switch_engine(job.engine)

@@ -69,7 +69,8 @@ async def upload_logo(file: UploadFile = File(...), db: Session = Depends(get_db
     d = safe_join(data_root(), "school", owner_id(db, t))
     d.mkdir(parents=True, exist_ok=True)
     for old in d.glob("logo.*"):
-        old.unlink()
+        from ..documents.cloud import remove_file
+        remove_file(old)
     path = d / f"logo.{'jpg' if ext == 'jpeg' else ext}"
     path.write_bytes(data)
     p.logo_file = rel(path)
@@ -82,8 +83,8 @@ def delete_logo(db: Session = Depends(get_db), t: Teacher = Depends(current_teac
     p = _profile(db, t)
     if p.logo_file:
         f = abs_path(p.logo_file)
-        if f.is_file():
-            f.unlink()
+        from ..documents.cloud import remove_file
+        remove_file(f)
         p.logo_file = None
     db.commit()
     return _profile_view(p)

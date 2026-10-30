@@ -9,6 +9,30 @@ export class ApiError extends Error {
 let onUnauthorized: () => void = () => {};
 export const setUnauthorizedHandler = (fn: () => void) => (onUnauthorized = fn);
 
+let uploadPolicy: Promise<boolean> | null = null;
+
+async function cloudUpload(path: string, form: FormData, signal?: AbortSignal): Promise<unknown> {
+  const match = path.match(/^\/exams\/([^/]+)\/(question-paper|answer-key|answer-sheets)(\/bulk)?$/);
+  if (!match) return undefined;
+  const direct = await (uploadPolicy ??= request("/auth/providers").then(r => r.json()).then(p => !!p.direct_uploads).catch(() => { uploadPolicy = null; return false; }));
+  if (!direct) return undefined;
+  const files = [...form.getAll("file"), ...form.getAll("files")].filter((v): v is File => v instanceof File);
+  if (!files.length) throw new Error("Choose a file to upload.");
+  const kind = match[2] === "answer-sheets" ? "answer-sheet" : match[2];
+  const results: any[] = [];
+  for (const file of files) {
+    const lease = await api<{id:string;upload_url:string;content_type:string}>(`/exams/${match[1]}/uploads`, {method:"POST",signal,json:{
+      kind,filename:file.name,file_size:file.size,student_id:form.get("student_id")||null,
+      student_name:form.get("student_name")||null,roll_number:form.get("roll_number")||null}});
+    // The URL is a short-lived capability for one private object. No service key reaches the browser.
+    const response = await fetch(lease.upload_url,{method:"PUT",body:file,signal,
+      headers:{"Content-Type":lease.content_type}});
+    if(!response.ok) throw new Error("The file could not be uploaded to private storage. Please try again.");
+    results.push(await api(`/uploads/${lease.id}/complete`,{method:"POST",signal}));
+  }
+  return match[3] ? {uploaded:results.length,documents:results.map(r=>r.document??r)} : results[0];
+}
+
 async function toError(res: Response): Promise<ApiError> {
   let body: { code?: string; message?: string; issues?: Issue[] } = {};
   try { body = await res.json(); } catch { /* proxy error may not be JSON */ }
@@ -44,6 +68,10 @@ async function request(path: string, init: RequestInit = {}): Promise<Response> 
 }
 
 export async function api<T = unknown>(path: string, opts: { method?: string; json?: unknown; form?: FormData; signal?: AbortSignal } = {}): Promise<T> {
+  if (opts.form) {
+    const uploaded = await cloudUpload(path, opts.form, opts.signal);
+    if (uploaded !== undefined) return uploaded as T;
+  }
   const headers: Record<string, string> = {};
   let body: BodyInit | undefined;
   if (opts.json !== undefined) { headers["Content-Type"] = "application/json"; body = JSON.stringify(opts.json); }

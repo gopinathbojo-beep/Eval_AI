@@ -16,6 +16,9 @@ from dotenv import load_dotenv
 
 load_dotenv(ROOT / ".env")
 os.environ["DATA_DIR"] = tempfile.mkdtemp(prefix="eval-live-workspaces-")
+os.environ["DATABASE_URL"] = ""
+os.environ["STORAGE_PROVIDER"] = "local"
+os.environ["DURABLE_JOBS"] = "false"
 os.environ["ENVIRONMENT"] = "development"
 os.environ["COOKIE_SECURE"] = "false"
 os.environ["JOB_QUEUE_INLINE"] = "true"

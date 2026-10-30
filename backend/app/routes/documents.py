@@ -29,11 +29,16 @@ EXT = {
 
 def _save(db: Session, kind: str, exam_id: str, data: bytes, ext: str, mime: str, filename: str, **extra):
     model = KINDS[kind][0]
-    doc_id = str(uuid.uuid4())
+    from .uploads import direct_upload_id
+    doc_id = direct_upload_id.get() or str(uuid.uuid4())
     d = doc_dir(kind, exam_id, doc_id, extra.get("student_id"))
     path = d / f"original.{ext}"
-    with open(path, "xb") as f:  # 'x': never overwrite an original
-        f.write(data)
+    if direct_upload_id.get() and path.is_file():
+        if path.read_bytes() != data:
+            raise err(409, "UPLOAD_CONFLICT", "This upload already contains another file.")
+    else:
+        with open(path, "xb") as f:  # 'x': never overwrite an original
+            f.write(data)
     doc = model(id=doc_id, exam_id=exam_id, original_filename=filename[:290], original_file=rel(path),
                 mime_type=mime, file_size=len(data), status="UPLOADED", stage="Queued", **extra)
     db.add(doc)

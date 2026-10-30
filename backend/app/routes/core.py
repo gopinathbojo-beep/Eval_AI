@@ -82,10 +82,10 @@ def ai_status(_: Teacher = Depends(current_teacher)):
     s = get_settings()
     try:
         info = check_model()
-        return {**info, "message": "InternVL3.5 4B is ready."}
+        return {**info, "message": f"{s.ai_model} is ready."}
     except AIUnavailable as e:
-        return {"available": False, "model": s.internvl_model, "url": s.internvl_api_url,
-                "message": AI_UNAVAILABLE_MESSAGE, "detail": e.detail}
+        return {"available": False, "model": s.ai_model, "provider": s.ai_provider,
+                "message": "The AI provider is unavailable. Check its configuration.", "detail": e.detail}
 
 
 # ---------- dashboard ----------
@@ -111,6 +111,8 @@ def dashboard(db: Session = Depends(get_db), t: Teacher = Depends(current_teache
 # ---------- cascade delete helpers ----------
 def cascade_delete_exam_records(db: Session, exam_id: str):
     """Safely cascades deletion of all dependent records and files for an exam."""
+    from ..documents.cloud import remove_prefix
+    remove_prefix(f"exams/{exam_id}")
     evals = db.query(Evaluation).filter_by(exam_id=exam_id).all()
     eval_ids = [ev.id for ev in evals]
     if eval_ids:
