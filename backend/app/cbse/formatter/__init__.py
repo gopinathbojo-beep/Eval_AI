@@ -70,7 +70,7 @@ def current() -> ModuleType:
     """The formatter of the exam being worked on."""
     subject = _subject.get()
     if subject is None:
-        from ..services import paper_format  # no exam in context: the paper format alone still says Tamil
+        from ...services import paper_format  # no exam in context: the paper format alone still says Tamil
         if paper_format.active() == paper_format.TAMIL:
             subject = "tamil"
     return get(subject)

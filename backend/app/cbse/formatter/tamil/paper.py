@@ -22,7 +22,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from ...services import paper_format
+from ....services import paper_format
 from . import choices  # this subject's either/or rules (tamil/choices.py)
 from . import format as tamil_format
 from .blocks import split_key_blocks, split_question_blocks

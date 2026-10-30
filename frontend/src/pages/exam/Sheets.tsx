@@ -2,8 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, downloadFile, fetchBlobUrl } from "../../api/client";
 import { useApi } from "../../hooks/useApi";
-import type { Evaluation, IdentityRead, OutcomeSummary, ReviewSummary, Student, UnassignedSheet } from "../../types";
-import { OutcomeTables } from "../../components/OutcomeTables";
+import type { Evaluation, IdentityRead, ReviewSummary, Student, UnassignedSheet } from "../../types";
 import { BUSY_DOC, date, fmt, label } from "../../utils/format";
 import { Badge, Button, Card, Confirm, Empty, ErrorPanel, LinkButton, Loading, Modal, Select, StatusBadge } from "../../components/ui";
 import { UploadZone } from "../../components/DocPanel";
@@ -698,7 +697,6 @@ function ExamFilesNotice() {
 export function ExamResults() {
   const { exam, reload } = useExam();
   const { data, loading, error } = useApi<Evaluation[]>(`/exams/${exam.id}/results`);
-  const outcomes = useApi<OutcomeSummary>(`/exams/${exam.id}/outcome-summary`);
   const [err, setErr] = useState<unknown>(null);
   const [confirm, setConfirm] = useState(false);
   const [downloading, setDownloading] = useState(false);
@@ -811,14 +809,6 @@ export function ExamResults() {
               </tbody>
             </table>
           </Card>
-          {outcomes.data && outcomes.data.finalized_students > 0 && (
-            <div className="space-y-2">
-              <p className="px-1 text-xs text-mute">
-                Class performance across {outcomes.data.finalized_students} finalized student(s).
-              </p>
-              <OutcomeTables outcomes={outcomes.data} average />
-            </div>
-          )}
         </>
       )}
 

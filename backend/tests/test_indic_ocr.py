@@ -1,7 +1,7 @@
 from app.config import get_settings
 from app.ocr.indic import blocks_to_result, uses_indic_ocr
 from app.ocr.schemas import AnswerKeyPageResult, QuestionPageResult, StudentPageResult
-from app.formatter.common.answers import segment_student_answers
+from app.cbse.formatter.common.answers import segment_student_answers
 
 PAGE = {
     "image": "page.png", "width": 1000, "height": 1400,
@@ -78,7 +78,7 @@ TAMIL_QP = {"blocks": [
 
 
 def test_tamil_question_paper_marks_sections_types():
-    from app.formatter.common.paper import parse_question_paper_structure
+    from app.cbse.formatter.common.paper import parse_question_paper_structure
     res = blocks_to_result(TAMIL_QP, QuestionPageResult, 1)
     s = parse_question_paper_structure([({"page_number": 1}, res)])
     got = {q.display_number: (q.question_type, q.max_marks, q.section) for q in s.questions}
@@ -92,7 +92,7 @@ def test_tamil_question_paper_marks_sections_types():
 
 
 def test_tamil_answer_key_marks_and_criteria():
-    from app.formatter.common.keys import extract_criteria_from_block, parse_criteria_marks
+    from app.cbse.formatter.common.keys import extract_criteria_from_block, parse_criteria_marks
     t = "திருவள்ளுவர் திருக்குறளை இயற்றினார்.\n• ஆசிரியர் பெயர் – 1 மதிப்பெண்\n• நூல் பெயர் – 1 மதிப்பெண்"
     _, crit = extract_criteria_from_block(t)
     assert len(crit) == 2 and parse_criteria_marks(crit, t) == 2
@@ -103,7 +103,7 @@ def test_tamil_answer_key_marks_and_criteria():
 
 
 def test_tamil_words_match_across_inflections():
-    from app.formatter.common.recovery import _tokenize
+    from app.cbse.formatter.common.recovery import _tokenize
     q = _tokenize("திருக்குறளை இயற்றியவர் யார்? விளக்குக")
     a = _tokenize("திருவள்ளுவர் திருக்குறள் எழுதினார்")
     assert q & a == {"திருக்குறள"}                     # same word, different case ending; "யார்"/"விளக்குக" are stop words
@@ -130,7 +130,7 @@ def test_grading_model_only_for_indian_language_subjects(monkeypatch):
 
 
 def test_tamil_question_labels():
-    from app.formatter.common.numbering import extract_label_from_text_prefix as label, normalize_question_number as norm
+    from app.cbse.formatter.common.numbering import extract_label_from_text_prefix as label, normalize_question_number as norm
     assert label("வினா 1. திருக்குறளை இயற்றியவர் யார்?") == ("1", "திருக்குறளை இயற்றியவர் யார்?")
     assert label("வினா எண் 3 (அ) கம்பர்") == ("3(a)", "கம்பர்")
     assert label("கேள்வி 2: பாடல்") == ("2", "பாடல்")
@@ -151,7 +151,7 @@ def test_student_tamil_labels_map_to_subparts():
 
 
 def _q(text, marks=None, source="default", qtype="descriptive"):
-    from app.formatter.common.paper import StructuredQuestion
+    from app.cbse.formatter.common.paper import StructuredQuestion
     return StructuredQuestion(None, None, "1", text, qtype, marks, None, 1, 1, None, None, type_source=source)
 
 
@@ -181,7 +181,7 @@ def test_labeler_marking_points_are_checked(monkeypatch):
     from types import SimpleNamespace
     from app.ocr.schemas import KeyCriteriaLabels
     from app.services import ai_labeler
-    from app.formatter.common.keys import SegmentedKey
+    from app.cbse.formatter.common.keys import SegmentedKey
     keys = [SegmentedKey("1", "1", "திருக்குறளை எழுதியவர் திருவள்ளுவர். அது 1330 குறள்களைக் கொண்டது.", None),
             SegmentedKey("2", "2", "சிலப்பதிகாரம் இளங்கோவடிகள் இயற்றியது.", None),
             SegmentedKey("3", "3", "கம்பர் இராமாயணம் இயற்றினார்.", None)]
@@ -212,7 +212,7 @@ def test_labeler_outage_keeps_rule_results(monkeypatch):
 
 def test_tamil_feedback_explains_a_deduction():
     from app.ocr.schemas import EvaluationResult
-    from app.formatter.common.mark_rules import validate_evaluation
+    from app.cbse.formatter.common.mark_rules import validate_evaluation
 
     def graded(feedback):
         return validate_evaluation(EvaluationResult(marks_awarded=1, decision="PARTIALLY_CORRECT",

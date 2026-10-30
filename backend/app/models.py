@@ -101,8 +101,6 @@ class ExamQuestion(Base):
     ocr_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     verification_status: Mapped[str] = mapped_column(String(20), default="UNVERIFIED")
     review_reason: Mapped[str | None] = mapped_column(String(300), nullable=True)
-    k_level: Mapped[str | None] = mapped_column(String(2), nullable=True)            # Bloom's K1..K6
-    k_level_source: Mapped[str | None] = mapped_column(String(10), nullable=True)    # SUGGESTED | TEACHER
     course_outcome: Mapped[str | None] = mapped_column(String(20), nullable=True)    # CO1, CO2, ...
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 

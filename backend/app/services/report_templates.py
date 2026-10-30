@@ -20,16 +20,16 @@ _COMMON_LABELS = {
 
 DEFAULTS: dict[str, dict] = {
     "report": {
-        "sections": ["header", "title", "student_details", "summary", "marks_table", "outcomes", "note", "remarks",
+        "sections": ["header", "title", "student_details", "summary", "marks_table", "note", "remarks",
                      "signatures", "grade_scale"],
-        "columns": ["qno", "k_level", "max", "obtained", "feedback"],
+        "columns": ["qno", "max", "obtained", "feedback"],
         "summary": ["obtained", "percentage", "grade"],
         "labels": {**_COMMON_LABELS,
                    "title": "Examination Report", "exam": "Examination", "subject": "Subject", "exam_type": "Exam Type",
                    "year": "Academic Year", "date": "Exam Date", "finalized": "Finalized",
                    "obtained": "Marks Obtained", "marks_section": "Question-wise Marks",
-                   "col_qno": "Q. No.", "col_k_level": "K Level", "col_max": "Max", "col_obtained": "Obtained",
-                   "col_feedback": "Feedback", "by_k": "By Knowledge Level",
+                   "col_qno": "Q. No.", "col_max": "Max", "col_obtained": "Obtained",
+                   "col_feedback": "Feedback",
                    "adjusted": "Adjusted by teacher", "not_attempted": "Not attempted"},
         "signers": ["Subject Teacher", "Principal", "Parent / Guardian"],
     },

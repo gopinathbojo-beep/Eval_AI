@@ -21,11 +21,7 @@ export interface ImportSummary { created: number; updated: number; errors: { row
 export interface OutcomeRow {
   key: string; label: string; questions: number; max_marks: number; scored?: number; average_scored?: number; percentage: number | null;
 }
-export interface Outcomes { k_levels: OutcomeRow[]; course_outcomes: OutcomeRow[] }
-export interface OutcomeSummary extends Outcomes {
-  finalized_students: number;
-  students: (Outcomes & { evaluation_id: string; student_id: string; name: string; roll_number: string })[];
-}
+export interface Outcomes { course_outcomes: OutcomeRow[] }
 export type ExamStatus =
   | "DRAFT" | "QUESTION_PAPER_UPLOADED" | "QUESTIONS_EXTRACTED" | "QUESTIONS_VERIFIED" | "ANSWER_KEY_UPLOADED"
   | "ANSWER_KEY_VERIFIED" | "READY_FOR_EVALUATION" | "EVALUATING" | "REVIEW_REQUIRED" | "FINALIZED";
@@ -54,7 +50,7 @@ export interface Question {
   compulsory?: boolean;
   page_start: number | null; page_end?: number | null; bbox: BBox | null; has_crop: boolean; ocr_confidence: number | null;
   verification_status: "UNVERIFIED" | "VERIFIED" | "NEEDS_REVIEW"; review_reason: string | null;
-  k_level?: string | null; k_level_source?: "SUGGESTED" | "TEACHER" | null; course_outcome?: string | null;
+  course_outcome?: string | null;
 }
 export interface SectionSummary {
   section: string;
@@ -146,7 +142,7 @@ export interface EvaluationDetail {
 export interface ResultRow {
   question_id: string; question: string; question_text: string; max_marks: number | null; final_marks: number | null;
   ai_marks: number | null; teacher_overridden: boolean; student_answer: string | null; official_answer: string | null;
-  feedback: string | null; status: string; k_level?: string | null; course_outcome?: string | null;
+  feedback: string | null; status: string; course_outcome?: string | null;
 }
 export interface ResultResponse {
   finalized: boolean; evaluation: Evaluation; exam: { id: string; name: string; subject: string; class: string };

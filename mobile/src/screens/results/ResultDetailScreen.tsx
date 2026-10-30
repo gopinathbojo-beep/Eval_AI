@@ -157,7 +157,6 @@ export const ResultDetailScreen: React.FC<ResultDetailScreenProps> = ({ route })
             <View style={styles.rowHeader}>
               <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
                 <Badge label={`Q${row.question}`} variant="teal" />
-                {row.k_level && <Badge label={row.k_level} variant="muted" size="small" />}
                 {row.course_outcome && <Badge label={row.course_outcome} variant="muted" size="small" />}
                 {row.teacher_overridden && (
                   <Badge label="Teacher Overridden" variant="warning" />

@@ -4,10 +4,10 @@ import threading
 
 from app.ocr.schemas import AnswerKeyItem, AnswerKeyPageResult, QuestionItem, QuestionPageResult
 from app.services import job_queue, paper_format
-from app.formatter.common import choices
-from app.formatter.common.paper import parse_question_paper_structure
-from app.formatter.common.keys import segment_answer_keys
-from app.formatter.common.numbering import normalize_question_number
+from app.cbse.formatter.common import choices
+from app.cbse.formatter.common.paper import parse_question_paper_structure
+from app.cbse.formatter.common.keys import segment_answer_keys
+from app.cbse.formatter.common.numbering import normalize_question_number
 
 
 def _q(label, text, marks=None):

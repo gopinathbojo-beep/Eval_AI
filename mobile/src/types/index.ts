@@ -57,7 +57,6 @@ export interface OutcomeRow {
 }
 
 export interface Outcomes {
-  k_levels: OutcomeRow[];
   course_outcomes: OutcomeRow[];
 }
 
@@ -148,8 +147,6 @@ export interface Question {
   ocr_confidence: number | null;
   verification_status: "UNVERIFIED" | "VERIFIED" | "NEEDS_REVIEW";
   review_reason: string | null;
-  k_level?: string | null;
-  k_level_source?: "SUGGESTED" | "TEACHER" | null;
   course_outcome?: string | null;
 }
 
@@ -353,7 +350,6 @@ export interface ResultRow {
   official_answer: string | null;
   feedback: string | null;
   status: string;
-  k_level?: string | null;
   course_outcome?: string | null;
 }
 

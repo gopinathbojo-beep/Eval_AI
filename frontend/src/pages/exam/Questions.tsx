@@ -2,7 +2,7 @@ import { Fragment, useEffect, useRef, useState } from "react";
 import { api, downloadFile } from "../../api/client";
 import { useApi } from "../../hooks/useApi";
 import type { Question, QuestionsResponse } from "../../types";
-import { BUSY_DOC, K_LEVELS, fmt, pct } from "../../utils/format";
+import { BUSY_DOC, fmt, pct } from "../../utils/format";
 import { Badge, Button, Card, Confirm, Empty, ErrorPanel, Field, Input, Loading, MathTextarea, MathView, Modal, MoreMenu, Select, StatusBadge } from "../../components/ui";
 import { PageViewer } from "../../components/PageViewer";
 import { IconChevronDown } from "../../components/Icons";
@@ -181,18 +181,6 @@ export default function Questions() {
               Questions
             </button>
           </div>
-
-          {exam.status !== "FINALIZED" && qs.some((q) => q.k_level_source === "SUGGESTED") && (
-            <Button
-              small
-              variant="soft"
-              busy={busy === "k-levels"}
-              title="Accept every suggested K level as correct"
-              onClick={() => run("k-levels", () => api(`/exams/${exam.id}/questions/confirm-k-levels`, { method: "POST" }))}
-            >
-              Confirm Suggested K Levels
-            </Button>
-          )}
 
           {!data.locked && (
             <>
@@ -530,8 +518,6 @@ export default function Questions() {
                             <IconChevronDown size={13} className={`transition-transform ${isSelected ? "rotate-180" : ""}`} />
                           </span>
                         </button>
-
-                        <OutcomeTags q={q} disabled={exam.status === "FINALIZED"} onSaved={reload} onError={setActionErr} />
 
                         {/* Show OCR image crop if selected and available */}
                         {isSelected && q.has_crop && (
@@ -958,38 +944,3 @@ function ReviewDlg({ q, onClose, onDone }: { q: Question; onClose: () => void; o
   );
 }
 
-/** Bloom's K level for one question. Suggested levels stay marked until the teacher confirms them. */
-function OutcomeTags({
-  q, disabled, onSaved, onError,
-}: {
-  q: Question; disabled: boolean; onSaved: () => Promise<void>; onError: (e: unknown) => void;
-}) {
-  const save = async (json: { k_level?: string | null }) => {
-    try {
-      await api(`/exam-questions/${q.id}/outcome`, { method: "PATCH", json });
-      await onSaved();
-    } catch (e) {
-      onError(e);
-    }
-  };
-  const suggested = q.k_level_source === "SUGGESTED";
-  return (
-    <div className="mt-2.5 flex flex-wrap items-center gap-2 text-xs">
-      <label className="flex items-center gap-1.5">
-        <span className="font-semibold text-mute">K level</span>
-        <select
-          aria-label={`K level for question ${q.display_number}`}
-          className={`rounded-md border bg-surface px-1.5 py-0.5 text-xs ${suggested ? "border-warn/60" : "border-line"}`}
-          value={q.k_level || ""}
-          disabled={disabled}
-          onChange={(e) => save({ k_level: e.target.value || null })}
-        >
-          <option value="">–</option>
-          {K_LEVELS.map((k) => (
-            <option key={k.key} value={k.key}>{k.key} · {k.label}</option>
-          ))}
-        </select>
-      </label>
-    </div>
-  );
-}

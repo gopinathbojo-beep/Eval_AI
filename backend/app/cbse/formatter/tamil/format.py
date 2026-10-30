@@ -14,7 +14,7 @@ Reference layout: Tamil Nadu SSLC Tamil paper (8501, 2025):
 """
 from __future__ import annotations
 import re
-from ...services import paper_format
+from ....services import paper_format
 
 _TAMIL_CHAR = re.compile(r"[஀-௿]")
 _INDIC_CHAR = re.compile(r"[ऀ-෿]")
@@ -424,27 +424,3 @@ _OMISSION_IN_FEEDBACK = re.compile(r"வில்லை|இல்லை|வி�
 def feedback_names_gap(feedback: str) -> bool:
     return has_tamil(feedback) and bool(_OMISSION_IN_FEEDBACK.search(feedback))
 
-
-# ---------------------------------------------------------------- Bloom's K levels
-
-# Tamil command words per K level (common/k_level.py takes the earliest in the question, as for English verbs).
-# Words start at a word boundary ("யார்" not inside "தயார்"); a stem ending in "~" takes any suffix ("எழுதுக",
-# "எழுதுதல்"), others must end there ("என்ன" not "என்னுடைய"). "விடையளிக்கவும்" (answer) names no level.
-def _kw(*words: str) -> tuple[str, ...]:
-    return tuple(r"(?<![஀-௿])" + (re.escape(w[:-1]) if w.endswith("~") else re.escape(w) + r"(?![஀-௿])")
-                 for w in words)
-
-
-K_LEVEL_VERBS: dict[str, tuple[str, ...]] = {
-    "K1": _kw("யாவை", "யாது", "என்ன", "யார்", "யாவர்", "எது", "எவை", "எதை~", "எவற்றை~", "எப்போது", "எங்கு~",
-              "எத்தனை", "நிரப்பு~", "கோடிட்ட", "பொருத்து~", "தேர்க", "தேர்ந்தெடு~", "தெரிவு செய்க", "எதிர்ச்சொல்~", "எதிர்ச்சொற்~",
-              "பெயர் எழுது~", "பட்டியலிடு~", "குறிப்பிடு~", "கண்டறி~", "பொருள் எழுது~", "பொருள் தருக"),
-    "K2": _kw("ஏன்", "விளக்கு~", "விவரி~", "காரணம்~", "புரிந்து~", "சுருக்கி~", "சுருக்கம்~", "எடுத்துக்காட்டு~",
-              "வகைப்படுத்து~", "எவ்வாறு", "எப்படி"),
-    "K3": _kw("மாற்றி எழுது~", "மாற்றுக", "பன்மை~", "ஒருமை~", "பிரித்து எழுது~", "சேர்த்து எழுது~", "பயன்படுத்தி~",
-              "கணக்கிடு~", "தீர்வு காண்~", "வரைக", "வரைந்து~", "தொடர் அமை~", "தொடரில் அமை~"),
-    "K4": _kw("ஒப்பிடு~", "ஒப்பிட்டு~", "வேறுபாடு~", "வேறுபடுத்து~", "பகுப்பாய்~", "ஆராய்~"),
-    "K5": _kw("மதிப்பிடு~", "நியாயப்படுத்து~", "உங்கள் கருத்து~", "கருத்துரை~", "திறனாய்~"),
-    "K6": _kw("கடிதம்~", "கட்டுரை~", "வாக்கியங்களில் எழுது~", "வாக்கியங்கள் எழுது~", "பத்தி எழுது~", "கவிதை எழுது~",
-              "கதை எழுது~", "உரையாடல்~", "அறிக்கை~", "விண்ணப்பம்~", "உருவாக்கு~", "கற்பனை~", "வடிவமை~"),
-}

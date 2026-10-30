@@ -12,11 +12,11 @@ from typing import Type, TypeVar
 import httpx
 from pydantic import BaseModel
 from ..config import INDIC_BAD_RESPONSE_MESSAGE, INDIC_UNAVAILABLE_MESSAGE, get_settings
-from ..formatter.common import choices
-from ..formatter.tamil import blocks as tamil_blocks
-from ..formatter.tamil import format as tamil_format
-from ..formatter.common.paper import extract_section_marks_rule, is_document_header, is_section_heading_line
-from ..formatter.common.numbering import extract_label_from_text_prefix
+from ..cbse.formatter.common import choices
+from ..cbse.formatter.tamil import blocks as tamil_blocks
+from ..cbse.formatter.tamil import format as tamil_format
+from ..cbse.formatter.common.paper import extract_section_marks_rule, is_document_header, is_section_heading_line
+from ..cbse.formatter.common.numbering import extract_label_from_text_prefix
 from .internvl import AICall
 from .schemas import AnswerKeyPageResult, QuestionPageResult, StudentPageResult
 

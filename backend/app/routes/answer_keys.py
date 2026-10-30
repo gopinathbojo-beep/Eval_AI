@@ -16,9 +16,9 @@ from ..ocr.schemas import GeneratedAnswerKeyResult
 from ..security import current_teacher
 from ..serializers import key_view
 from ..services.audit import audit
-from ..formatter.common.mapping import map_label
+from ..cbse.formatter.common.mapping import map_label
 from ..services.mapping_service import exam_questions, refresh_key_state, refresh_rubric
-from ..formatter.common.numbering import normalize_question_number
+from ..cbse.formatter.common.numbering import normalize_question_number
 from ..services.state import set_state
 
 router = APIRouter(prefix="/api")

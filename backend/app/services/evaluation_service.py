@@ -9,12 +9,12 @@ from ..ocr import prompts
 from ..ocr.internvl import AIResponseError, AIUnavailable, chat_structured, check_model
 from ..ocr.indic import text_model_for
 from ..ocr.schemas import EvaluationResult
-from .. import formatter
-from ..formatter.common import choices
-from ..formatter.common.mark_rules import EvaluationValidationError, validate_evaluation
+from ..cbse import formatter
+from ..cbse.formatter.common import choices
+from ..cbse.formatter.common.mark_rules import EvaluationValidationError, validate_evaluation
 from .job_queue import keyed_lock, submit
 from .mapping_service import exam_questions
-from ..formatter.common.numbering import parent_number
+from ..cbse.formatter.common.numbering import parent_number
 from .state import set_state
 
 log = logging.getLogger("adem.evaluation")

@@ -1,7 +1,7 @@
 from __future__ import annotations
 import math
 import re
-from ...ocr.schemas import EvaluationResult
+from ....ocr.schemas import EvaluationResult
 from ..tamil import format as tamil_format
 
 VALID_DECISIONS = {"CORRECT", "PARTIALLY_CORRECT", "INCORRECT", "NOT_ATTEMPTED"}

@@ -2,7 +2,7 @@ from __future__ import annotations
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from .models import Evaluation, Exam, Teacher
-from . import formatter
+from .cbse import formatter
 from .services import paper_format
 
 
