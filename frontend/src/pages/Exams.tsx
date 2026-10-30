@@ -510,7 +510,7 @@ export function ExamNew() {
                 id={id}
                 value={f.class_id}
                 onChange={(val) => {
-                  setF((prev) => ({ ...prev, class_id: val, subject_id: "" }));
+                  setF((prev) => prev.class_id === val ? prev : ({ ...prev, class_id: val, subject_id: "" }));
                   if (val) setClassError(null);
                 }}
                 options={classOptions}
