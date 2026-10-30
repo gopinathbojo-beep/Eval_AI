@@ -1,0 +1,10 @@
+*
+!Dockerfile
+!requirements.lock
+!app/
+!app/**
+!scripts/
+!scripts/**
+**/__pycache__
+**/*.pyc
+scripts/e2e_server.py

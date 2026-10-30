@@ -1,0 +1,566 @@
+from __future__ import annotations
+import logging
+from datetime import datetime, timezone
+from sqlalchemy.orm import Session
+from ..database import SessionLocal
+from dataclasses import dataclass, field
+from ..models import AnswerKey, AnswerSheetDocument, Evaluation, Exam, ExamQuestion, EvaluationItem, StudentAnswer
+from ..ocr import prompts
+from ..ocr.internvl import AIResponseError, AIUnavailable, chat_structured, check_model
+from ..ocr.indic import text_model_for
+from ..ocr.schemas import EvaluationResult
+from .. import formatter
+from ..formatter.common import choices
+from ..formatter.common.mark_rules import EvaluationValidationError, validate_evaluation
+from .job_queue import keyed_lock, submit
+from .mapping_service import exam_questions
+from ..formatter.common.numbering import parent_number
+from .state import set_state
+from .audit import audit
+
+log = logging.getLogger("adem.evaluation")
+_ANSWER_STATES = {"MAPPED", "EVALUATING", "EVALUATED", "APPROVED"}
+
+# Valid student answer resolution states
+STUDENT_ANSWER_FOUND = "STUDENT_ANSWER_FOUND"
+STUDENT_ANSWER_NOT_ATTEMPTED = "STUDENT_ANSWER_NOT_ATTEMPTED"
+STUDENT_ANSWER_UNMAPPED = "STUDENT_ANSWER_UNMAPPED"
+STUDENT_ANSWER_OCR_FAILED = "STUDENT_ANSWER_OCR_FAILED"
+STUDENT_ANSWER_MAPPING_REVIEW = "STUDENT_ANSWER_MAPPING_REVIEW"
+STUDENT_ANSWER_GROUPING_ERROR = "STUDENT_ANSWER_GROUPING_ERROR"
+STUDENT_ANSWER_RELATIONSHIP_ERROR = "STUDENT_ANSWER_RELATIONSHIP_ERROR"
+DATA_INTEGRITY_ERROR = "DATA_INTEGRITY_ERROR"
+# how each unresolved state is worded in the error shown to teachers (the codes themselves stay as they are)
+_RESOLUTION_TEXT = {
+    STUDENT_ANSWER_UNMAPPED: "Answer not mapped",
+    STUDENT_ANSWER_OCR_FAILED: "Answer sheet could not be read",
+    STUDENT_ANSWER_MAPPING_REVIEW: "Answer mapping needs review",
+    STUDENT_ANSWER_GROUPING_ERROR: "Answer grouping problem",
+    STUDENT_ANSWER_RELATIONSHIP_ERROR: "Answer record problem",
+    DATA_INTEGRITY_ERROR: "Data integrity problem",
+}
+
+
+@dataclass
+class ResolvedAnswer:
+    status: str
+    combined_text: str = ""
+    primary_answer: StudentAnswer | None = None
+    constituent_answers: list[StudentAnswer] = field(default_factory=list)
+    reason: str | None = None
+
+
+class ExamSnapshot:
+    """The rows needed to judge sheets of one exam, fetched in a few bulk queries.
+
+    The database is remote, so every query is a round trip; checking sheets question by question, sheet by sheet,
+    made the review pages take tens of seconds. Rows are loaded fresh on construction: build a new one after changes.
+    """
+
+    def __init__(self, db: Session, exam_id: str, evs: list[Evaluation]):
+        ids = [e.id for e in evs] or [""]
+        self.questions = exam_questions(db, exam_id)
+        self.keys: dict[str | None, list[AnswerKey]] = {}
+        for k in db.query(AnswerKey).filter_by(exam_id=exam_id, is_active=True):
+            self.keys.setdefault(k.exam_question_id, []).append(k)
+        self.answers: dict[str, list[StudentAnswer]] = {i: [] for i in ids}
+        for a in (db.query(StudentAnswer).filter(StudentAnswer.evaluation_id.in_(ids))
+                  .order_by(StudentAnswer.page_number, StudentAnswer.position)):
+            self.answers[a.evaluation_id].append(a)
+        self.items: dict[str, list[EvaluationItem]] = {i: [] for i in ids}
+        for it in db.query(EvaluationItem).filter(EvaluationItem.evaluation_id.in_(ids)):
+            self.items[it.evaluation_id].append(it)
+        doc_ids = [e.answer_sheet_id for e in evs if e.answer_sheet_id] or [""]
+        self.docs = {d.id: d for d in db.query(AnswerSheetDocument).filter(AnswerSheetDocument.id.in_(doc_ids))}
+
+    def unresolved(self, ev: Evaluation) -> bool:
+        return any(a.status in ("UNMAPPED", "NEEDS_REVIEW") for a in self.answers.get(ev.id, []))
+
+
+def resolve_student_answer(db: Session, ev: Evaluation, q: ExamQuestion, snap: ExamSnapshot | None = None) -> ResolvedAnswer:
+    """Resolve student's answer for canonical question q.id across multiple sources:
+    1. verified direct student_answer_group.question_id
+    2. verified parent / subquestion mappings
+    3. answer blocks belonging to mapped group (including cross-page continuations)
+    4. precise diagnostic states if missing (not attempted vs mapping review vs unmapped vs ocr failed).
+    """
+    all_answers = snap.answers.get(ev.id, []) if snap else (
+        db.query(StudentAnswer)
+        .filter_by(evaluation_id=ev.id)
+        .order_by(StudentAnswer.page_number, StudentAnswer.position)
+        .all()
+    )
+
+    # 1. Direct verified answer blocks mapped to canonical q.id
+    direct_answers = [
+        a for a in all_answers
+        if a.exam_question_id == q.id and a.status in _ANSWER_STATES
+    ]
+
+    # 2. Check canonical subquestions if q is a parent question
+    all_exam_qs = snap.questions if snap else exam_questions(db, ev.exam_id)
+    canonical_sub_qs = [
+        sq for sq in all_exam_qs
+        if sq.id != q.id and sq.normalized_number and q.normalized_number
+        and parent_number(sq.normalized_number) == q.normalized_number
+    ]
+    sub_answers = []
+    if canonical_sub_qs:
+        sub_q_ids = {sq.id for sq in canonical_sub_qs}
+        sub_answers = [
+            a for a in all_answers
+            if a.exam_question_id in sub_q_ids and a.status in _ANSWER_STATES
+        ]
+
+    # Constituent answers: use direct_answers if present; if empty and sub_answers exist, use sub_answers
+    constituent: list[StudentAnswer] = []
+    if direct_answers:
+        constituent = direct_answers
+        # Combine all answer blocks / cross-page continuations
+        combined_parts = [a.answer_text.strip() for a in constituent if a.answer_text and a.answer_text.strip()]
+        combined_text = "\n\n".join(combined_parts)
+    elif sub_answers:
+        constituent = sub_answers
+        combined_parts = []
+        for a in sub_answers:
+            lbl = a.raw_question_number or a.normalized_number or ""
+            txt = a.answer_text.strip() if a.answer_text else ""
+            if txt:
+                combined_parts.append(f"[{lbl}]\n{txt}" if lbl else txt)
+        combined_text = "\n\n".join(combined_parts)
+    else:
+        combined_text = ""
+
+    if constituent:
+        if combined_text.strip():
+            return ResolvedAnswer(
+                status=STUDENT_ANSWER_FOUND,
+                combined_text=combined_text,
+                primary_answer=constituent[0],
+                constituent_answers=constituent,
+            )
+        else:
+            return ResolvedAnswer(
+                status=STUDENT_ANSWER_GROUPING_ERROR,
+                primary_answer=constituent[0],
+                constituent_answers=constituent,
+                reason=f"Student answer block exists for {q.display_number} but contains no transcribed text.",
+            )
+
+    # 3. If no verified answer found, resolve exact state
+    # Check for mapping review / unresolved mapping for this question
+    review_candidates = [
+        a for a in all_answers
+        if a.status in ("NEEDS_REVIEW", "UNMAPPED") and (
+            a.exam_question_id == q.id
+            or q.id in (a.mapping_candidates or [])
+            or (a.normalized_number and q.normalized_number and a.normalized_number == q.normalized_number)
+        )
+    ]
+    if review_candidates:
+        ca = review_candidates[0]
+        return ResolvedAnswer(
+            status=STUDENT_ANSWER_MAPPING_REVIEW,
+            primary_answer=ca,
+            constituent_answers=review_candidates,
+            reason=ca.mapping_note or f"Student answer detected ({ca.raw_question_number or 'unlabelled'}) but mapping is unresolved.",
+        )
+
+    # Check for relationship error (e.g. mapped answer marked IGNORED)
+    ignored = [a for a in all_answers if a.exam_question_id == q.id and a.status == "IGNORED"]
+    if ignored:
+        return ResolvedAnswer(
+            status=STUDENT_ANSWER_RELATIONSHIP_ERROR,
+            primary_answer=ignored[0],
+            constituent_answers=ignored,
+            reason=f"Student answer for {q.display_number} is marked as IGNORED in mapping records.",
+        )
+
+    # Check for unmapped answer blocks on the sheet
+    unmapped = [a for a in all_answers if a.status == "UNMAPPED"]
+    if unmapped:
+        return ResolvedAnswer(
+            status=STUDENT_ANSWER_UNMAPPED,
+            primary_answer=unmapped[0],
+            constituent_answers=unmapped,
+            reason=f"Unmapped student answer block exists on sheet (page {unmapped[0].page_number or 'unknown'}).",
+        )
+
+    # Check for failed OCR on answer sheet document
+    doc = None
+    if ev.answer_sheet_id:
+        doc = snap.docs.get(ev.answer_sheet_id) if snap else db.get(AnswerSheetDocument, ev.answer_sheet_id)
+    if doc and doc.pages:
+        failed_pages = [p.get("page_number") for p in doc.pages if p.get("ocr_status") != "OK"]
+        if failed_pages:
+            return ResolvedAnswer(
+                status=STUDENT_ANSWER_OCR_FAILED,
+                reason=f"Student answer sheet could not be read on page(s): {', '.join(map(str, failed_pages))}.",
+            )
+
+    # Truly not attempted
+    return ResolvedAnswer(
+        status=STUDENT_ANSWER_NOT_ATTEMPTED,
+        reason="No student answer region detected anywhere for this question.",
+    )
+
+
+def active_key_for(db: Session, exam_id: str, question_id: str) -> AnswerKey | None:
+    return (db.query(AnswerKey).filter_by(exam_id=exam_id, exam_question_id=question_id, is_active=True,
+                                          mapping_status="MAPPED").first())
+
+
+_POINT_CHECK = {"number": "final value", "unit": "SI unit", "equation": "equation", "exact": "exact answer",
+                "meaning": "same meaning", "criterion": "band"}
+
+
+def rubric_criteria(key: AnswerKey) -> list[str]:
+    """The marking points the grader is given: the key's rubric as "[1 mark] (a) exact answer: since - Correct
+    preposition choice", or the key's criteria lines when it has no rubric."""
+    rubric = getattr(key, "rubric", None) or {}
+    points = rubric.get("points") or []
+    if not points:
+        return list(key.criteria or [])
+    out = []
+    for p in points:
+        m = p.get("marks")
+        mark = f"{m:g} mark{'' if m == 1 else 's'}" if isinstance(m, (int, float)) else "marks"
+        part = f" ({p['part']})" if p.get("part") else ""
+        expects = f": {' / '.join(p['expected'])}" if p.get("expected") else ""
+        out.append(f"[{mark}]{part} {_POINT_CHECK.get(p.get('kind'), 'same meaning')}{expects} - {p.get('text', '')}")
+    for d in rubric.get("deductions") or []:
+        out.append(f"[deduction] {d}")
+    return out
+
+
+def _reset_item(item: EvaluationItem) -> None:
+    item.ai_marks = item.ai_decision = item.ai_feedback = item.ai_confidence = None
+    item.matched_points, item.missing_points = [], []
+    item.raw_response = item.error = None
+    item.final_marks, item.teacher_overridden, item.teacher_feedback = None, False, None
+    item.not_attempted_confirmed = False
+
+
+def evaluate_item(db: Session, ev: Evaluation, q: ExamQuestion, item: EvaluationItem, model: str | None = None) -> None:
+    """Evaluate one question. Raises AIUnavailable only; every other failure is recorded on the item."""
+    _reset_item(item)
+    resolved = resolve_student_answer(db, ev, q)
+    item.student_answer_id = resolved.primary_answer.id if resolved.primary_answer else None
+
+    if resolved.status == STUDENT_ANSWER_FOUND:
+        key = active_key_for(db, ev.exam_id, q.id)
+        if key is None or q.max_marks is None:
+            item.status, item.error = "EVALUATION_ERROR", "No mapped answer key or maximum marks for this question."
+            db.commit()
+            return
+        for a in resolved.constituent_answers:
+            a.status = "EVALUATING"
+        db.commit()
+        fmt = formatter.current()  # the subject's own grading rules, see app/formatter
+        # "write on any one topic" answered on several: each graded, the best counts
+        attempts = fmt.grading_attempts(q.question_text, resolved.combined_text) or [(None, resolved.combined_text)]
+        try:
+            graded = []
+            for title, text in attempts:
+                prompt = prompts.evaluation_prompt(q.display_number, q.question_text, key.answer_text, rubric_criteria(key),
+                                                   key.accepted_answers, key.keywords, q.max_marks, text)
+                exam_owner = db.get(Exam, ev.exam_id).teacher_id
+                audit(db, exam_id=ev.exam_id, teacher_id=exam_owner, entity_type="evaluation", entity_id=ev.id,
+                      action="ai_grading_request")
+                db.commit()
+                call = chat_structured(prompts.EVAL_SYSTEM, prompt, EvaluationResult, model=model)
+                item.raw_response = call.raw
+                res = validate_evaluation(call.parsed, q.max_marks)  # type: ignore[arg-type]
+                res = fmt.check_deductions(res, text, key.answer_text, q.max_marks)
+                graded.append((title, res, call.raw))
+            title, res, _ = max(graded, key=lambda g: g[1].marks_awarded)  # the first of equal best
+            item.ai_marks, item.ai_decision = res.marks_awarded, res.decision
+            item.matched_points, item.missing_points = res.matched_points, res.missing_points
+            item.ai_feedback, item.ai_confidence = res.feedback, res.confidence
+            if len(graded) > 1:
+                item.raw_response = "\n\n".join(f"--- {t} ---\n{raw}" for t, _, raw in graded)
+                scores = "; ".join(f"{t}: {r.marks_awarded:g}/{q.max_marks:g}" for t, r, _ in graded)
+                item.ai_feedback = (f"Asked for one topic; {len(graded)} were answered. Each was graded and the best "
+                                    f"counts: {title}. Scores: {scores}.\n{res.feedback or ''}").strip()
+            item.final_marks = res.marks_awarded  # proposal; becomes official only on teacher approval
+            item.status = "EVALUATED"
+            for a in resolved.constituent_answers:
+                a.status = "EVALUATED"
+        except EvaluationValidationError as e:
+            item.status, item.error = "EVALUATION_ERROR", f"Invalid AI evaluation: {e}"
+            for a in resolved.constituent_answers:
+                a.status = "MAPPED"
+        except AIResponseError as e:
+            item.raw_response = e.raw
+            item.status, item.error = "EVALUATION_ERROR", "InternVL3.5 4B failed to return a valid structured response."
+            for a in resolved.constituent_answers:
+                a.status = "MAPPED"
+            log.error("Eval AI error q=%s: %s", q.display_number, e.detail)
+        except AIUnavailable:
+            for a in resolved.constituent_answers:
+                a.status = "MAPPED"
+            db.commit()
+            raise
+        db.commit()
+        return
+
+    elif resolved.status == STUDENT_ANSWER_NOT_ATTEMPTED:
+        item.status = "MISSING"
+        item.final_marks = 0.0
+        item.not_attempted_confirmed = True
+        if q.choice_group:
+            item.ai_feedback = f"Either/or question {q.choice_group}: this alternative was not answered; only one counts."
+        elif q.answer_any and not q.compulsory:
+            item.ai_feedback = f"Not answered. The section asks for any {q.answer_any}; the best {q.answer_any} count."
+        else:
+            item.ai_feedback = "Question was not attempted by student."
+        item.error = None
+        db.commit()
+        return
+
+    else:
+        item.status = "EVALUATION_ERROR"
+        item.error = f"{_RESOLUTION_TEXT.get(resolved.status, resolved.status)}: {resolved.reason}"
+        db.commit()
+        return
+
+
+def run_evaluation(ev_id: str, only_question_ids: list[str] | None = None) -> None:
+    with keyed_lock(f"evaluation:{ev_id}"):  # jobs run in parallel; one grading run per sheet at a time
+        _run_evaluation(ev_id, only_question_ids)
+
+
+def _run_evaluation(ev_id: str, only_question_ids: list[str] | None) -> None:
+    db = SessionLocal()
+    try:
+        ev = db.get(Evaluation, ev_id)
+        exam = db.get(Exam, ev.exam_id)
+        ev.run_status = "RUNNING"
+        audit(db, exam_id=exam.id, teacher_id=exam.teacher_id, entity_type="evaluation", entity_id=ev.id,
+              action="ai_evaluation_started", new={"question_retry": bool(only_question_ids)})
+        if exam.status in ("READY_FOR_EVALUATION", "REVIEW_REQUIRED", "EVALUATING"):
+            set_state(exam, "EVALUATING")
+        db.commit()
+        try:
+            model = text_model_for(exam.subject.name if exam.subject else None)  # Tamil etc. graded by a model that reads it
+            check_model(model)
+            qs = [q for q in exam_questions(db, ev.exam_id) if not only_question_ids or q.id in only_question_ids]
+            ev.run_total, ev.run_progress = len(qs), 0
+            db.commit()
+            for q in qs:
+                item = db.query(EvaluationItem).filter_by(evaluation_id=ev.id, exam_question_id=q.id).first()
+                if item is None:
+                    item = EvaluationItem(evaluation_id=ev.id, exam_question_id=q.id)
+                    db.add(item)
+                    db.flush()
+                # bulk runs never overwrite a teacher's approved/overridden work
+                if not only_question_ids and (item.status == "APPROVED" or item.teacher_overridden):
+                    ev.run_progress += 1
+                    db.commit()
+                    continue
+                evaluate_item(db, ev, q, item, model)
+                ev.run_progress += 1
+                db.commit()
+            ev.run_status = "DONE"
+        except AIUnavailable as e:
+            log.error("AI unavailable during evaluation: %s", e.detail)
+            ev.run_status = "ERROR"
+        db.refresh(exam)
+        others_running = db.query(Evaluation).filter(Evaluation.exam_id == exam.id, Evaluation.id != ev.id,
+                                                     Evaluation.run_status == "RUNNING").first()
+        if exam.status == "EVALUATING" and not others_running:  # the last sheet still grading moves the exam on
+            set_state(exam, "REVIEW_REQUIRED")
+        db.commit()
+        refresh_evaluation_status(db, ev)
+        audit(db, exam_id=exam.id, teacher_id=exam.teacher_id, entity_type="evaluation", entity_id=ev.id,
+              action="ai_evaluation_failed" if ev.run_status == "ERROR" else "ai_evaluation_completed")
+        db.commit()
+    except Exception:
+        log.exception("Evaluation run crashed")
+        db.rollback()
+        ev = db.get(Evaluation, ev_id)
+        if ev:
+            ev.run_status = "ERROR"
+            failed_exam = db.get(Exam, ev.exam_id)
+            audit(db, exam_id=ev.exam_id, teacher_id=failed_exam.teacher_id, entity_type="evaluation", entity_id=ev.id,
+                  action="ai_evaluation_failed")
+            db.commit()
+    finally:
+        db.close()
+
+
+def confirm_not_attempted(db: Session, ev: Evaluation, snap: ExamSnapshot | None = None) -> None:
+    """Once every student answer is mapped, a MISSING question with no answer on the sheet is not attempted: 0 marks."""
+    snap = snap or ExamSnapshot(db, ev.exam_id, [ev])
+    if snap.unresolved(ev):
+        return
+    qs = {q.id: q for q in snap.questions}
+    for it in snap.items[ev.id]:
+        if it.status != "MISSING" or it.not_attempted_confirmed:
+            continue
+        q = qs.get(it.exam_question_id)
+        if q is not None and resolve_student_answer(db, ev, q, snap).status == STUDENT_ANSWER_NOT_ATTEMPTED:
+            it.not_attempted_confirmed = True
+            if it.final_marks is None:
+                it.final_marks = 0.0
+
+
+def finalize_issues(db: Session, ev: Evaluation, snap: ExamSnapshot | None = None) -> list[dict]:
+    """Read-only: lists what still blocks finalizing. Call confirm_not_attempted() first to settle unanswered items."""
+    snap = snap or ExamSnapshot(db, ev.exam_id, [ev])
+    qs = snap.questions
+    has_unresolved = snap.unresolved(ev)
+    issues: list[dict] = []
+
+    def add(question: str, reason: str):
+        issues.append({"question": question, "reason": reason})
+
+    if not qs or any(q.verification_status != "VERIFIED" for q in qs):
+        add("Exam", "Question paper is not verified")
+    for q in qs:
+        mapped = [k for k in snap.keys.get(q.id, []) if k.mapping_status == "MAPPED"]
+        if len(mapped) != 1 or mapped[0].verification_status != "VERIFIED":
+            add(q.display_number, "Answer key is missing, duplicated or not verified")
+        elif mapped[0].mark_mismatch:
+            add(q.display_number, "Answer key marks disagree with the question's maximum marks")
+    for a in snap.answers[ev.id]:
+        if a.status in ("UNMAPPED", "NEEDS_REVIEW"):
+            label = a.raw_question_number or "(no question number)"
+            add(label, "Student answer is unmapped" if a.status == "UNMAPPED"
+                else f"Student answer needs mapping review: {a.mapping_note or ''}".strip())
+    items = {i.exam_question_id: i for i in snap.items[ev.id]}
+    for q in qs:
+        it = items.get(q.id)
+        if it is None or it.status == "PENDING":
+            add(q.display_number, "Not evaluated yet")
+        elif it.status == "EVALUATION_ERROR":
+            add(q.display_number, it.error or "AI evaluation failed")
+        elif it.status == "MISSING":
+            if not getattr(it, "not_attempted_confirmed", False):
+                res = resolve_student_answer(db, ev, q, snap)
+                if res.status == STUDENT_ANSWER_NOT_ATTEMPTED:
+                    # with nothing left to map, confirm_not_attempted() settles this item; only report it otherwise
+                    if has_unresolved:
+                        add(q.display_number, "No student answer found. Map an answer or confirm it was not attempted")
+                elif res.status == STUDENT_ANSWER_MAPPING_REVIEW:
+                    add(q.display_number, f"Student answer detected but mapping needs review: {res.reason}")
+                elif res.status == STUDENT_ANSWER_UNMAPPED:
+                    add(q.display_number, f"Student answer detected on page but remains unmapped: {res.reason}")
+                elif res.status == STUDENT_ANSWER_OCR_FAILED:
+                    add(q.display_number, f"Answer sheet could not be read: {res.reason}")
+                elif res.status in (STUDENT_ANSWER_RELATIONSHIP_ERROR, DATA_INTEGRITY_ERROR):
+                    add(q.display_number, f"Database relationship error: {res.reason}")
+                else:
+                    add(q.display_number, "No student answer found. Map an answer or confirm it was not attempted")
+        elif it.status == "EVALUATED":
+            add(q.display_number, "Awaiting teacher approval")
+        if it and it.final_marks is not None and q.max_marks is not None and it.final_marks > q.max_marks + 1e-9:
+            add(q.display_number, f"Marks {it.final_marks:g} exceed maximum {q.max_marks:g}")
+    return issues
+
+
+def refresh_evaluation_status(db: Session, ev: Evaluation) -> None:
+    if ev.status == "FINALIZED":
+        return
+    db.flush()  # the snapshot is read from the database, so pending changes must be there first
+    snap = ExamSnapshot(db, ev.exam_id, [ev])
+    confirm_not_attempted(db, ev, snap)
+    items = snap.items[ev.id]
+    if snap.unresolved(ev):
+        ev.status = "MAPPING_REVIEW"
+    elif not items or all(i.status == "PENDING" for i in items):
+        ev.status = "OCR_REVIEW"
+    elif not finalize_issues(db, ev, snap):
+        ev.status = "FINALIZABLE"
+    elif any(i.status == "APPROVED" or i.teacher_overridden for i in items):
+        ev.status = "TEACHER_REVIEW"
+    elif any(i.status == "EVALUATED" for i in items):
+        ev.status = "AI_EVALUATED"
+    else:
+        ev.status = "TEACHER_REVIEW"
+    db.commit()
+
+
+def approve_clean_items(db: Session, ev: Evaluation) -> int:
+    """Approve every cleanly evaluated item and confirm genuine unattempted items; returns how many were approved."""
+    mapping_complete = not any(a.status in ("UNMAPPED", "NEEDS_REVIEW")
+                               for a in db.query(StudentAnswer).filter_by(evaluation_id=ev.id).all())
+    n = 0
+    for it in db.query(EvaluationItem).filter_by(evaluation_id=ev.id):
+        if it.status == "EVALUATED":
+            it.status = "APPROVED"
+            n += 1
+            if it.student_answer_id and (a := db.get(StudentAnswer, it.student_answer_id)):
+                a.status = "APPROVED"
+        elif it.status == "MISSING" and (it.not_attempted_confirmed or mapping_complete):
+            it.not_attempted_confirmed = True
+            if it.final_marks is None:
+                it.final_marks = 0.0
+            it.status = "APPROVED"
+            n += 1
+    return n
+
+
+# AI marks below this confidence are pointed out to the teacher before a bulk finalize
+LOW_CONFIDENCE = 0.6
+_EVALUATABLE_EXAM = ("READY_FOR_EVALUATION", "EVALUATING", "REVIEW_REQUIRED")
+
+
+def auto_evaluate_sheet(doc_id: str) -> None:
+    """Grade a freshly read sheet straight away when nothing needs the teacher first (pages read, answers mapped).
+
+    Sheets with unread pages or unmapped answers are left for the teacher; review_reasons() lists why. Grading is
+    queued as its own job on the grading model's engine, so a Tamil sheet is graded once InternVL is back on the GPU.
+    """
+    db = SessionLocal()
+    try:
+        ev = db.query(Evaluation).filter_by(answer_sheet_id=doc_id).first()
+        doc = db.get(AnswerSheetDocument, doc_id)
+        if ev is None or doc is None or ev.status == "FINALIZED" or ev.run_status == "RUNNING" or doc.status != "READY":
+            return
+        if db.get(Exam, ev.exam_id).status not in _EVALUATABLE_EXAM:
+            return
+        if any(a.status in ("UNMAPPED", "NEEDS_REVIEW") for a in db.query(StudentAnswer).filter_by(evaluation_id=ev.id)):
+            return
+        ev.run_status, ev.run_progress = "RUNNING", 0
+        db.commit()
+        ev_id, exam_id = ev.id, ev.exam_id
+    finally:
+        db.close()
+    submit(exam_id, run_evaluation, ev_id, grading=True)
+
+
+def review_reasons(db: Session, ev: Evaluation, snap: ExamSnapshot) -> list[dict]:
+    """Why this sheet cannot be finalized together with the others.
+
+    AI marks still awaiting approval are not listed: finalizing all sheets approves them.
+    """
+    doc = snap.docs.get(ev.answer_sheet_id)
+    issues = [i for i in finalize_issues(db, ev, snap) if i["reason"] != "Awaiting teacher approval"]
+    if snap.unresolved(ev):
+        # every question reads "Not evaluated yet" until the mapping is fixed; one line says it better
+        issues = [i for i in issues if i["reason"] != "Not evaluated yet"]
+        issues.append({"question": "Evaluation", "reason": "Not graded yet. Fix the answer mapping, then run the evaluation."})
+    if doc is not None and doc.status == "NEEDS_ATTENTION":
+        issues.insert(0, {"question": "Answer sheet", "reason": "Some pages could not be read. Retry them first."})
+    if ev.run_status == "ERROR":
+        issues.insert(0, {"question": "Evaluation", "reason": "The AI evaluation stopped with an error. Run it again."})
+    qs = {q.id: q for q in snap.questions}
+    for it in snap.items[ev.id]:
+        if it.status != "EVALUATED" or it.teacher_overridden:
+            continue
+        if it.ai_confidence is not None and it.ai_confidence < LOW_CONFIDENCE and (q := qs.get(it.exam_question_id)):
+            issues.append({"question": q.display_number,
+                           "reason": f"AI was unsure of these marks ({round(it.ai_confidence * 100)}% confidence). Check them."})
+    return issues
+
+
+def finalize(db: Session, ev: Evaluation) -> None:
+    qs = exam_questions(db, ev.exam_id)
+    items = {i.exam_question_id: i for i in db.query(EvaluationItem).filter_by(evaluation_id=ev.id).all()}
+    counted_qs = choices.counted(qs, {qid: it.final_marks for qid, it in items.items()})
+    ev.total_marks = sum((items[q.id].final_marks or 0.0) for q in counted_qs)
+    ev.maximum_marks = sum((q.max_marks or 0.0) for q in counted_qs)
+    ev.percentage = round(100.0 * ev.total_marks / ev.maximum_marks, 2) if ev.maximum_marks else 0.0
+    ev.status, ev.finalized_at = "FINALIZED", datetime.now(timezone.utc)
+    db.commit()
