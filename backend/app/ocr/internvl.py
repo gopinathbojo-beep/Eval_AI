@@ -254,6 +254,67 @@ def is_looping(raw: str) -> bool:
     return any(sum(c.isalnum() for c in m.group(1)) >= 3 for m in _LOOP.finditer((raw or "")[-4000:]))
 
 
+def _split_page_call(system: str, user: str, schema: Type[T], image_path: Path,
+                     model: str | None = None) -> AICall:
+    """Extract an over-limit page in two overlapping regions and merge its items."""
+    import cv2
+
+    image = cv2.imread(str(image_path))
+    if image is None or image.shape[0] < 400:
+        raise ValueError("The page image could not be split for extraction")
+    height = image.shape[0]
+    overlap = max(40, int(height * 0.04))
+    middle = height // 2
+    regions = [("TOP", 0, min(height, middle + overlap)),
+               ("BOTTOM", max(0, middle - overlap), height)]
+    parsed_regions: list[T] = []
+    raw_regions: list[str] = []
+    paths: list[Path] = []
+    try:
+        for label, start, end in regions:
+            path = image_path.parent / f"{image_path.stem}_{label.lower()}_split{image_path.suffix}"
+            paths.append(path)
+            if not cv2.imwrite(str(path), image[start:end, :]):
+                raise ValueError(f"Could not create the {label.lower()} page region")
+            region_prompt = (
+                user
+                + f"\n\nTOKEN-LIMIT RECOVERY: This image is only the {label} region of the page. "
+                  "Extract every visible item in this region. Do not invent content outside it."
+            )
+            raw = _call_once(system, region_prompt, path, format="json", model=model)
+            parsed = _measured(schema.model_validate(extract_json_object(raw)), raw)
+            for collection in ("questions", "answers"):
+                for item in getattr(parsed, collection, []) or []:
+                    if getattr(item, "bbox", None) is not None:
+                        item.bbox.y += start
+            parsed_regions.append(parsed)
+            raw_regions.append(raw)
+    finally:
+        for path in paths:
+            path.unlink(missing_ok=True)
+
+    merged = parsed_regions[0].model_copy(deep=True)
+    collection = next((name for name in ("questions", "answers") if hasattr(merged, name)), None)
+    if collection is None:
+        raise ValueError("This extraction result cannot be merged after splitting")
+    items = list(getattr(merged, collection) or [])
+    seen = {
+        (getattr(item, "raw_question_number", None) or getattr(item, "question_number", None),
+         (getattr(item, "question_text", None) or getattr(item, "answer_text", None) or "").strip()[:120])
+        for item in items
+    }
+    for item in getattr(parsed_regions[1], collection) or []:
+        signature = (
+            getattr(item, "raw_question_number", None) or getattr(item, "question_number", None),
+            (getattr(item, "question_text", None) or getattr(item, "answer_text", None) or "").strip()[:120],
+        )
+        if signature not in seen:
+            items.append(item)
+            seen.add(signature)
+    setattr(merged, collection, items)
+    return AICall(merged, "\n\n--- SPLIT REGION ---\n\n".join(raw_regions), 2)
+
+
 def chat_structured(system: str, user: str, schema: Type[T], image_path: Path | None = None,
                     model: str | None = None) -> AICall:
     """Call the model (default InternVL), parse + validate against `schema`. Retries with CLAHE and 2-stage fallback on parse failures."""
@@ -267,6 +328,17 @@ def chat_structured(system: str, user: str, schema: Type[T], image_path: Path | 
             raw = _call_once(system, user, image_path, format="json", model=model)
         except AIUnavailable:
             raise
+        except AIResponseError as e:
+            if image_path is not None and "token limit" in e.detail.lower():
+                try:
+                    log.info("AI output limit reached; retrying %s as two page regions", image_path)
+                    return _split_page_call(system, user, schema, Path(image_path), model)
+                except Exception as split_error:
+                    last_err, kind = f"Split-page recovery failed: {split_error}", "FAILED_PARSE"
+                    log.warning("Split-page recovery failed for %s: %s", image_path, split_error)
+                    continue
+            last_err, kind = e.detail, e.kind
+            continue
         except (httpx.TimeoutException, httpx.HTTPError) as e:
             last_err, kind = f"HTTP/timeout error: {e}", "AI_ERROR"
             log.warning("InternVL attempt %d/%d failed: %s", i, attempts, last_err)
