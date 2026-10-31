@@ -1,8 +1,14 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useAuth } from "../context/Auth";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api/client";
-import { FilteredEmptyState, TablePagination, TableToolbar } from "../components/TableToolbar";
-import { LinkButton,
+import {
+  FilteredEmptyState,
+  TablePagination,
+  TableToolbar,
+} from "../components/TableToolbar";
+import {
+  LinkButton,
   Button,
   Card,
   Confirm,
@@ -22,7 +28,6 @@ import { useApi } from "../hooks/useApi";
 import { useTableState } from "../hooks/useTableState";
 import type { ClassRow, Exam, Subject } from "../types";
 import { EXAM_STEPS } from "../utils/format";
-
 
 export function ExamsList() {
   const { data, error, loading, reload } = useApi<Exam[]>("/exams");
@@ -64,7 +69,9 @@ export function ExamsList() {
     },
     sortFns: {
       name: (a, b) => a.name.localeCompare(b.name),
-      date: (a, b) => new Date(a.exam_date || 0).getTime() - new Date(b.exam_date || 0).getTime(),
+      date: (a, b) =>
+        new Date(a.exam_date || 0).getTime() -
+        new Date(b.exam_date || 0).getTime(),
       marks: (a, b) => (a.total_marks ?? 0) - (b.total_marks ?? 0),
     },
     defaultSort: "name",
@@ -109,8 +116,8 @@ export function ExamsList() {
         sub="Create exams and track their progress."
         actions={
           <LinkButton to="/exams/new" variant="primary" className="shadow-xs">
-              <span>Create New Exam</span>
-            </LinkButton>
+            <span>Create New Exam</span>
+          </LinkButton>
         }
       />
       <ErrorPanel error={error} />
@@ -121,7 +128,9 @@ export function ExamsList() {
           title="No exams created yet"
           hint="Create an exam to get started."
           action={
-            <LinkButton to="/exams/new" variant="primary">Create Exam</LinkButton>
+            <LinkButton to="/exams/new" variant="primary">
+              Create Exam
+            </LinkButton>
           }
         />
       ) : (
@@ -177,18 +186,38 @@ export function ExamsList() {
                           {e.exam_type}
                         </div>
                       </td>
-                      <td className="px-4 py-3 font-medium text-ink">{e.class_name}</td>
-                      <td className="px-4 py-3 font-medium text-ink">{e.subject_name}</td>
-                      <td className="px-4 py-3 font-mono font-medium text-ink">{e.total_marks}</td>
+                      <td className="px-4 py-3 font-medium text-ink">
+                        {e.class_name}
+                      </td>
+                      <td className="px-4 py-3 font-medium text-ink">
+                        {e.subject_name}
+                      </td>
+                      <td className="px-4 py-3 font-mono font-medium text-ink">
+                        {e.total_marks}
+                      </td>
                       <td className="px-4 py-3">
                         <StatusBadge status={e.status} />
                       </td>
                       <td className="px-4 py-3 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1.5">
-                          <LinkButton to={`/exams/${e.id}`} small variant="soft">
+                          <LinkButton
+                            to={`/exams/${e.id}`}
+                            small
+                            variant="soft"
+                          >
                             <span>Open</span>
-                            <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                            <svg
+                              className="h-3 w-3"
+                              fill="none"
+                              stroke="currentColor"
+                              viewBox="0 0 24 24"
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth={2}
+                                d="M9 5l7 7-7 7"
+                              />
                             </svg>
                           </LinkButton>
                           <Button
@@ -198,8 +227,18 @@ export function ExamsList() {
                             onClick={() => setDeletingExam(e)}
                             title={`Delete exam ${e.name}`}
                           >
-                            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            <svg
+                              className="h-3.5 w-3.5"
+                              fill="none"
+                              stroke="currentColor"
+                              viewBox="0 0 24 24"
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth={2}
+                                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                              />
                             </svg>
                           </Button>
                         </div>
@@ -228,10 +267,13 @@ export function ExamsList() {
               body={
                 <div className="space-y-2 text-sm text-ink">
                   <p>
-                    Are you sure you want to permanently delete exam <b>{deletingExam.name}</b>?
+                    Are you sure you want to permanently delete exam{" "}
+                    <b>{deletingExam.name}</b>?
                   </p>
                   <p className="text-xs text-mute">
-                    All extracted questions, answer keys, uploaded answer sheets, and student evaluation results will be permanently removed. This action cannot be reversed.
+                    All extracted questions, answer keys, uploaded answer
+                    sheets, and student evaluation results will be permanently
+                    removed. This action cannot be reversed.
                   </p>
                 </div>
               }
@@ -250,17 +292,50 @@ export function ExamsList() {
 }
 
 const EXAM_TYPE_PRESETS: ComboboxOption[] = [
-  { value: "Unit test", label: "Unit test", sublabel: "Periodic chapter or unit check" },
-  { value: "Midterm Assessment", label: "Midterm Assessment", sublabel: "Mid-semester evaluation" },
-  { value: "Quarterly Exam", label: "Quarterly Exam", sublabel: "End of term 1 evaluation" },
-  { value: "Half-Yearly Exam", label: "Half-Yearly Exam", sublabel: "Mid-year formal examination" },
-  { value: "Semester Exam", label: "Semester Exam", sublabel: "Full semester assessment" },
-  { value: "Final Examination", label: "Final Examination", sublabel: "Year-end comprehensive exam" },
-  { value: "Weekly Quiz", label: "Weekly Quiz", sublabel: "Short form diagnostic" },
-  { value: "Mock Exam", label: "Mock Exam", sublabel: "Practice test for board/term" },
+  {
+    value: "Unit test",
+    label: "Unit test",
+    sublabel: "Periodic chapter or unit check",
+  },
+  {
+    value: "Midterm Assessment",
+    label: "Midterm Assessment",
+    sublabel: "Mid-semester evaluation",
+  },
+  {
+    value: "Quarterly Exam",
+    label: "Quarterly Exam",
+    sublabel: "End of term 1 evaluation",
+  },
+  {
+    value: "Half-Yearly Exam",
+    label: "Half-Yearly Exam",
+    sublabel: "Mid-year formal examination",
+  },
+  {
+    value: "Semester Exam",
+    label: "Semester Exam",
+    sublabel: "Full semester assessment",
+  },
+  {
+    value: "Final Examination",
+    label: "Final Examination",
+    sublabel: "Year-end comprehensive exam",
+  },
+  {
+    value: "Weekly Quiz",
+    label: "Weekly Quiz",
+    sublabel: "Short form diagnostic",
+  },
+  {
+    value: "Mock Exam",
+    label: "Mock Exam",
+    sublabel: "Practice test for board/term",
+  },
 ];
 
 export function ExamNew() {
+  const { teacher } = useAuth();
   const nav = useNavigate();
   const classes = useApi<ClassRow[]>("/classes");
   const subjects = useApi<Subject[]>("/subjects");
@@ -275,6 +350,10 @@ export function ExamNew() {
     instructions: "",
   });
   const [error, setError] = useState<unknown>(null);
+  useEffect(() => {
+    if (teacher?.role === "PARENT" && classes.data?.[0])
+      setF((prev) => ({ ...prev, class_id: classes.data![0].id }));
+  }, [classes.data, teacher?.role]);
   const [classError, setClassError] = useState<string | null>(null);
   const [subjectError, setSubjectError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -295,12 +374,17 @@ export function ExamNew() {
 
   const subjectOptions: ComboboxOption[] = useMemo(() => {
     if (!subjects.data) return [];
-    return subjects.data.map((s) => ({
-      value: s.id,
-      label: s.name,
-      sublabel: s.code ? `Code: ${s.code}` : undefined,
-    }));
-  }, [subjects.data]);
+    const assigned = classes.data?.find(
+      (c) => c.id === f.class_id,
+    )?.assigned_subject_ids;
+    return subjects.data
+      .filter((s) => teacher?.role !== "TEACHER" || assigned?.includes(s.id))
+      .map((s) => ({
+        value: s.id,
+        label: s.name,
+        sublabel: s.code ? `Code: ${s.code}` : undefined,
+      }));
+  }, [subjects.data, classes.data, f.class_id, teacher?.role]);
 
   const handleAddClass = async (className: string) => {
     const created = await api<ClassRow>("/classes", {
@@ -329,11 +413,15 @@ export function ExamNew() {
     let hasErr = false;
 
     if (!f.class_id) {
-      setClassError("Please select a class or click '+ Add' to confirm creating a new one.");
+      setClassError(
+        "Please select a class or click '+ Add' to confirm creating a new one.",
+      );
       hasErr = true;
     }
     if (!f.subject_id) {
-      setSubjectError("Please select a subject or click '+ Add' to confirm creating a new one.");
+      setSubjectError(
+        "Please select a subject or click '+ Add' to confirm creating a new one.",
+      );
       hasErr = true;
     }
     if (hasErr) return;
@@ -347,7 +435,9 @@ export function ExamNew() {
           ...f,
           exam_date: f.exam_date || null,
           instructions: f.instructions || null,
-          duration_minutes: f.duration_minutes ? Number(f.duration_minutes) : null,
+          duration_minutes: f.duration_minutes
+            ? Number(f.duration_minutes)
+            : null,
           total_marks: Number(f.total_marks),
         },
       });
@@ -359,7 +449,9 @@ export function ExamNew() {
   };
 
   const hasNoClassesOrSubjects =
-    classes.data && subjects.data && (!classes.data.length || !subjects.data.length);
+    classes.data &&
+    subjects.data &&
+    (!classes.data.length || !subjects.data.length);
 
   return (
     <div className="max-w-3xl space-y-5">
@@ -367,7 +459,9 @@ export function ExamNew() {
         title="Create New Examination"
         sub="Name, class, subject and marks."
         actions={
-          <LinkButton to="/exams" variant="ghost">Cancel &amp; Return</LinkButton>
+          <LinkButton to="/exams" variant="ghost">
+            Cancel &amp; Return
+          </LinkButton>
         }
       />
 
@@ -375,7 +469,8 @@ export function ExamNew() {
         <div className="rounded-lg border border-line bg-sunken/50 p-3 text-sm text-ink">
           <div>
             <p className="text-xs text-mute">
-              Type a new class or subject below and choose <b>+ Add</b> to create it.
+              Type a new class or subject below and choose <b>+ Add</b> to
+              create it.
             </p>
           </div>
         </div>
@@ -384,7 +479,10 @@ export function ExamNew() {
       <form onSubmit={submit} className="space-y-4">
         <Card className="grid gap-4 p-6 shadow-soft sm:grid-cols-2">
           <div className="sm:col-span-2">
-            <Field label="Exam Name" hint="e.g. Midterm Physics Assessment 2026">
+            <Field
+              label="Exam Name"
+              hint="e.g. Midterm Physics Assessment 2026"
+            >
               {(id) => (
                 <Input
                   id={id}
@@ -400,7 +498,11 @@ export function ExamNew() {
           <Field
             label="Class"
             required
-            hint="Search or type custom class"
+            hint={
+              teacher?.role === "TEACHER"
+                ? "Choose an assigned class"
+                : "CBSE Class 10 or 12"
+            }
             error={classError || undefined}
           >
             {(id) => (
@@ -408,13 +510,13 @@ export function ExamNew() {
                 id={id}
                 value={f.class_id}
                 onChange={(val) => {
-                  setF((prev) => ({ ...prev, class_id: val }));
+                  setF((prev) => prev.class_id === val ? prev : ({ ...prev, class_id: val, subject_id: "" }));
                   if (val) setClassError(null);
                 }}
                 options={classOptions}
-                placeholder="Search or enter class (e.g. 10-A, 11-B)..."
+                placeholder="Choose class (10-A or 12-A)..."
                 itemNoun="class"
-                allowCustom
+                allowCustom={teacher?.role === "MANAGEMENT"}
                 emptyMessage="No matching classes found"
                 onAddCustom={handleAddClass}
                 icon={<IconClasses size={16} />}
@@ -440,7 +542,7 @@ export function ExamNew() {
                 options={subjectOptions}
                 placeholder="Search or enter subject (e.g. Mathematics)..."
                 itemNoun="subject"
-                allowCustom
+                allowCustom={teacher?.role !== "TEACHER"}
                 emptyMessage="No matching subjects found"
                 onAddCustom={handleAddSubject}
                 icon={<IconSubjects size={16} />}
@@ -458,7 +560,9 @@ export function ExamNew() {
               <SearchableCombobox
                 id={id}
                 value={f.exam_type}
-                onChange={(val) => setF((prev) => ({ ...prev, exam_type: val }))}
+                onChange={(val) =>
+                  setF((prev) => ({ ...prev, exam_type: val }))
+                }
                 options={EXAM_TYPE_PRESETS}
                 placeholder="Select or enter exam type (e.g. Unit test)..."
                 itemNoun="exam type"
@@ -530,7 +634,9 @@ export function ExamNew() {
         <ErrorPanel error={error} />
 
         <div className="flex items-center justify-end gap-3">
-          <LinkButton to="/exams" variant="ghost">Cancel</LinkButton>
+          <LinkButton to="/exams" variant="ghost">
+            Cancel
+          </LinkButton>
           <Button
             type="submit"
             variant="primary"
@@ -544,4 +650,3 @@ export function ExamNew() {
     </div>
   );
 }
-

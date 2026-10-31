@@ -1,0 +1,88 @@
+name: eval-ai
+
+services:
+  edge:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env}
+      ACME_EMAIL: ${ACME_EMAIL:?Set ACME_EMAIL in .env}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [ingress]
+    depends_on:
+      web:
+        condition: service_healthy
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  web:
+    build: ./frontend
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    networks: [ingress, api]
+    depends_on:
+      backend:
+        condition: service_healthy
+    logging: *logging
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=512m,mode=1777
+    volumes:
+      - app_data:/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      ENVIRONMENT: production
+      COOKIE_SECURE: "true"
+      SECRET_KEY: ${SECRET_KEY:?Generate SECRET_KEY in .env}
+      DATA_DIR: /data
+      CORS_ORIGINS: https://${DOMAIN:?Set DOMAIN in .env}
+      ALLOWED_HOSTS: ${DOMAIN},localhost,127.0.0.1,backend
+      ACCESS_TOKEN_MINUTES: ${ACCESS_TOKEN_MINUTES:-60}
+      LOGIN_ATTEMPTS_PER_MINUTE: ${LOGIN_ATTEMPTS_PER_MINUTE:-20}
+      ADMIN_EMAIL: seyamesh91@gmail.com
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-${Client_ID:-}}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-${Client_secret:-}}
+      GOOGLE_REDIRECT_URI: https://${DOMAIN}/api/auth/google/callback
+      MAX_UPLOAD_MB: "50"
+      INTERNVL_ENABLED: "true"
+      INTERNVL_MODEL: ${INTERNVL_MODEL:-blaifa/InternVL3_5:4B}
+      INTERNVL_API_URL: ${INTERNVL_API_URL:-http://host.docker.internal:11434}
+      INTERNVL_PARALLEL_JOBS: ${INTERNVL_PARALLEL_JOBS:-1}
+      INDIC_OCR_ENABLED: ${INDIC_OCR_ENABLED:-false}
+      INDIC_OCR_URL: ${INDIC_OCR_URL:-http://host.docker.internal:8090}
+      INDIC_TEXT_MODEL: ${INDIC_TEXT_MODEL:-}
+      INDIC_PARALLEL_JOBS: ${INDIC_PARALLEL_JOBS:-1}
+    stop_grace_period: 75s
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    networks: [api]
+    logging: *logging
+
+networks:
+  ingress:
+  api:
+
+volumes:
+  app_data:
+  caddy_data:
+  caddy_config:

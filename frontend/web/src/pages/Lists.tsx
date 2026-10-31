@@ -1,7 +1,11 @@
 import { useToast } from "../components/Toast";
 import { useMemo, useState, type FormEvent } from "react";
 import { api, downloadFile } from "../api/client";
-import { FilteredEmptyState, TablePagination, TableToolbar } from "../components/TableToolbar";
+import {
+  FilteredEmptyState,
+  TablePagination,
+  TableToolbar,
+} from "../components/TableToolbar";
 import {
   Button,
   Card,
@@ -14,12 +18,89 @@ import {
   Modal,
   PageHeader,
   Select,
-  StatusBadge,
 } from "../components/ui";
 import { useApi } from "../hooks/useApi";
 import { useTableState } from "../hooks/useTableState";
 import type { ClassRow, ImportSummary, Student, Subject } from "../types";
-import { ReportCardDialog, ReportTemplatesCard, SchoolDetailsCard } from "../components/SchoolSettings";
+import {
+  ReportCardDialog,
+  ReportTemplatesCard,
+  SchoolDetailsCard,
+} from "../components/SchoolSettings";
+import { useAuth } from "../context/Auth";
+import { Navigate } from "react-router-dom";
+
+function AssignedDirectory({
+  kind,
+}: {
+  kind: "classes" | "students" | "subjects";
+}) {
+  const { data, error, loading } = useApi<
+    Array<{
+      id: string;
+      name: string;
+      roll_number?: string;
+      class_name?: string;
+    }>
+  >(`/${kind}`);
+  return (
+    <div className="space-y-5">
+      <PageHeader
+        title={`Assigned ${kind}`}
+        sub="Your school management maintains these shared records."
+      />
+      <ErrorPanel error={error} />
+      {loading ? (
+        <Loading />
+      ) : (
+        <Card className="divide-y divide-line">
+          {data?.map((r) => (
+            <div key={r.id} className="p-4">
+              <p className="font-semibold">{r.name}</p>
+              <p className="text-sm text-mute">
+                {[r.roll_number, r.class_name].filter(Boolean).join(" · ")}
+              </p>
+            </div>
+          ))}
+          {!data?.length && (
+            <p className="p-6 text-mute">
+              No records assigned yet. Contact school management.
+            </p>
+          )}
+        </Card>
+      )}
+    </div>
+  );
+}
+
+export function Classes() {
+  const { teacher } = useAuth();
+  return teacher?.role === "TEACHER" ? (
+    <AssignedDirectory kind="classes" />
+  ) : teacher?.role === "PARENT" ? (
+    <Navigate to="/family" replace />
+  ) : (
+    <EditableClasses />
+  );
+}
+export function Subjects() {
+  const { teacher } = useAuth();
+  return teacher?.role === "TEACHER" ? (
+    <AssignedDirectory kind="subjects" />
+  ) : (
+    <EditableSubjects />
+  );
+}
+export function Students() {
+  const { teacher } = useAuth();
+  return teacher?.role === "TEACHER" ? (
+    <AssignedDirectory kind="students" />
+  ) : teacher?.role === "PARENT" ? (
+    <Navigate to="/family" replace />
+  ) : (
+    <EditableStudents />
+  );
+}
 
 function SimpleForm({
   title,
@@ -64,7 +145,7 @@ function SimpleForm({
   );
 }
 
-export function Classes() {
+function EditableClasses() {
   const { data, error, loading, reload } = useApi<ClassRow[]>("/classes");
   const [open, setOpen] = useState(false);
   const [editingClass, setEditingClass] = useState<ClassRow | null>(null);
@@ -85,7 +166,6 @@ export function Classes() {
     }
   };
 
-
   const table = useTableState<ClassRow>({
     data,
     searchFilter: (c, q) => c.name.toLowerCase().includes(q),
@@ -95,8 +175,7 @@ export function Classes() {
           numeric: true,
           sensitivity: "base",
         }),
-      student_count: (a, b) =>
-        (a.student_count ?? 0) - (b.student_count ?? 0),
+      student_count: (a, b) => (a.student_count ?? 0) - (b.student_count ?? 0),
     },
     defaultSort: "name",
     defaultOrder: "asc",
@@ -108,7 +187,6 @@ export function Classes() {
     { value: "student_count", label: "Student count" },
   ];
 
-
   return (
     <div className="space-y-4">
       <PageHeader
@@ -116,15 +194,43 @@ export function Classes() {
         sub="Your classes and marksheets."
         actions={
           <div className="flex items-center gap-2">
-            <Button variant="soft" busy={downloading} onClick={handleDownloadMarksheet}>
-              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            <Button
+              variant="soft"
+              busy={downloading}
+              onClick={handleDownloadMarksheet}
+            >
+              <svg
+                className="h-4 w-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={1.75}
+                  d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                />
               </svg>
               <span>Export Marksheet (.xlsx)</span>
             </Button>
-            <Button variant="primary" onClick={() => setOpen(true)} className="shadow-xs">
-              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            <Button
+              variant="primary"
+              onClick={() => setOpen(true)}
+              className="shadow-xs"
+            >
+              <svg
+                className="h-4 w-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 4v16m8-8H4"
+                />
               </svg>
               <span>Add Class</span>
             </Button>
@@ -138,7 +244,11 @@ export function Classes() {
         <Empty
           title="No classes added yet"
           hint="Add a class (Std 10, Sec A) before creating exams."
-          action={<Button variant="primary" onClick={() => setOpen(true)}>Add Class</Button>}
+          action={
+            <Button variant="primary" onClick={() => setOpen(true)}>
+              Add Class
+            </Button>
+          }
         />
       ) : (
         <>
@@ -178,12 +288,22 @@ export function Classes() {
                 <tbody className="divide-y divide-line text-sm">
                   {table.paginatedData.map((c) => (
                     <tr key={c.id} className="hover:bg-hover">
-                      <td className="px-4 py-3 font-semibold text-ink">{c.std}</td>
-                      <td className="px-4 py-3 font-semibold text-ink">{c.section || "–"}</td>
-                      <td className="px-4 py-3 font-mono text-mute">{c.student_count ?? 0} students</td>
+                      <td className="px-4 py-3 font-semibold text-ink">
+                        {c.std}
+                      </td>
+                      <td className="px-4 py-3 font-semibold text-ink">
+                        {c.section || "–"}
+                      </td>
+                      <td className="px-4 py-3 font-mono text-mute">
+                        {c.student_count ?? 0} students
+                      </td>
                       <td className="px-4 py-3 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1.5">
-                          <Button small variant="soft" onClick={() => setCardsFor(c)}>
+                          <Button
+                            small
+                            variant="soft"
+                            onClick={() => setCardsFor(c)}
+                          >
                             Report cards
                           </Button>
                           <Button
@@ -229,7 +349,11 @@ export function Classes() {
         />
       )}
       {cardsFor && (
-        <ReportCardDialog classId={cardsFor.id} title={`Report cards · ${cardsFor.name}`} onClose={() => setCardsFor(null)} />
+        <ReportCardDialog
+          classId={cardsFor.id}
+          title={`Report cards · ${cardsFor.name}`}
+          onClose={() => setCardsFor(null)}
+        />
       )}
       {deletingClass && (
         <Confirm
@@ -239,10 +363,12 @@ export function Classes() {
           body={
             <div className="space-y-2 text-sm text-ink">
               <p>
-                Are you sure you want to delete class <b>{deletingClass.name}</b>?
+                Are you sure you want to delete class{" "}
+                <b>{deletingClass.name}</b>?
               </p>
               <p className="text-xs text-mute">
-                This will also remove any exams and enrolled students associated with this class.
+                This will also remove any exams and enrolled students associated
+                with this class.
               </p>
             </div>
           }
@@ -260,17 +386,41 @@ export function Classes() {
 
 /** Std and Sec make up the class name the rest of the app shows: Std 10 + Sec A -> 10-A. */
 function StdSecFields({
-  std, sec, setStd, setSec,
+  std,
+  sec,
+  setStd,
+  setSec,
 }: {
-  std: string; sec: string; setStd: (v: string) => void; setSec: (v: string) => void;
+  std: string;
+  sec: string;
+  setStd: (v: string) => void;
+  setSec: (v: string) => void;
 }) {
   return (
     <div className="grid gap-4 sm:grid-cols-2">
       <Field label="Std" hint="e.g. 10, 11 or Grade 12">
-        {(id) => <Input id={id} required value={std} onChange={(e) => setStd(e.target.value)} placeholder="10" />}
+        {(id) => (
+          <Select
+            id={id}
+            required
+            value={std}
+            onChange={(e) => setStd(e.target.value)}
+          >
+            <option value="">Choose class</option>
+            <option value="10">CBSE Class 10</option>
+            <option value="12">CBSE Class 12</option>
+          </Select>
+        )}
       </Field>
       <Field label="Sec (optional)" hint="e.g. A, B or Science">
-        {(id) => <Input id={id} value={sec} onChange={(e) => setSec(e.target.value)} placeholder="A" />}
+        {(id) => (
+          <Input
+            id={id}
+            value={sec}
+            onChange={(e) => setSec(e.target.value)}
+            placeholder="A"
+          />
+        )}
       </Field>
     </div>
   );
@@ -293,7 +443,15 @@ function ClassForm({ done, close }: { done: () => void; close: () => void }) {
   );
 }
 
-function EditClassForm({ cls, done, close }: { cls: ClassRow; done: () => void; close: () => void }) {
+function EditClassForm({
+  cls,
+  done,
+  close,
+}: {
+  cls: ClassRow;
+  done: () => void;
+  close: () => void;
+}) {
   const [std, setStd] = useState(cls.std);
   const [sec, setSec] = useState(cls.section ?? "");
   return (
@@ -301,7 +459,10 @@ function EditClassForm({ cls, done, close }: { cls: ClassRow; done: () => void; 
       title={`Edit Class (${cls.name})`}
       onClose={close}
       onSubmit={async () => {
-        await api(`/classes/${cls.id}`, { method: "PATCH", json: { std, section: sec } });
+        await api(`/classes/${cls.id}`, {
+          method: "PATCH",
+          json: { std, section: sec },
+        });
         done();
       }}
     >
@@ -310,7 +471,7 @@ function EditClassForm({ cls, done, close }: { cls: ClassRow; done: () => void; 
   );
 }
 
-export function Subjects() {
+function EditableSubjects() {
   const { data, error, loading, reload } = useApi<Subject[]>("/subjects");
   const [open, setOpen] = useState(false);
   const [editingSubject, setEditingSubject] = useState<Subject | null>(null);
@@ -319,7 +480,8 @@ export function Subjects() {
   const table = useTableState<Subject>({
     data,
     searchFilter: (s, q) =>
-      s.name.toLowerCase().includes(q) || (s.code || "").toLowerCase().includes(q),
+      s.name.toLowerCase().includes(q) ||
+      (s.code || "").toLowerCase().includes(q),
     sortFns: {
       name: (a, b) => a.name.localeCompare(b.name),
       code: (a, b) => (a.code || "").localeCompare(b.code || ""),
@@ -340,9 +502,23 @@ export function Subjects() {
         title="Subjects Directory"
         sub="Subjects you set exams for."
         actions={
-          <Button variant="primary" onClick={() => setOpen(true)} className="shadow-xs">
-            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+          <Button
+            variant="primary"
+            onClick={() => setOpen(true)}
+            className="shadow-xs"
+          >
+            <svg
+              className="h-4 w-4"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 4v16m8-8H4"
+              />
             </svg>
             <span>Add Subject</span>
           </Button>
@@ -355,7 +531,11 @@ export function Subjects() {
         <Empty
           title="No subjects added yet"
           hint="Add a subject, e.g. Physics."
-          action={<Button variant="primary" onClick={() => setOpen(true)}>Add Subject</Button>}
+          action={
+            <Button variant="primary" onClick={() => setOpen(true)}>
+              Add Subject
+            </Button>
+          }
         />
       ) : (
         <>
@@ -394,8 +574,12 @@ export function Subjects() {
                 <tbody className="divide-y divide-line text-sm">
                   {table.paginatedData.map((s) => (
                     <tr key={s.id} className="hover:bg-hover">
-                      <td className="px-4 py-3 font-semibold text-ink">{s.name}</td>
-                      <td className="px-4 py-3 font-mono text-mute">{s.code ?? "–"}</td>
+                      <td className="px-4 py-3 font-semibold text-ink">
+                        {s.name}
+                      </td>
+                      <td className="px-4 py-3 font-mono text-mute">
+                        {s.code ?? "–"}
+                      </td>
                       <td className="px-4 py-3 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1.5">
                           <Button
@@ -448,10 +632,12 @@ export function Subjects() {
           body={
             <div className="space-y-2 text-sm text-ink">
               <p>
-                Are you sure you want to delete subject <b>{deletingSubject.name}</b>?
+                Are you sure you want to delete subject{" "}
+                <b>{deletingSubject.name}</b>?
               </p>
               <p className="text-xs text-mute">
-                This will also remove any examinations associated with this subject.
+                This will also remove any examinations associated with this
+                subject.
               </p>
             </div>
           }
@@ -475,21 +661,47 @@ function SubjectForm({ done, close }: { done: () => void; close: () => void }) {
       title="Add New Subject"
       onClose={close}
       onSubmit={async () => {
-        await api("/subjects", { method: "POST", json: { name, code: code || null } });
+        await api("/subjects", {
+          method: "POST",
+          json: { name, code: code || null },
+        });
         done();
       }}
     >
       <Field label="Subject Name">
-        {(id) => <Input id={id} required placeholder="e.g. Physics" value={name} onChange={(e) => setName(e.target.value)} />}
+        {(id) => (
+          <Input
+            id={id}
+            required
+            placeholder="e.g. Physics"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+        )}
       </Field>
       <Field label="Subject Code (optional)">
-        {(id) => <Input id={id} placeholder="e.g. PHY101" value={code} onChange={(e) => setCode(e.target.value)} />}
+        {(id) => (
+          <Input
+            id={id}
+            placeholder="e.g. PHY101"
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+          />
+        )}
       </Field>
     </SimpleForm>
   );
 }
 
-function EditSubjectForm({ subject, done, close }: { subject: Subject; done: () => void; close: () => void }) {
+function EditSubjectForm({
+  subject,
+  done,
+  close,
+}: {
+  subject: Subject;
+  done: () => void;
+  close: () => void;
+}) {
   const [name, setName] = useState(subject.name);
   const [code, setCode] = useState(subject.code || "");
   return (
@@ -497,21 +709,37 @@ function EditSubjectForm({ subject, done, close }: { subject: Subject; done: () 
       title={`Edit Subject (${subject.name})`}
       onClose={close}
       onSubmit={async () => {
-        await api(`/subjects/${subject.id}`, { method: "PATCH", json: { name, code: code || null } });
+        await api(`/subjects/${subject.id}`, {
+          method: "PATCH",
+          json: { name, code: code || null },
+        });
         done();
       }}
     >
       <Field label="Subject Name">
-        {(id) => <Input id={id} required value={name} onChange={(e) => setName(e.target.value)} />}
+        {(id) => (
+          <Input
+            id={id}
+            required
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+        )}
       </Field>
       <Field label="Code (optional)">
-        {(id) => <Input id={id} value={code} onChange={(e) => setCode(e.target.value)} />}
+        {(id) => (
+          <Input
+            id={id}
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+          />
+        )}
       </Field>
     </SimpleForm>
   );
 }
 
-export function Students() {
+function EditableStudents() {
   const { data, error, loading, reload } = useApi<Student[]>("/students");
   const [open, setOpen] = useState(false);
   const [editingStudent, setEditingStudent] = useState<Student | null>(null);
@@ -531,7 +759,6 @@ export function Students() {
       .map(([value, label]) => ({ value, label }))
       .sort((a, b) => a.label.localeCompare(b.label));
   }, [data]);
-
 
   const table = useTableState<Student>({
     data,
@@ -554,14 +781,10 @@ export function Students() {
         }),
 
       class: (a, b) =>
-        (a.class_name || "").localeCompare(
-          b.class_name || "",
-          undefined,
-          {
-            numeric: true,
-            sensitivity: "base",
-          }
-        ),
+        (a.class_name || "").localeCompare(b.class_name || "", undefined, {
+          numeric: true,
+          sensitivity: "base",
+        }),
     },
 
     defaultSort: "class",
@@ -575,7 +798,6 @@ export function Students() {
     { value: "class", label: "Class" },
   ];
 
-
   const filterConfigs = [
     {
       key: "class",
@@ -588,11 +810,16 @@ export function Students() {
 
   const exportAs = async (format: "xlsx" | "pdf") => {
     // export follows the class filter when one is chosen
-    const classId = data?.find((s) => s.class_name === table.activeFilters.class)?.class_id;
+    const classId = data?.find(
+      (s) => s.class_name === table.activeFilters.class,
+    )?.class_id;
     setExporting(format);
     setExportErr(null);
     try {
-      await downloadFile(`/students/export?format=${format}${classId ? `&class_id=${classId}` : ""}`, `students.${format}`);
+      await downloadFile(
+        `/students/export?format=${format}${classId ? `&class_id=${classId}` : ""}`,
+        `students.${format}`,
+      );
     } catch (e) {
       setExportErr(e);
     } finally {
@@ -607,18 +834,46 @@ export function Students() {
         sub="Answer sheets are matched to students by registration or roll number."
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            <Button variant="soft" onClick={() => setImporting(true)} title="Import students from an Excel sheet">
+            <Button
+              variant="soft"
+              onClick={() => setImporting(true)}
+              title="Import students from an Excel sheet"
+            >
               <span>Import Excel</span>
             </Button>
-            <Button variant="soft" busy={exporting === "xlsx"} disabled={!data?.length} onClick={() => exportAs("xlsx")}>
+            <Button
+              variant="soft"
+              busy={exporting === "xlsx"}
+              disabled={!data?.length}
+              onClick={() => exportAs("xlsx")}
+            >
               <span>Export Excel</span>
             </Button>
-            <Button variant="soft" busy={exporting === "pdf"} disabled={!data?.length} onClick={() => exportAs("pdf")}>
+            <Button
+              variant="soft"
+              busy={exporting === "pdf"}
+              disabled={!data?.length}
+              onClick={() => exportAs("pdf")}
+            >
               <span>Export PDF</span>
             </Button>
-            <Button variant="primary" onClick={() => setOpen(true)} className="shadow-xs">
-              <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            <Button
+              variant="primary"
+              onClick={() => setOpen(true)}
+              className="shadow-xs"
+            >
+              <svg
+                className="h-4 w-4"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 4v16m8-8H4"
+                />
               </svg>
               <span>Add Student</span>
             </Button>
@@ -634,8 +889,12 @@ export function Students() {
           hint="Add students one by one or import an Excel sheet."
           action={
             <div className="flex gap-2">
-              <Button variant="soft" onClick={() => setImporting(true)}>Import Excel</Button>
-              <Button variant="primary" onClick={() => setOpen(true)}>Add Student</Button>
+              <Button variant="soft" onClick={() => setImporting(true)}>
+                Import Excel
+              </Button>
+              <Button variant="primary" onClick={() => setOpen(true)}>
+                Add Student
+              </Button>
             </div>
           }
         />
@@ -680,14 +939,28 @@ export function Students() {
                 <tbody className="divide-y divide-line text-sm">
                   {table.paginatedData.map((s) => (
                     <tr key={s.id} className="hover:bg-hover">
-                      <td className="px-4 py-3 font-mono font-medium text-ink">{s.roll_number}</td>
-                      <td className="px-4 py-3 font-semibold text-ink">{s.name}</td>
-                      <td className="px-4 py-3 font-mono text-ink">{s.registration_number || "–"}</td>
-                      <td className="px-4 py-3 font-medium text-mute">{s.class_std ?? s.class_name ?? "–"}</td>
-                      <td className="px-4 py-3 font-medium text-mute">{s.section || "–"}</td>
+                      <td className="px-4 py-3 font-mono font-medium text-ink">
+                        {s.roll_number}
+                      </td>
+                      <td className="px-4 py-3 font-semibold text-ink">
+                        {s.name}
+                      </td>
+                      <td className="px-4 py-3 font-mono text-ink">
+                        {s.registration_number || "–"}
+                      </td>
+                      <td className="px-4 py-3 font-medium text-mute">
+                        {s.class_std ?? s.class_name ?? "–"}
+                      </td>
+                      <td className="px-4 py-3 font-medium text-mute">
+                        {s.section || "–"}
+                      </td>
                       <td className="px-4 py-3 text-right whitespace-nowrap">
                         <div className="flex items-center justify-end gap-1.5">
-                          <Button small variant="soft" onClick={() => setCardFor(s)}>
+                          <Button
+                            small
+                            variant="soft"
+                            onClick={() => setCardFor(s)}
+                          >
                             Report card
                           </Button>
                           <Button
@@ -725,10 +998,16 @@ export function Students() {
         </>
       )}
       {open && <StudentForm done={reload} close={() => setOpen(false)} />}
-      {importing && <ImportStudents done={reload} close={() => setImporting(false)} />}
+      {importing && (
+        <ImportStudents done={reload} close={() => setImporting(false)} />
+      )}
       {cardFor && (
-        <ReportCardDialog classId={cardFor.class_id} studentId={cardFor.id} title={`Report card · ${cardFor.name}`}
-          onClose={() => setCardFor(null)} />
+        <ReportCardDialog
+          classId={cardFor.class_id}
+          studentId={cardFor.id}
+          title={`Report card · ${cardFor.name}`}
+          onClose={() => setCardFor(null)}
+        />
       )}
       {editingStudent && (
         <EditStudentForm
@@ -745,10 +1024,13 @@ export function Students() {
           body={
             <div className="space-y-2 text-sm text-ink">
               <p>
-                Are you sure you want to delete student <b>{deletingStudent.name}</b> (Roll: {deletingStudent.roll_number})?
+                Are you sure you want to delete student{" "}
+                <b>{deletingStudent.name}</b> (Roll:{" "}
+                {deletingStudent.roll_number})?
               </p>
               <p className="text-xs text-mute">
-                This will also remove any evaluations associated with this student.
+                This will also remove any evaluations associated with this
+                student.
               </p>
             </div>
           }
@@ -765,11 +1047,27 @@ export function Students() {
 }
 
 /** Pick a student's class as Std, then Sec; a class with no section is the "–" choice. */
-function ClassPicker({ classes, value, onChange }: { classes: ClassRow[]; value: string; onChange: (id: string) => void }) {
-  const [std, setStd] = useState(classes.find((c) => c.id === value)?.std ?? "");
+function ClassPicker({
+  classes,
+  value,
+  onChange,
+}: {
+  classes: ClassRow[];
+  value: string;
+  onChange: (id: string) => void;
+}) {
+  const [std, setStd] = useState(
+    classes.find((c) => c.id === value)?.std ?? "",
+  );
   const byStd = (x: string) => classes.filter((c) => c.std === x);
-  const stds = [...new Set(classes.map((c) => c.std))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  const secs = byStd(std).sort((a, b) => (a.section ?? "").localeCompare(b.section ?? "", undefined, { numeric: true }));
+  const stds = [...new Set(classes.map((c) => c.std))].sort((a, b) =>
+    a.localeCompare(b, undefined, { numeric: true }),
+  );
+  const secs = byStd(std).sort((a, b) =>
+    (a.section ?? "").localeCompare(b.section ?? "", undefined, {
+      numeric: true,
+    }),
+  );
   return (
     <div className="grid gap-4 sm:grid-cols-2">
       <Field label="Std">
@@ -785,15 +1083,29 @@ function ClassPicker({ classes, value, onChange }: { classes: ClassRow[]; value:
             }}
           >
             <option value="">Choose std...</option>
-            {stds.map((x) => <option key={x} value={x}>{x}</option>)}
+            {stds.map((x) => (
+              <option key={x} value={x}>
+                {x}
+              </option>
+            ))}
           </Select>
         )}
       </Field>
       <Field label="Sec">
         {(id) => (
-          <Select id={id} required disabled={!std} value={value} onChange={(e) => onChange(e.target.value)}>
+          <Select
+            id={id}
+            required
+            disabled={!std}
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+          >
             <option value="">Choose sec...</option>
-            {secs.map((c) => <option key={c.id} value={c.id}>{c.section ?? "–"}</option>)}
+            {secs.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.section ?? "–"}
+              </option>
+            ))}
           </Select>
         )}
       </Field>
@@ -812,31 +1124,71 @@ function StudentForm({ done, close }: { done: () => void; close: () => void }) {
       title="Add New Student"
       onClose={close}
       onSubmit={async () => {
-        const section = classes.data?.find((c) => c.id === cls)?.section ?? null;
+        const section =
+          classes.data?.find((c) => c.id === cls)?.section ?? null;
         await api("/students", {
           method: "POST",
-          json: { name, roll_number: roll, class_id: cls, registration_number: reg || null, section },
+          json: {
+            name,
+            roll_number: roll,
+            class_id: cls,
+            registration_number: reg || null,
+            section,
+          },
         });
         done();
       }}
     >
       <Field label="Student Full Name">
-        {(id) => <Input id={id} required placeholder="e.g. Priya Patel" value={name} onChange={(e) => setName(e.target.value)} />}
+        {(id) => (
+          <Input
+            id={id}
+            required
+            placeholder="e.g. Priya Patel"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+        )}
       </Field>
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Roll Number">
-          {(id) => <Input id={id} required placeholder="e.g. 101" value={roll} onChange={(e) => setRoll(e.target.value)} />}
+          {(id) => (
+            <Input
+              id={id}
+              required
+              placeholder="e.g. 101"
+              value={roll}
+              onChange={(e) => setRoll(e.target.value)}
+            />
+          )}
         </Field>
         <Field label="Registration Number">
-          {(id) => <Input id={id} placeholder="e.g. 2026BIO0142" value={reg} onChange={(e) => setReg(e.target.value)} />}
+          {(id) => (
+            <Input
+              id={id}
+              placeholder="e.g. 2026BIO0142"
+              value={reg}
+              onChange={(e) => setReg(e.target.value)}
+            />
+          )}
         </Field>
       </div>
-      {classes.data && <ClassPicker classes={classes.data} value={cls} onChange={setCls} />}
+      {classes.data && (
+        <ClassPicker classes={classes.data} value={cls} onChange={setCls} />
+      )}
     </SimpleForm>
   );
 }
 
-function EditStudentForm({ student, done, close }: { student: Student; done: () => void; close: () => void }) {
+function EditStudentForm({
+  student,
+  done,
+  close,
+}: {
+  student: Student;
+  done: () => void;
+  close: () => void;
+}) {
   const classes = useApi<ClassRow[]>("/classes");
   const [name, setName] = useState(student.name);
   const [roll, setRoll] = useState(student.roll_number);
@@ -848,37 +1200,86 @@ function EditStudentForm({ student, done, close }: { student: Student; done: () 
       onClose={close}
       onSubmit={async () => {
         // a class without a section keeps whatever section the student already had
-        const section = classes.data?.find((c) => c.id === cls)?.section ?? student.section ?? null;
+        const section =
+          classes.data?.find((c) => c.id === cls)?.section ??
+          student.section ??
+          null;
         await api(`/students/${student.id}`, {
           method: "PATCH",
-          json: { name, roll_number: roll, class_id: cls, registration_number: reg || null, section },
+          json: {
+            name,
+            roll_number: roll,
+            class_id: cls,
+            registration_number: reg || null,
+            section,
+          },
         });
         done();
       }}
     >
       <Field label="Student Full Name">
-        {(id) => <Input id={id} required value={name} onChange={(e) => setName(e.target.value)} />}
+        {(id) => (
+          <Input
+            id={id}
+            required
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+        )}
       </Field>
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Roll Number">
-          {(id) => <Input id={id} required value={roll} onChange={(e) => setRoll(e.target.value)} />}
+          {(id) => (
+            <Input
+              id={id}
+              required
+              value={roll}
+              onChange={(e) => setRoll(e.target.value)}
+            />
+          )}
         </Field>
         <Field label="Registration Number">
-          {(id) => <Input id={id} value={reg} onChange={(e) => setReg(e.target.value)} />}
+          {(id) => (
+            <Input
+              id={id}
+              value={reg}
+              onChange={(e) => setReg(e.target.value)}
+            />
+          )}
         </Field>
       </div>
-      {classes.data && <ClassPicker classes={classes.data} value={cls} onChange={setCls} />}
+      {classes.data && (
+        <ClassPicker classes={classes.data} value={cls} onChange={setCls} />
+      )}
     </SimpleForm>
   );
 }
 
-function ImportStudents({ done, close }: { done: () => void; close: () => void }) {
+function ImportStudents({
+  done,
+  close,
+}: {
+  done: () => void;
+  close: () => void;
+}) {
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<unknown>(null);
-  const [result, setResult] = useState<ImportSummary | null>(null);
+  const [result, setResult] = useState<
+    | (ImportSummary & {
+        rows?: Array<{
+          row: number;
+          name: string;
+          roll_number: string;
+          class_name: string;
+          action: string;
+        }>;
+      })
+    | null
+  >(null);
+  const [committed, setCommitted] = useState(false);
 
-  const go = async (e: FormEvent) => {
+  const go = async (e: FormEvent, confirmed = false) => {
     e.preventDefault();
     if (!file) return;
     setBusy(true);
@@ -886,8 +1287,14 @@ function ImportStudents({ done, close }: { done: () => void; close: () => void }
     try {
       const form = new FormData();
       form.append("file", file);
-      setResult(await api<ImportSummary>("/students/import", { method: "POST", form }));
-      done();
+      form.append("confirm", confirmed ? "true" : "false");
+      const response = await api<ImportSummary & { committed: boolean }>(
+        "/students/import",
+        { method: "POST", form },
+      );
+      setResult(response);
+      setCommitted(response.committed);
+      if (response.committed) done();
     } catch (x) {
       setErr(x);
     } finally {
@@ -900,42 +1307,124 @@ function ImportStudents({ done, close }: { done: () => void; close: () => void }
       {result ? (
         <div className="space-y-4 text-sm">
           <p className="text-ink">
-            <b>{result.created}</b> added, <b>{result.updated}</b> updated
-            {result.errors.length > 0 && <>, <b className="text-mark">{result.errors.length}</b> row(s) skipped</>}.
+            {committed ? "Imported: " : "Preview: "}
+            <b>{result.created}</b> additions, <b>{result.updated}</b> updates
+            {result.errors.length > 0 && (
+              <>
+                , <b className="text-mark">{result.errors.length}</b> row(s)
+                skipped
+              </>
+            )}
+            .
           </p>
           {result.errors.length > 0 && (
             <ul className="max-h-60 space-y-1 overflow-auto rounded-lg border border-line bg-sunken/50 p-3 text-xs">
               {result.errors.map((x) => (
-                <li key={x.row}><span className="font-mono font-semibold">Row {x.row}:</span> {x.reason}</li>
+                <li key={x.row}>
+                  <span className="font-mono font-semibold">Row {x.row}:</span>{" "}
+                  {x.reason}
+                </li>
               ))}
             </ul>
           )}
+          {!committed && (
+            <p className="text-xs text-mute">
+              No records have been saved. Correct all errors before confirming.
+            </p>
+          )}
+          {!!result.rows?.length && (
+            <div className="max-h-60 overflow-auto rounded border border-line">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr>
+                    {["Action", "Name", "Roll", "Class"].map((h) => (
+                      <th key={h} className="p-2">
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.rows.map((r) => (
+                    <tr key={r.row}>
+                      <td className="p-2">{r.action}</td>
+                      <td className="p-2">{r.name}</td>
+                      <td className="p-2">{r.roll_number}</td>
+                      <td className="p-2">{r.class_name}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
           <div className="flex justify-end border-t border-line/60 pt-3">
-            <Button variant="primary" onClick={close}>Done</Button>
+            <Button onClick={() => setResult(null)}>Choose another file</Button>
+            {!committed && !result.errors.length && (
+              <Button
+                variant="primary"
+                busy={busy}
+                onClick={(e) => void go(e, true)}
+              >
+                Confirm import
+              </Button>
+            )}
+            <Button onClick={close}>{committed ? "Done" : "Cancel"}</Button>
           </div>
         </div>
       ) : (
         <form onSubmit={go} className="space-y-4">
+          <Button
+            type="button"
+            onClick={() =>
+              downloadFile(
+                "/students/import-template",
+                "student-import-template.xlsx",
+              )
+            }
+          >
+            Download Excel template
+          </Button>
           <div className="rounded-lg border border-line bg-sunken/50 p-3 text-xs text-mute space-y-1">
-            <p>The first sheet needs a header row with these columns (any order):</p>
-            <p className="font-mono text-ink">Name · Roll Number · Registration Number · Std · Sec</p>
             <p>
-              <b className="text-ink">Name, Roll Number and Std are required</b>: answer sheets are matched to students by the
-              roll or registration number written on them. Each Std + Sec becomes its own class (Std 10, Sec A → 10-A) and
-              is created if it doesn't exist. Existing students are updated (matched by registration number, or Std + Sec +
-              roll number). Tip: export your current list to get a ready template.
+              The first sheet needs a header row with these columns (any order):
+            </p>
+            <p className="font-mono text-ink">
+              Name · Roll Number · Registration Number · Std · Sec
+            </p>
+            <p>
+              <b className="text-ink">Name, Roll Number and Std are required</b>
+              : answer sheets are matched to students by the roll or
+              registration number written on them. Each Std + Sec becomes its
+              own class (Std 10, Sec A → 10-A) and is created if it doesn't
+              exist. Existing students are updated (matched by registration
+              number, or Std + Sec + roll number). Tip: export your current list
+              to get a ready template.
             </p>
           </div>
           <Field label="Excel file (.xlsx)">
             {(id) => (
-              <Input id={id} type="file" required accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+              <Input
+                id={id}
+                type="file"
+                required
+                accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              />
             )}
           </Field>
           <ErrorPanel error={err} />
           <div className="flex justify-end gap-2 border-t border-line/60 pt-3">
-            <Button type="button" variant="ghost" onClick={close}>Cancel</Button>
-            <Button type="submit" variant="primary" busy={busy} disabled={!file}>Import</Button>
+            <Button type="button" variant="ghost" onClick={close}>
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              busy={busy}
+              disabled={!file}
+            >
+              Preview import
+            </Button>
           </div>
         </form>
       )}
@@ -944,54 +1433,13 @@ function ImportStudents({ done, close }: { done: () => void; close: () => void }
 }
 
 export function SettingsPage() {
-  const { data, loading, reload } = useApi<{
-    available: boolean;
-    model: string;
-    url: string;
-    message: string;
-    detail?: string;
-  }>("/system/ai-status");
-
+  const { teacher } = useAuth();
+  if (teacher?.role !== "MANAGEMENT") return <Navigate to="/account" replace />;
   return (
     <div className="space-y-4 max-w-2xl">
-      <PageHeader
-        title="Settings"
-        sub="School details, report templates and AI model status."
-      />
+      <PageHeader title="Settings" sub="School details and report templates." />
       <SchoolDetailsCard />
       <ReportTemplatesCard />
-      <Card className="p-6 shadow-soft space-y-4">
-        <div className="flex items-center justify-between border-b border-line pb-3">
-          <h2 className="text-lg font-semibold text-ink">Local AI Service Health</h2>
-          {data && <StatusBadge status={data.available ? "READY" : "AI_ERROR"} />}
-        </div>
-        {loading || !data ? (
-          <Loading />
-        ) : (
-          <div className="space-y-3 text-sm">
-            <p className="flex items-center gap-2 font-medium text-ink">
-              <span>{data.message}</span>
-            </p>
-            <div className="rounded-lg bg-sunken p-3 font-mono text-xs text-mute space-y-1 border border-line/60">
-              <p>Model: <span className="text-ink font-semibold">{data.model}</span></p>
-              <p>Endpoint URL: <span className="text-ink">{data.url}</span></p>
-            </div>
-            {data.detail && (
-              <div className="rounded-lg bg-warn-soft/50 p-3 text-xs text-warn border border-warn/30">
-                {data.detail}
-              </div>
-            )}
-            <div className="pt-2">
-              <Button onClick={reload} variant="soft">
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-                <span>Check Service Status Again</span>
-              </Button>
-            </div>
-          </div>
-        )}
-      </Card>
     </div>
   );
 }

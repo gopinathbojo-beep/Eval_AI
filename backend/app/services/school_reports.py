@@ -3,8 +3,12 @@
 Layout comes from a template config (see report_templates.py): which sections appear and in what order, table
 columns, summary items, every label, styling and signature lines. Data is gathered into plain dicts first, so the
 same renderer draws real records and the sample data used by the template editor's preview.
+<<<<<<< 7c662e7
 Grades follow CBSE 9-point grading (cbse/grading.py), ranked among each exam's own students; marks come only
 from finalized evaluations.
+=======
+Grades use eight relative bands among passed candidates; marks come only from finalized evaluations.
+>>>>>>> kishore/Version2.0
 """
 from __future__ import annotations
 
@@ -25,9 +29,23 @@ from ..cbse.common import grading
 from ..deps import err, get_evaluation, get_exam
 from ..documents.storage import abs_path
 from ..models import AuditLog, Evaluation, EvaluationItem, Exam, ExamQuestion, SchoolClass, SchoolProfile, Student, Teacher
+<<<<<<< 7c662e7
+=======
+from ..formatter.common.k_level import summarize as summarize_outcomes
+>>>>>>> kishore/Version2.0
 from .report_generator import BASE_FONT, BOLD_FONT
 from .report_templates import active_config
+from ..workspaces import owner_id, exams_query, classes_query
 
+<<<<<<< 7c662e7
+=======
+PASS_PERCENT = 33  # Existing pass threshold, applied before display rounding.
+RELATIVE_GRADES = ("A-1", "A-2", "B-1", "B-2", "C-1", "C-2", "D-1", "D-2")
+GRADE_SCALE_TEXT = ("A-1: Top 1/8 (12.5%) of passed candidates; A-2, B-1, B-2, C-1, C-2, D-1: "
+                    "each next 1/8 (12.5%); D-2: final 1/8 (12.5%); E: Failed / Essential Repeat. "
+                    "Pass mark: 33% per subject. Equal scores share the higher band; small cohorts may have empty bands. "
+                    "Overall grades require all subjects to be finalized and passed. Incomplete results: not graded.")
+>>>>>>> kishore/Version2.0
 _FONTS = {"default": (BASE_FONT, BOLD_FONT), "helvetica": ("Helvetica", "Helvetica-Bold"),
           "times": ("Times-Roman", "Times-Bold")}
 MUTE = colors.HexColor("#64748B")
@@ -36,6 +54,27 @@ ZEBRA = colors.HexColor("#F1F5F9")
 TOTAL_BG = colors.HexColor("#E2E8F0")
 
 
+<<<<<<< 7c662e7
+=======
+def relative_grades(scores: dict[str, float | None], failed: set[str] | None = None) -> dict[str, str]:
+    """Eight equal rank bands among passes. Ties use their first rank, never student IDs/order."""
+    failed = failed or set()
+    result = {key: "–" if score is None else "E" for key, score in scores.items()}
+    passed = sorted((score for key, score in scores.items() if score is not None and score >= PASS_PERCENT and key not in failed), reverse=True)
+    first = {}
+    for position, score in enumerate(passed):
+        first.setdefault(score, position)
+    for key, score in scores.items():
+        if score is not None and score >= PASS_PERCENT and key not in failed:
+            result[key] = RELATIVE_GRADES[min(7, first[score] * 8 // len(passed))]
+    return result
+
+
+def raw_percentage(got, maximum):
+    return 100.0 * got / maximum if got is not None and maximum and maximum > 0 else None
+
+
+>>>>>>> kishore/Version2.0
 def _m(v: float | None) -> str:
     return "–" if v is None else f"{v:g}"
 
@@ -242,6 +281,7 @@ class _Doc:
 # ---------------------------------------------------------------- per-exam student report
 
 SAMPLE_REPORT = {
+    "grade": "A-2",
     "student": {"name": "Aditi Sharma", "roll": "12", "class": "10 – A", "reg": "2026SCI0412"},
     "exam": {"name": "Term 1 Examination", "subject": "Science", "type": "Term 1", "year": "2026-27",
              "date": "2026-09-18", "finalized": "21 Sep 2026"},
@@ -288,11 +328,19 @@ def report_data(db: Session, teacher: Teacher, ev: Evaluation) -> dict:
         "exam": {"name": exam.name, "subject": exam.subject.name if exam.subject else "", "type": exam.exam_type,
                  "year": exam.academic_year, "date": exam.exam_date or "",
                  "finalized": ev.finalized_at.strftime("%d %b %Y") if ev.finalized_at else ""},
+<<<<<<< 7c662e7
         "obtained": ev.total_marks or 0.0, "maximum": ev.maximum_marks or 0.0, "grade": grade, "questions": rows,
+=======
+        "obtained": ev.total_marks or 0.0, "maximum": ev.maximum_marks or 0.0, "questions": rows,
+        "grade": relative_grades({candidate.id: raw_percentage(candidate.total_marks, candidate.maximum_marks)
+                                 for candidate in db.query(Evaluation).filter_by(exam_id=exam.id, status="FINALIZED")}).get(ev.id, "–"),
+>>>>>>> kishore/Version2.0
     }
 
 
 def render_report(data: dict, cfg: dict, school: dict) -> bytes:
+    if cfg.get("family"):
+        school = {**school, "name": "Eval AI", "principal_name": ""}
     d, L = _Doc(cfg, school), cfg["labels"]
     pct = _pct(data["obtained"], data["maximum"])
     story: list = []
@@ -309,10 +357,16 @@ def render_report(data: dict, cfg: dict, school: dict) -> bytes:
         elif sec == "summary":
             vals = {"obtained": (L["obtained"], f"{_m(data['obtained'])} / {_m(data['maximum'])}"),
                     "percentage": (L["percentage"], "–" if pct is None else f"{pct:g}%"),
+<<<<<<< 7c662e7
                     "grade": (L["grade"], data["grade"])}
+=======
+                    "grade": (L["grade"], data.get("grade", "–"))}
+>>>>>>> kishore/Version2.0
             story += d.summary([vals[k] for k in d.visible("summary")])
+            if cfg.get("family"):
+                story += [d.p("Result: " + ("Pass" if (raw_percentage(data["obtained"], data["maximum"]) or 0) >= PASS_PERCENT else "Fail")), Spacer(1, 10)]
         elif sec == "marks_table":
-            cols = d.visible("columns")
+            cols = [col for col in d.visible("columns") if col != "k_level"]
             if not cols:
                 continue
             fixed = {"qno": 46, "max": 40, "obtained": 52}
@@ -343,6 +397,11 @@ def render_report(data: dict, cfg: dict, school: dict) -> bytes:
             right = {"max", "obtained"}
             story += [d.table([L[f"col_{c}"] for c in cols], rows, widths, total=[tot.get(c, "") for c in cols],
                               aligns=[TA_RIGHT if c in right else TA_LEFT for c in cols]), Spacer(1, 10)]
+<<<<<<< 7c662e7
+=======
+        elif sec == "outcomes":
+            continue  # Legacy saved templates must not reintroduce K-level sections.
+>>>>>>> kishore/Version2.0
         elif sec == "note":
             story += d.note()
         elif sec == "remarks":
@@ -360,7 +419,7 @@ def build_evaluation_pdf_report(db: Session, teacher: Teacher, evaluation_id: st
     if ev.status != "FINALIZED":
         raise err(400, "EVALUATION_NOT_FINALIZED",
                   f"Reports can only be generated for finalized evaluations. Current status is {ev.status}.")
-    profile = db.query(SchoolProfile).filter_by(teacher_id=teacher.id).first()
+    profile = db.query(SchoolProfile).filter_by(teacher_id=owner_id(db, teacher)).first()
     pdf = render_report(report_data(db, teacher, ev), active_config(db, teacher, "report"), _school(profile))
     return pdf, f"Report_{_clean_name(ev.student.name, ev.student.roll_number, ev.exam.name)}.pdf"
 
@@ -415,7 +474,12 @@ def render_exam_report(data: dict, cfg: dict, school: dict) -> bytes:
     students = data["students"]
     pcts = [s["percentage"] for s in students]
     scores = [s["obtained"] for s in students]
+<<<<<<< 7c662e7
     passed = sum(1 for p in pcts if grading.is_pass(p))
+=======
+    passed = sum(1 for p in pcts if p >= PASS_PERCENT)
+    assigned = relative_grades({str(i): raw_percentage(s["obtained"], s["maximum"]) for i, s in enumerate(students)})
+>>>>>>> kishore/Version2.0
     mean = sum(pcts) / len(pcts)
     story: list = d.header() + d.title("Exam Result Analysis")
     story += d.details([("Examination", e["name"]), ("Subject", e["subject"]), ("Class", e["class"]),
@@ -426,8 +490,13 @@ def render_exam_report(data: dict, cfg: dict, school: dict) -> bytes:
                         ("Passed", f"{passed} / {len(students)}"), ("Pass %", f"{round(100 * passed / len(students), 2):g}%")])
 
     # grade distribution
+<<<<<<< 7c662e7
     grades = [*grading.GRADES, grading.FAIL]
     counts = {g: sum(1 for s in students if s["grade"] == g) for g in grades}
+=======
+    grades = [*RELATIVE_GRADES, "E"]
+    counts = {g: sum(value == g for value in assigned.values()) for g in grades}
+>>>>>>> kishore/Version2.0
     w = d.width / (len(grades) + 1)
     story += d.section_title("Grade Distribution")
     story += [d.table(["Grade"] + grades,
@@ -437,8 +506,13 @@ def render_exam_report(data: dict, cfg: dict, school: dict) -> bytes:
 
     # student results
     rows = [[d.p(_esc(s["roll"])), d.p(_esc(s["name"])), d.p(f"<b>{_m(s['obtained'])}</b> / {_m(s['maximum'])}", align=TA_RIGHT),
+<<<<<<< 7c662e7
              d.p(f"{s['percentage']:g}", align=TA_RIGHT), d.p(f"<b>{s['grade']}</b>", align=TA_CENTER),
              d.p(str(s["rank"]), align=TA_CENTER)] for s in students]
+=======
+             d.p(f"{s['percentage']:g}", align=TA_RIGHT), d.p(f"<b>{assigned[str(i)]}</b>", align=TA_CENTER),
+             d.p(str(s["rank"]), align=TA_CENTER)] for i, s in enumerate(students)]
+>>>>>>> kishore/Version2.0
     rows += [[d.p(_esc(s["roll"])), d.p(_esc(s["name"]), color=MUTE), d.p("Not evaluated", color=MUTE, align=TA_RIGHT),
               d.p("–", align=TA_RIGHT), d.p("–", align=TA_CENTER), d.p("–", align=TA_CENTER)] for s in data["pending"]]
     widths = [d.width * x for x in (0.12, 0.40, 0.18, 0.10, 0.10, 0.10)]
@@ -452,7 +526,11 @@ def render_exam_report(data: dict, cfg: dict, school: dict) -> bytes:
                  d.p(_m(q["max"]), align=TA_RIGHT), d.p(f"{q['average']:g}", align=TA_RIGHT),
                  d.p("–" if q["percentage"] is None else f"{q['percentage']:g}", align=TA_RIGHT),
                  d.p(str(q["full"]), align=TA_RIGHT), d.p(str(q["zero"]), align=TA_RIGHT)] for q in data["questions"]]
+<<<<<<< 7c662e7
         widths = [d.width * x for x in (0.20, 0.16, 0.16, 0.16, 0.16, 0.16)]
+=======
+        widths = [d.width * x for x in (0.15, 0.15, 0.18, 0.16, 0.18, 0.18)]
+>>>>>>> kishore/Version2.0
         story += d.section_title("Question-wise Analysis")
         story += [d.table(["Q. No.", "Max", "Avg. Marks", "Avg. %", "Full Marks", "Zero / NA"], rows, widths,
                           aligns=[TA_LEFT] + [TA_RIGHT] * 5), Spacer(1, 10)]
@@ -464,7 +542,12 @@ def render_exam_report(data: dict, cfg: dict, school: dict) -> bytes:
 def build_exam_pdf_report(db: Session, teacher: Teacher, exam_id: str) -> tuple[bytes, str]:
     """Class-level report for one exam, over its finalized evaluations. Returns (pdf_bytes, filename)."""
     exam = get_exam(db, teacher, exam_id)
-    profile = db.query(SchoolProfile).filter_by(teacher_id=teacher.id).first()
+    if teacher.role == "PARENT":
+        ev = db.query(Evaluation).filter_by(exam_id=exam.id, status="FINALIZED").first()
+        if not ev:
+            raise err(400, "EVALUATION_NOT_FINALIZED", "Finalize the evaluation before downloading its report.")
+        return build_evaluation_pdf_report(db, teacher, ev.id)
+    profile = db.query(SchoolProfile).filter_by(teacher_id=owner_id(db, teacher)).first()
     pdf = render_exam_report(exam_report_data(db, exam), active_config(db, teacher, "report"), _school(profile))
     cls = exam.school_class.name if exam.school_class else ""
     return pdf, f"ExamReport_{_clean_name(exam.name, cls)}.pdf"
@@ -475,19 +558,28 @@ def build_exam_pdf_report(db: Session, teacher: Teacher, exam_id: str) -> tuple[
 SAMPLE_CARD = {
     "student": {"name": "Aditi Sharma", "roll": "12", "class": "10 – A", "reg": "2026SCI0412"},
     "term": {"exam_type": "Term 1", "year": "2026-27"},
+<<<<<<< 7c662e7
     "subjects": [{"subject": "English", "maximum": 80, "obtained": 68, "grade": "B1"},
                  {"subject": "Mathematics", "maximum": 80, "obtained": 74.5, "grade": "A1"},
                  {"subject": "Science", "maximum": 80, "obtained": 66, "grade": "B2"},
                  {"subject": "Social Science", "maximum": 80, "obtained": 59, "grade": "C1"},
                  {"subject": "Hindi", "maximum": 80, "obtained": None, "grade": "–"}],
     "grade": "B1", "rank": 3, "ranked": 38,
+=======
+    "subjects": [{"subject": "English", "maximum": 80, "obtained": 68, "grade": "A-2"}, {"subject": "Mathematics", "maximum": 80, "obtained": 74.5, "grade": "A-1"},
+                 {"subject": "Science", "maximum": 80, "obtained": 66, "grade": "B-1"}, {"subject": "Social Science", "maximum": 80, "obtained": 59, "grade": "B-2"},
+                 {"subject": "Hindi", "maximum": 80, "obtained": None}],
+    "rank": None, "ranked": 38, "overall_grade": "–",
+>>>>>>> kishore/Version2.0
 }
 
 
 def report_card_terms(db: Session, teacher: Teacher, class_id: str) -> list[dict]:
     """Academic year + exam type combinations of this class that have finalized results."""
+    if not classes_query(db, teacher).filter_by(id=class_id).first():
+        raise err(404, "NOT_FOUND", "Class not found.")
     terms: dict[tuple[str, str], dict] = {}
-    for e in db.query(Exam).filter_by(teacher_id=teacher.id, class_id=class_id):
+    for e in exams_query(db, teacher).filter_by(class_id=class_id):
         if not db.query(Evaluation).filter_by(exam_id=e.id, status="FINALIZED").first():
             continue
         t = terms.setdefault((e.academic_year, e.exam_type),
@@ -513,21 +605,34 @@ def _overall(rows: list[dict]) -> tuple[float, float]:
 def card_data(db: Session, teacher: Teacher, class_id: str, academic_year: str, exam_type: str,
               student_id: str | None = None) -> tuple[list[dict], SchoolClass]:
     cls = db.get(SchoolClass, class_id)
-    if cls is None or cls.teacher_id != teacher.id:
+    if cls is None or not classes_query(db, teacher).filter_by(id=class_id).first():
         raise err(404, "NOT_FOUND", "Class not found.")
-    exams = sorted(db.query(Exam).filter_by(teacher_id=teacher.id, class_id=class_id, academic_year=academic_year,
+    exams = sorted(exams_query(db, teacher).filter_by(class_id=class_id, academic_year=academic_year,
                                              exam_type=exam_type).all(),
                    key=lambda e: ((e.subject.name if e.subject else ""), e.name))
     if not exams:
         raise err(404, "NO_EXAMS", f"No {exam_type} exams for {cls.name} in {academic_year}.")
     everyone = db.query(Student).filter_by(class_id=class_id).all()
     rows = {s.id: _subject_rows(db, exams, s.id) for s in everyone}
+<<<<<<< 7c662e7
     for i in range(len(exams)):
         grade = grading.grades({sid: _pct(r[i]["obtained"], r[i]["maximum"]) for sid, r in rows.items()})
         for sid, r in rows.items():
             r[i]["grade"] = grade[sid]
     overall_grade = grading.grades({sid: _pct(*_overall(r)) for sid, r in rows.items()})
     scores = {sid: got / mx for sid, (got, mx) in ((sid, _overall(r)) for sid, r in rows.items()) if mx}
+=======
+    scores = {sid: got / mx for sid, (got, mx) in ((sid, _overall(r)) for sid, r in rows.items())
+              if mx and all(raw_percentage(r["obtained"], r["maximum"]) is not None for r in rows[sid])}
+    failed = {sid for sid, subjects in rows.items() if any(raw_percentage(r["obtained"], r["maximum"]) is not None
+               and raw_percentage(r["obtained"], r["maximum"]) < PASS_PERCENT for r in subjects)}
+    overall_grades = relative_grades({s.id: scores[s.id] * 100 if s.id in scores else None for s in everyone}, failed)
+    for index in range(len(exams)):
+        subject_grades = relative_grades({sid: raw_percentage(subjects[index]["obtained"], subjects[index]["maximum"])
+                                         for sid, subjects in rows.items()})
+        for sid, subjects in rows.items():
+            subjects[index]["grade"] = subject_grades[sid]
+>>>>>>> kishore/Version2.0
     ordered = sorted(scores.values(), reverse=True)  # standard competition ranking: 1, 2, 2, 4
     if student_id:
         students = [s for s in everyone if s.id == student_id]
@@ -540,12 +645,19 @@ def card_data(db: Session, teacher: Teacher, class_id: str, academic_year: str, 
     cards = [{"student": {"name": s.name, "roll": s.roll_number, "reg": s.registration_number or "",
                           "class": f"{cls.name} – {s.section}" if s.section else cls.name},
               "term": {"exam_type": exam_type, "year": academic_year}, "subjects": rows[s.id],
+<<<<<<< 7c662e7
               "grade": overall_grade[s.id], "rank": ordered.index(scores[s.id]) + 1 if s.id in scores else None, "ranked": len(scores)}
+=======
+              "rank": ordered.index(scores[s.id]) + 1 if s.id in scores else None, "ranked": len(scores),
+              "overall_grade": overall_grades[s.id]}
+>>>>>>> kishore/Version2.0
              for s in students]
     return cards, cls
 
 
 def render_cards(cards: list[dict], cfg: dict, school: dict) -> bytes:
+    if cfg.get("family"):
+        school = {**school, "name": "Eval AI", "principal_name": ""}
     d, L = _Doc(cfg, school), cfg["labels"]
     story: list = []
     for n, c in enumerate(cards):
@@ -575,12 +687,20 @@ def render_cards(cards: list[dict], cfg: dict, school: dict) -> bytes:
                             "obtained": d.p(_m(r["obtained"]) if r["obtained"] is not None
                                             else f"<font color='#64748B'>{_esc(L['not_evaluated'])}</font>", align=TA_RIGHT),
                             "percent": d.p("–" if p is None else f"{p:g}", align=TA_RIGHT),
+<<<<<<< 7c662e7
                             "grade": d.p(f"<b>{r['grade']}</b>", align=TA_CENTER)}
+=======
+                            "grade": d.p(f"<b>{r.get('grade', '–')}</b>", align=TA_CENTER)}
+>>>>>>> kishore/Version2.0
                     rows.append([cell[x] for x in cols])
                 tot = {"subject": d.p(f"<b>{_esc(L['total'])}</b>"), "max": d.p(f"<b>{_m(mx) if mx else '–'}</b>", align=TA_RIGHT),
                        "obtained": d.p(f"<b>{_m(got) if mx else '–'}</b>", align=TA_RIGHT),
                        "percent": d.p(f"<b>{'–' if overall is None else f'{overall:g}'}</b>", align=TA_RIGHT),
+<<<<<<< 7c662e7
                        "grade": d.p(f"<b>{c['grade']}</b>", align=TA_CENTER)}
+=======
+                       "grade": d.p(f"<b>{c.get('overall_grade', '–')}</b>", align=TA_CENTER)}
+>>>>>>> kishore/Version2.0
                 story += d.section_title(L["subjects_section"])
                 align = {"subject": TA_LEFT, "grade": TA_CENTER}
                 story += [d.table([L[f"col_{x}"] for x in cols], rows, widths, total=[tot[x] for x in cols],
@@ -588,9 +708,17 @@ def render_cards(cards: list[dict], cfg: dict, school: dict) -> bytes:
             elif sec == "summary":
                 vals = {"total": (L["total"], f"{_m(got)} / {_m(mx)}" if mx else "–"),
                         "percentage": (L["percentage"], "–" if overall is None else f"{overall:g}%"),
+<<<<<<< 7c662e7
                         "grade": (L["overall_grade"], c["grade"]),
+=======
+                        "grade": (L["overall_grade"], c.get("overall_grade", "–")),
+>>>>>>> kishore/Version2.0
                         "rank": (L["rank"], f"{c['rank']} of {c['ranked']}" if c.get("rank") else "–")}
                 story += d.summary([vals[k] for k in d.visible("summary")])
+                if cfg.get("family"):
+                    complete = all(r["obtained"] is not None for r in c["subjects"])
+                    passed = complete and all((raw_percentage(r["obtained"], r["maximum"]) or 0) >= PASS_PERCENT for r in c["subjects"])
+                    story += [d.p("Result: " + ("Incomplete" if not complete else "Pass" if passed else "Fail")), Spacer(1, 10)]
             elif sec == "note":
                 story += d.note()
             elif sec == "remarks":
@@ -607,7 +735,7 @@ def build_report_cards(db: Session, teacher: Teacher, class_id: str, academic_ye
                        student_id: str | None = None) -> tuple[bytes, str]:
     """One student's report card, or one page per student of the class. Returns (pdf_bytes, filename)."""
     cards, cls = card_data(db, teacher, class_id, academic_year, exam_type, student_id)
-    profile = db.query(SchoolProfile).filter_by(teacher_id=teacher.id).first()
+    profile = db.query(SchoolProfile).filter_by(teacher_id=owner_id(db, teacher)).first()
     pdf = render_cards(cards, active_config(db, teacher, "report_card"), _school(profile))
     who = _clean_name(cards[0]["student"]["name"], cards[0]["student"]["roll"]) if student_id else _clean_name(cls.name)
     return pdf, f"ReportCard_{who}_{_clean_name(exam_type, academic_year)}.pdf"

@@ -1,47 +1,111 @@
 from __future__ import annotations
-from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, File, Form, Query, Request, Response, UploadFile
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 import shutil
+from datetime import datetime, timezone
 from ..config import AI_UNAVAILABLE_MESSAGE, get_settings
 from ..database import get_db
 from ..deps import err, get_exam
 from ..models import (AnswerKey, AnswerKeyDocument, AnswerSheetDocument, AuditLog, Evaluation,
                       EvaluationItem, Exam, ExamQuestion, QuestionPaperDocument, SchoolClass,
-                      Student, StudentAnswer, Subject, Teacher)
+                      Student, StudentAnswer, Subject, Teacher, TeacherAssignment)
 from ..ocr.internvl import AIUnavailable, check_model
+<<<<<<< 7c662e7
 from ..security import current_teacher
+=======
+from ..security import SESSION_COOKIE, create_token, current_account, current_teacher, is_admin, require_browser_request, set_session_cookie, verify_password
+from ..login_limiter import login_limiter
+>>>>>>> kishore/Version2.0
 from ..serializers import EVALUATION_VIEW_LOAD, doc_view, evaluation_view, student_view
 from ..services.audit import audit
 from ..services.student_io import export_pdf, export_xlsx, import_students, reg_taken, split_class_name
+from ..workspaces import owner_id, exams_query, classes_query, subjects_query, assigned
 
 router = APIRouter(prefix="/api")
 
 
+<<<<<<< 7c662e7
+=======
+# ---------- auth ----------
+class LoginIn(BaseModel):
+    email: str = Field(max_length=320)
+    password: str = Field(max_length=1024)
+    browser_session: bool = False
+
+
+def teacher_view(t: Teacher) -> dict:
+    return {"id": t.id, "name": t.name, "email": t.email, "is_admin": is_admin(t),
+            "approval_status": t.approval_status, "profile_complete": bool(t.profile_completed_at),
+            "profile": t.profile, "rejection_reason": None, "email_verified": bool(t.google_sub),
+            "role": "ADMIN" if is_admin(t) else t.role, "workspace_id": t.workspace_id,
+            "must_change_password": t.must_change_password}
+
+
+@router.post("/auth/login")
+def login(body: LoginIn, request: Request, response: Response, db: Session = Depends(get_db)):
+    if body.browser_session:
+        require_browser_request(request)
+    s = get_settings()
+    login_limiter.check(request.client.host if request.client else "unknown", s.login_attempts_per_minute)
+    t = db.query(Teacher).filter_by(email=body.email.strip().lower()).first()
+    if not t or not verify_password(body.password, t.password_hash):
+        raise err(401, "INVALID_CREDENTIALS", "Email or password is incorrect.")
+    if not t.is_active:
+        raise err(403, "ACCOUNT_DISABLED", "Your account has been disabled. Contact the administrator.")
+    if t.workspace_id:
+        from ..models import Workspace
+        ws = db.get(Workspace, t.workspace_id)
+        if not ws or not ws.is_active:
+            raise err(403, "WORKSPACE_DISABLED", "Your workspace has been disabled. Contact the administrator.")
+    t.last_login_at = datetime.now(timezone.utc)
+    audit(db, exam_id=None, teacher_id=t.id, entity_type="teacher", entity_id=t.id, action="password_login")
+    db.commit()
+    access_token = create_token(t.id, t.session_version)
+    response.headers["Cache-Control"] = "no-store"
+    if body.browser_session:
+        set_session_cookie(response, t)
+        return {"teacher": teacher_view(t)}
+    return {"access_token": access_token, "token_type": "bearer", "teacher": teacher_view(t)}
+
+
+@router.post("/auth/logout", status_code=204)
+def logout(request: Request, response: Response):
+    require_browser_request(request)
+    response.delete_cookie(SESSION_COOKIE, path="/api", secure=get_settings().cookie_secure,
+                           httponly=True, samesite="strict")
+
+
+@router.get("/auth/me")
+def me(t: Teacher = Depends(current_account)):
+    return teacher_view(t)
+
+
+>>>>>>> kishore/Version2.0
 # ---------- system ----------
 @router.get("/system/ai-status")
 def ai_status(_: Teacher = Depends(current_teacher)):
     s = get_settings()
     try:
         info = check_model()
-        return {**info, "message": "InternVL3.5 4B is ready."}
+        return {**info, "message": f"{s.ai_model} is ready."}
     except AIUnavailable as e:
-        return {"available": False, "model": s.internvl_model, "url": s.internvl_api_url,
-                "message": AI_UNAVAILABLE_MESSAGE, "detail": e.detail}
+        return {"available": False, "model": s.ai_model, "provider": s.ai_provider,
+                "message": "The AI provider is unavailable. Check its configuration.", "detail": e.detail}
 
 
 # ---------- dashboard ----------
 @router.get("/dashboard")
 def dashboard(db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
-    exam_ids = [e.id for e in db.query(Exam.id).filter_by(teacher_id=t.id)]
-    class_ids = [c.id for c in db.query(SchoolClass.id).filter_by(teacher_id=t.id)]
+    exam_ids = [e.id for e in exams_query(db, t)]
+    class_ids = [c.id for c in classes_query(db, t)]
     evs = db.query(Evaluation).options(*EVALUATION_VIEW_LOAD).filter(Evaluation.exam_id.in_(exam_ids)).all() if exam_ids else []
-    recent_exams = db.query(Exam).filter_by(teacher_id=t.id).order_by(Exam.created_at.desc()).limit(5).all()
+    recent_exams = exams_query(db, t).order_by(Exam.created_at.desc()).limit(5).all()
     recent_evs = sorted(evs, key=lambda e: e.created_at, reverse=True)[:5]
     return {
         "total_classes": len(class_ids),
-        "total_subjects": db.query(Subject).filter_by(teacher_id=t.id).count(),
+        "total_subjects": subjects_query(db, t).count(),
         "total_exams": len(exam_ids),
         "total_students": db.query(Student).filter(Student.class_id.in_(class_ids)).count() if class_ids else 0,
         "pending_evaluations": sum(e.status != "FINALIZED" for e in evs),
@@ -54,6 +118,8 @@ def dashboard(db: Session = Depends(get_db), t: Teacher = Depends(current_teache
 # ---------- cascade delete helpers ----------
 def cascade_delete_exam_records(db: Session, exam_id: str):
     """Safely cascades deletion of all dependent records and files for an exam."""
+    from ..documents.cloud import remove_prefix
+    remove_prefix(f"exams/{exam_id}")
     evals = db.query(Evaluation).filter_by(exam_id=exam_id).all()
     eval_ids = [ev.id for ev in evals]
     if eval_ids:
@@ -94,6 +160,13 @@ class NameIn(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     code: str | None = None
 
+    @field_validator("name")
+    @classmethod
+    def required_name(cls, value):
+        if not value.strip():
+            raise ValueError("Name cannot be blank")
+        return value.strip()
+
 
 class ClassIn(BaseModel):
     """A class is a standard plus an optional section, stored as one name: Std '10' + Sec 'A' -> '10-A'."""
@@ -106,6 +179,8 @@ class ClassIn(BaseModel):
         name = (f"{std}-{sec}" if sec else std) if std else (self.name or "").strip()
         if not name:
             raise err(400, "STD_REQUIRED", "Enter the standard (e.g. 10).")
+        if split_class_name(name)[0] not in {"10", "12"}:
+            raise err(400, "CBSE_CLASS_REQUIRED", "Eval AI supports CBSE Classes 10 and 12 only.")
         return name
 
 
@@ -117,14 +192,17 @@ def _class_view(db: Session, c: SchoolClass) -> dict:
 
 @router.get("/classes")
 def list_classes(db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
-    return [_class_view(db, c) for c in db.query(SchoolClass).filter_by(teacher_id=t.id).order_by(SchoolClass.name)]
+    return [{**_class_view(db, c), "assigned_subject_ids": [a.subject_id for a in db.query(TeacherAssignment).filter_by(teacher_id=t.id, class_id=c.id)] if t.role == "TEACHER" else None}
+            for c in classes_query(db, t).order_by(SchoolClass.name)]
 
 
 @router.post("/classes", status_code=201)
 def create_class(body: ClassIn, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     name = body.full_name()
-    c = SchoolClass(teacher_id=t.id, name=name)
+    c = SchoolClass(teacher_id=owner_id(db, t), workspace_id=t.workspace_id, name=name)
     db.add(c)
+    db.flush()
+    audit(db, exam_id=None, teacher_id=t.id, entity_type="class", entity_id=c.id, action="class_created")
     db.commit()
     return _class_view(db, c)
 
@@ -132,7 +210,7 @@ def create_class(body: ClassIn, db: Session = Depends(get_db), t: Teacher = Depe
 @router.patch("/classes/{class_id}")
 def update_class(class_id: str, body: ClassIn, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     c = db.get(SchoolClass, class_id)
-    if not c or c.teacher_id != t.id:
+    if not c or c.teacher_id != owner_id(db, t):
         raise err(404, "NOT_FOUND", "Class not found.")
     c.name = body.full_name()
     db.commit()
@@ -142,7 +220,7 @@ def update_class(class_id: str, body: ClassIn, db: Session = Depends(get_db), t:
 @router.delete("/classes/{class_id}")
 def delete_class(class_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     c = db.get(SchoolClass, class_id)
-    if not c or c.teacher_id != t.id:
+    if not c or c.teacher_id != owner_id(db, t):
         raise err(404, "NOT_FOUND", "Class not found.")
 
     # 1. Cascade delete all exams assigned to this class
@@ -164,12 +242,12 @@ def delete_class(class_id: str, db: Session = Depends(get_db), t: Teacher = Depe
 @router.get("/subjects")
 def list_subjects(db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     return [{"id": s.id, "name": s.name, "code": s.code}
-            for s in db.query(Subject).filter_by(teacher_id=t.id).order_by(Subject.name)]
+            for s in subjects_query(db, t).order_by(Subject.name)]
 
 
 @router.post("/subjects", status_code=201)
 def create_subject(body: NameIn, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
-    s = Subject(teacher_id=t.id, name=body.name.strip(), code=body.code)
+    s = Subject(teacher_id=owner_id(db, t), workspace_id=t.workspace_id, name=body.name.strip(), code=body.code)
     db.add(s)
     db.commit()
     return {"id": s.id, "name": s.name, "code": s.code}
@@ -178,7 +256,7 @@ def create_subject(body: NameIn, db: Session = Depends(get_db), t: Teacher = Dep
 @router.patch("/subjects/{subject_id}")
 def update_subject(subject_id: str, body: NameIn, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     s = db.get(Subject, subject_id)
-    if not s or s.teacher_id != t.id:
+    if not s or s.teacher_id != owner_id(db, t):
         raise err(404, "NOT_FOUND", "Subject not found.")
     s.name = body.name.strip()
     if body.code is not None:
@@ -190,7 +268,7 @@ def update_subject(subject_id: str, body: NameIn, db: Session = Depends(get_db),
 @router.delete("/subjects/{subject_id}")
 def delete_subject(subject_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     s = db.get(Subject, subject_id)
-    if not s or s.teacher_id != t.id:
+    if not s or s.teacher_id != owner_id(db, t):
         raise err(404, "NOT_FOUND", "Subject not found.")
 
     # Cascade delete all exams assigned to this subject
@@ -210,6 +288,13 @@ class StudentIn(BaseModel):
     registration_number: str | None = Field(None, max_length=50)
     section: str | None = Field(None, max_length=20)
 
+    @field_validator("name", "roll_number")
+    @classmethod
+    def required_text(cls, value):
+        if not value.strip():
+            raise ValueError("This field cannot be blank")
+        return value.strip()
+
 
 class StudentPatch(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=200)
@@ -220,7 +305,7 @@ class StudentPatch(BaseModel):
 
 
 def _check_reg(db: Session, t: Teacher, reg: str | None, exclude_id: str | None = None) -> None:
-    other = reg_taken(db, t.id, reg, exclude_id)
+    other = reg_taken(db, owner_id(db, t), reg, exclude_id)
     if other:
         raise err(409, "DUPLICATE_REG", f"Registration number {reg} already belongs to {other.name} ({other.roll_number}).")
 
@@ -228,7 +313,9 @@ def _check_reg(db: Session, t: Teacher, reg: str | None, exclude_id: str | None 
 @router.get("/students")
 def list_students(class_id: str | None = Query(None), db: Session = Depends(get_db),
                   t: Teacher = Depends(current_teacher)):
-    class_ids = [c.id for c in db.query(SchoolClass.id).filter_by(teacher_id=t.id)]
+    class_ids = [c.id for c in classes_query(db, t)]
+    if class_id and class_id not in class_ids:
+        raise err(404, "NOT_FOUND", "Class not found.")
     q = db.query(Student).filter(Student.class_id.in_(class_ids or [""]))
     if class_id:
         q = q.filter(Student.class_id == class_id)
@@ -238,12 +325,12 @@ def list_students(class_id: str | None = Query(None), db: Session = Depends(get_
 @router.post("/students", status_code=201)
 def create_student(body: StudentIn, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     c = db.get(SchoolClass, body.class_id)
-    if not c or c.teacher_id != t.id:
+    if not c or c.teacher_id != owner_id(db, t):
         raise err(404, "NOT_FOUND", "Class not found.")
     reg = (body.registration_number or "").strip() or None
     _check_reg(db, t, reg)
     s = Student(class_id=c.id, name=body.name.strip(), roll_number=body.roll_number.strip(),
-                registration_number=reg, section=(body.section or "").strip() or None)
+                registration_number=reg, section=(body.section or "").strip() or split_class_name(c.name)[1] or "A")
     db.add(s)
     try:
         db.commit()
@@ -260,13 +347,13 @@ def update_student(student_id: str, body: StudentPatch, db: Session = Depends(ge
     if not s:
         raise err(404, "NOT_FOUND", "Student not found.")
     orig_c = db.get(SchoolClass, s.class_id)
-    if not orig_c or orig_c.teacher_id != t.id:
+    if not orig_c or orig_c.teacher_id != owner_id(db, t):
         raise err(404, "NOT_FOUND", "Student not found.")
 
     target_class_id = s.class_id
     if body.class_id and body.class_id != s.class_id:
         new_c = db.get(SchoolClass, body.class_id)
-        if not new_c or new_c.teacher_id != t.id:
+        if not new_c or new_c.teacher_id != owner_id(db, t):
             raise err(404, "NOT_FOUND", "Target class not found.")
         s.class_id = new_c.id
         target_class_id = new_c.id
@@ -296,7 +383,7 @@ def update_student(student_id: str, body: StudentPatch, db: Session = Depends(ge
 @router.get("/students/export")
 def export_students(format: str = Query("xlsx", pattern="^(xlsx|pdf)$"), class_id: str | None = Query(None),
                     db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
-    classes = {c.id: c for c in db.query(SchoolClass).filter_by(teacher_id=t.id)}
+    classes = {c.id: c for c in classes_query(db, t)}
     if class_id and class_id not in classes:
         raise err(404, "NOT_FOUND", "Class not found.")
     ids = [class_id] if class_id else list(classes)
@@ -312,7 +399,7 @@ def export_students(format: str = Query("xlsx", pattern="^(xlsx|pdf)$"), class_i
 
 
 @router.post("/students/import")
-async def import_students_xlsx(file: UploadFile = File(...), class_id: str | None = Form(None),
+async def import_students_xlsx(file: UploadFile = File(...), class_id: str | None = Form(None), confirm: bool = Form(False),
                                db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     """Excel only. Updates students matched by registration number or class + roll number; creates the rest."""
     if not (file.filename or "").lower().endswith(".xlsx"):
@@ -320,18 +407,27 @@ async def import_students_xlsx(file: UploadFile = File(...), class_id: str | Non
     default_class = None
     if class_id:
         default_class = db.get(SchoolClass, class_id)
-        if not default_class or default_class.teacher_id != t.id:
+        if not default_class or default_class.teacher_id != owner_id(db, t):
             raise err(404, "NOT_FOUND", "Class not found.")
     data = await file.read()
     if len(data) > get_settings().max_upload_mb * 1024 * 1024:
         raise err(413, "FILE_TOO_LARGE", "The file is too large.")
     try:
-        summary = import_students(db, t.id, data, default_class)
+        summary = import_students(db, owner_id(db, t), data, default_class)
     except ValueError as e:
         db.rollback()
         raise err(400, "IMPORT_FAILED", str(e))
-    db.commit()
-    return summary
+    if confirm and not summary.get("errors"):
+        db.commit()
+    else:
+        db.rollback()
+    return {**summary, "committed": confirm and not summary.get("errors")}
+
+
+@router.get("/students/import-template")
+def import_template(t: Teacher = Depends(current_teacher)):
+    return Response(export_xlsx([]), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": 'attachment; filename="student-import-template.xlsx"'})
 
 
 @router.delete("/students/{student_id}")
@@ -340,7 +436,7 @@ def delete_student(student_id: str, db: Session = Depends(get_db), t: Teacher = 
     if not s:
         raise err(404, "NOT_FOUND", "Student not found.")
     c = db.get(SchoolClass, s.class_id)
-    if not c or c.teacher_id != t.id:
+    if not c or c.teacher_id != owner_id(db, t):
         raise err(404, "NOT_FOUND", "Student not found.")
     cascade_delete_student_records(db, s.id)
     db.commit()
@@ -350,25 +446,9 @@ def delete_student(student_id: str, db: Session = Depends(get_db), t: Teacher = 
 # ---------- reports ----------
 @router.get("/reports/marksheet")
 def download_marksheet(db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
-    import traceback
-    import logging
-    from fastapi import Response
-    from fastapi.responses import JSONResponse
-    try:
-        from ..services.marksheet import generate_marksheet_bytes, sync_root_marksheet_file
-        stream = generate_marksheet_bytes(db, teacher_id=t.id)
-        sync_root_marksheet_file(db, teacher_id=t.id, stream=stream)
-        return Response(
-            content=stream.getvalue(),
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            headers={"Content-Disposition": "attachment; filename=ADEM_Student_Marksheet.xlsx"}
-        )
-    except Exception as e:
-        logging.getLogger("adem").exception("Marksheet generation error")
-        return JSONResponse(
-            {"code": "MARKSHEET_ERROR", "detail": str(e), "trace": traceback.format_exc()},
-            status_code=500,
-        )
+    from ..services.workspace_export import marksheet
+    return Response(marksheet(db, t), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": "attachment; filename=EvalAI_Student_Marksheet.xlsx"})
 
 
 # ---------- exams ----------
@@ -406,20 +486,20 @@ def exam_view(e: Exam) -> dict:
 
 @router.get("/exams")
 def list_exams(db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
-    return [exam_view(e) for e in db.query(Exam).filter_by(teacher_id=t.id).order_by(Exam.created_at.desc())]
+    return [exam_view(e) for e in exams_query(db, t).order_by(Exam.created_at.desc())]
 
 
 @router.post("/exams", status_code=201)
 def create_exam(body: ExamIn, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     c, s = db.get(SchoolClass, body.class_id), db.get(Subject, body.subject_id)
-    if not c or c.teacher_id != t.id or not s or s.teacher_id != t.id:
-        raise err(400, "INVALID_REFERENCE", "Choose a class and subject that exist.")
+    if not c or c.teacher_id != owner_id(db, t) or not s or s.teacher_id != owner_id(db, t) or not assigned(db, t, c.id, s.id):
+        raise err(404, "NOT_FOUND", "Class or subject not found in your assignments.")
     data = body.model_dump()
     if not data.get("academic_year"):
         from datetime import datetime
         now = datetime.now()
         data["academic_year"] = f"{now.year}-{str(now.year + 1)[-2:]}"
-    e = Exam(teacher_id=t.id, status="DRAFT", **data)
+    e = Exam(teacher_id=t.id, workspace_id=t.workspace_id, status="DRAFT", **data)
     db.add(e)
     db.flush()
     audit(db, exam_id=e.id, teacher_id=t.id, entity_type="exam", entity_id=e.id, action="exam_created")
@@ -461,10 +541,5 @@ def delete_exam(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depend
     e = get_exam(db, t, exam_id)
     cascade_delete_exam_records(db, e.id)
     db.commit()
-    try:
-        from ..services.marksheet import sync_root_marksheet_file
-        sync_root_marksheet_file(db, t.id)
-    except Exception:
-        pass
     return {"ok": True}
 

@@ -12,7 +12,7 @@ from ..serializers import (EVALUATION_VIEW_LOAD, answer_view, doc_view, evaluati
 from ..cbse.common import choices
 from ..services.audit import audit
 from ..services.job_queue import submit
-from ..services.exam_files import purge_exam_files, save_reports_and_schedule, stored_report
+from ..services.exam_files import purge_exam_files, save_reports_and_schedule
 from ..services.evaluation_service import (ExamSnapshot, approve_clean_items, finalize, finalize_issues,
                                            refresh_evaluation_status, review_reasons, run_evaluation)
 from ..cbse.common.outcomes import summarize as summarize_outcomes
@@ -23,6 +23,7 @@ from ..services.school_reports import build_evaluation_pdf_report, build_exam_pd
 from ..services.state import set_state
 from ..services.student_identity import in_flight
 from ..config import get_settings
+from ..workspaces import exams_query
 
 router = APIRouter(prefix="/api")
 
@@ -34,7 +35,9 @@ def _not_finalized(ev: Evaluation):
 
 @router.get("/evaluations")
 def list_evaluations(exam_id: str | None = Query(None), db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
-    exam_ids = [e.id for e in db.query(Exam.id).filter_by(teacher_id=t.id)]
+    if exam_id:
+        get_exam(db, t, exam_id)
+    exam_ids = [e.id for e in exams_query(db, t)]
     q = db.query(Evaluation).options(*EVALUATION_VIEW_LOAD).filter(Evaluation.exam_id.in_(exam_ids or [""]))
     if exam_id:
         q = q.filter(Evaluation.exam_id == exam_id)
@@ -484,11 +487,9 @@ def result(ev_id: str, db: Session = Depends(get_db), t: Teacher = Depends(curre
 @router.get("/evaluations/{ev_id}/report.pdf")
 @router.get("/evaluations/{ev_id}/report")
 def download_evaluation_report(ev_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
-    saved = stored_report(get_evaluation(db, t, ev_id))
-    if saved:  # the official copy kept when the exam was finalized
-        pdf_bytes, filename = saved.read_bytes(), saved.name.split("__", 1)[1]
-    else:
-        pdf_bytes, filename = build_evaluation_pdf_report(db, t, ev_id)
+    # Relative grades depend on the current finalized cohort; an archived PDF can be stale.
+    # Re-render from retained database results, including after original files are purged.
+    pdf_bytes, filename = build_evaluation_pdf_report(db, t, ev_id)
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
@@ -514,7 +515,7 @@ def download_exam_report(exam_id: str, db: Session = Depends(get_db), t: Teacher
 
 @router.get("/results")
 def list_results(db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
-    exam_ids = [e.id for e in db.query(Exam.id).filter_by(teacher_id=t.id)]
+    exam_ids = [e.id for e in exams_query(db, t)]
     evs = (db.query(Evaluation).options(*EVALUATION_VIEW_LOAD)
            .filter(Evaluation.exam_id.in_(exam_ids or [""]), Evaluation.status == "FINALIZED")
            .order_by(Evaluation.finalized_at.desc()))

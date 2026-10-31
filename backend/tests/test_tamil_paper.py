@@ -144,8 +144,10 @@ def test_any_one_topic_answered_on_several_counts_the_best(monkeypatch):
 
     item = NS(status=None, error=None, student_answer_id=None)
     q = NS(id="q10", display_number="10", question_text=Q10, max_marks=5.0)
+    recorded = []
     with paper_format.use(paper_format.TAMIL):
-        es.evaluate_item(NS(commit=lambda: None), NS(exam_id="e"), q, item)
+        es.evaluate_item(NS(commit=lambda: None, get=lambda *_: NS(teacher_id="teacher"), add=recorded.append), NS(id="evaluation", exam_id="e"), q, item)
+    assert len(recorded) == 3 and all(event.action == "ai_grading_request" for event in recorded)
     assert len(prompts_seen) == 3
     assert item.status == "EVALUATED" and item.ai_marks == 4.5 and item.final_marks == 4.5
     assert "ஆ) கல்வியின் முக்கியத்துவம்" in item.ai_feedback.splitlines()[0]

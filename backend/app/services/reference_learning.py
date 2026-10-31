@@ -371,7 +371,7 @@ def infer_structure_type(text: str) -> str:
 
 # ---------- Accuracy Diagnostics & Benchmarking ----------
 
-def calculate_accuracy_diagnostics(db: Session) -> dict:
+def calculate_accuracy_diagnostics(db: Session, workspace_id: str | None = None, teacher_id: str | None = None) -> dict:
     """
     Computes rigorous accuracy metrics comparing original OCR vs teacher-corrected references:
     - Character Error Rate (CER)
@@ -381,8 +381,7 @@ def calculate_accuracy_diagnostics(db: Session) -> dict:
     - Mathematical Symbol Accuracy
     - Breakdown by subject and document type
     """
-    seed_verified_reference_collection(db)
-    examples = db.query(VerifiedReferenceExample).all()
+    examples = db.query(VerifiedReferenceExample).filter_by(workspace_id=workspace_id, teacher_id=teacher_id).all()
 
     if not examples:
         return {

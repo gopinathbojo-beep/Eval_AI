@@ -3,6 +3,18 @@ dist/
 __pycache__/
 .venv/
 .env
+/env
+.env.*
+!.env.example
+!**/.env.example
+coverage/
+.pytest_cache/
+.ruff_cache/
+/tmp/
+playwright-report/
+test-results/
+backups/
+.e2e-data/
 data/*
 !data/.gitkeep
 *.pyc
@@ -53,8 +65,12 @@ yarn-error.*
 /Student_Marksheet*.xlsx
 
 gpu_server/ollama.log*
+<<<<<<< 7c662e7
 
 # sample papers and student answer sheets stay out of git
 /exam/
 /exam.zip
 .pytest_cache/
+=======
+.bat
+>>>>>>> kishore/Version2.0

@@ -15,7 +15,7 @@ KINDS = ("report", "report_card")
 _COMMON_LABELS = {
     "student": "Student", "roll": "Roll No.", "class": "Class", "reg": "Reg. No.",
     "total": "Total", "percentage": "Percentage", "grade": "Grade", "remarks": "Remarks",
-    "grade_scale": "Grading scale (CBSE)",
+    "grade_scale": "Relative grading scale",
 }
 
 DEFAULTS: dict[str, dict] = {
@@ -121,11 +121,24 @@ def resolve(db: Session, teacher: Teacher, kind: str, template_id: str | None) -
         return preset_config(kind, template_id[7:])
     if template_id:
         t = db.get(ReportTemplate, template_id)
-        if t and t.teacher_id == teacher.id and t.kind == kind:
+        from ..workspaces import owner_id
+        if t and t.teacher_id == owner_id(db, teacher) and t.kind == kind:
             return normalize(kind, t.config)
     return preset_config(kind, "classic")
 
 
 def active_config(db: Session, teacher: Teacher, kind: str) -> dict:
-    profile = db.query(SchoolProfile).filter_by(teacher_id=teacher.id).first()
-    return resolve(db, teacher, kind, active_template_id(profile, kind))
+    from ..workspaces import owner_id
+    profile = db.query(SchoolProfile).filter_by(teacher_id=owner_id(db, teacher)).first()
+    cfg = resolve(db, teacher, kind, active_template_id(profile, kind))
+    return family_config(cfg) if teacher.role == "PARENT" else cfg
+
+
+def family_config(cfg: dict) -> dict:
+    cfg = copy.deepcopy(cfg)
+    cfg["family"] = True
+    for key, hidden in {"sections": {"grade_scale", "signatures"}, "summary": {"grade", "rank"}, "columns": {"grade"}}.items():
+        for item in cfg.get(key, []):
+            if item["id"] in hidden:
+                item["visible"] = False
+    return cfg

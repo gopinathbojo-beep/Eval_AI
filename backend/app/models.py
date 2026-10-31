@@ -36,6 +36,7 @@ class User(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
     name: Mapped[str] = mapped_column(String(200))
     email: Mapped[str] = mapped_column(String(200), unique=True, index=True)
+<<<<<<< 7c662e7
     phone: Mapped[str] = mapped_column(String(30), default="")
     role: Mapped[str] = mapped_column(String(20), default="teacher")  # platform_admin | school_manager | teacher | parent
     admin_role: Mapped[str | None] = mapped_column(String(20), nullable=True)  # super_admin | admin | viewer
@@ -55,12 +56,91 @@ class User(Base):
 
 
 Teacher = User  # the teacher routes predate roles; a teacher is a User with role "teacher"
+=======
+    password_hash: Mapped[str] = mapped_column(String(200))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    google_sub: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True)
+    session_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    approval_status: Mapped[str] = mapped_column(String(20), default="APPROVED", server_default="APPROVED")
+    registration_source: Mapped[str] = mapped_column(String(20), default="ADMIN", server_default="ADMIN")
+    profile: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    profile_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rejection_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    role: Mapped[str] = mapped_column(String(20), default="TEACHER", server_default="TEACHER")
+    workspace_id: Mapped[str | None] = mapped_column(ForeignKey("workspaces.id"), nullable=True, index=True)
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+
+
+# Keep the legacy table and authentication alias for existing API clients.
+User = Teacher
+
+
+class BackgroundJob(Base):
+    __tablename__ = "background_jobs"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+    exam_id: Mapped[str | None] = mapped_column(String(36), index=True)
+    workspace_id: Mapped[str | None] = mapped_column(String(36), index=True)
+    actor_id: Mapped[str | None] = mapped_column(String(36))
+    session_version: Mapped[int | None] = mapped_column(Integer)
+    handler: Mapped[str] = mapped_column(String(100))
+    payload: Mapped[dict] = mapped_column(JSON)
+    active_key: Mapped[str | None] = mapped_column(String(64), unique=True)
+    status: Mapped[str] = mapped_column(String(20), default="QUEUED", index=True)
+    error: Mapped[str | None] = mapped_column(String(300))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    worker_id: Mapped[str | None] = mapped_column(String(36))
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class PendingUpload(Base):
+    __tablename__ = "pending_uploads"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+    exam_id: Mapped[str] = mapped_column(ForeignKey("exams.id", ondelete="CASCADE"), index=True)
+    actor_id: Mapped[str] = mapped_column(String(36), index=True)
+    workspace_id: Mapped[str] = mapped_column(String(36), index=True)
+    object_key: Mapped[str] = mapped_column(String(500))
+    kind: Mapped[str] = mapped_column(String(20))
+    filename: Mapped[str] = mapped_column(String(300))
+    mime_type: Mapped[str] = mapped_column(String(100))
+    file_size: Mapped[int] = mapped_column(Integer)
+    fields: Mapped[dict] = mapped_column(JSON, default=dict)
+    result: Mapped[dict | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class Workspace(Base):
+    __tablename__ = "workspaces"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+    kind: Mapped[str] = mapped_column(String(10))
+    name: Mapped[str] = mapped_column(String(200))
+    owner_id: Mapped[str] = mapped_column(String(36), unique=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class TeacherAssignment(Base):
+    __tablename__ = "teacher_assignments"
+    __table_args__ = (UniqueConstraint("teacher_id", "class_id", "subject_id", name="uq_assignment"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+    teacher_id: Mapped[str] = mapped_column(ForeignKey("teachers.id"), index=True)
+    class_id: Mapped[str] = mapped_column(ForeignKey("classes.id", ondelete="CASCADE"))
+    subject_id: Mapped[str] = mapped_column(ForeignKey("subjects.id", ondelete="CASCADE"))
+>>>>>>> kishore/Version2.0
 
 
 class SchoolClass(Base):
     __tablename__ = "classes"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+<<<<<<< 7c662e7
     teacher_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+=======
+    teacher_id: Mapped[str] = mapped_column(ForeignKey("teachers.id"), index=True)
+    workspace_id: Mapped[str | None] = mapped_column(ForeignKey("workspaces.id"), index=True)
+>>>>>>> kishore/Version2.0
     name: Mapped[str] = mapped_column(String(100))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
@@ -68,7 +148,12 @@ class SchoolClass(Base):
 class Subject(Base):
     __tablename__ = "subjects"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+<<<<<<< 7c662e7
     teacher_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+=======
+    teacher_id: Mapped[str] = mapped_column(ForeignKey("teachers.id"), index=True)
+    workspace_id: Mapped[str | None] = mapped_column(ForeignKey("workspaces.id"), index=True)
+>>>>>>> kishore/Version2.0
     name: Mapped[str] = mapped_column(String(100))
     code: Mapped[str | None] = mapped_column(String(30), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
@@ -90,10 +175,15 @@ class Student(Base):
 class Exam(Base):
     __tablename__ = "exams"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+<<<<<<< 7c662e7
     # The owner: a teacher, or for origin PARENT the parent. Schools see exams whose owner belongs to the school,
     # so parent exams (owner has no school) never reach a school.
     teacher_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
     origin: Mapped[str] = mapped_column(String(20), default="TEACHER")  # TEACHER | PARENT
+=======
+    teacher_id: Mapped[str] = mapped_column(ForeignKey("teachers.id"), index=True)
+    workspace_id: Mapped[str | None] = mapped_column(ForeignKey("workspaces.id"), index=True)
+>>>>>>> kishore/Version2.0
     name: Mapped[str] = mapped_column(String(200))
     academic_year: Mapped[str] = mapped_column(String(20))
     class_id: Mapped[str] = mapped_column(ForeignKey("classes.id"))
@@ -276,7 +366,12 @@ class AuditLog(Base):
     __tablename__ = "audit_logs"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
     exam_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+<<<<<<< 7c662e7
     teacher_id: Mapped[str | None] = mapped_column(String(36), nullable=True)  # the acting user, whatever the role
+=======
+    teacher_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    workspace_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+>>>>>>> kishore/Version2.0
     entity_type: Mapped[str] = mapped_column(String(50))
     entity_id: Mapped[str] = mapped_column(String(36))
     action: Mapped[str] = mapped_column(String(60))
@@ -293,6 +388,7 @@ class VerifiedReferenceExample(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
     exam_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     teacher_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    workspace_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     document_type: Mapped[str] = mapped_column(String(50))  # question_paper, answer_key, student_answer
     subject: Mapped[str] = mapped_column(String(100), default="General")
     source_document: Mapped[str] = mapped_column(String(300))
