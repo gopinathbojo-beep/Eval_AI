@@ -377,6 +377,7 @@ class PromoteBlockBody(BaseModel):
 
 @router.post("/exams/{exam_id}/promote-block")
 def promote_block(exam_id: str, body: PromoteBlockBody, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    get_exam(db, t, exam_id)  # the teacher's own exam (404 otherwise)
     exam = _require_editable(db, exam_id)
     doc = db.query(QuestionPaperDocument).filter_by(exam_id=exam.id, is_active=True).order_by(QuestionPaperDocument.uploaded_at.desc()).first()
     qs = db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all()
@@ -428,6 +429,7 @@ class DismissBlockBody(BaseModel):
 
 @router.post("/exams/{exam_id}/dismiss-block")
 def dismiss_block(exam_id: str, body: DismissBlockBody, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    get_exam(db, t, exam_id)  # the teacher's own exam (404 otherwise)
     exam = _require_editable(db, exam_id)
     doc = db.query(QuestionPaperDocument).filter_by(exam_id=exam.id, is_active=True).order_by(QuestionPaperDocument.uploaded_at.desc()).first()
 

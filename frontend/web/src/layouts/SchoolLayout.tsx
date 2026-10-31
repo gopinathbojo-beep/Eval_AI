@@ -17,7 +17,7 @@ export function SchoolLayout({ nav }: { nav: NavItem[] }) {
   const [open, setOpen] = useState(false);
   if (loading) return <Loading text="Signing you in..." />;
   if (!user) return <Navigate to="/login" replace state={{ from: loc.pathname }} />;
-  if (user.role !== "school_manager") return <Navigate to="/dashboard" replace />;
+  if (user.role !== "MANAGEMENT") return <Navigate to="/dashboard" replace />;
   if (user.must_change_password) return <Navigate to="/change-password" replace />;
   const active = user.school?.status === "ACTIVE";
 

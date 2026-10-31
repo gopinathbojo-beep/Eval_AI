@@ -3,15 +3,16 @@ import pytest
 from app.database import SessionLocal
 from app.models import Teacher
 from app.security import hash_password
-from .conftest import make_pdf, make_png
+from .conftest import assign, make_pdf, make_png
 
 
-def test_ai_generate_and_save_answer_key(client, auth):
-    c, h = client, auth
+def test_ai_generate_and_save_answer_key(client, auth, teach):
+    c, m, h = client, auth, teach
 
     # 1. Setup exam
-    cls = c.post("/api/classes", json={"name": "10"}, headers=h).json()
-    sub = c.post("/api/subjects", json={"name": "Physics"}, headers=h).json()
+    cls = c.post("/api/classes", json={"name": "10"}, headers=m).json()
+    sub = c.post("/api/subjects", json={"name": "Physics"}, headers=m).json()
+    assign(cls["id"], sub["id"])
     exam = c.post("/api/exams", headers=h, json={
         "name": "Physics Midterm", "academic_year": "2026-27",
         "class_id": cls["id"], "subject_id": sub["id"],
@@ -84,12 +85,13 @@ def test_ai_generate_and_save_answer_key(client, auth):
     assert exam_verified["status"] == "ANSWER_KEY_VERIFIED"
 
 
-def test_upload_answer_key_sheet_option(client, auth):
-    c, h = client, auth
+def test_upload_answer_key_sheet_option(client, auth, teach):
+    c, m, h = client, auth, teach
 
     # 1. Setup exam with verified questions
-    cls = c.post("/api/classes", json={"name": "12"}, headers=h).json()
-    sub = c.post("/api/subjects", json={"name": "Chemistry"}, headers=h).json()
+    cls = c.post("/api/classes", json={"name": "12"}, headers=m).json()
+    sub = c.post("/api/subjects", json={"name": "Chemistry"}, headers=m).json()
+    assign(cls["id"], sub["id"])
     exam = c.post("/api/exams", headers=h, json={
         "name": "Chemistry Unit 1", "academic_year": "2026-27",
         "class_id": cls["id"], "subject_id": sub["id"],
@@ -111,8 +113,8 @@ def test_upload_answer_key_sheet_option(client, auth):
     assert doc_info["status"] in ("READY", "NEEDS_ATTENTION", "UPLOADED")
 
 
-def test_ai_generation_security_and_errors(client, auth):
-    c, h = client, auth
+def test_ai_generation_security_and_errors(client, auth, teach):
+    c, m, h = client, auth, teach
 
     # Non-existent exam -> 404
     assert c.post("/api/exams/non-existent-id/answer-keys/generate-ai", headers=h).status_code == 404
@@ -123,10 +125,11 @@ def test_ai_generation_security_and_errors(client, auth):
     assert c.post("/api/exams/any-id/answer-keys/save-ai", json={"answers": []}).status_code == 401
 
 
-def test_create_exam_without_academic_year(client, auth):
-    c, h = client, auth
-    cls = c.post("/api/classes", json={"name": "12"}, headers=h).json()
-    sub = c.post("/api/subjects", json={"name": "Biology"}, headers=h).json()
+def test_create_exam_without_academic_year(client, auth, teach):
+    c, m, h = client, auth, teach
+    cls = c.post("/api/classes", json={"name": "12"}, headers=m).json()
+    sub = c.post("/api/subjects", json={"name": "Biology"}, headers=m).json()
+    assign(cls["id"], sub["id"])
     res = c.post(
         "/api/exams",
         headers=h,
@@ -145,10 +148,11 @@ def test_create_exam_without_academic_year(client, auth):
     assert "-" in data["academic_year"]
 
 
-def test_answer_key_not_locked_in_questions_verified(client, auth):
-    c, h = client, auth
-    cls = c.post("/api/classes", json={"name": "12"}, headers=h).json()
-    sub = c.post("/api/subjects", json={"name": "Maths"}, headers=h).json()
+def test_answer_key_not_locked_in_questions_verified(client, auth, teach):
+    c, m, h = client, auth, teach
+    cls = c.post("/api/classes", json={"name": "12"}, headers=m).json()
+    sub = c.post("/api/subjects", json={"name": "Maths"}, headers=m).json()
+    assign(cls["id"], sub["id"])
     exam_res = c.post(
         "/api/exams",
         headers=h,
@@ -179,10 +183,11 @@ def test_answer_key_not_locked_in_questions_verified(client, auth):
     assert len(keys_data["keys"]) == 0
 
 
-def test_cancel_document_ocr(client, auth):
-    c, h = client, auth
-    cls = c.post("/api/classes", json={"name": "12"}, headers=h).json()
-    sub = c.post("/api/subjects", json={"name": "Chemistry"}, headers=h).json()
+def test_cancel_document_ocr(client, auth, teach):
+    c, m, h = client, auth, teach
+    cls = c.post("/api/classes", json={"name": "12"}, headers=m).json()
+    sub = c.post("/api/subjects", json={"name": "Chemistry"}, headers=m).json()
+    assign(cls["id"], sub["id"])
     exam = c.post("/api/exams", headers=h, json={
         "name": "Chem Quiz", "class_id": cls["id"], "subject_id": sub["id"],
         "exam_type": "Quiz", "total_marks": 20.0
@@ -204,10 +209,11 @@ def test_cancel_document_ocr(client, auth):
     assert doc_status["status"] == "CANCELLED"
 
 
-def test_delete_exam_cascades(client, auth):
-    c, h = client, auth
-    cls = c.post("/api/classes", json={"name": "12"}, headers=h).json()
-    sub = c.post("/api/subjects", json={"name": "Biology"}, headers=h).json()
+def test_delete_exam_cascades(client, auth, teach):
+    c, m, h = client, auth, teach
+    cls = c.post("/api/classes", json={"name": "12"}, headers=m).json()
+    sub = c.post("/api/subjects", json={"name": "Biology"}, headers=m).json()
+    assign(cls["id"], sub["id"])
     exam = c.post("/api/exams", headers=h, json={
         "name": "Bio Final", "class_id": cls["id"], "subject_id": sub["id"],
         "exam_type": "Final", "total_marks": 50.0

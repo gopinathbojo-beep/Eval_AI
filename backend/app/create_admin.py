@@ -21,7 +21,7 @@ def main():
     if db.query(User).filter_by(email=email).first():
         print("An account with that email already exists.")
         sys.exit(1)
-    db.add(User(name=name, email=email, role="platform_admin", admin_role="super_admin",
+    db.add(User(name=name, email=email, role="ADMIN", admin_role="super_admin",
                 password_hash=hash_password(pw), must_change_password=True))
     db.commit()
     print(f"Created Super Admin {email}. Sign in to the Admin app and choose a new password.")

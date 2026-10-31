@@ -9,8 +9,8 @@ mark_rules.py (checks on the grader's marks).
 from __future__ import annotations
 from typing import Any
 
-__all__ = ["parse_paper", "segment_keys", "segment_answers", "grading_attempts", "check_deductions",
-           "uses_pdf_text", "build_rubric"]
+__all__ = ["parse_paper", "segment_keys", "segment_answers", "repair_answers", "grading_attempts", "grade_points",
+           "check_deductions", "uses_pdf_text", "build_rubric"]
 
 
 def parse_paper(page_results: list[tuple[dict, Any]]) -> Any | None:
@@ -23,14 +23,29 @@ def segment_keys(page_results: list[tuple[dict, Any]], canonical_questions: list
     return None
 
 
-def segment_answers(page_results: list[tuple[dict, Any]], canonical_questions: list[Any] | None = None) -> list[Any] | None:
-    """The student's answers (SegmentedAnswer), or None for the shared segmenter."""
+def segment_answers(page_results: list[tuple[dict, Any]], canonical_questions: list[Any] | None = None,
+                    keys: dict[str, str] | None = None) -> list[Any] | None:
+    """The student's answers (SegmentedAnswer), or None for the shared segmenter. keys: the key's text per question
+    number ("7" -> ...), when the exam has its key."""
     return None
+
+
+def repair_answers(answers: list[Any], page_results: list[tuple[dict, Any]], canonical_questions: list[Any] | None,
+                   keys: dict[str, str] | None, reread: Any | None) -> list[Any]:
+    """The answers after the subject's own repairs, before anything is flagged for review. reread(page_number, bbox)
+    reads that region of the page again (a list of StudentAnswerItem), or is None when it cannot."""
+    return answers
 
 
 def grading_attempts(question_text: str | None, answer_text: str) -> list[tuple[str, str]]:
     """Several attempts in one answer, each graded and the best counted: [(title, text)]; [] grades it as one."""
     return []
+
+
+def grade_points(rubric: dict | None, answer_text: str, max_marks: float, ask: Any) -> Any | None:
+    """The question graded point by point (EvaluationResult) on its confirmed rubric, ask(system, prompt, schema)
+    putting one narrow question to the grading model; None grades the whole answer at once."""
+    return None
 
 
 def check_deductions(result: Any, answer_text: str, key_text: str | None, max_marks: float) -> Any:

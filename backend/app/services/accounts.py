@@ -11,10 +11,13 @@ from sqlalchemy.orm import Session
 from ..config import get_settings
 from ..deps import err
 from ..models import AuthToken, School, User
-from ..security import admin_role
+from ..security import admin_role, is_admin
 
 LINK_TTL = {"invite": timedelta(days=7), "reset": timedelta(hours=1), "verify": timedelta(hours=24)}
-PORTAL_LABEL = {"admin": "Admin", "school": "School", "teacher": "Teacher", "parent": "Parents"}
+PORTAL_LABEL = {"admin": "Admin", "school": "School", "teacher": "Teacher", "parent": "Parents", "web": "School"}
+# the app each role signs in to
+ROLE_APP = {"ADMIN": "Admin", "MANAGEMENT": "School", "TEACHER": "School", "PARENT": "Parents",
+            "UNASSIGNED": "School"}
 
 
 def now() -> datetime:
@@ -48,14 +51,22 @@ def check_password(pw: str) -> None:
         raise err(422, "WEAK_PASSWORD", problem)
 
 
-def user_view(u: User) -> dict:
-    school = u.school
-    return {"id": u.id, "name": u.name, "email": u.email, "phone": u.phone, "role": u.role,
-            "admin_role": admin_role(u) if u.role == "platform_admin" else None,
-            "school": {"id": school.id, "name": school.name, "status": school.status} if school else None,
+def account_view(u: User) -> dict:
+    """The signed-in account as every app sees it (web, admin, parents): Version2.0's fields and ours."""
+    ws = u.workspace
+    admin = is_admin(u)
+    return {"id": u.id, "name": u.name, "email": u.email, "phone": u.phone or "",
+            "role": "ADMIN" if admin else u.role, "admin_role": admin_role(u) if admin else None, "is_admin": admin,
+            "approval_status": u.approval_status, "profile_complete": bool(u.profile_completed_at),
+            "profile": u.profile, "rejection_reason": None,
+            "email_verified": bool(u.email_verified_at or u.google_sub), "workspace_id": u.workspace_id,
+            "school": {"id": ws.id, "name": ws.name, "status": ws.status, "kind": ws.kind} if ws else None,
             "status": u.status, "must_change_password": u.must_change_password,
-            "has_password": bool(u.password_hash), "google_linked": bool(u.google_sub),
+            "has_password": not (u.password_hash or "!").startswith("!"), "google_linked": bool(u.google_sub),
             "last_login_at": u.last_login_at.isoformat() if u.last_login_at else None}
+
+
+user_view = account_view
 
 
 # ---------- lockout ----------

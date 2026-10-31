@@ -192,6 +192,176 @@ def extract_from_full_pdf_text(full_text: str, norm_num: str) -> tuple[str | Non
     return answer_text, criteria
 
 
+# The marking scheme table of a typed CBSE key (renderer.table_rows / table_cell_lines):
+# "Q. No. | ANS | HINTS/SOLUTION | Marks" (MCQs) and "Q.No. | Solution | Marks" with step marks beside the steps
+_KEY_LABEL = re.compile(r"^Q?\s*(\d{1,3})\s*\.?\s*(?:\(\s*([A-Da-d])\s*\))?\s*\.?$")
+_KEY_HEADER = re.compile(r"^(?:Q\.?\s*No\.?|ANS|HINTS|SOLUTION|Marks)\b", re.I)
+_KEY_VI = re.compile(r"^For\s+(?:the\s+)?visually\s+impaired\b", re.I)
+_STEP_MARK = re.compile(r"^\s*((?:\d+(?:\.\d+)?|[½¼¾])(?:\s*\+\s*(?:\d+(?:\.\d+)?|[½¼¾]))*)\s*(.*)$")
+_FRACTION = {"½": 0.5, "¼": 0.25, "¾": 0.75}
+
+
+def _step_value(text: str) -> tuple[float, str] | None:
+    """A marks-cell line as (marks, note): "½" -> 0.5, "½+½" -> 1, "4x½ = 2" -> 2, "1 for" -> (1, "for")."""
+    t = text.strip()
+    if "=" in t and re.match(r"^\d+\s*[x×]\s*[\d½¼¾]", t):
+        t = t.split("=")[-1]
+    m = _STEP_MARK.match(t)
+    if not m:
+        return None
+    value = sum(_FRACTION.get(v.strip(), None) or float(v) for v in m.group(1).split("+"))
+    return value, m.group(2).strip()
+
+
+def _marks_label(v: float) -> str:
+    """0.5 -> "½ Mark", 2 -> "2 Marks", 1.5 -> "1.5 Marks" (the rubric reads "½" alone or a decimal, not "1½")."""
+    text = {0.5: "½", 0.25: "¼", 0.75: "¾"}.get(v) or f"{v:g}"
+    return f"{text} Mark{'s' if v > 1 else ''}"
+
+
+_EQ_LABEL = re.compile(r"\s*[-—–_.]{2,}\s*\(\s*(?:\d{1,2}|[ivx]{1,4})\s*\)\s*$")  # "x + y = 9 ------(1)", "____(ii)"
+_ALT_START = re.compile(r"^\s*(?:\(\s*[ivx]{1,4}\s*\)\s*)?\(\s*([A-D])\s*\)")  # "(iii) (A) ...", "(B) ..."
+_OR_LINE = re.compile(r"^\s*OR\b\s*")
+_WORD = re.compile(r"[A-Za-z]+|\d+(?:\.\d+)?")
+
+
+def _step_texts(text_lines: list[str], visual: list[tuple[float, str]]) -> list[tuple[float, str]]:
+    """The solution's text lines (fractions rebuilt) with the height of the visual line each comes from: the line
+    whose words and numbers it shares most. A step mark then quotes the whole step, not a stacked fraction's row."""
+    out = []
+    for t in text_lines:
+        words = set(_WORD.findall(t))
+        if not words or not visual:
+            continue
+        best = max(visual, key=lambda v: (len(words & set(_WORD.findall(v[1]))), -abs(len(v[1]) - len(t))))
+        if words & set(_WORD.findall(best[1])):
+            t = re.sub(r"^OR(?:\s+|$)|\s+OR$", "", _EQ_LABEL.sub("", t).strip())  # the "OR" between alternatives
+            if t:
+                out.append((best[0], t))
+    return out
+
+
+def _union(boxes: list[dict]) -> dict | None:
+    """Figures as one box (fractions of the page), cut from the page image as the key's crop; None without any."""
+    if not boxes:
+        return None
+    x0, y0 = min(b["x"] for b in boxes), min(b["y"] for b in boxes)
+    x1, y1 = max(b["x"] + b["width"] for b in boxes), max(b["y"] + b["height"] for b in boxes)
+    return {"x": x0, "y": y0, "width": x1 - x0, "height": y1 - y0}
+
+
+def _total(values: list[tuple[float, str]]) -> float:
+    """The step marks added up, an (A)/(B) alternative counted once (the larger)."""
+    plain = sum(v for v, p in values if not p)
+    groups: list[dict[str, float]] = []
+    for v, p in values:
+        if not p:
+            continue
+        if p.startswith("Either") and (not groups or any(k.startswith("Or") for k in groups[-1])):
+            groups.append({})
+        if not groups:
+            groups.append({})
+        groups[-1][p] = groups[-1].get(p, 0) + v
+    return plain + sum(max(g.values()) for g in groups)
+
+
+def keys_from_pdf_tables(page_results: list[tuple[dict, Any]],
+                         canonical_questions: list[Any] | None = None) -> list[SegmentedKey] | None:
+    """A typed marking scheme whose answers sit in a ruled table, one key per row label ("1.", "21(A).", "36."):
+    the MCQ's answer letter (ANS column), the solution, and a criterion per step mark ("½ Mark: <the step beside
+    it>"). Rows continued across pages join their key; "OR" rows and the "For visually impaired students only"
+    solutions are left out. None when the pages carry no such table: the model's blocks are used then."""
+    pages = [(page_info.get("table_rows") or [], page_info.get("table_cells") or [], page_info.get("page_number", i + 1),
+              page_info.get("table_figures") or [])
+             for i, (page_info, _) in enumerate(page_results)]
+    if sum(1 for rows, _, _, _ in pages for r in rows if r and r[0] and _KEY_LABEL.match(r[0].replace("\n", " "))) < 5:
+        return None
+    max_marks = {getattr(q, "normalized_number", None): getattr(q, "max_marks", None) for q in canonical_questions or []}
+    keys: dict[str, dict] = {}
+    current: str | None = None
+    for rows, cell_lines, page, figures in pages:
+        for k, cells in enumerate(rows):
+            lines = cell_lines[k] if k < len(cell_lines) else []
+            row_figures = figures[k] if k < len(figures) else []
+            label = (cells[0] or "").replace("\n", " ").strip()
+            middle = cells[1:-1]
+            text = "\n".join(c for c in middle if c and c.strip()).strip()
+            if _KEY_HEADER.match(label) or _KEY_HEADER.match(text.partition("\n")[0]):
+                continue
+            if m := _KEY_LABEL.match(label) if label else None:
+                number = f"{m.group(1)}({m.group(2)})" if m.group(2) else m.group(1)
+                current = normalize_question_number(number)
+                keys[current] = {"label": label.rstrip("."), "texts": [], "criteria": [], "values": [], "page": page, "figures": [],
+                                 "answer": None}
+                if len(middle) >= 2 and re.fullmatch(r"[A-D]", (middle[0] or "").strip()):  # the ANS column
+                    keys[current]["answer"] = middle[0].strip()
+                    text = "\n".join(c for c in middle[1:] if c and c.strip()).strip()
+            elif not label and text.upper() == "OR":
+                continue
+            elif not label and _KEY_VI.match(text):
+                # the solution for visually impaired candidates, and its continuation, is no key; a question
+                # number cell spanning both rows makes its figure look like the key's too
+                if current is not None:
+                    keys[current]["figures"] = [f for f in keys[current]["figures"] if f not in row_figures]
+                current = None
+                continue
+            elif current is None or label:
+                continue
+            key = keys[current]
+            if key["page"] == page:  # its figures, cut from the page image as the key's crop
+                key.setdefault("figures", []).extend(f for f in row_figures if f not in key["figures"])
+            if text:
+                key["texts"].append("\n".join(ln.rstrip() for ln in text.splitlines() if ln.strip()))
+            # each step mark with the solution step level with it
+            visual = [ln for cell in (lines[2:-1] if key["answer"] else lines[1:-1]) for ln in cell] if lines else []
+            steps = _step_texts([ln for ln in text.splitlines() if ln.strip()], visual)
+            # "OR" inside the solution: the part's alternatives ((iii)(A) OR (iii)(B)); only one of them is marked
+            # ("OR" may share the line of the alternative after it: "OR (iii) (B) ...")
+            ors = [y - (0.5 if ln.strip().upper() != "OR" else 0) for y, ln in visual if _OR_LINE.match(ln)]
+            starts = [(y, m.group(1)) for y, ln in visual if (m := _ALT_START.match(_OR_LINE.sub("", ln)))]
+            marks_lines = lines[-1] if lines else []
+            tokens: list[list] = []
+            for y, line in marks_lines:
+                if (v := _step_value(line)) is not None:
+                    tokens.append([y, v[0], v[1]])
+                elif tokens:
+                    tokens[-1][2] = f"{tokens[-1][2]} {line}".strip()  # "1 for" / "correct" / "figure"
+            owner = {i: min(range(len(tokens)), key=lambda j: abs(tokens[j][0] - sy))
+                     for i, (sy, _) in enumerate(steps)} if tokens else {}
+            for j, (y, value, note) in enumerate(tokens):
+                mine = [steps[i][1] for i in sorted(owner) if owner[i] == j]
+                if not mine and steps:
+                    mine = [min(steps, key=lambda st: abs(st[0] - y))[1]]
+                step = " ".join(mine)
+                step = step if len(step) <= 220 else step[:217].rstrip() + "..."
+                detail = " ".join(x for x in (step, f"({note.strip('() ')})" if note else "") if x)
+                prefix = ""
+                for n, oy in enumerate(ors):
+                    a_start = max((sy for sy, _ in starts if sy < oy), default=None)
+                    b_start = min((sy for sy, _ in starts if sy > oy), default=oy)
+                    b_end = ors[n + 1] if n + 1 < len(ors) else float("inf")
+                    if a_start is not None and a_start - 6 <= y < oy:
+                        prefix = f"Either ({next(l for sy, l in starts if sy == a_start)}): "
+                    elif oy < y < b_end and y >= b_start - 6:
+                        prefix = f"Or ({next((l for sy, l in starts if sy == b_start), 'B')}): "
+                key["criteria"].append(f"{_marks_label(value)}: {prefix}{detail or 'as in the scheme'}")
+                key["values"].append((value, prefix))
+    if len(keys) < 5:
+        return None
+    out = []
+    for norm, key in keys.items():
+        body = "\n".join(key["texts"]).strip()
+        if key["answer"]:  # an MCQ: the marks for the right option, no part marks
+            body = f"Answer: ({key['answer']})\n{body}".strip()
+            key["criteria"] = [f"{_marks_label(_total(key['values']) or 1)}: Correct option ({key['answer']})"]
+        stated = _total(key["values"]) or None
+        marks = max_marks.get(norm) or max_marks.get(parent_number(norm)) or stated
+        out.append(SegmentedKey(raw_question_number=key["label"], normalized_number=norm, answer_text=body, marks=marks,
+                                criteria=key["criteria"], accepted_answers=[key["answer"]] if key["answer"] else [],
+                                page_number=key["page"], bbox=_union(key["figures"])))
+    return out
+
+
 def segment_answer_keys(
     page_results: list[tuple[dict, Any]],
     canonical_questions: list[Any] | None = None,
@@ -200,6 +370,8 @@ def segment_answer_keys(
     own = formatter.current().segment_keys(page_results, canonical_questions)  # see cbse/formatter.py
     if own is not None:
         return own
+    if (table := keys_from_pdf_tables(page_results, canonical_questions)) is not None:
+        return table
     grouped: list[SegmentedKey] = []
     full_text = ""
 

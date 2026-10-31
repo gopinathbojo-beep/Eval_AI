@@ -1,7 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 import { resolve } from "node:path";
 
-const backend = resolve(import.meta.dirname, "../backend");
+const backend = resolve(import.meta.dirname, "../../backend");
 const python = process.env.PYTHON_EXECUTABLE ?? resolve(backend, process.platform === "win32" ? ".venv/Scripts/python.exe" : ".venv/bin/python");
 
 export default defineConfig({

@@ -170,6 +170,7 @@ export const SearchableCombobox = forwardRef<
   useEffect(() => {
     const handleOutsideClick = (e: MouseEvent) => {
       if (
+        isOpen &&
         containerRef.current &&
         !containerRef.current.contains(e.target as Node)
       ) {
@@ -197,7 +198,7 @@ export const SearchableCombobox = forwardRef<
 
     document.addEventListener("mousedown", handleOutsideClick);
     return () => document.removeEventListener("mousedown", handleOutsideClick);
-  }, [query, options, selectedOption, allowCustom, onAddCustom, onChange, onBlur]);
+  }, [isOpen, query, options, selectedOption, allowCustom, onAddCustom, onChange, onBlur]);
 
   // Scroll active item into view
   useEffect(() => {

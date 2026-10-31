@@ -1,5 +1,5 @@
 import pytest
-from .conftest import BEHAVIOUR, MODEL, make_pdf, make_png
+from .conftest import assign, BEHAVIOUR, MODEL, make_pdf, make_png
 
 H = {}
 
@@ -23,10 +23,11 @@ def test_ai_status(client, auth):
     assert s["available"] and s["model"] == MODEL
 
 
-def test_full_workflow(client, auth):
-    c, h = client, auth
-    cls = j(c.post("/api/classes", json={"name": "10-A"}, headers=h), 201)
-    sub = j(c.post("/api/subjects", json={"name": "Biology"}, headers=h), 201)
+def test_full_workflow(client, auth, teach):
+    c, m, h = client, auth, teach
+    cls = j(c.post("/api/classes", json={"name": "10-A"}, headers=m), 201)
+    sub = j(c.post("/api/subjects", json={"name": "Biology"}, headers=m), 201)
+    assign(cls["id"], sub["id"])
     exam = j(c.post("/api/exams", headers=h, json={"name": "Term 1", "academic_year": "2026-27", "class_id": cls["id"],
              "subject_id": sub["id"], "exam_type": "Unit", "total_marks": 15}), 201)
     eid = exam["id"]
@@ -101,7 +102,8 @@ def test_full_workflow(client, auth):
     qs2 = j(c.get(f"/api/exams/{eid}/questions", headers=h))
     assert [q["max_marks"] for q in qs2["questions"]] == [2, 5, 3, 5]
 
-    # --- student answer sheet
+    # --- student answer sheet (the student is on the roster, which management keeps)
+    j(c.post("/api/students", headers=m, json={"name": "Asha", "roll_number": "7", "class_id": cls["id"]}), 201)
     BEHAVIOUR["sheet"] = "main"
     r = c.post(f"/api/exams/{eid}/answer-sheets", headers=h, data={"student_name": "Asha", "roll_number": "7"},
                files={"file": ("sheet.pdf", make_pdf(1), "application/pdf")})
@@ -187,13 +189,7 @@ def test_full_workflow(client, auth):
     assert rep_pdf.status_code == 200 and rep_pdf.content.startswith(b"%PDF")
     from io import BytesIO
     from openpyxl import load_workbook
-<<<<<<< 7c662e7
     assert "K-Level Analysis" not in load_workbook(BytesIO(c.get("/api/reports/marksheet", headers=h).content)).sheetnames
-=======
-    workbook = load_workbook(BytesIO(c.get("/api/reports/marksheet", headers=h).content))
-    assert "K-Level Analysis" not in workbook.sheetnames
-    assert "Grade" in [cell.value for cell in workbook.active[1]]
->>>>>>> kishore/Version2.0
     # audit trail
     logs = j(c.get(f"/api/exams/{eid}/audit-logs", headers=h), 200)
     actions = {l["action"] for l in logs}
@@ -226,10 +222,11 @@ def test_full_workflow(client, auth):
     assert "attachment" in rep_pdf.headers["content-disposition"] and "__" not in rep_pdf.headers["content-disposition"]
 
 
-def test_duplicate_mapping_and_ai_unavailable(client, auth):
-    c, h = client, auth
-    cls = j(c.post("/api/classes", json={"name": "12-B"}, headers=h), 201)
-    sub = j(c.post("/api/subjects", json={"name": "Botany"}, headers=h), 201)
+def test_duplicate_mapping_and_ai_unavailable(client, auth, teach):
+    c, m, h = client, auth, teach
+    cls = j(c.post("/api/classes", json={"name": "12-B"}, headers=m), 201)
+    sub = j(c.post("/api/subjects", json={"name": "Botany"}, headers=m), 201)
+    assign(cls["id"], sub["id"])
     eid = j(c.post("/api/exams", headers=h, json={"name": "T2", "academic_year": "26", "class_id": cls["id"],
             "subject_id": sub["id"], "exam_type": "Unit", "total_marks": 15}), 201)["id"]
     # Ollama down -> clear AI_ERROR, nothing invented
@@ -256,6 +253,7 @@ def test_duplicate_mapping_and_ai_unavailable(client, auth):
     j(c.post(f"/api/exams/{eid}/answer-keys/verify", headers=h), 200)
 
     BEHAVIOUR["sheet"] = "dup"
+    j(c.post("/api/students", headers=m, json={"name": "Ravi", "roll_number": "3", "class_id": cls["id"]}), 201)
     ev = j(c.post(f"/api/exams/{eid}/answer-sheets", headers=h, data={"student_name": "Ravi", "roll_number": "3"},
                   files={"file": ("s.png", make_png(), "image/png")}), 202)
     d = j(c.get(f"/api/evaluations/{ev['id']}", headers=h))

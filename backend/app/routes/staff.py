@@ -30,7 +30,7 @@ def _view(u: User) -> dict:
 
 def _teacher(db: Session, manager: User, tid: str) -> User:
     u = db.get(User, tid)
-    if u is None or u.role != "teacher" or u.school_id != manager.school_id:
+    if u is None or u.role != "TEACHER" or u.school_id != manager.school_id:
         raise err(404, "NOT_FOUND", "Teacher not found.")
     return u
 
@@ -48,7 +48,7 @@ def _send_invite(db: Session, manager: User, u: User) -> None:
 
 @router.get("/teachers")
 def list_teachers(db: Session = Depends(get_db), m: User = Depends(current_school_manager)):
-    rows = (db.query(User).filter(User.school_id == m.school_id, User.role == "teacher", User.status != "removed")
+    rows = (db.query(User).filter(User.school_id == m.school_id, User.role == "TEACHER")
             .order_by(User.created_at.desc()).all())
     return [_view(u) for u in rows]
 
@@ -68,8 +68,8 @@ def invite_teacher(body: InviteIn, request: Request, db: Session = Depends(get_d
     if db.query(User).filter_by(email=email).first() is not None:
         # one email = one account and one role, at this school or any other
         raise err(409, "EMAIL_TAKEN", "This email already has an ADEM account. Use a different email.")
-    u = User(name=body.name.strip(), email=email, phone=body.phone.strip(), role="teacher", school_id=m.school_id,
-             status="invited", created_by=m.id)
+    u = User(name=body.name.strip(), email=email, phone=body.phone.strip(), role="TEACHER", school_id=m.school_id,
+             status="invited", created_by=m.id, registration_source="INVITE", profile={"phone": body.phone.strip()})
     db.add(u)
     db.flush()
     audit(db, exam_id=None, teacher_id=m.id, entity_type="user", entity_id=u.id, action="TEACHER_INVITED", ip=_ip(request))

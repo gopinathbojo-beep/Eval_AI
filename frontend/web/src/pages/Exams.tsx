@@ -528,7 +528,11 @@ export function ExamNew() {
           <Field
             label="Subject"
             required
-            hint="Search or type custom subject"
+            hint={
+              teacher?.role === "TEACHER"
+                ? "Subjects your school management assigned to you for this class"
+                : "Search or type custom subject"
+            }
             error={subjectError || undefined}
           >
             {(id) => (

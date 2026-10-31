@@ -5,7 +5,7 @@ import { SchoolLayout, type NavItem } from "./layouts/SchoolLayout";
 import Login from "./pages/Login";
 import Signup, { VerifyEmail } from "./pages/auth/Signup";
 import { AcceptInvite, ChangePassword, ForgotPassword, ResetPassword } from "./pages/auth/PasswordPages";
-import { IconStudents } from "./components/Icons";
+import { IconClasses, IconSparkles, IconStudents } from "./components/Icons";
 import Dashboard from "./pages/Dashboard";
 import { Loading } from "./components/ui";
 
@@ -33,9 +33,15 @@ const Management = lazy(() => import("./pages/Management"));
 const Family = lazy(() => import("./pages/Family"));
 
 const Teachers = lazy(() => import("./pages/school/Teachers"));
+const SchoolCredits = lazy(() => import("./pages/school/Credits"));
+const Rollover = lazy(() => import("./pages/school/Rollover"));
 
-// School management's area; more sections join as they are built
-const SCHOOL_NAV: NavItem[] = [{ to: "/school/teachers", label: "Teachers", icon: <IconStudents /> }];
+// School management's area
+const SCHOOL_NAV: NavItem[] = [
+  { to: "/school/teachers", label: "Teachers", icon: <IconStudents /> },
+  { to: "/school/credits", label: "Credits", icon: <IconSparkles /> },
+  { to: "/school/rollover", label: "Year rollover", icon: <IconClasses /> },
+];
 
 const Suspended = ({ children }: { children: React.ReactNode }) => (
   <Suspense fallback={<Loading text="Loading workspace..." />}>{children}</Suspense>
@@ -45,7 +51,6 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
-<<<<<<< 7c662e7:frontend/web/src/App.tsx
       <Route path="/signup" element={<Signup />} />
       <Route path="/verify-email" element={<VerifyEmail />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
@@ -55,12 +60,12 @@ export default function App() {
       <Route element={<SchoolLayout nav={SCHOOL_NAV} />}>
         <Route path="/school" element={<Navigate to="/school/teachers" replace />} />
         <Route path="/school/teachers" element={<Suspended><Teachers /></Suspended>} />
+        <Route path="/school/credits" element={<Suspended><SchoolCredits /></Suspended>} />
+        <Route path="/school/rollover" element={<Suspended><Rollover /></Suspended>} />
       </Route>
-=======
       <Route path="/register" element={<Suspended><Register /></Suspended>} />
       <Route path="/onboarding" element={<Suspended><Onboarding /></Suspended>} />
       <Route path="/account" element={<Suspended><Account /></Suspended>} />
->>>>>>> kishore/Version2.0:frontend/src/App.tsx
       <Route element={<AppLayout />}>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/teacher/*" element={<Navigate to="/dashboard" replace />} />

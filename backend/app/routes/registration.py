@@ -18,6 +18,7 @@ from ..security import (
     set_session_cookie,
     verify_password,
 )
+from ..services import school_setup
 from ..services.audit import audit
 from ..actor import actor_id
 from .core import teacher_view
@@ -150,6 +151,8 @@ def complete_profile(
         db.add(ws)
         db.flush()
         user.workspace_id = ws.id
+        if ws.kind == "SCHOOL":
+            school_setup.default_subjects(db, ws)  # every CBSE subject; management assigns them to teachers
     user.name = body.name.strip()
     user.profile = body.model_dump(exclude={"name", "role"})
     user.profile_completed_at = datetime.now(timezone.utc)
@@ -227,7 +230,7 @@ def change_password(
     user: Teacher = Depends(current_account),
     db: Session = Depends(get_db),
 ):
-    if not user.password_hash.startswith("!") and not verify_password(
+    if not (user.password_hash or "!").startswith("!") and not verify_password(
         body.current_password, user.password_hash
     ):
         raise err(400, "INVALID_PASSWORD", "Current password is incorrect.")

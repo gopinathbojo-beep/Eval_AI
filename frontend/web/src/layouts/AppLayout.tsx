@@ -437,7 +437,7 @@ export function AppLayout() {
 }
 
 function AppShell() {
-  const { user, teacher, loading, logout } = useAuth();
+  const { teacher, loading, logout } = useAuth();
   const loc = useLocation();
   const crumbNames = useCrumbNames();
   const [sidebarOpen, setSidebarOpen] = useState(false); // Mobile drawer state
@@ -527,10 +527,6 @@ function AppShell() {
   );
 
   if (loading) return <ShellSkeleton />;
-<<<<<<< 7c662e7:frontend/web/src/layouts/AppLayout.tsx
-  if (!teacher) return user ? <Navigate to="/school" replace /> : <Navigate to="/login" replace state={{ from: loc.pathname }} />;
-  if (teacher.must_change_password) return <Navigate to="/change-password" replace />;
-=======
   if (!teacher)
     return <Navigate to="/login" replace state={{ from: loc.pathname }} />;
   if (teacher.must_change_password) return <Navigate to="/account" replace />;
@@ -538,7 +534,6 @@ function AppShell() {
     return <Navigate to="/onboarding" replace />;
   if (teacher.is_admin && loc.pathname !== "/admin")
     return <Navigate to="/admin" replace />;
->>>>>>> kishore/Version2.0:frontend/src/layouts/AppLayout.tsx
 
   const navContent = (
     <div className="flex h-full flex-col">

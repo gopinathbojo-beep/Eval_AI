@@ -4,11 +4,12 @@ import copy
 import json
 import logging
 from pathlib import Path
+from PIL import Image
 from sqlalchemy.orm import Session
 from ..config import AI_BAD_RESPONSE_MESSAGE, AI_UNAVAILABLE_MESSAGE, INDIC_BAD_RESPONSE_MESSAGE, INDIC_UNAVAILABLE_MESSAGE, ai_unavailable_message, ai_bad_response_message
 from ..database import SessionLocal
 from ..documents import cropping
-from ..documents.renderer import RenderError, page_text as pdf_page_text, render_document
+from ..documents.renderer import RenderError, page_text as pdf_page_text, render_document, table_cell_lines as pdf_table_cell_lines, table_figures as pdf_table_figures, table_rows as pdf_table_rows
 from ..documents.storage import abs_path, rel
 from ..models import (AnswerKey, AnswerKeyDocument, AnswerSheetDocument, Evaluation, EvaluationItem, Exam, ExamQuestion,
                       QuestionPaperDocument, StudentAnswer)
@@ -243,6 +244,9 @@ def _load_results(doc, schema):
             if 1 <= p_num <= len(pdf_doc):
                 try:
                     p_dict["page_text"] = pdf_page_text(pdf_doc[p_num - 1])
+                    p_dict["table_rows"] = pdf_table_rows(pdf_doc[p_num - 1])  # a typed paper's question table
+                    p_dict["table_cells"] = pdf_table_cell_lines(pdf_doc[p_num - 1])  # ... with line heights (step marks)
+                    p_dict["table_figures"] = pdf_table_figures(pdf_doc[p_num - 1])  # ... and the pictures in its rows
                 except Exception:
                     pass
         data = json.loads(abs_path(p["ocr_file"]).read_text(encoding="utf-8"))
@@ -269,6 +273,30 @@ def _bbox_and_crop(p: dict, bbox, wd: Path, name: str):
     return nb, crop
 
 
+def _figure_crop(figures: list[tuple[int, dict]], pages_by_num: dict, wd: Path, name: str) -> str | None:
+    """A question's figures (paper.DocumentStructure.figures) cut from the page images, one under the other."""
+    parts = []
+    for page_number, box in figures:
+        p = pages_by_num.get(page_number)
+        nb = p and cropping.normalise_bbox(box, p["ocr_width"], p["ocr_height"], p["width"], p["height"])
+        if nb:
+            try:
+                parts.append(cropping.save_crop(abs_path(p["source_file"]), nb, wd / "crops" / f"{name}-{len(parts)}.png"))
+            except Exception:
+                log.exception("figure crop failed")
+    if len(parts) <= 1:
+        return rel(parts[0]) if parts else None
+    images = [Image.open(x) for x in parts]
+    sheet = Image.new("RGB", (max(i.width for i in images), sum(i.height for i in images)), "white")
+    y = 0
+    for i in images:
+        sheet.paste(i, (0, y))
+        y += i.height
+    dest = wd / "crops" / f"{name}.png"
+    sheet.save(dest, "PNG")
+    return rel(dest)
+
+
 def _build_questions(db: Session, doc, exam: Exam, wd: Path, results) -> None:
     existing_q_ids = [q.id for q in db.query(ExamQuestion).filter_by(exam_id=exam.id).all()]
     if existing_q_ids:
@@ -277,7 +305,8 @@ def _build_questions(db: Session, doc, exam: Exam, wd: Path, results) -> None:
         db.query(EvaluationItem).filter(EvaluationItem.exam_question_id.in_(existing_q_ids)).delete(synchronize_session=False)
         db.query(ExamQuestion).filter_by(exam_id=exam.id).delete()
     struct = parse_question_paper_structure(results)
-    apply_pdf_question_text(struct.questions, [p.get("page_text") or "" for p, _ in results])
+    if not struct.from_pdf_table:  # rows read from a typed paper's table are exact already
+        apply_pdf_question_text(struct.questions, [p.get("page_text") or "" for p, _ in results])
     labeler_model = text_model_for(exam.subject.name if exam.subject else None)
     if labeler_model:
         label_question_types(struct.questions, labeler_model)
@@ -313,7 +342,7 @@ def _build_questions(db: Session, doc, exam: Exam, wd: Path, results) -> None:
             )
 
     # The CBSE paper design of this standard and subject (class10/subjects/<subject>/format.json): marks the parser missed, mismatches
-    design = standards.for_exam(exam)
+    design = standards.for_exam(exam, (results[0][0].get("page_text") or "") if results else "")
     design_problems = standards.check(struct, design) if design else []
     for problem in design_problems:
         log.info("Exam %s vs CBSE %s design: %s", exam.id, design["subject"], problem)
@@ -335,6 +364,8 @@ def _build_questions(db: Session, doc, exam: Exam, wd: Path, results) -> None:
         pos += 1
         p = pages_by_num.get(q.page_start) or results[0][0]
         nb, crop = _bbox_and_crop(p, q.bbox, wd, f"q{pos:03d}")
+        if not crop and q.normalized_number in struct.figures:  # a typed paper's question: its figure, not a crop
+            crop = _figure_crop(struct.figures[q.normalized_number], pages_by_num, wd, f"q{pos:03d}-figure")
 
         row = ExamQuestion(
             exam_id=exam.id,
@@ -441,12 +472,54 @@ def _build_answer_key(db: Session, doc, exam: Exam, wd: Path, results) -> None:
     db.commit()
 
 
+def _key_texts(db: Session, exam_id: str, questions: list[ExamQuestion]) -> dict[str, str]:
+    """The exam's active key text per question number ("7" -> ...), for the segmenter to compare answers with."""
+    numbers = {q.id: q.normalized_number for q in questions if q.normalized_number}
+    out: dict[str, str] = {}
+    for k in db.query(AnswerKey).filter_by(exam_id=exam_id, is_active=True):
+        if (n := numbers.get(k.exam_question_id)) and k.answer_text:
+            out[n] = f"{out[n]}\n{k.answer_text}" if n in out else k.answer_text
+    return out
+
+
+def _rereader(pages_by_num: dict[int, dict], wd: Path):
+    """reread(page_number, bbox): that region of the page read again by IndicOCR, its blocks in page coordinates;
+    [] when it cannot be read."""
+    count = 0
+
+    def reread(page_number: int, bbox: dict) -> list:
+        nonlocal count
+        p = pages_by_num.get(page_number)
+        if not p or not p.get("processed_file"):
+            return []
+        count += 1
+        pad = 12
+        try:
+            crop = cropping.save_crop(abs_path(p["processed_file"]), bbox, wd / "crops" / f"reread-{page_number:03d}-{count}.png", pad)
+            items = read_page(crop, StudentPageResult, page_number).parsed.answers
+        except (IndicUnavailable, IndicResponseError, OSError) as e:
+            log.warning("Re-reading page %d region failed: %s", page_number, e)
+            return []
+        dx, dy = max(0, bbox["x"] - pad), max(0, bbox["y"] - pad)
+        for it in items:
+            if it.bbox:
+                it.bbox.x += dx
+                it.bbox.y += dy
+        return items
+    return reread
+
+
 def _build_student_answers(db: Session, doc, exam: Exam, wd: Path, results) -> None:
     ev = db.query(Evaluation).filter_by(answer_sheet_id=doc.id).one()
     db.query(StudentAnswer).filter_by(evaluation_id=ev.id).delete()
     pages_by_num = {p["page_number"]: p for p, _ in results}
     canonical_qs = db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all()
-    answers = segment_student_answers(results, canonical_questions=canonical_qs)
+    keys = _key_texts(db, exam.id, canonical_qs)
+    answers = segment_student_answers(results, canonical_questions=canonical_qs, keys=keys)
+    # the subject's self-repair before anything is flagged; re-reading regions only where this sheet was read by IndicOCR
+    indic = uses_indic_ocr(exam.subject.name if exam.subject else None)
+    reread = _rereader(pages_by_num, wd) if indic else None
+    answers = formatter.current().repair_answers(answers, results, canonical_qs, keys, reread)
     n = 0
     for a in answers:
         n += 1

@@ -87,6 +87,8 @@ def _call_once(system: str, user: str, image_path: Path | None, format: str | No
         except (httpx.ConnectError, httpx.ConnectTimeout):
             raise AIUnavailable("Cannot connect to the remote AI provider.") from None
         except httpx.HTTPStatusError as error:
+            if error.response.status_code == 429:
+                raise AIUnavailable("The AI provider is rate limited. Retry later; no automatic repeated calls were made.") from None
             if error.response.status_code in {401, 402, 403}:
                 raise AIUnavailable("The AI provider rejected access. Check the API key, model access and available credits.") from None
             raise

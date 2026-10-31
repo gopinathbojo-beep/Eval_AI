@@ -340,7 +340,7 @@ export function DocProgress({
               icon={<IconRotateCcw size={15} />}
             >
               {doc.status === "AI_ERROR"
-                ? "Retry (Now that Ollama is running)"
+                ? "Retry AI processing"
                 : "Retry Failed Pages"}
             </Button>
           </div>

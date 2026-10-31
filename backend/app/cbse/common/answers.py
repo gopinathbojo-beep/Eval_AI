@@ -27,6 +27,7 @@ class SegmentedAnswer:
     bbox: dict | None
     ocr_confidence: float | None
     position: int = 0
+    boundary_confidence: float | None = None  # how sure the segmenter is where this answer starts (align.py)
 
 
 # Sub-part markers: e.g. "(a)", "(b)", "a)", "b)", "(i)", "(ii)", "a>", "b>", "a,", "b,"
@@ -417,9 +418,10 @@ def _segment_invented_labels(
 def segment_student_answers(
     page_results: list[tuple[dict, Any]],
     canonical_questions: list[Any] | None = None,
+    keys: dict[str, str] | None = None,
 ) -> list[SegmentedAnswer]:
     """Segment and group raw OCR blocks into coherent student answers across pages."""
-    own = formatter.current().segment_answers(page_results, canonical_questions)  # see cbse/formatter.py
+    own = formatter.current().segment_answers(page_results, canonical_questions, keys)  # see cbse/formatter.py
     if own is not None:
         return own
     if canonical_questions:

@@ -63,3 +63,73 @@ def grant_signup_bonus(db: Session, owner_type: str, owner_id: str, phone_key: s
     ref = f"{owner_type}-phone:{phone_key}" if phone_key else f"{owner_type}:{owner_id}"
     post(db, wallet_for(db, owner_type, owner_id), "SIGNUP_BONUS", amount, ref, ref_type=owner_type,
          note="Free signup credits")
+
+
+# ---------- evaluation charging: hold on start, capture on success, release on failure ----------
+def wallet_of_exam(db: Session, exam) -> Wallet | None:
+    """The wallet an exam's evaluations are charged to: its school's, or the parent's for a family exam. None for an
+    exam outside any workspace (records from before workspaces), which is not charged."""
+    from ..models import Workspace
+    ws = db.get(Workspace, exam.workspace_id) if getattr(exam, "workspace_id", None) else None
+    if ws is None:
+        return None
+    return wallet_for(db, "parent", ws.owner_id) if ws.kind == "FAMILY" else wallet_for(db, "school", ws.id)
+
+
+def _holds(db: Session, ev_id: str) -> list[CreditLedger]:
+    return db.query(CreditLedger).filter(CreditLedger.type == "EVAL_HOLD", CreditLedger.ref_id.like(f"{ev_id}#%")).all()
+
+
+def _settled(db: Session, hold: CreditLedger) -> bool:
+    return db.query(CreditLedger).filter(CreditLedger.ref_id == hold.ref_id,
+                                         CreditLedger.type.in_(("EVAL_CAPTURE", "EVAL_RELEASE"))).first() is not None
+
+
+def evaluation_cost(db: Session, ev) -> int:
+    return int(setting(db, "eval_per_sheet"))
+
+
+def is_charged(db: Session, ev) -> bool:
+    """The sheet was paid for already: grading it again (after a teacher's correction, a retry) is free."""
+    return any(db.query(CreditLedger).filter_by(type="EVAL_CAPTURE", ref_id=h.ref_id).first() for h in _holds(db, ev.id))
+
+
+def quote(db: Session, ev, exam) -> dict:
+    wallet = wallet_of_exam(db, exam)
+    free = wallet is None or is_charged(db, ev)
+    cost = 0 if free else evaluation_cost(db, ev)
+    balance = wallet.balance if wallet else None
+    return {"credits": cost, "free": free, "balance": balance, "enough": free or (balance or 0) >= cost,
+            "reason": "Already paid: grading again is free." if wallet and free else
+                      ("Not charged." if wallet is None else f"{cost} credit(s) per answer sheet.")}
+
+
+def hold_evaluation(db: Session, ev, exam, actor_id: str | None = None) -> CreditLedger | None:
+    """Reserve the sheet's credits before a full grading run. None when it costs nothing (paid already, no wallet,
+    or a hold is still open). Raises InsufficientCredits. The caller commits."""
+    wallet = wallet_of_exam(db, exam)
+    if wallet is None or is_charged(db, ev):
+        return None
+    holds = _holds(db, ev.id)
+    if any(not _settled(db, h) for h in holds):
+        return None  # a run already holds credits for this sheet
+    cost = evaluation_cost(db, ev)
+    if cost <= 0:
+        return None
+    return post(db, wallet, "EVAL_HOLD", -cost, f"{ev.id}#{len(holds) + 1}", ref_type="evaluation",
+                note="Credits held while the answer sheet is graded", actor_id=actor_id, held_change=cost)
+
+
+def settle_evaluation(db: Session, ev_id: str, success: bool) -> None:
+    """Capture the open hold when grading succeeded, give the credits back when it failed. Nothing to do without an
+    open hold (a free re-grade). The caller commits."""
+    for h in _holds(db, ev_id):
+        if _settled(db, h):
+            continue
+        wallet = db.get(Wallet, h.wallet_id)
+        if success:
+            post(db, wallet, "EVAL_CAPTURE", 0, h.ref_id, ref_type="evaluation", note="Answer sheet graded",
+                 held_change=h.amount)  # h.amount is negative: the hold leaves "held"
+        else:
+            post(db, wallet, "EVAL_RELEASE", -h.amount, h.ref_id, ref_type="evaluation",
+                 note="Grading failed: credits returned", held_change=h.amount)

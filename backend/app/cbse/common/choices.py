@@ -37,6 +37,8 @@ _CAPITAL_OR_AT_LINE_END = re.compile(r"(?<=\S)[ \t]+(OR)[ \t]*\n")
 _OR_BEFORE_LETTER = re.compile(r"(?<=\S)[ \t]+(Or)[ \t]*\n(?=[ \t]*\(?[A-H][ \t]*[.)])")
 # "Attempt either sub-part C or D." (CBSE): the OR after it chooses between two parts, the question stays one
 _PART_CHOICE = re.compile(r"attempt\s+(?:either\s+)?sub[\s-]*parts?\s*\(?[A-Za-z]{1,4}\)?\s+or\s+\(?[A-Za-z]{1,4}\)?", re.I)
+# "(iii)(A) ... OR (iii)(B) ..." (CBSE Maths case studies): the same choice inside a part, without the announcement
+_ROMAN_PART_ALT = re.compile(r"^[ \t]*\([ \t]*([ivx]{1,4})[ \t]*\)[ \t]*\([ \t]*([A-D])[ \t]*\)", re.I | re.M)
 
 
 def isolate_either_or(text: str) -> str:
@@ -55,8 +57,9 @@ _VISUALLY_IMPAIRED = re.compile(
 
 
 def asks_part_choice(text: str) -> bool:
-    """"Attempt either sub-part C or D": the question's last part is a choice."""
-    return bool(_PART_CHOICE.search(text or ""))
+    """"Attempt either sub-part C or D", or "(iii)(A) ... OR (iii)(B) ...": the question's last part is a choice."""
+    found = _ROMAN_PART_ALT.findall(text or "")
+    return bool(_PART_CHOICE.search(text or "")) or (len(found) > 1 and len({p.lower() for p, _ in found}) == 1)
 
 
 def drop_visually_impaired(text: str) -> str:
@@ -81,6 +84,9 @@ def split_alternatives(text: str) -> list[str]:
         if joins and alts:
             alts[-1] = f"{alts[-1]}\nOR\n{alt}"
             joins -= 1
+        elif alts and (m := _ROMAN_PART_ALT.match(alt)) and m.group(2).upper() != "A" and re.search(
+                rf"^[ \t]*\([ \t]*{m.group(1)}[ \t]*\)[ \t]*\([ \t]*A[ \t]*\)", alts[-1], re.I | re.M):
+            alts[-1] = f"{alts[-1]}\nOR\n{alt}"  # (iii)(B) after (iii)(A): a choice inside part (iii), one question
         else:
             alts.append(alt)
         joins += len(_PART_CHOICE.findall(alt))

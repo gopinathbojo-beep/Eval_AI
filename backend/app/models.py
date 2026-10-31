@@ -2,7 +2,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, synonym
 from .database import Base
 
 
@@ -14,66 +14,63 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-class School(Base):
-    """One school = one organisation. Self-signed-up schools stay PENDING until a Platform Admin approves them."""
-    __tablename__ = "schools"
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
-    name: Mapped[str] = mapped_column(String(200))
-    board: Mapped[str] = mapped_column(String(20), default="CBSE")
-    address: Mapped[str] = mapped_column(Text, default="")
-    city: Mapped[str] = mapped_column(String(100), default="")
-    state: Mapped[str] = mapped_column(String(100), default="")
-    phone: Mapped[str] = mapped_column(String(30), default="")
-    status: Mapped[str] = mapped_column(String(20), default="PENDING")  # PENDING | ACTIVE | SUSPENDED
-    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    approved_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+class Teacher(Base):
+    """Every account, whatever its role. One email = one account.
 
-
-class User(Base):
-    """Every account. One email = one role. Teachers keep the column name teacher_id on the rows they own."""
-    __tablename__ = "users"
+    role: ADMIN (platform console; admin_role says what it may do), MANAGEMENT (runs a school workspace), TEACHER
+    (a school's teacher, works on the classes and subjects assigned), PARENT (a family workspace), UNASSIGNED (signed up,
+    profile not finished). Rows a user owns keep the column name teacher_id.
+    approval_status: APPROVED, PENDING (waiting for the platform team), REJECTED, INVITED (emailed invitation not yet
+    accepted). is_active False = suspended or removed."""
+    __tablename__ = "teachers"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
     name: Mapped[str] = mapped_column(String(200))
     email: Mapped[str] = mapped_column(String(200), unique=True, index=True)
-<<<<<<< 7c662e7
-    phone: Mapped[str] = mapped_column(String(30), default="")
-    role: Mapped[str] = mapped_column(String(20), default="teacher")  # platform_admin | school_manager | teacher | parent
-    admin_role: Mapped[str | None] = mapped_column(String(20), nullable=True)  # super_admin | admin | viewer
-    school_id: Mapped[str | None] = mapped_column(ForeignKey("schools.id"), index=True, nullable=True)
-    status: Mapped[str] = mapped_column(String(20), default="active")  # invited | active | suspended | removed
+    phone: Mapped[str] = mapped_column(String(30), default="", server_default="")
     password_hash: Mapped[str | None] = mapped_column(String(200), nullable=True)  # null = Google-only or invited
-    google_sub: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
-    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
-    failed_attempts: Mapped[int] = mapped_column(Integer, default=0)
-    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    token_version: Mapped[int] = mapped_column(Integer, default=0)  # bumping it signs out every session
-    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
-    school: Mapped[School | None] = relationship()
-
-
-Teacher = User  # the teacher routes predate roles; a teacher is a User with role "teacher"
-=======
-    password_hash: Mapped[str] = mapped_column(String(200))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     google_sub: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True)
-    session_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    session_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")  # bumping it ends every session
+    failed_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     approval_status: Mapped[str] = mapped_column(String(20), default="APPROVED", server_default="APPROVED")
     registration_source: Mapped[str] = mapped_column(String(20), default="ADMIN", server_default="ADMIN")
     profile: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     profile_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     rejection_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     role: Mapped[str] = mapped_column(String(20), default="TEACHER", server_default="TEACHER")
+    admin_role: Mapped[str | None] = mapped_column(String(20), nullable=True)  # super_admin | admin | viewer
     workspace_id: Mapped[str | None] = mapped_column(ForeignKey("workspaces.id"), nullable=True, index=True)
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    workspace: Mapped[Workspace | None] = relationship(foreign_keys=[workspace_id])
+
+    # The names our signup, invite and staff code uses for the same columns
+    school_id = synonym("workspace_id")
+    token_version = synonym("session_version")
+    school = synonym("workspace")
+
+    @property
+    def status(self) -> str:
+        """invited | active | suspended"""
+        if self.approval_status == "INVITED":
+            return "invited"
+        return "active" if self.is_active else "suspended"
+
+    @status.setter
+    def status(self, value: str) -> None:
+        if value == "invited":
+            self.approval_status, self.is_active = "INVITED", True
+        else:
+            self.is_active = value == "active"
+            if self.approval_status == "INVITED":
+                self.approval_status = "APPROVED"
 
 
-# Keep the legacy table and authentication alias for existing API clients.
+# Our account code and older API clients call an account a User
 User = Teacher
 
 
@@ -113,13 +110,28 @@ class PendingUpload(Base):
 
 
 class Workspace(Base):
+    """One organisation: a SCHOOL (its management account owns it, its teachers work in it) or a FAMILY (a parent).
+
+    status: ACTIVE, or PENDING for a self-signed-up school until the platform team approves it, or SUSPENDED.
+    is_active False switches the workspace off altogether."""
     __tablename__ = "workspaces"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
-    kind: Mapped[str] = mapped_column(String(10))
+    kind: Mapped[str] = mapped_column(String(10))  # SCHOOL | FAMILY
     name: Mapped[str] = mapped_column(String(200))
     owner_id: Mapped[str] = mapped_column(String(36), unique=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    status: Mapped[str] = mapped_column(String(20), default="ACTIVE", server_default="ACTIVE")
+    board: Mapped[str] = mapped_column(String(20), default="CBSE", server_default="CBSE")
+    address: Mapped[str] = mapped_column(Text, default="", server_default="")
+    city: Mapped[str] = mapped_column(String(100), default="", server_default="")
+    state: Mapped[str] = mapped_column(String(100), default="", server_default="")
+    phone: Mapped[str] = mapped_column(String(30), default="", server_default="")
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    approved_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+School = Workspace  # our school signup, staff and credits code says School
 
 
 class TeacherAssignment(Base):
@@ -129,18 +141,13 @@ class TeacherAssignment(Base):
     teacher_id: Mapped[str] = mapped_column(ForeignKey("teachers.id"), index=True)
     class_id: Mapped[str] = mapped_column(ForeignKey("classes.id", ondelete="CASCADE"))
     subject_id: Mapped[str] = mapped_column(ForeignKey("subjects.id", ondelete="CASCADE"))
->>>>>>> kishore/Version2.0
 
 
 class SchoolClass(Base):
     __tablename__ = "classes"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
-<<<<<<< 7c662e7
-    teacher_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
-=======
     teacher_id: Mapped[str] = mapped_column(ForeignKey("teachers.id"), index=True)
     workspace_id: Mapped[str | None] = mapped_column(ForeignKey("workspaces.id"), index=True)
->>>>>>> kishore/Version2.0
     name: Mapped[str] = mapped_column(String(100))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
@@ -148,12 +155,8 @@ class SchoolClass(Base):
 class Subject(Base):
     __tablename__ = "subjects"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
-<<<<<<< 7c662e7
-    teacher_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
-=======
     teacher_id: Mapped[str] = mapped_column(ForeignKey("teachers.id"), index=True)
     workspace_id: Mapped[str | None] = mapped_column(ForeignKey("workspaces.id"), index=True)
->>>>>>> kishore/Version2.0
     name: Mapped[str] = mapped_column(String(100))
     code: Mapped[str | None] = mapped_column(String(30), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
@@ -175,16 +178,15 @@ class Student(Base):
 class Exam(Base):
     __tablename__ = "exams"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
-<<<<<<< 7c662e7
-    # The owner: a teacher, or for origin PARENT the parent. Schools see exams whose owner belongs to the school,
-    # so parent exams (owner has no school) never reach a school.
-    teacher_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
-    origin: Mapped[str] = mapped_column(String(20), default="TEACHER")  # TEACHER | PARENT
-=======
+    # The owner: a teacher, or for origin PARENT the parent; the workspace (school or family) it belongs to
     teacher_id: Mapped[str] = mapped_column(ForeignKey("teachers.id"), index=True)
     workspace_id: Mapped[str | None] = mapped_column(ForeignKey("workspaces.id"), index=True)
->>>>>>> kishore/Version2.0
+    origin: Mapped[str] = mapped_column(String(20), default="TEACHER", server_default="TEACHER")  # TEACHER | PARENT
     name: Mapped[str] = mapped_column(String(200))
+    standard_profile_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    standard_version: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    standard_options: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    standard_validation: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     academic_year: Mapped[str] = mapped_column(String(20))
     class_id: Mapped[str] = mapped_column(ForeignKey("classes.id"))
     subject_id: Mapped[str] = mapped_column(ForeignKey("subjects.id"))
@@ -211,6 +213,7 @@ class ExamQuestion(Base):
     display_number: Mapped[str] = mapped_column(String(50))
     normalized_number: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
     question_text: Mapped[str] = mapped_column(Text, default="")
+    structure: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     raw_ocr_text: Mapped[str] = mapped_column(Text, default="")
     question_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     max_marks: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -252,11 +255,13 @@ class _DocMixin:
 class QuestionPaperDocument(_DocMixin, Base):
     __tablename__ = "question_paper_documents"
     exam_id: Mapped[str] = mapped_column(ForeignKey("exams.id"), index=True)
+    extraction: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 class AnswerKeyDocument(_DocMixin, Base):
     __tablename__ = "answer_key_documents"
     exam_id: Mapped[str] = mapped_column(ForeignKey("exams.id"), index=True)
+    extraction: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 class AnswerSheetDocument(_DocMixin, Base):
@@ -366,12 +371,8 @@ class AuditLog(Base):
     __tablename__ = "audit_logs"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
     exam_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
-<<<<<<< 7c662e7
     teacher_id: Mapped[str | None] = mapped_column(String(36), nullable=True)  # the acting user, whatever the role
-=======
-    teacher_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     workspace_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
->>>>>>> kishore/Version2.0
     entity_type: Mapped[str] = mapped_column(String(50))
     entity_id: Mapped[str] = mapped_column(String(36))
     action: Mapped[str] = mapped_column(String(60))
@@ -412,7 +413,7 @@ class SchoolProfile(Base):
     """School details printed on reports and report cards (one per teacher)."""
     __tablename__ = "school_profiles"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
-    teacher_id: Mapped[str] = mapped_column(ForeignKey("users.id"), unique=True, index=True)
+    teacher_id: Mapped[str] = mapped_column(ForeignKey("teachers.id"), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(200), default="")
     address: Mapped[str] = mapped_column(Text, default="")
     principal_name: Mapped[str] = mapped_column(String(200), default="")
@@ -427,7 +428,7 @@ class ReportTemplate(Base):
     """A teacher's saved layout for the exam report ("report") or the report card ("report_card")."""
     __tablename__ = "report_templates"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
-    teacher_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    teacher_id: Mapped[str] = mapped_column(ForeignKey("teachers.id"), index=True)
     kind: Mapped[str] = mapped_column(String(20))
     name: Mapped[str] = mapped_column(String(100))
     config: Mapped[dict] = mapped_column(JSON, default=dict)
@@ -441,7 +442,7 @@ class AuthToken(Base):
     __tablename__ = "auth_tokens"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
     kind: Mapped[str] = mapped_column(String(20))  # invite | reset | verify
-    user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"), index=True, nullable=True)
+    user_id: Mapped[str | None] = mapped_column(ForeignKey("teachers.id"), index=True, nullable=True)
     signup_id: Mapped[str | None] = mapped_column(String(36), index=True, nullable=True)
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -466,7 +467,7 @@ class SignupRequest(Base):
 class Consent(Base):
     __tablename__ = "consents"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
-    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("teachers.id"), index=True)
     kind: Mapped[str] = mapped_column(String(20))  # privacy | terms | child_data
     version: Mapped[str] = mapped_column(String(20))
     ip: Mapped[str] = mapped_column(String(64), default="")
@@ -477,7 +478,7 @@ class Consent(Base):
 class Child(Base):
     __tablename__ = "children"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
-    parent_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    parent_id: Mapped[str] = mapped_column(ForeignKey("teachers.id"), index=True)
     name: Mapped[str] = mapped_column(String(200))
     standard: Mapped[int] = mapped_column(Integer)  # 10 | 12
     subjects: Mapped[list] = mapped_column(JSON, default=list)
@@ -592,7 +593,7 @@ class Payment(Base):
 class Dispute(Base):
     __tablename__ = "disputes"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
-    raised_by: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    raised_by: Mapped[str] = mapped_column(ForeignKey("teachers.id"), index=True)
     evaluation_id: Mapped[str] = mapped_column(ForeignKey("evaluations.id"))
     exam_question_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     reason: Mapped[str] = mapped_column(Text)
@@ -607,7 +608,7 @@ class Dispute(Base):
 class SupportTicket(Base):
     __tablename__ = "support_tickets"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
-    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("teachers.id"), index=True)
     subject: Mapped[str] = mapped_column(String(200))
     message: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(20), default="OPEN")  # OPEN | ANSWERED | CLOSED

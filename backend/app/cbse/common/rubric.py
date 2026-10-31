@@ -56,6 +56,10 @@ _NAMED_VALUE = re.compile(r"\bcorrect\b[^=]*=\s*(-?\d[\d,]*(?:\.\d+)?)(?!\s*[+\-
 _VALUE_IN_BRACKETS = re.compile(r"\(\s*(?:Rs\.?\s*)?(-?\d[\d,]*(?:\.\d+)?)\s*[^()]{0,6}\)\s*\.?\s*$")
 # "Definition of rusting (1 mark) + balanced chemical equation (1 mark)": two points in one line
 _SUBPOINT = re.compile(r"(?P<text>[^+]+?)\s*\(\s*(?P<m>\d+(?:\.\d+)?|½)\s*marks?\s*\)", re.I)
+# a step of working: an equation, not a sentence naming a value ("x + y = 9 ----(1)", "45±√45²−4 (324)")
+_MATHY = re.compile(r"[=⇒±√∴]|\d\s*[−\-+×*/]\s*\(?\d")
+# "Either (A): ..." / "Or (B): ...": the marking scheme's alternatives for one part, only one of which is marked
+_ALT = re.compile(r"^(?P<w>Either|Or)\s*\(\s*(?P<l>[A-D])\s*\)\s*:\s*", re.I)
 _EXACT_WORDS = re.compile(r"\b(?:choice|word\s+identification|correct\s+word|fill(?:ed)?\s+in|blank|option)\b", re.I)
 
 
@@ -71,6 +75,8 @@ class Point:
     kind: str = "meaning"
     part: str | None = None
     expected: list[str] = field(default_factory=list)
+    alt_group: int | None = None  # points of one "Either (A) ... Or (B)" choice share a group
+    alt: str | None = None        # the alternative they belong to: "A", "B"
 
 
 @dataclass
@@ -84,7 +90,14 @@ class Rubric:
 
     @property
     def total(self) -> float:
-        return sum(p.marks for p in self.points)
+        """The marks on offer: every point, an alternative's points counted once (the largest alternative)."""
+        plain = sum(p.marks for p in self.points if p.alt_group is None)
+        groups: dict[int, dict[str, float]] = {}
+        for p in self.points:
+            if p.alt_group is not None:
+                groups.setdefault(p.alt_group, {}).setdefault(p.alt or "", 0)
+                groups[p.alt_group][p.alt or ""] += p.marks
+        return plain + sum(max(g.values()) for g in groups.values())
 
     def to_dict(self) -> dict:
         return {**asdict(self), "total": self.total}
@@ -151,12 +164,15 @@ def _kind_and_expected(text: str, part_answer: str | None, key_text: str) -> tup
             word = [part_answer.strip(" .")]
         if word:
             return "exact", word
+    # "... for n = 10: 440." -> 440 (the value after the colon), else "Correct n = 9"
+    if m := (re.search(r"(?<!\b[A-Za-z]):\s+(-?\d[\d,]*(?:\.\d+)?)\s*\.?\s*$", text) or _NAMED_VALUE.search(text)):
+        return "number", [m.group(1).replace(",", "")]
+    if _MATHY.search(text):  # a step of working: its numbers and bracketed labels are no expected value
+        return "meaning", []
     nums = _numbers(text)
     if nums and _NUMBER_WORDS.search(text):
         return "number", nums[-1:]
-    # "... for n = 10: 440." -> 440 (the value after the colon), else "Correct n = 9", else "(Rs. 43,560)"
-    if m := (re.search(r":\s*(-?\d[\d,]*(?:\.\d+)?)\s*\.?\s*$", text) or _NAMED_VALUE.search(text)
-             or _VALUE_IN_BRACKETS.search(text)):
+    if m := _VALUE_IN_BRACKETS.search(text):  # "(Rs. 43,560)"
         return "number", [m.group(1).replace(",", "")]
     return "meaning", []
 
@@ -232,6 +248,14 @@ def _read_line(line: str, rubric: Rubric, parts: dict[str, str], question_parts:
             rubric.notes.append(line)
         return pending
     text = m.group("text").strip()
+    alt_group = alt = None
+    if a := _ALT.match(text):
+        text, alt = text[a.end():].strip(), a.group("l").upper()
+        groups = [p.alt_group for p in rubric.points if p.alt_group is not None]
+        last = max(groups) if groups else None
+        starts_new = a.group("w").lower() == "either" and (
+            last is None or any(p.alt != alt for p in rubric.points if p.alt_group == last))
+        alt_group = (last or 0) + 1 if starts_new or last is None else last
     refs = _PART_REF.findall(text)
     part = refs[0] if len(set(refs)) == 1 and refs[0] in "abcdefgh" else None
     k, expected = _kind_and_expected(text, parts.get(part) if part else None, key_text)
@@ -246,7 +270,7 @@ def _read_line(line: str, rubric: Rubric, parts: dict[str, str], question_parts:
             sk, sexp = _kind_and_expected(sub_text, parts.get(part) if part else None, key_text)
             rubric.points.append(Point(str(len(rubric.points) + 1), _marks(x.group("m")), sub_text, sk, part, sexp))
         return None
-    point = Point(str(len(rubric.points) + 1), _marks(m.group("m")), text, k, part, expected)
+    point = Point(str(len(rubric.points) + 1), _marks(m.group("m")), text, k, part, expected, alt_group, alt)
     rubric.points.append(point)
     return point
 

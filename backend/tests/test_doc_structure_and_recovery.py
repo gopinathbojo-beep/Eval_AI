@@ -2,6 +2,7 @@
 import pytest
 from dataclasses import dataclass
 from typing import Any
+from tests.conftest import assign
 from app.ocr.schemas import QuestionPageResult, QuestionItem, StudentPageResult, StudentAnswerItem, AnswerKeyPageResult, AnswerKeyItem
 from app.cbse.common.paper import (
     parse_question_paper_structure,
@@ -177,9 +178,9 @@ def test_answer_key_multipage_continuation():
     assert "Second part continues" in keys[0].answer_text
 
 
-def test_answer_key_split_and_merge_api(client, auth):
+def test_answer_key_split_and_merge_api(client, auth, teach):
     """Test splitting and merging answer keys via the API."""
-    c, h = client, auth
+    c, m, h = client, auth, teach
     from app.database import SessionLocal
     from app.models import AnswerKey, Exam, ExamQuestion, SchoolClass, Subject, Teacher
     db = SessionLocal()
@@ -189,9 +190,11 @@ def test_answer_key_split_and_merge_api(client, auth):
         sub = Subject(teacher_id=t.id, name="Subject SplitKey")
         db.add_all([cls, sub])
         db.commit()
+        tt = db.query(Teacher).filter_by(email="teacher@school.org").one()  # the teacher runs the exam
+        assign(cls.id, sub.id)
 
         exam = Exam(
-            teacher_id=t.id, class_id=cls.id, subject_id=sub.id,
+            teacher_id=tt.id, class_id=cls.id, subject_id=sub.id,
             name="Exam SplitKey", academic_year="2026-27", exam_type="Unit",
             total_marks=20, status="ANSWER_KEY_UPLOADED"
         )
@@ -240,9 +243,9 @@ def test_answer_key_split_and_merge_api(client, auth):
     assert "Part B text" in merged["answer_text"]
 
 
-def test_student_answer_split_merge_and_suggestion_api(client, auth):
+def test_student_answer_split_merge_and_suggestion_api(client, auth, teach):
     """Test splitting, merging, and accepting suggestions on student answers via API."""
-    c, h = client, auth
+    c, m, h = client, auth, teach
     from app.database import SessionLocal
     from app.models import AnswerSheetDocument, Evaluation, Exam, ExamQuestion, SchoolClass, Student, StudentAnswer, Subject, Teacher
     db = SessionLocal()
@@ -252,9 +255,11 @@ def test_student_answer_split_merge_and_suggestion_api(client, auth):
         sub = Subject(teacher_id=t.id, name="Subject EvalSplit")
         db.add_all([cls, sub])
         db.commit()
+        tt = db.query(Teacher).filter_by(email="teacher@school.org").one()  # the teacher runs the exam
+        assign(cls.id, sub.id)
 
         exam = Exam(
-            teacher_id=t.id, class_id=cls.id, subject_id=sub.id,
+            teacher_id=tt.id, class_id=cls.id, subject_id=sub.id,
             name="Exam EvalSplit", academic_year="2026-27", exam_type="Unit",
             total_marks=20, status="READY_FOR_EVALUATION"
         )

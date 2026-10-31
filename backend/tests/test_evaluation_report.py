@@ -1,3 +1,4 @@
+from .conftest import assign
 import re
 import pymupdf
 import pytest
@@ -43,12 +44,13 @@ def test_format_math_text():
     assert "(b / a)" in t3
 
 
-def test_download_evaluation_report_pdf_e2e(client, auth):
-    c, h = client, auth
+def test_download_evaluation_report_pdf_e2e(client, auth, teach):
+    c, m, h = client, auth, teach
 
     # Setup class, subject, exam
-    cls = c.post("/api/classes", json={"name": "10-B"}, headers=h).json()
-    sub = c.post("/api/subjects", json={"name": "Mathematics"}, headers=h).json()
+    cls = c.post("/api/classes", json={"name": "10-B"}, headers=m).json()
+    sub = c.post("/api/subjects", json={"name": "Mathematics"}, headers=m).json()
+    assign(cls["id"], sub["id"])
     exam = c.post(
         "/api/exams",
         headers=h,
@@ -66,7 +68,7 @@ def test_download_evaluation_report_pdf_e2e(client, auth):
     # Student
     stu = c.post(
         "/api/students",
-        headers=h,
+        headers=m,
         json={"class_id": cls["id"], "name": "Alice Smith", "roll_number": "101"},
     ).json()
 
@@ -213,16 +215,17 @@ def test_download_evaluation_report_pdf_e2e(client, auth):
     assert "Mathematics" in clean_text
     assert "18.5" in clean_text
     assert "92.5%" in clean_text
-    assert "A-1" in clean_text                                                 # highest finalized candidate's relative grade
+    assert "A1" in clean_text  # the highest finalized candidate's CBSE 9-point grade
     assert "Adjusted by teacher: Awarded half mark for clear intermediate step" in clean_text
     assert "Accepted correct final simplification" in clean_text
     assert "Page 1 of" in clean_text
 
 
-def test_download_evaluation_report_unfinalized_rejected(client, auth):
-    c, h = client, auth
-    cls = c.post("/api/classes", json={"name": "12-B"}, headers=h).json()
-    sub = c.post("/api/subjects", json={"name": "Physics"}, headers=h).json()
+def test_download_evaluation_report_unfinalized_rejected(client, auth, teach):
+    c, m, h = client, auth, teach
+    cls = c.post("/api/classes", json={"name": "12-B"}, headers=m).json()
+    sub = c.post("/api/subjects", json={"name": "Physics"}, headers=m).json()
+    assign(cls["id"], sub["id"])
     exam = c.post(
         "/api/exams",
         headers=h,
@@ -238,7 +241,7 @@ def test_download_evaluation_report_unfinalized_rejected(client, auth):
 
     stu = c.post(
         "/api/students",
-        headers=h,
+        headers=m,
         json={"class_id": cls["id"], "name": "Bob Jones", "roll_number": "102"},
     ).json()
 

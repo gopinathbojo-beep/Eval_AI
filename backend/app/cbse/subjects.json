@@ -1,0 +1,25 @@
+{
+  "_note": "Every school starts with these subjects (services/school_setup.py): the CBSE subjects of the reference papers in exam/Class 10 and exam/Class 12. Names match the subjects' format.json where one exists.",
+  "10": [
+    {"name": "Computer Applications", "code": "165"},
+    {"name": "English Communicative", "code": "101"},
+    {"name": "English Language and Literature", "code": "184"},
+    {"name": "Hindi Course A", "code": "002"},
+    {"name": "Hindi Course B", "code": "085"},
+    {"name": "Mathematics Basic", "code": "241"},
+    {"name": "Mathematics Standard", "code": "041"},
+    {"name": "Science", "code": "086"},
+    {"name": "Social Science", "code": "087"}
+  ],
+  "12": [
+    {"name": "Accountancy", "code": "055"},
+    {"name": "Biology", "code": "044"},
+    {"name": "Chemistry", "code": "043"},
+    {"name": "Computer Science", "code": "083"},
+    {"name": "English Core", "code": "301"},
+    {"name": "English Elective", "code": "001"},
+    {"name": "Physics", "code": "042"},
+    {"name": "Political Science", "code": "028"},
+    {"name": "Tamil", "code": "106"}
+  ]
+}

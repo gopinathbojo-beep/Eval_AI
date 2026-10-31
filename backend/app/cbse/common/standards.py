@@ -50,8 +50,28 @@ def _designs(standard: str) -> tuple[dict, ...]:
                  for p in files)
 
 
-def load(standard: str | None, subject_name: str | None, subject_code: str | None = None) -> dict | None:
-    """The design of a class ('10') and subject; None when no file has been added for it."""
+@lru_cache(maxsize=None)
+def catalog() -> tuple[tuple[str, str], ...]:
+    """The CBSE subjects a school starts with (cbse/subjects.json, the reference papers of Class 10 and 12):
+    (name, CBSE code), e.g. ("Mathematics Basic", "241")."""
+    data = json.loads((ROOT / "subjects.json").read_text(encoding="utf-8"))
+    seen: dict[str, str] = {}
+    for standard in ("10", "12"):
+        for s in data[standard]:
+            seen.setdefault(s["name"], s.get("code") or "")
+    return tuple(seen.items())
+
+
+def _printed(design: dict, paper_text: str) -> bool:
+    """The paper's header names this design: its code "(241)" or its full subject name "MATHEMATICS BASIC"."""
+    head = (paper_text or "")[:600]
+    return bool(re.search(rf"\(\s*0*{design['code'].lstrip('0')}\s*\)", head)) or design["subject"].casefold() in head.casefold()
+
+
+def load(standard: str | None, subject_name: str | None, subject_code: str | None = None,
+         paper_text: str = "") -> dict | None:
+    """The design of a class ('10') and subject; None when no file has been added for it. A subject name that fits
+    several designs ("Math": Basic and Standard) is settled by the paper's own header when it is given."""
     if not standard:
         return None
     designs = _designs(standard)
@@ -60,12 +80,17 @@ def load(standard: str | None, subject_name: str | None, subject_code: str | Non
         return hit
     name = (subject_name or "").casefold()
     found = [(len(alias), d) for d in designs for alias in d["names"] if alias in name]
+    printed = [d for d in designs if paper_text and _printed(d, paper_text)]
+    # the paper names one design of the same subject family ("Math" -> "MATHEMATICS BASIC (241)"): that one
+    if len(printed) == 1 and any(w[:4] in printed[0]["subject"].casefold() for w in re.findall(r"[a-z]{4,}", name)):
+        return printed[0]
     return max(found, key=lambda x: x[0])[1] if found else None
 
 
-def for_exam(exam: Any) -> dict | None:
+def for_exam(exam: Any, paper_text: str = "") -> dict | None:
     cls, subject = getattr(exam, "school_class", None), getattr(exam, "subject", None)
-    return load(standard_of(getattr(cls, "name", None)), getattr(subject, "name", None), getattr(subject, "code", None))
+    return load(standard_of(getattr(cls, "name", None)), getattr(subject, "name", None), getattr(subject, "code", None),
+                paper_text)
 
 
 def questions(design: dict) -> dict[int, dict]:

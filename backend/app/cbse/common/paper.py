@@ -61,7 +61,9 @@ _INLINE_MARKS_PATTERN = re.compile(
 )
 _LINE_MARKS_PATTERN = re.compile(r"\(\s*(\d+(?:\.\d+)?)\s*(?:marks?|m)\s*\)[ \t]*$", re.IGNORECASE | re.MULTILINE)
 
-_SECTION_LINE = re.compile(r"^\s*(?:section|part)\s*[-–—:]?\s+[a-z0-9ivx]+\b", re.IGNORECASE)  # "SECTION B", "Section – A"
+# "SECTION B", "Section – A", "PART II", "Part 1": the word, then a capital letter, a roman numeral or a number. Not a
+# sentence that wraps onto a line starting "section of class IV will plant ..."
+_SECTION_LINE = re.compile(r"^\s*(?i:section|part)\s*[-–—:]?\s*(?:[A-Z]|[IVX]{1,4}|\d{1,2})(?![A-Za-z])")
 _MCQ_OPTION = re.compile(r"(?:^|\s)\(?\s*([a-dA-D])\s*[\)\.]")
 _ASKING_PART = re.compile(r"(?m)^\s*\(?[A-D][.)]\s+\S.*\?\s*(?:\(\d+\))?\s*$")  # "B. How can we determine ...?"
 # A full-width row before questions sharing it: "The following two questions consist of two statements – Assertion ..."
@@ -134,6 +136,9 @@ class DocumentStructure:
     qp_code: str | None = None
     passages: dict[str, str] = field(default_factory=dict)
     unclassified_blocks: list[dict] = field(default_factory=list)
+    from_pdf_table: bool = False  # rows read from a typed paper's question table (rows_from_pdf_tables)
+    # question number ("24", "27(a)") -> its figures [(page number, box in page fractions)], see renderer.table_figures
+    figures: dict[str, list[tuple[int, dict]]] = field(default_factory=dict)
 
 
 def is_heading_or_title(text: str) -> bool:
@@ -605,19 +610,21 @@ def _deduplicate_question_text(text: str) -> str:
                 if all_duplicates:
                     return f"{topic_header}\n{first_body}"
 
-    # 4. Sentence-level deduplication: remove exact duplicate question sentences
-    raw_sentences = re.split(r"(?<=[.?!])\s+", full_joined)
-    if len(raw_sentences) > 2:
+    # 4. Sentence-level deduplication: remove exact duplicate question sentences. Each kept sentence keeps the
+    # space or line break that followed it, so parts ("fan.\n(ii) With ...") stay on their own lines.
+    pieces = re.split(r"((?<=[.?!])\s+)", full_joined)  # sentence, separator, sentence, separator, ...
+    if len(pieces) > 4:
         seen_sents = set()
-        clean_sents = []
-        for sent in raw_sentences:
+        kept: list[str] = []
+        for i in range(0, len(pieces), 2):
+            sent, sep = pieces[i], pieces[i + 1] if i + 1 < len(pieces) else ""
             s_clean = re.sub(r"\s+", " ", sent.strip().lower())
             if len(s_clean) > 20 and s_clean in seen_sents:
                 continue
             if len(s_clean) > 20:
                 seen_sents.add(s_clean)
-            clean_sents.append(sent.strip())
-        full_joined = " ".join(clean_sents)
+            kept.append(sent.strip() + ("\n" if "\n" in sep else " " if sep else ""))
+        full_joined = "".join(kept)
 
     return full_joined.strip()
 
@@ -1055,10 +1062,12 @@ _FOOTER_MIN = 40  # a line on most pages this long is the page footer ("*There i
 
 
 def _join_wrapped(lines: list[str]) -> str:
-    """The text layer breaks lines where the page wraps: join them, keeping parts, options and OR on lines of their own."""
+    """The text layer breaks lines where the page wraps: join them, keeping parts, options, OR and the rows of a data
+    table ("| Class | 0-5 |") on lines of their own."""
     out: list[str] = []
     for line in lines:
-        if out and not _OWN_LINE.match(line) and not out[-1].endswith((":", "?")) and not is_section_heading_line(line):
+        if (out and not _OWN_LINE.match(line) and not out[-1].endswith((":", "?")) and not is_section_heading_line(line)
+                and not line.startswith("|") and not out[-1].startswith("|")):
             out[-1] = f"{out[-1]} {line}"
         else:
             out.append(line)
@@ -1158,13 +1167,131 @@ def rows_from_text_layer(page_results: list[tuple[dict, Any]]) -> list[tuple[dic
             for p, (page_info, res) in enumerate(page_results)]
 
 
+# The question table of a typed CBSE paper (renderer.table_rows): "Q.No. | Question | Marks"
+_TABLE_LABEL = re.compile(r"^Q?\s*(\d{1,3})\s*\.?\s*(?:\(\s*([A-Da-d])\s*\))?\s*$")
+_TEXT_LABEL = re.compile(r"^Q\s*(\d{1,3})\s*\(\s*([A-Da-d])\s*\)\s*")  # "Q21(A) Find ..." with the label in the text cell
+_TABLE_HEADER = re.compile(r"^(?:Q\.?\s*No\.?|S\.?\s*No\.?|Question\s+No\.?)$", re.I)
+_VI_ROW = re.compile(r"^For\s+(?:the\s+)?Visually\s+Impaired\b[^\n]*\n?", re.I)
+_VI_MARK = "- - - - - - - - - - - - - -\nFor visually impaired students\n"
+
+
+def _lines(cell: str) -> list[str]:
+    """A cell's lines without their indent: "   (i) The angle ..." must start its own line ("(i)" opens a part)."""
+    return [ln.strip() for ln in cell.splitlines() if ln.strip()]
+
+
+def rows_from_pdf_tables(page_results: list[tuple[dict, Any]],
+                         figures: dict[str, list[tuple[int, dict]]] | None = None) -> list[tuple[dict, Any]] | None:
+    """A typed paper whose questions sit in a ruled table, rebuilt from the table's cells: one row per question with
+    its number, text and marks; "Q21(A)" OR "Q21(B)" as "A. ... OR B. ..."; a "For Visually Impaired Candidates" row
+    at the end of its question's text (dropped later); section headings as the section of the rows below them.
+
+    The cells are exact where the page's lines are not (a number cell centred beside a three-line question, its
+    marks on the line of another). None when the pages carry no such table (scanned papers, other layouts): the
+    text layer or the model's blocks are used then. `figures`, when given, receives each question's figures
+    (renderer.table_figures) by its number: "24", or "27(a)" for the option the figure is drawn in."""
+    pages = [page_info.get("table_rows") or [] for page_info, _ in page_results]
+    page_figures = [page_info.get("table_figures") or [] for page_info, _ in page_results]
+    if sum(1 for rows in pages for r in rows if r and r[0] and _TABLE_LABEL.match(r[0].replace("\n", " "))) < 5:
+        return None
+    questions: dict[int, dict] = {}  # number -> {alts: [[letter, text]], figs: {alt: [(page, box)]}, vi, marks, ...}
+    sequence: list[tuple[int, int | str, str | None]] = []  # (page, question number or plain text, section) in order
+    section: str | None = None
+    current: int | None = None
+    for page, rows in enumerate(pages):
+        page_number = page_results[page][0].get("page_number", page + 1)
+        for k, cells in enumerate(rows):
+            figs = [(page_number, box) for box in (page_figures[page][k] if k < len(page_figures[page]) else [])]
+            label, marks_cell = (cells[0] or "").strip(), (cells[-1] or "").strip()
+            text = "\n".join(c for c in cells[1:-1] if c).strip()
+            if not text and label and not _TABLE_LABEL.match(label.replace("\n", " ")):
+                text, label = label, ""  # a cell spanning the row: a section heading or a note
+            if _TABLE_HEADER.match(label) or not (text or label or marks_cell):
+                continue
+            first, _, rest = text.partition("\n")
+            if not label and is_section_heading_line(first.strip()):
+                section, current = re.sub(r"\s{2,}", " ", first.strip()), None
+                # the section's own instruction ("Attempt any four"), not its description ("This section comprises
+                # of 3 case-study/passage-based questions ..."), which would read as a passage of its first question
+                if rest.strip() and not re.match(r"This\s+section\s+(?:comprises|consists|contains|has)\b", rest.strip(), re.I):
+                    sequence.append((page, rest.strip(), section))
+                continue
+            letter = None
+            if m := _TABLE_LABEL.match(label.replace("\n", " ")):
+                number, letter = int(m.group(1)), m.group(2)
+            elif not label and (m := _TEXT_LABEL.match(text)):
+                number, letter, text = int(m.group(1)), m.group(2), text[m.end():]
+            elif not label and current is not None and (text.upper() == "OR" or _VI_ROW.match(text) or not text):
+                q = questions[current]
+                if _VI_ROW.match(text):
+                    q["vi"].append(_VI_ROW.sub("", text).strip())
+                else:  # a figure in a row of its own, maybe on the next page (Q27(A))
+                    q["figs"].setdefault(len(q["alts"]) - 1, []).extend(figs)
+                if marks_cell and q["marks"] is None:
+                    q["marks"] = marks_cell  # the marks cell of a row continued from the page before
+                continue
+            else:
+                sequence.append((page, text, section))  # a shared intro ("Assertion-Reason Based Questions ...")
+                current = None
+                continue
+            if number not in questions:
+                questions[number] = {"alts": [], "figs": {}, "vi": [], "marks": None, "section": section, "page": page}
+                sequence.append((page, number, section))
+            q = questions[number]
+            q["alts"].append([letter, text.strip()])
+            q["figs"].setdefault(len(q["alts"]) - 1, []).extend(figs)
+            if marks_cell and q["marks"] is None:
+                q["marks"] = marks_cell
+            current = number
+    numbers = [n for _, n, _ in sequence if isinstance(n, int)]
+    if len(numbers) < 5 or numbers != sorted(numbers):
+        return None
+
+    def marks(cell: str | None) -> float | None:
+        values = [float(v) for v in re.findall(r"\d+(?:\.\d+)?", cell or "")]
+        if len(values) > 1 and len(values) % 2 == 0 and values[:len(values) // 2] == values[len(values) // 2:]:
+            values = values[:len(values) // 2]  # the parts' marks, printed again beside the visually impaired version
+        return sum(values) if values else None
+
+    if figures is not None:
+        for number, q in questions.items():
+            for i, figs in q["figs"].items():
+                if figs:
+                    letter = (q["alts"][i][0] or "abcd"[i]).lower()
+                    figures[f"{number}({letter})" if len(q["alts"]) > 1 else str(number)] = figs
+
+    blocks: list[list[QuestionItem]] = [[] for _ in page_results]
+    # the paper's header and general instructions sit above the table on the first page
+    header = [ln.strip() for ln in (page_results[0][0].get("page_text") or "").splitlines()]
+    cut = next((i for i, ln in enumerate(header) if is_section_heading_line(ln)), len(header))
+    if any(header[:cut]):
+        blocks[0].append(QuestionItem(question_text=_join_wrapped([ln for ln in header[:cut] if ln])))
+    for page, item, sec in sequence:
+        if isinstance(item, str):
+            blocks[page].append(QuestionItem(question_text=_join_wrapped(_lines(item)), section=sec))
+            continue
+        q = questions[item]
+        if len(q["alts"]) > 1:
+            body = "\nOR\n".join(f"{(letter or 'ABCD'[i]).upper()}. {_join_wrapped(_lines(t))}"
+                                 for i, (letter, t) in enumerate(q["alts"]))
+        else:
+            body = _join_wrapped(_lines(q["alts"][0][1]))
+        body += "".join(f"\n{_VI_MARK}{_join_wrapped(_lines(v))}" for v in q["vi"] if v)
+        blocks[page].append(QuestionItem(raw_question_number=str(item), question_text=body, marks=marks(q["marks"]),
+                                         section=sec))
+    return [(page_info, res.model_copy(update={"questions": blocks[p]}))
+            for p, (page_info, res) in enumerate(page_results)]
+
+
 def parse_question_paper_structure(page_results: list[tuple[dict, Any]]) -> DocumentStructure:
     """Parse raw page extraction results into a unified DocumentStructure model."""
     own = formatter.current().parse_paper(page_results)  # a subject with its own paper layout, see cbse/formatter.py
     if own is not None:
         return own
-    page_results = rows_from_text_layer(page_results)
-    doc_struct = DocumentStructure()
+    figures: dict[str, list[tuple[int, dict]]] = {}
+    table = rows_from_pdf_tables(page_results, figures)
+    page_results = table or rows_from_text_layer(page_results)
+    doc_struct = DocumentStructure(from_pdf_table=table is not None, figures=figures if table else {})
 
     # Step 1: Scan global metadata across all pages
     for page_info, page_res in page_results:
