@@ -105,6 +105,11 @@ _ADDED_COLUMNS = {"teachers": {"role": "VARCHAR(20) NOT NULL DEFAULT 'TEACHER'",
                  "answer_keys": {"rubric": "JSON", "rubric_status": "VARCHAR(20) NOT NULL DEFAULT 'UNREVIEWED'"}}
 for _table in ("classes", "subjects", "exams", "audit_logs", "verified_reference_examples"):
     _ADDED_COLUMNS.setdefault(_table, {})["workspace_id"] = "VARCHAR(36)"
+_ADDED_COLUMNS["exams"].update({"standard_profile_id": "VARCHAR(40)", "standard_version": "VARCHAR(30)",
+    "standard_options": "JSON", "standard_validation": "JSON"})
+_ADDED_COLUMNS["exam_questions"]["structure"] = "JSON"
+for _table in ("question_paper_documents", "answer_key_documents"):
+    _ADDED_COLUMNS[_table] = {"extraction": "JSON"}
 
 
 def _add_missing_columns() -> None:

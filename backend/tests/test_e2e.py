@@ -27,7 +27,7 @@ def test_full_workflow(client, auth):
     c, h = client, auth
     cls = j(c.post("/api/classes", json={"name": "10-A"}, headers=h), 201)
     sub = j(c.post("/api/subjects", json={"name": "Biology"}, headers=h), 201)
-    exam = j(c.post("/api/exams", headers=h, json={"name": "Term 1", "academic_year": "2026-27", "class_id": cls["id"],
+    exam = j(c.post("/api/_test/legacy-exams", headers=h, json={"name": "Term 1", "academic_year": "2026-27", "class_id": cls["id"],
              "subject_id": sub["id"], "exam_type": "Unit", "total_marks": 15}), 201)
     eid = exam["id"]
     assert exam["status"] == "DRAFT"
@@ -231,7 +231,7 @@ def test_duplicate_mapping_and_ai_unavailable(client, auth):
     c, h = client, auth
     cls = j(c.post("/api/classes", json={"name": "12-B"}, headers=h), 201)
     sub = j(c.post("/api/subjects", json={"name": "Botany"}, headers=h), 201)
-    eid = j(c.post("/api/exams", headers=h, json={"name": "T2", "academic_year": "26", "class_id": cls["id"],
+    eid = j(c.post("/api/_test/legacy-exams", headers=h, json={"name": "T2", "academic_year": "26", "class_id": cls["id"],
             "subject_id": sub["id"], "exam_type": "Unit", "total_marks": 15}), 201)["id"]
     # Ollama down -> clear AI_ERROR, nothing invented
     from app.config import get_settings

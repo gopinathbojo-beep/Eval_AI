@@ -27,6 +27,7 @@ import { IconClasses, IconExam, IconSubjects } from "../components/Icons";
 import { useApi } from "../hooks/useApi";
 import { useTableState } from "../hooks/useTableState";
 import type { ClassRow, Exam, Subject } from "../types";
+import type { StandardProfile } from "../types/standards";
 import { EXAM_STEPS } from "../utils/format";
 
 export function ExamsList() {
@@ -343,7 +344,7 @@ export function ExamNew() {
     name: "",
     class_id: "",
     subject_id: "",
-    exam_type: "Unit test",
+    exam_type: "Board pattern",
     exam_date: "",
     duration_minutes: "",
     total_marks: "",
@@ -356,6 +357,11 @@ export function ExamNew() {
   }, [classes.data, teacher?.role]);
   const [classError, setClassError] = useState<string | null>(null);
   const [subjectError, setSubjectError] = useState<string | null>(null);
+  const standards = useApi<StandardProfile[]>(`/standards${f.class_id ? `?class_id=${encodeURIComponent(f.class_id)}` : ""}`);
+  const [profileId, setProfileId] = useState("");
+  const [audience,setAudience] = useState("standard");
+  const [branch,setBranch] = useState("");
+  const profile = standards.data?.find(p=>p.id===profileId);
   const [busy, setBusy] = useState(false);
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) =>
     setF((prev) => ({ ...prev, [k]: e.target.value }));
@@ -372,20 +378,6 @@ export function ExamNew() {
     }));
   }, [classes.data]);
 
-  const subjectOptions: ComboboxOption[] = useMemo(() => {
-    if (!subjects.data) return [];
-    const assigned = classes.data?.find(
-      (c) => c.id === f.class_id,
-    )?.assigned_subject_ids;
-    return subjects.data
-      .filter((s) => teacher?.role !== "TEACHER" || assigned?.includes(s.id))
-      .map((s) => ({
-        value: s.id,
-        label: s.name,
-        sublabel: s.code ? `Code: ${s.code}` : undefined,
-      }));
-  }, [subjects.data, classes.data, f.class_id, teacher?.role]);
-
   const handleAddClass = async (className: string) => {
     const created = await api<ClassRow>("/classes", {
       method: "POST",
@@ -394,17 +386,6 @@ export function ExamNew() {
     await classes.reload();
     setF((prev) => ({ ...prev, class_id: created.id }));
     setClassError(null);
-    return created.id;
-  };
-
-  const handleAddSubject = async (subjectName: string) => {
-    const created = await api<Subject>("/subjects", {
-      method: "POST",
-      json: { name: subjectName.trim() },
-    });
-    await subjects.reload();
-    setF((prev) => ({ ...prev, subject_id: created.id }));
-    setSubjectError(null);
     return created.id;
   };
 
@@ -429,16 +410,17 @@ export function ExamNew() {
     setBusy(true);
     setError(null);
     try {
+      if (!profile) throw new Error("Choose an exact CBSE subject variant.");
       const ex = await api<Exam>("/exams", {
         method: "POST",
         json: {
           ...f,
+          standard_profile_id: profile.id,
+          standard_options: {accessibility: audience, accountancy_option: branch || null},
           exam_date: f.exam_date || null,
           instructions: f.instructions || null,
-          duration_minutes: f.duration_minutes
-            ? Number(f.duration_minutes)
-            : null,
-          total_marks: Number(f.total_marks),
+          duration_minutes: profile.duration_minutes,
+          total_marks: profile.total_marks,
         },
       });
       nav(`/exams/${ex.id}`);
@@ -457,7 +439,7 @@ export function ExamNew() {
     <div className="max-w-3xl space-y-5">
       <PageHeader
         title="Create New Examination"
-        sub="Name, class, subject and marks."
+        sub="Full CBSE board-paper pattern • 2026–27. Upload your own paper and marking scheme."
         actions={
           <LinkButton to="/exams" variant="ghost">
             Cancel &amp; Return
@@ -469,8 +451,7 @@ export function ExamNew() {
         <div className="rounded-lg border border-line bg-sunken/50 p-3 text-sm text-ink">
           <div>
             <p className="text-xs text-mute">
-              Type a new class or subject below and choose <b>+ Add</b> to
-              create it.
+              Select a class and a supported CBSE subject. School management maintains classes and teacher assignments.
             </p>
           </div>
         </div>
@@ -481,13 +462,13 @@ export function ExamNew() {
           <div className="sm:col-span-2">
             <Field
               label="Exam Name"
-              hint="e.g. Midterm Physics Assessment 2026"
+              hint="e.g. Class 12 Physics Board Practice"
             >
               {(id) => (
                 <Input
                   id={id}
                   required
-                  placeholder="Midterm Assessment"
+                  placeholder="Board Practice Examination"
                   value={f.name}
                   onChange={set("name")}
                 />
@@ -511,6 +492,7 @@ export function ExamNew() {
                 value={f.class_id}
                 onChange={(val) => {
                   setF((prev) => prev.class_id === val ? prev : ({ ...prev, class_id: val, subject_id: "" }));
+                  if (val !== f.class_id) setProfileId("");
                   if (val) setClassError(null);
                 }}
                 options={classOptions}
@@ -528,23 +510,35 @@ export function ExamNew() {
           <Field
             label="Subject"
             required
-            hint="Search or type custom subject"
+            hint="Choose the exact CBSE subject variant"
             error={subjectError || undefined}
           >
             {(id) => (
               <SearchableCombobox
                 id={id}
-                value={f.subject_id}
-                onChange={(val) => {
-                  setF((prev) => ({ ...prev, subject_id: val }));
-                  if (val) setSubjectError(null);
+                value={profileId}
+                onChange={async (val) => {
+                  setProfileId(val);
+                  setSubjectError(null);
+                  const p = standards.data?.find(x=>x.id===val);
+                  if (!p) { setF(prev=>({...prev,subject_id:""})); return; }
+                  let subjectId = p.subject_ids[0];
+                  try {
+                    if (!subjectId) {
+                      const created = await api<Subject>("/subjects",{method:"POST",json:{name:p.name,code:p.code}});
+                      subjectId=created.id;
+                      await subjects.reload();
+                      await standards.reload();
+                    }
+                    setF(prev=>({...prev,subject_id:subjectId,duration_minutes:String(p.duration_minutes),total_marks:String(p.total_marks),exam_type:"Board pattern"}));
+                  } catch (error) { setError(error); setProfileId(""); }
                 }}
-                options={subjectOptions}
-                placeholder="Search or enter subject (e.g. Mathematics)..."
+                options={(standards.data||[]).map(p=>({value:p.id,label:p.name,sublabel:`${p.code} · ${p.total_marks} marks · ${p.question_count} questions`}))}
+                placeholder={f.class_id ? "Choose CBSE subject..." : "Choose a class first"}
+                disabled={!f.class_id || standards.loading}
                 itemNoun="subject"
-                allowCustom={teacher?.role !== "TEACHER"}
+                allowCustom={false}
                 emptyMessage="No matching subjects found"
-                onAddCustom={handleAddSubject}
                 icon={<IconSubjects size={16} />}
                 required
               />
@@ -559,14 +553,14 @@ export function ExamNew() {
             {(id) => (
               <SearchableCombobox
                 id={id}
-                value={f.exam_type}
+                value="Board pattern"
                 onChange={(val) =>
                   setF((prev) => ({ ...prev, exam_type: val }))
                 }
                 options={EXAM_TYPE_PRESETS}
                 placeholder="Select or enter exam type (e.g. Unit test)..."
                 itemNoun="exam type"
-                allowCustom
+                disabled
                 emptyMessage="No preset exam types found"
                 icon={<IconExam size={16} />}
                 required
@@ -593,6 +587,7 @@ export function ExamNew() {
                 min={1}
                 placeholder="e.g. 90"
                 value={f.duration_minutes}
+                readOnly
                 onChange={set("duration_minutes")}
               />
             )}
@@ -608,6 +603,7 @@ export function ExamNew() {
                 required
                 placeholder="e.g. 50"
                 value={f.total_marks}
+                readOnly
                 onChange={set("total_marks")}
               />
             )}
@@ -629,6 +625,8 @@ export function ExamNew() {
               )}
             </Field>
           </div>
+          <Field label="Paper version">{id=><select id={id} className="input" value={audience} onChange={e=>setAudience(e.target.value)}><option value="standard">Standard paper</option><option value="accessible">Visually impaired alternative questions</option></select>}</Field>
+          {profile?.code === "055" && <Field label="Accountancy Part B" required>{id=><select id={id} className="input" required value={branch} onChange={e=>setBranch(e.target.value)}><option value="">Choose option...</option><option value="financial">Analysis of Financial Statements</option><option value="computerised">Computerised Accounting</option></select>}</Field>}
         </Card>
 
         <ErrorPanel error={error} />

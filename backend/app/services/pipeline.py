@@ -101,6 +101,9 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
     model_cls, prompt_fn, schema = KINDS[kind]
     doc = db.get(model_cls, doc_id)
     exam = db.get(Exam, doc.exam_id)
+    if exam.standard_profile_id and kind in {"question-paper", "answer-key"}:
+        from ..cbse.extraction import Page
+        schema = Page
     original = abs_path(doc.original_file)
     wd = original.parent
     ext = original.suffix.lstrip(".").lower()
@@ -163,11 +166,23 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
             if canonical_qs:
                 prompt_kwargs["canonical_questions"] = canonical_qs
         prompt_str = prompt_fn(p["page_number"], p["ocr_width"], p["ocr_height"], **prompt_kwargs)
+        system = prompts.OCR_SYSTEM
+        if exam.standard_profile_id and kind in {"question-paper", "answer-key"}:
+            from ..cbse.extraction import prompt as cbse_prompt, SYSTEM
+            from ..cbse.catalog import get_profile
+            previous = []
+            if i and doc.pages[i-1].get("ocr_status") == "OK":
+                try:
+                    previous = [f["root"] for f in json.loads(abs_path(doc.pages[i-1]["ocr_file"]).read_text(encoding="utf-8"))["parsed"].get("fragments", [])]
+                except (KeyError, ValueError, OSError):
+                    pass
+            prompt_str = cbse_prompt(kind,get_profile(exam.standard_profile_id),p["page_number"],total,previous,p.get("page_text", ""),exam.standard_options)
+            system = SYSTEM
         try:
             if indic:
                 call = read_page(img, schema, p["page_number"])
             else:
-                call = chat_structured(prompts.OCR_SYSTEM, prompt_str,
+                call = chat_structured(system, prompt_str,
                                        schema, img)
             out.write_text(json.dumps({"status": "OK", "raw": call.raw, "parsed": call.parsed.model_dump(),
                                        "attempts": call.attempts, "engine": "indic-ocr" if indic else "internvl"},
@@ -221,6 +236,11 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
         doc.status, doc.stage, doc.error_message = "READY", "Ready for review", None
     db.commit()
 
+    if exam.standard_profile_id:
+        from ..cbse.validation import validate
+        validate(db,exam,"paper" if kind == "question-paper" else "scheme")
+        db.commit()
+
 
 def _load_results(doc, schema):
     out = []
@@ -269,6 +289,9 @@ def _bbox_and_crop(p: dict, bbox, wd: Path, name: str):
 
 
 def _build_questions(db: Session, doc, exam: Exam, wd: Path, results) -> None:
+    if exam.standard_profile_id:
+        from ..cbse.build import build_questions
+        return build_questions(db,doc,exam,results)
     existing_q_ids = [q.id for q in db.query(ExamQuestion).filter_by(exam_id=exam.id).all()]
     if existing_q_ids:
         db.query(AnswerKey).filter_by(exam_id=exam.id).update({AnswerKey.exam_question_id: None})
@@ -399,6 +422,9 @@ def _build_questions(db: Session, doc, exam: Exam, wd: Path, results) -> None:
 
 
 def _build_answer_key(db: Session, doc, exam: Exam, wd: Path, results) -> None:
+    if exam.standard_profile_id:
+        from ..cbse.build import build_keys
+        return build_keys(db,doc,exam,results)
     db.query(AnswerKey).filter(AnswerKey.exam_id == exam.id, AnswerKey.document_id != doc.id).update({AnswerKey.is_active: False})
     db.query(AnswerKey).filter_by(document_id=doc.id).delete()
     pages_by_num = {p["page_number"]: p for p, _ in results}

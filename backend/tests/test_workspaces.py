@@ -35,7 +35,7 @@ def setup_school(browser):
 
 def exam(browser, cls, subject):
     r = browser.post(
-        "/api/exams",
+        "/api/_test/legacy-exams",
         headers=HEADERS,
         json={
             "name": "Term exam",

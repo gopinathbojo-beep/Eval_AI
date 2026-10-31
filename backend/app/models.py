@@ -131,6 +131,10 @@ class Exam(Base):
     teacher_id: Mapped[str] = mapped_column(ForeignKey("teachers.id"), index=True)
     workspace_id: Mapped[str | None] = mapped_column(ForeignKey("workspaces.id"), index=True)
     name: Mapped[str] = mapped_column(String(200))
+    standard_profile_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    standard_version: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    standard_options: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    standard_validation: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     academic_year: Mapped[str] = mapped_column(String(20))
     class_id: Mapped[str] = mapped_column(ForeignKey("classes.id"))
     subject_id: Mapped[str] = mapped_column(ForeignKey("subjects.id"))
@@ -157,6 +161,7 @@ class ExamQuestion(Base):
     display_number: Mapped[str] = mapped_column(String(50))
     normalized_number: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
     question_text: Mapped[str] = mapped_column(Text, default="")
+    structure: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     raw_ocr_text: Mapped[str] = mapped_column(Text, default="")
     question_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     max_marks: Mapped[float | None] = mapped_column(Float, nullable=True)
@@ -200,11 +205,13 @@ class _DocMixin:
 class QuestionPaperDocument(_DocMixin, Base):
     __tablename__ = "question_paper_documents"
     exam_id: Mapped[str] = mapped_column(ForeignKey("exams.id"), index=True)
+    extraction: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 class AnswerKeyDocument(_DocMixin, Base):
     __tablename__ = "answer_key_documents"
     exam_id: Mapped[str] = mapped_column(ForeignKey("exams.id"), index=True)
+    extraction: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 class AnswerSheetDocument(_DocMixin, Base):

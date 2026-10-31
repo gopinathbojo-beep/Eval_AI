@@ -450,10 +450,12 @@ class ExamIn(BaseModel):
     academic_year: str | None = None
     class_id: str
     subject_id: str
-    exam_type: str
+    exam_type: str = "Board pattern"
+    standard_profile_id: str | None = None
+    standard_options: dict | None = None
     exam_date: str | None = None
     duration_minutes: int | None = Field(None, gt=0)
-    total_marks: float = Field(gt=0)
+    total_marks: float | None = Field(None, gt=0)
     instructions: str | None = None
 
 
@@ -474,7 +476,8 @@ def exam_view(e: Exam) -> dict:
             "total_marks": e.total_marks, "instructions": e.instructions, "status": e.status,
             "files_purge_at": e.files_purge_at.isoformat() if e.files_purge_at else None,
             "files_purged_at": e.files_purged_at.isoformat() if e.files_purged_at else None,
-            "created_at": e.created_at.isoformat()}
+            "created_at": e.created_at.isoformat(), "standard_profile_id":e.standard_profile_id,
+            "standard_version":e.standard_version,"standard_options":e.standard_options}
 
 
 @router.get("/exams")
@@ -487,7 +490,8 @@ def create_exam(body: ExamIn, db: Session = Depends(get_db), t: Teacher = Depend
     c, s = db.get(SchoolClass, body.class_id), db.get(Subject, body.subject_id)
     if not c or c.teacher_id != owner_id(db, t) or not s or s.teacher_id != owner_id(db, t) or not assigned(db, t, c.id, s.id):
         raise err(404, "NOT_FOUND", "Class or subject not found in your assignments.")
-    data = body.model_dump()
+    from ..cbse.catalog import creation_data
+    data = creation_data(body,c,s)
     if not data.get("academic_year"):
         from datetime import datetime
         now = datetime.now()
@@ -519,6 +523,10 @@ def patch_exam(exam_id: str, body: ExamPatch, db: Session = Depends(get_db), t: 
     e = get_exam(db, t, exam_id)
     if e.status == "FINALIZED":
         raise err(409, "EXAM_FINALIZED", "A finalized exam cannot be edited.")
+    if e.standard_profile_id:
+        for field in ("total_marks","duration_minutes","exam_type","academic_year"):
+            if field in body.model_fields_set and getattr(body,field) != getattr(e,field):
+                raise err(400,"CBSE_FIXED_PATTERN","Board-pattern totals, duration, type and academic year are fixed.")
     for k, v in body.model_dump(exclude_unset=True).items():
         old = getattr(e, k)
         if v != old:

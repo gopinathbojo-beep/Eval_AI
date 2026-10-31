@@ -361,7 +361,7 @@ def generate_answer_keys_ai(exam_id: str, db: Session = Depends(get_db), t: Teac
     q_order = {q.id: idx for idx, q in enumerate(qs)}
     matched_answers.sort(key=lambda x: q_order.get(x["exam_question_id"], 999))
 
-    return {"answers": matched_answers}
+    return {"answers": matched_answers,"source":"AI_DRAFT","can_save_as_scheme":not bool(exam.standard_profile_id)}
 
 
 class SaveGeneratedItem(BaseModel):
@@ -380,6 +380,8 @@ class SaveGeneratedIn(BaseModel):
 @router.post("/exams/{exam_id}/answer-keys/save-ai", status_code=201)
 def save_generated_answer_keys(exam_id: str, body: SaveGeneratedIn, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     exam = get_exam(db, t, exam_id)
+    if exam.standard_profile_id:
+        raise err(409,"UPLOADED_SCHEME_REQUIRED","Generated answers are drafts. Upload the matching marking scheme for a CBSE board-pattern exam.")
     if exam.status in ("DRAFT", "QUESTION_PAPER_UPLOADED", "QUESTIONS_EXTRACTED"):
         raise err(409, "QUESTIONS_NOT_VERIFIED", "Verify the questions before saving an answer key.")
     if db.query(EvaluationItem).join(Evaluation, Evaluation.id == EvaluationItem.evaluation_id).filter(Evaluation.exam_id == exam.id).first():
@@ -696,6 +698,8 @@ def verify_all_keys(exam_id: str, db: Session = Depends(get_db), t: Teacher = De
 @router.post("/exams/{exam_id}/answer-keys/verify")
 def verify_keys(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     exam = get_exam(db, t, exam_id)
+    from ..cbse.validation import require_ready
+    require_ready(db,exam,"scheme")
     if exam.status != "ANSWER_KEY_UPLOADED":
         raise err(409, "INVALID_EXAM_STATE", "The answer key can only be verified after it has been uploaded.")
     doc = db.query(AnswerKeyDocument).filter_by(exam_id=exam.id, is_active=True).order_by(AnswerKeyDocument.uploaded_at.desc()).first()

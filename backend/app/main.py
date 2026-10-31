@@ -57,6 +57,8 @@ def create_app() -> FastAPI:
     app = FastAPI(title="ADEM API", version="1.0.0", lifespan=lifespan,
                   docs_url=None if production else "/docs", redoc_url=None if production else "/redoc",
                   openapi_url=None if production else "/openapi.json")
+    from .cbse.routes import router as standards_router
+    app.include_router(standards_router)
     if production:
         app.add_middleware(TrustedHostMiddleware, allowed_hosts=[h.strip() for h in s.allowed_hosts.split(",") if h.strip()])
     app.add_middleware(CORSMiddleware, allow_origins=[o.strip() for o in s.cors_origins.split(",") if o.strip()],

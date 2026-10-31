@@ -15,6 +15,11 @@ const KIND: Record<RubricPoint["kind"], { label: string; tone: Tone; hint: strin
 const marks = (m: number | null) => (m == null ? "–" : Number.isInteger(m) ? String(m) : m.toFixed(1).replace(/\.0$/, ""));
 
 export function RubricView({ rubric, status, questionMarks }: { rubric: Rubric; status: string; questionMarks?: number | null }) {
+  if (rubric.cbse_tree) return <div className="mt-3 rounded border border-line p-3 text-xs">
+    <strong>Uploaded CBSE marking scheme</strong> · {questionMarks} marks
+    <p className="mt-1 text-mute">Parts, choices and allocations are shown in the CBSE validation panel. {status==="CONFIRMED"?"Reviewed and confirmed.":"Review before verification."}</p>
+    {rubric.problems.map((p,i)=><p key={i} className="text-mark">{p}</p>)}
+  </div>;
   const adds = questionMarks == null || Math.abs(rubric.total - questionMarks) < 1e-9;
   return (
     <div className="mt-2.5 space-y-1.5">

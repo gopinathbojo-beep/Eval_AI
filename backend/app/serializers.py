@@ -53,6 +53,7 @@ def question_view(q: ExamQuestion) -> dict:
         "clean_question_text": q_text, "passage_text": passage_text,
         "raw_ocr_text": q.raw_ocr_text, "question_type": q.question_type, "max_marks": q.max_marks,
         "section": q.section, "choice_group": q.choice_group, "answer_any": q.answer_any, "compulsory": q.compulsory,
+        "structure":q.structure,
         "position": q.position, "page_start": q.page_start, "page_end": q.page_end,
         "bbox": q.bbox, "has_crop": bool(q.crop_file), "document_id": q.document_id,
         "ocr_confidence": q.ocr_confidence, "verification_status": q.verification_status,

@@ -42,6 +42,8 @@ export interface DocInfo {
   progress_current: number; progress_total: number; error_message: string | null; uploaded_at: string; pages: PageInfo[];
 }
 export interface Exam {
+  standard_profile_id?: string | null; standard_version?: string | null;
+  standard_options?: Record<string, string> | null;
   id: string; name: string; academic_year: string; class_id: string; class_name: string; subject_id: string;
   subject_name: string; exam_type: string; exam_date: string | null; duration_minutes: number | null;
   total_marks: number; instructions: string | null; status: ExamStatus; created_at: string;
@@ -111,6 +113,7 @@ export interface RubricPoint {
   part: string | null; expected: string[];
 }
 export interface Rubric {
+  cbse_tree?: import("./standards").ScoringNode;
   kind: string; points: RubricPoint[]; notes: string[]; deductions: string[]; problems: string[];
   stated_total: number | null; total: number;
 }

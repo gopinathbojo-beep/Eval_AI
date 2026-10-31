@@ -143,6 +143,10 @@ def patch_question(qid: str, body: QuestionPatch, db: Session = Depends(get_db),
                 audit(db, exam_id=exam.id, teacher_id=t.id, entity_type="exam_question", entity_id=q.id,
                       action="question_number_changed", old=q.display_number, new=norm, reason=reason)
             q.display_number, q.normalized_number = norm, norm
+            if exam.standard_profile_id:
+                if not norm.isdigit():
+                    raise err(400,"CBSE_WHOLE_QUESTION","Use a whole-question number; edit subparts in the CBSE hierarchy.")
+                q.structure = {**(q.structure or {}),"root":int(norm)}
             content_changed = True
             continue
         old = getattr(q, field)
@@ -153,6 +157,12 @@ def patch_question(qid: str, body: QuestionPatch, db: Session = Depends(get_db),
             content_changed = True
     if content_changed:
         q.verification_status, q.review_reason = "UNVERIFIED", None
+        if exam.standard_profile_id:
+            from ..models import AnswerKey
+            for key in db.query(AnswerKey).filter_by(exam_question_id=q.id,is_active=True):
+                key.verification_status,key.rubric_status="UNVERIFIED","UNREVIEWED"
+            from ..cbse.validation import validate
+            validate(db,exam,"paper")
     if status:
         if status not in ("VERIFIED", "UNVERIFIED", "NEEDS_REVIEW"):
             raise err(400, "INVALID_STATUS", "Unknown verification status.")
@@ -341,6 +351,8 @@ def accept_valid(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depen
 @router.post("/exams/{exam_id}/questions/verify")
 def verify_questions(exam_id: str, bg: BackgroundTasks, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     exam = get_exam(db, t, exam_id)
+    from ..cbse.validation import require_ready
+    require_ready(db,exam,"paper")
     doc = db.query(QuestionPaperDocument).filter_by(exam_id=exam.id, is_active=True).order_by(QuestionPaperDocument.uploaded_at.desc()).first()
     qs = db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all()
 
@@ -405,6 +417,7 @@ class PromoteBlockBody(BaseModel):
 
 @router.post("/exams/{exam_id}/promote-block")
 def promote_block(exam_id: str, body: PromoteBlockBody, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    get_exam(db,t,exam_id)
     exam = _require_editable(db, exam_id)
     doc = db.query(QuestionPaperDocument).filter_by(exam_id=exam.id, is_active=True).order_by(QuestionPaperDocument.uploaded_at.desc()).first()
     qs = db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all()
@@ -456,6 +469,7 @@ class DismissBlockBody(BaseModel):
 
 @router.post("/exams/{exam_id}/dismiss-block")
 def dismiss_block(exam_id: str, body: DismissBlockBody, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    get_exam(db,t,exam_id)
     exam = _require_editable(db, exam_id)
     doc = db.query(QuestionPaperDocument).filter_by(exam_id=exam.id, is_active=True).order_by(QuestionPaperDocument.uploaded_at.desc()).first()
 

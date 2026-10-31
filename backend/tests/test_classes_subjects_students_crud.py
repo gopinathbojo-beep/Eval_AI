@@ -104,7 +104,7 @@ def test_cascade_delete_class_and_subject_with_assigned_exams(client, auth):
     st = c.post("/api/students", headers=h, json={
         "name": "Cascade Student", "roll_number": "999", "class_id": cls["id"]
     }).json()
-    exam = c.post("/api/exams", headers=h, json={
+    exam = c.post("/api/_test/legacy-exams", headers=h, json={
         "name": "Cascade Exam", "academic_year": "2026-27",
         "class_id": cls["id"], "subject_id": sub["id"],
         "exam_type": "Unit", "total_marks": 50
@@ -125,7 +125,7 @@ def test_cascade_delete_class_and_subject_with_assigned_exams(client, auth):
 
     # 3. Create another exam for subject, then delete subject
     cls2 = c.post("/api/classes", headers=h, json={"name": "12-Cascade"}).json()
-    exam2 = c.post("/api/exams", headers=h, json={
+    exam2 = c.post("/api/_test/legacy-exams", headers=h, json={
         "name": "Cascade Exam 2", "academic_year": "2026-27",
         "class_id": cls2["id"], "subject_id": sub["id"],
         "exam_type": "Unit", "total_marks": 50

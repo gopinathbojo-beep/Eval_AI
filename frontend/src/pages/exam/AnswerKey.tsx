@@ -123,7 +123,7 @@ export default function AnswerKey() {
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-3">
             <div>
               <h2 className="text-sm font-semibold text-ink">Answer Key Source Options</h2>
-              <p className="text-xs text-mute">Provide an answer key document or generate verified model answers with AI.</p>
+              <p className="text-xs text-mute">{exam.standard_profile_id?"Upload the marking scheme matching this full board-pattern paper. AI drafts cannot replace the uploaded scheme.":"Provide an answer key document or generate verified model answers with AI."}</p>
             </div>
             <div className="flex items-center gap-2">
               <div className="flex rounded-lg border border-line bg-sunken p-0.5 text-xs">
@@ -139,6 +139,7 @@ export default function AnswerKey() {
                 <button
                   type="button"
                   onClick={() => setSourceMode("ai")}
+                  disabled={!!exam.standard_profile_id}
                   className={`rounded-md px-3 py-1 font-medium transition-colors ${
                     sourceMode === "ai" ? "bg-surface font-semibold text-pen shadow-xs" : "text-mute hover:text-brown"
                   }`}

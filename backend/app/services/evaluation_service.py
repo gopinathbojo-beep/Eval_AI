@@ -118,6 +118,8 @@ def resolve_student_answer(db: Session, ev: Evaluation, q: ExamQuestion, snap: E
         constituent = direct_answers
         # Combine all answer blocks / cross-page continuations
         combined_parts = [a.answer_text.strip() for a in constituent if a.answer_text and a.answer_text.strip()]
+        if getattr(q,"structure",None):
+            combined_parts = [f"[{a.raw_question_number or q.display_number}]\n{a.answer_text.strip()}" for a in constituent if a.answer_text and a.answer_text.strip()]
         combined_text = "\n\n".join(combined_parts)
     elif sub_answers:
         constituent = sub_answers
@@ -264,14 +266,26 @@ def evaluate_item(db: Session, ev: Evaluation, q: ExamQuestion, item: Evaluation
             for title, text in attempts:
                 prompt = prompts.evaluation_prompt(q.display_number, q.question_text, key.answer_text, rubric_criteria(key),
                                                    key.accepted_answers, key.keywords, q.max_marks, text)
+                system = prompts.EVAL_SYSTEM
+                exam_record = db.get(Exam,ev.exam_id)
+                if getattr(exam_record,"standard_profile_id",None):
+                    from ..cbse import grading
+                    from ..cbse.validation import active_doc
+                    from ..models import AnswerKeyDocument
+                    scheme_doc = active_doc(db,AnswerKeyDocument,exam_record.id)
+                    prompt = grading.prompt(q,key,text,exam_record.standard_options or {},(scheme_doc.extraction or {}).get("instructions",[]))
+                    system = grading.SYSTEM
                 exam_owner = db.get(Exam, ev.exam_id).teacher_id
                 audit(db, exam_id=ev.exam_id, teacher_id=exam_owner, entity_type="evaluation", entity_id=ev.id,
                       action="ai_grading_request")
                 db.commit()
-                call = chat_structured(prompts.EVAL_SYSTEM, prompt, EvaluationResult, model=model)
+                call = chat_structured(system, prompt, EvaluationResult, model=model)
                 item.raw_response = call.raw
-                res = validate_evaluation(call.parsed, q.max_marks)  # type: ignore[arg-type]
-                res = fmt.check_deductions(res, text, key.answer_text, q.max_marks)
+                if getattr(exam_record,"standard_profile_id",None):
+                    res = grading.validate_result(call.parsed,q,key,exam_record.standard_options or {},text)
+                else:
+                    res = validate_evaluation(call.parsed, q.max_marks)  # type: ignore[arg-type]
+                    res = fmt.check_deductions(res, text, key.answer_text, q.max_marks)
                 graded.append((title, res, call.raw))
             title, res, _ = max(graded, key=lambda g: g[1].marks_awarded)  # the first of equal best
             item.ai_marks, item.ai_decision = res.marks_awarded, res.decision
@@ -335,6 +349,8 @@ def _run_evaluation(ev_id: str, only_question_ids: list[str] | None) -> None:
     try:
         ev = db.get(Evaluation, ev_id)
         exam = db.get(Exam, ev.exam_id)
+        from ..cbse.validation import require_ready
+        require_ready(db,exam)
         ev.run_status = "RUNNING"
         audit(db, exam_id=exam.id, teacher_id=exam.teacher_id, entity_type="evaluation", entity_id=ev.id,
               action="ai_evaluation_started", new={"question_retry": bool(only_question_ids)})
@@ -411,6 +427,9 @@ def finalize_issues(db: Session, ev: Evaluation, snap: ExamSnapshot | None = Non
     qs = snap.questions
     has_unresolved = snap.unresolved(ev)
     issues: list[dict] = []
+    from ..cbse.validation import validate
+    board_check = validate(db,db.get(Exam,ev.exam_id))
+    issues.extend({"question":i.get("question") or "CBSE pattern","reason":i["message"]} for i in board_check["issues"])
 
     def add(question: str, reason: str):
         issues.append({"question": question, "reason": reason})

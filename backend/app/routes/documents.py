@@ -188,6 +188,9 @@ def release_waiting_key(db: Session, exam, bg: BackgroundTasks) -> bool:
     """Called once questions are verified: start reading an answer key that was uploaded early."""
     doc = db.query(AnswerKeyDocument).filter_by(exam_id=exam.id, is_active=True, status="WAITING").first()
     if doc is None:
+        if exam.standard_profile_id and db.query(AnswerKeyDocument).filter_by(exam_id=exam.id,is_active=True,status="READY").first():
+            set_state(exam,"ANSWER_KEY_UPLOADED")
+            db.commit()
         return False
     set_state(exam, "ANSWER_KEY_UPLOADED")
     doc.status, doc.stage = "UPLOADED", "Queued"

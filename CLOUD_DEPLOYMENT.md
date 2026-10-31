@@ -1,5 +1,7 @@
 # Render + Vercel + Supabase deployment
 
+For the new CBSE board-paper workflow and its migration/release checks, see [CBSE_STANDARDS.md](CBSE_STANDARDS.md).
+
 The API runs as one Docker service on Render. Vercel serves the web frontend and proxies `/api` to Render. Supabase PostgreSQL stores application records; a **private** Supabase Storage bucket stores documents and reports. OpenRouter provides vision and grading through `qwen/qwen3-vl-8b-instruct`. No local GPU or IndicOCR is required for this configuration.
 
 ## 5. Push the deployment code

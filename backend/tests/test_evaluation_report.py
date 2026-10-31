@@ -50,7 +50,7 @@ def test_download_evaluation_report_pdf_e2e(client, auth):
     cls = c.post("/api/classes", json={"name": "10-B"}, headers=h).json()
     sub = c.post("/api/subjects", json={"name": "Mathematics"}, headers=h).json()
     exam = c.post(
-        "/api/exams",
+        "/api/_test/legacy-exams",
         headers=h,
         json={
             "name": "Math Term 1",
@@ -224,7 +224,7 @@ def test_download_evaluation_report_unfinalized_rejected(client, auth):
     cls = c.post("/api/classes", json={"name": "12-B"}, headers=h).json()
     sub = c.post("/api/subjects", json={"name": "Physics"}, headers=h).json()
     exam = c.post(
-        "/api/exams",
+        "/api/_test/legacy-exams",
         headers=h,
         json={
             "name": "Physics Quiz",

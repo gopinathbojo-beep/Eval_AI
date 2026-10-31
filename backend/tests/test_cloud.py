@@ -82,7 +82,7 @@ def test_signed_upload_completion_is_authorized_validated_and_idempotent(client,
     objects, _ = private_storage
     cls = client.post("/api/classes", headers=auth, json={"std":"10","section":"Cloud"}).json()
     subject = client.post("/api/subjects", headers=auth, json={"name":"Cloud English"}).json()
-    exam = client.post("/api/exams", headers=auth, json={"name":"Cloud exam","class_id":cls["id"],"subject_id":subject["id"],"exam_type":"Unit","total_marks":7}).json()
+    exam = client.post("/api/_test/legacy-exams", headers=auth, json={"name":"Cloud exam","class_id":cls["id"],"subject_id":subject["id"],"exam_type":"Unit","total_marks":7}).json()
     content = make_pdf()
     lease = client.post(f"/api/exams/{exam['id']}/uploads", headers=auth, json={"kind":"question-paper","filename":"paper.pdf","file_size":len(content)})
     assert lease.status_code == 201, lease.text
@@ -149,7 +149,9 @@ def test_versioned_migrations_are_repeatable(tmp_path):
         config.attributes["connection"]=connection
         command.upgrade(config,"head"); command.upgrade(config,"head")
         assert set(Base.metadata.tables) <= set(inspect(connection).get_table_names())
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar() == "20261030_uploads"
+        for name,table in Base.metadata.tables.items():
+            assert {column.name for column in table.columns} <= {column["name"] for column in inspect(connection).get_columns(name)}
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar() == "20261031_cbse"
 
 
 def test_durable_queue_deduplicates_recovers_queued_and_flags_interrupted(client, auth, monkeypatch):
@@ -160,7 +162,7 @@ def test_durable_queue_deduplicates_recovers_queued_and_flags_interrupted(client
     monkeypatch.setattr(jq,"_ensure_workers",lambda:None)
     cls=client.post('/api/classes',headers=auth,json={'std':'12','section':'Durable'}).json()
     sub=client.post('/api/subjects',headers=auth,json={'name':'Durable English'}).json()
-    exam=client.post('/api/exams',headers=auth,json={'name':'Durable','class_id':cls['id'],'subject_id':sub['id'],'exam_type':'Unit','total_marks':2}).json()
+    exam=client.post('/api/_test/legacy-exams',headers=auth,json={'name':'Durable','class_id':cls['id'],'subject_id':sub['id'],'exam_type':'Unit','total_marks':2}).json()
     job=jq._Job('internvl',process_document,('question-paper','document-id'),exam_id=exam['id'])
     job_id=pq.persist(job)
     assert job_id and pq.persist(job) is None

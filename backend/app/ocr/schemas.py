@@ -237,6 +237,8 @@ class EvaluationResult(_Base):
     missing_points: list[str] = Field(default_factory=list)
     feedback: str = ""
     confidence: float | None = None
+    criterion_awards: list[dict] = Field(default_factory=list)
+    deductions: list[dict] = Field(default_factory=list)
 
     _n = field_validator("marks_awarded", "max_marks", mode="before")(lambda cls, v: _num(v))
     _c = field_validator("confidence", mode="before")(lambda cls, v: _conf(v))

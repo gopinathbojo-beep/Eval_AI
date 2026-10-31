@@ -23,7 +23,7 @@ def _exam_ready_for_sheets(c, h, class_name):
     """Question paper + answer key uploaded together; the key waits and starts by itself once questions are verified."""
     cls = j(c.post("/api/classes", json={"name": class_name}, headers=h), 201)
     sub = j(c.post("/api/subjects", json={"name": f"Biology {class_name}"}, headers=h), 201)
-    eid = j(c.post("/api/exams", headers=h, json={"name": "Bulk", "academic_year": "2026-27", "class_id": cls["id"],
+    eid = j(c.post("/api/_test/legacy-exams", headers=h, json={"name": "Bulk", "academic_year": "2026-27", "class_id": cls["id"],
                                                    "subject_id": sub["id"], "exam_type": "Unit", "total_marks": 15}), 201)["id"]
     key = j(c.post(f"/api/exams/{eid}/answer-key", headers=h, files={"file": ("key.png", make_png(), "image/png")}), 202)
     assert key["status"] == "WAITING"

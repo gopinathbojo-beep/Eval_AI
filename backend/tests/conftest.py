@@ -140,6 +140,39 @@ def client(ollama_stub):
         yield c
 
 
+@pytest.fixture(scope="session", autouse=True)
+def legacy_exam_seed_route(ollama_stub):
+    """Seed pre-standard records for regression tests through a TEST-ONLY authenticated route.
+
+    Production /api/exams always enforces CBSE. Legacy workflow tests deliberately create
+    historical records without weakening or monkeypatching the production creation gate.
+    """
+    from fastapi import Depends
+    from app.main import app
+    from app.database import get_db
+    from app.routes.core import ExamIn, exam_view
+    from app.models import Exam, SchoolClass, Subject
+    from app.security import current_teacher
+    from app.workspaces import owner_id, assigned
+    from app.deps import err
+    from app.services.audit import audit
+    from datetime import datetime
+
+    @app.post("/api/_test/legacy-exams",status_code=201)
+    def seed(body: ExamIn, db=Depends(get_db), user=Depends(current_teacher)):
+        c,s=db.get(SchoolClass,body.class_id),db.get(Subject,body.subject_id)
+        if not c or not s or c.teacher_id!=owner_id(db,user) or s.teacher_id!=owner_id(db,user) or not assigned(db,user,c.id,s.id):
+            raise err(404,"NOT_FOUND","Class or subject not found in your assignments.")
+        data=body.model_dump(exclude={"standard_profile_id","standard_options"})
+        if not data.get("academic_year"):
+            data["academic_year"]=f"{datetime.now().year}-{str(datetime.now().year+1)[-2:]}"
+        row=Exam(teacher_id=user.id,workspace_id=user.workspace_id,status="DRAFT",**data)
+        db.add(row);db.flush()
+        audit(db,exam_id=row.id,teacher_id=user.id,entity_type="exam",entity_id=row.id,action="exam_created")
+        db.commit()
+        return exam_view(row)
+
+
 @pytest.fixture(scope="session")
 def auth(client):
     r = client.post("/api/auth/login", json={"email": "rao@school.org", "password": "password123"})
