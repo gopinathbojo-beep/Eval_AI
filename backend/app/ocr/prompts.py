@@ -19,7 +19,7 @@ OCR_SYSTEM = (
     "   - Preserve vertical fractions and powers as inline expressions: [((2/3)⁻² × (3/4)⁻³) ÷ (8/9)⁻²].\n"
     "   - Preserve superscripts and formulas: (a + b)² = a² + b² + 2ab, x² + 1/x² = 34, 16x⁴ - 81y⁴, V = π(R² - r²)h.\n"
     "   - Preserve chemical equations, reaction arrows, and gas arrows: Na + H₂O → ________ + H₂ ↑, SO₂ + H₂O → ________, Zn + H₂SO₄ → ________ + H₂ ↑.\n"
-    "7. Tables: preserve table structure as Markdown tables (| Header 1 | Header 2 |) with rows and cells. Never flatten table rows into unformatted text.\n"
+    "7. Tables: preserve table structure as compact Markdown tables (| Header 1 | Header 2 |) with rows and cells. Use simple separators like '|---|---|'. Never output long repeating sequences of dashes or hyphens.\n"
     "8. Notice Boxes & Formats: preserve notice borders and formatted text layout.\n"
     "9. Passages: comprehension passages, poems, and source texts belong to the question context, not as separate question entities.\n"
     "10. Languages: preserve original language (English, Tamil, Hindi, or bilingual/mixed text) verbatim.\n"
@@ -39,7 +39,7 @@ UNIVERSAL EXTRACTION RULES:
 2. PRESERVE STRUCTURE & TEXT: Transcribe full text verbatim without truncation or summarisation.
    - Mathematical expressions: inline vertical fractions and powers e.g. [((2/3)⁻² × (3/4)⁻³) ÷ (8/9)⁻²], superscripts e.g. x² + 1/x² = 6, 16x⁴ - 81y⁴, π, √.
    - Chemical equations: keep reaction arrows →, gas evolution ↑, and blanks ________ (e.g. Na + H₂O → ________ + H₂ ↑).
-   - Tables: transcribe every row and cell as clean Markdown tables (| Line | Incorrect Word | Correct Word |).
+   - Tables: transcribe every row and cell as clean, compact Markdown tables (| Line | Incorrect Word | Correct Word |). Keep separators minimal like |---|---| and never output long runs of dashes.
 3. QUESTION NUMBERING: Keep question labels exactly as printed (e.g. "1", "Q1", "Q7", "Q8", "3(a)", "(b)", "(c)").
    - DO NOT STRIP printed question labels like "Q7" or "Q8" from the question! If printed as "Q7. Reading Comprehension", set raw_question_number to "Q7" and question_text to "Reading Comprehension:...".
    - If page starts with a subquestion like (b) or (c), keep raw_question_number as "(b)" or "(c)". If unlabelled, set raw_question_number to null.

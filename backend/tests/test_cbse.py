@@ -519,7 +519,7 @@ def test_continuations_merge_and_conflicting_allocations_require_review():
 
 
 def test_cross_page_parts_derive_total_from_source_and_duplicate_roots_are_flagged():
-    from app.cbse.build import collect, combined
+    from app.cbse.build import collect, combined, review_reason
 
     first = Page(
         page_number=1,
@@ -552,6 +552,48 @@ def test_cross_page_parts_derive_total_from_source_and_duplicate_roots_are_flagg
     second.fragments[0].continues = False
     roots = collect(NS(), [({"page_number": 1}, first), ({"page_number": 2}, second)])
     assert combined(roots[1])[2]
+    full_issues = ["source conflict " + ("x" * 200), "another " + ("y" * 200)]
+    assert len(review_reason(full_issues)) == 300
+    assert review_reason(full_issues).endswith("...")
+
+
+def test_cbse_visual_evidence_is_tightly_cropped_and_described(tmp_path, monkeypatch):
+    from PIL import Image
+    from app.cbse import build
+
+    source = tmp_path / "page.png"
+    Image.new("RGB", (1000, 1400), "white").save(source)
+    fragment = Fragment.model_validate(
+        {
+            "root": 8,
+            "text": "Refer to the circuit diagram.",
+            "visuals": [
+                {
+                    "kind": "diagram",
+                    "description": "Circuit with a cell and two labelled resistors.",
+                    "labels": ["R1", "R2"],
+                    "bbox": {"x": 100, "y": 200, "width": 300, "height": 250},
+                }
+            ],
+        }
+    )
+    page = {
+        "page_number": 2,
+        "source_file": "page.png",
+        "ocr_width": 1000,
+        "ocr_height": 1400,
+        "width": 1000,
+        "height": 1400,
+    }
+    monkeypatch.setattr(build, "abs_path", lambda _: source)
+    monkeypatch.setattr(build, "rel", lambda value: str(value))
+    visuals = build.crop_visuals([(page, fragment)], tmp_path, "q8")
+    assert len(visuals) == 1
+    assert visuals[0]["kind"] == "diagram"
+    assert visuals[0]["labels"] == ["R1", "R2"]
+    assert Path(visuals[0]["crop_file"]).exists()
+    with Image.open(visuals[0]["crop_file"]) as crop:
+        assert crop.width == 324 and crop.height == 274
 
 
 def test_workspace_isolation_on_standards_review(client, auth):

@@ -7,6 +7,9 @@ _tmp = tempfile.mkdtemp(prefix="adem-test-")
 os.environ["DATA_DIR"] = _tmp
 os.environ["DATABASE_URL"] = ""
 os.environ["AI_PROVIDER"] = "ollama"
+os.environ["INTERNVL_MODEL"] = "blaifa/InternVL3_5:4B"
+os.environ["INTERNVL_PARALLEL_JOBS"] = "1"
+os.environ["INDIC_PARALLEL_JOBS"] = "1"
 os.environ["STORAGE_PROVIDER"] = "local"
 os.environ["DURABLE_JOBS"] = "false"
 os.environ["AUTO_MIGRATE"] = "false"

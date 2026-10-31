@@ -4,6 +4,56 @@ from collections import defaultdict
 from .extraction import merge_nodes, tree_total
 from ..models import ExamQuestion, AnswerKey, StudentAnswer, EvaluationItem
 from ..services.state import set_state
+from ..documents import cropping
+from ..documents.storage import abs_path, rel
+
+
+def review_reason(issues):
+    """Keep the summary within the legacy column; full issues remain in structure."""
+    value = "; ".join(issues)
+    return value if len(value) <= 300 else value[:297].rstrip() + "..."
+
+
+def crop_visuals(fragments, wd, prefix):
+    """Persist every source visual; callers expose paths only through authorized routes."""
+    output = []
+    for page, fragment in fragments:
+        for visual in fragment.visuals:
+            bbox = cropping.normalise_bbox(
+                visual.bbox,
+                page["ocr_width"],
+                page["ocr_height"],
+                page["width"],
+                page["height"],
+            )
+            if not bbox:
+                fragment.issues.append(
+                    f"Invalid {visual.kind} crop on page {page['page_number']}; review the source location."
+                )
+                continue
+            try:
+                path = cropping.save_crop(
+                    abs_path(page["source_file"]),
+                    bbox,
+                    wd / "crops" / f"{prefix}-visual-{len(output) + 1:02d}.png",
+                )
+                crop_file = rel(path)
+            except Exception:
+                fragment.issues.append(
+                    f"Could not store {visual.kind} crop on page {page['page_number']}."
+                )
+                continue
+            output.append(
+                {
+                    "kind": visual.kind,
+                    "description": visual.description,
+                    "labels": visual.labels,
+                    "page_number": page["page_number"],
+                    "bbox": bbox,
+                    "crop_file": crop_file,
+                }
+            )
+    return output
 
 
 def collect(doc, results):
@@ -78,6 +128,9 @@ def build_questions(db, doc, exam, results):
         ).delete(synchronize_session=False)
         db.query(ExamQuestion).filter_by(exam_id=exam.id).delete()
     for root, fragments in sorted(collect(doc, results).items()):
+        visuals = crop_visuals(
+            fragments, abs_path(doc.original_file).parent, f"q{root}"
+        )
         text, tree, issues, marks, section = combined(fragments, exam.standard_options)
         db.add(
             ExamQuestion(
@@ -98,9 +151,12 @@ def build_questions(db, doc, exam, results):
                     "tree": tree,
                     "issues": issues,
                     "source_pages": [p["page_number"] for p, _ in fragments],
+                    "visuals": visuals,
                 },
+                bbox=visuals[0]["bbox"] if visuals else None,
+                crop_file=visuals[0]["crop_file"] if visuals else None,
                 verification_status="NEEDS_REVIEW" if issues else "UNVERIFIED",
-                review_reason="; ".join(issues) or None,
+                review_reason=review_reason(issues) or None,
             )
         )
     set_state(exam, "QUESTIONS_EXTRACTED")
@@ -124,6 +180,9 @@ def build_keys(db, doc, exam, results):
         for q in db.query(ExamQuestion).filter_by(exam_id=exam.id)
     }
     for root, fragments in sorted(collect(doc, results).items()):
+        visuals = crop_visuals(
+            fragments, abs_path(doc.original_file).parent, f"k{root}"
+        )
         text, tree, issues, marks, _ = combined(fragments, exam.standard_options)
         q = qs.get(str(root))
         criteria = [x for _, f in fragments for x in f.criteria]
@@ -141,6 +200,8 @@ def build_keys(db, doc, exam, results):
                 accepted_answers=[x for _, f in fragments for x in f.accepted_answers],
                 mapping_status="MAPPED" if q else "UNMAPPED",
                 page_number=fragments[0][0]["page_number"],
+                bbox=visuals[0]["bbox"] if visuals else None,
+                crop_file=visuals[0]["crop_file"] if visuals else None,
                 mark_mismatch=bool(q and marks != q.max_marks),
                 verification_status="UNVERIFIED",
                 rubric_status="UNREVIEWED",
@@ -154,6 +215,7 @@ def build_keys(db, doc, exam, results):
                     "stated_total": marks,
                     "total": marks,
                     "source_pages": [p["page_number"] for p, _ in fragments],
+                    "visuals": visuals,
                 },
             )
         )

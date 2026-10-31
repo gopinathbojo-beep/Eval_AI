@@ -27,6 +27,13 @@ class Node(BaseModel):
     children: list[Node] = Field(default_factory=list)
 
 
+class VisualEvidence(BaseModel):
+    kind: Literal["diagram", "image", "graph", "map", "table", "formula", "other"]
+    description: str
+    labels: list[str] = Field(default_factory=list)
+    bbox: dict
+
+
 class Fragment(BaseModel):
     root: int = Field(gt=0)
     text: str
@@ -37,6 +44,7 @@ class Fragment(BaseModel):
     criteria: list[str] = Field(default_factory=list)
     accepted_answers: list[str] = Field(default_factory=list)
     bbox: dict | None = None
+    visuals: list[VisualEvidence] = Field(default_factory=list)
     continues: bool = False
     issues: list[str] = Field(default_factory=list)
 
@@ -68,6 +76,7 @@ Return this structure:
 "instructions":["verbatim general instructions, examiner rules, deductions, optional-part and choice instructions"],
 "fragments":[{{"root":1,"text":"complete visible content including passage, tables, alternatives and subparts", "section":"A", "marks":1,"question_type":"mcq", "continues":false,
 "criteria":["verbatim marking instructions"],"accepted_answers":["explicit alternatives"],
+"visuals":[{{"kind":"diagram","description":"source-grounded description of visible relationships","labels":["verbatim visible labels"],"bbox":{{"x":0,"y":0,"width":0,"height":0}}}}],
 "tree":{{"id":"q1","kind":"all","label":"1","text":"question/answer context","marks":1,"children":[{{"id":"q1.i","kind":"point","label":"1(i)","text":"visible scored part or marking criterion","marks":1,"children":[]}}]}},"issues":[],"bbox":null}}],"issues":[]}}
 Only include metadata actually printed on THIS page. Never copy expected metadata into extracted metadata.
 Use numeric root labels for whole questions (1..N); passage paragraph numbers and MCQ options are NOT roots.
@@ -79,6 +88,7 @@ For alternative SOLUTION METHODS of the same required question use choice_type='
 Use audience tags 'standard'/'accessible' for visually impaired alternatives and 'financial'/'computerised' for Accountancy Part B branches. These are alternative versions, never additional marks.
 For a marking scheme, point marks must come from its explicit allocations. If only a whole-question total is given, one holistic point with that printed total is acceptable; NEVER invent finer allocations.
 For a paper, points represent the smallest independently marked parts, not MCQ options. Include printed branch labels and choice instructions in text.
+For every diagram, image, map, graph, meaningful table or visual formula used by a question or marking rule, add a visuals item. Give a TIGHT bbox around the visual only in pixels of the supplied page image, list only visible labels, and describe visible relationships without solving or inventing content. Do not add decorative logos, borders or page furniture. Keep the surrounding question/answer text in fragment.text.
 Mark MCQ leaf nodes response_type='mcq'. MCQ alternatives are options inside one point, not scored child nodes. MCQs have no partial marks.
 All node IDs must be unique within a root, stable across continuations. If unclear, report an issue instead of guessing a label or allocation.
 Fractional marks are numbers, e.g. 0.25, 0.5, 1.5. Section totals are not root marks.

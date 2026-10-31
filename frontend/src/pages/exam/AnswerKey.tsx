@@ -1,39 +1,81 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../api/client";
 import { useApi } from "../../hooks/useApi";
-import type { AnswerKeyRow, DocInfo, GeneratedAnswerItem, KeysResponse } from "../../types";
+import type {
+  AnswerKeyRow,
+  DocInfo,
+  GeneratedAnswerItem,
+  KeysResponse,
+} from "../../types";
 import { BUSY_DOC, pct } from "../../utils/format";
-import { Badge, Button, Card, Confirm, Empty, ErrorPanel, Field, Input, Loading, MathTextarea, MathView, Modal, Select, StatusBadge, Textarea } from "../../components/ui";
+import {
+  Badge,
+  Button,
+  Card,
+  Confirm,
+  Empty,
+  ErrorPanel,
+  Field,
+  Input,
+  Loading,
+  MathTextarea,
+  MathView,
+  Modal,
+  Select,
+  StatusBadge,
+  Textarea,
+} from "../../components/ui";
 import { DocProgress, UploadZone } from "../../components/DocPanel";
 import { PageViewer } from "../../components/PageViewer";
 import { IconChevronDown } from "../../components/Icons";
 import { CriteriaEditor } from "../../components/CriteriaEditor";
 import { RubricView } from "../../components/RubricView";
 import { SaveToVerifiedCollectionModal } from "../../components/SaveToVerifiedCollectionModal";
+import { AuthImage } from "../../components/AuthImage";
 import { useExam } from "../ExamWorkspace";
 
-const lines = (s: string) => s.split("\n").map((x) => x.trim()).filter(Boolean);
+const lines = (s: string) =>
+  s
+    .split("\n")
+    .map((x) => x.trim())
+    .filter(Boolean);
 
 export default function AnswerKey() {
   const { exam, reload: reloadExam } = useExam();
-  const doc = useApi<DocInfo | null>(`/exams/${exam.id}/answer-key`, (d) => (d && BUSY_DOC.includes(d.status) ? 1500 : null));
-  const keys = useApi<KeysResponse>(`/exams/${exam.id}/answer-keys`, () => (doc.data && BUSY_DOC.includes(doc.data.status) ? 1500 : null));
+  const doc = useApi<DocInfo | null>(`/exams/${exam.id}/answer-key`, (d) =>
+    d && BUSY_DOC.includes(d.status) ? 1500 : null,
+  );
+  const keys = useApi<KeysResponse>(`/exams/${exam.id}/answer-keys`, () =>
+    doc.data && BUSY_DOC.includes(doc.data.status) ? 1500 : null,
+  );
   const [page, setPage] = useState(1);
   const [sel, setSel] = useState<string | null>(null);
-  const [dlg, setDlg] = useState<{ kind: "edit" | "delete" | "add" | "split" | "merge"; row?: AnswerKeyRow; qid?: string } | null>(null);
+  const [dlg, setDlg] = useState<{
+    kind: "edit" | "delete" | "add" | "split" | "merge";
+    row?: AnswerKeyRow;
+    qid?: string;
+  } | null>(null);
   const [err, setErr] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
-  const [referenceTarget, setReferenceTarget] = useState<AnswerKeyRow | null>(null);
-  const [activeTab, setActiveTab] = useState<"both" | "scan" | "answers">("both");
+  const [referenceTarget, setReferenceTarget] = useState<AnswerKeyRow | null>(
+    null,
+  );
+  const [activeTab, setActiveTab] = useState<"both" | "scan" | "answers">(
+    "both",
+  );
 
   // Two options state: "upload" or "ai"
   const [sourceMode, setSourceMode] = useState<"upload" | "ai">("upload");
   const [showReplace, setShowReplace] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
   const [aiError, setAiError] = useState<unknown>(null);
-  const [reviewAnswers, setReviewAnswers] = useState<GeneratedAnswerItem[] | null>(null);
+  const [reviewAnswers, setReviewAnswers] = useState<
+    GeneratedAnswerItem[] | null
+  >(null);
 
-  const after = async () => { await Promise.all([doc.reload(), keys.reload(), reloadExam()]); };
+  const after = async () => {
+    await Promise.all([doc.reload(), keys.reload(), reloadExam()]);
+  };
   const upload = async (file: File) => {
     const f = new FormData();
     f.append("file", file);
@@ -58,7 +100,10 @@ export default function AnswerKey() {
     setAiBusy(true);
     setAiError(null);
     try {
-      const res = await api<{ answers: GeneratedAnswerItem[] }>(`/exams/${exam.id}/answer-keys/generate-ai`, { method: "POST" });
+      const res = await api<{ answers: GeneratedAnswerItem[] }>(
+        `/exams/${exam.id}/answer-keys/generate-ai`,
+        { method: "POST" },
+      );
       setReviewAnswers(res.answers);
     } catch (e) {
       setAiError(e);
@@ -80,24 +125,54 @@ export default function AnswerKey() {
   // Synchronize keys automatically when doc transitions to READY
   const prevDocStatus = useRef(doc.data?.status);
   useEffect(() => {
-    if (prevDocStatus.current && BUSY_DOC.includes(prevDocStatus.current) && doc.data && ["READY", "NEEDS_ATTENTION"].includes(doc.data.status)) {
+    if (
+      prevDocStatus.current &&
+      BUSY_DOC.includes(prevDocStatus.current) &&
+      doc.data &&
+      ["READY", "NEEDS_ATTENTION"].includes(doc.data.status)
+    ) {
       keys.reload();
     }
     prevDocStatus.current = doc.data?.status;
   }, [doc.data?.status, keys]);
 
-  if (exam.status === "DRAFT" || ["QUESTION_PAPER_UPLOADED", "QUESTIONS_EXTRACTED"].includes(exam.status))
-    return <Empty title="Verify questions first" hint={exam.answer_key_document
-      ? "Your answer key is uploaded and waiting. It is read and matched to the questions as soon as the questions are verified."
-      : "You can upload the answer key now in the Question Paper & Answer Key tab. It is read as soon as the questions are verified."} />;
+  if (
+    exam.status === "DRAFT" ||
+    ["QUESTION_PAPER_UPLOADED", "QUESTIONS_EXTRACTED"].includes(exam.status)
+  )
+    return (
+      <Empty
+        title="Verify questions first"
+        hint={
+          exam.answer_key_document
+            ? "Your answer key is uploaded and waiting. It is read and matched to the questions as soon as the questions are verified."
+            : "You can upload the answer key now in the Question Paper & Answer Key tab. It is read as soon as the questions are verified."
+        }
+      />
+    );
   if (doc.loading || keys.loading) return <Loading />;
-  const d = doc.data, k = keys.data;
-  const isLocked = Boolean(k?.locked || ["ANSWER_KEY_VERIFIED", "READY_FOR_EVALUATION", "EVALUATING", "REVIEW_REQUIRED", "FINALIZED"].includes(exam.status));
-  const qLabel = (id: string | null) => k?.questions?.find((q) => q.id === id)?.display_number;
+  const d = doc.data,
+    k = keys.data;
+  const isLocked = Boolean(
+    k?.locked ||
+    [
+      "ANSWER_KEY_VERIFIED",
+      "READY_FOR_EVALUATION",
+      "EVALUATING",
+      "REVIEW_REQUIRED",
+      "FINALIZED",
+    ].includes(exam.status),
+  );
+  const qLabel = (id: string | null) =>
+    k?.questions?.find((q) => q.id === id)?.display_number;
   const selRow = k?.keys?.find((x) => x.id === sel);
   const hasKeys = (k?.keys?.length ?? 0) > 0;
-  const ready = (d && ["READY", "NEEDS_ATTENTION"].includes(d.status)) || (!d && hasKeys);
-  const showOptions = !isLocked && !(d && BUSY_DOC.includes(d.status)) && (!hasKeys || showReplace);
+  const ready =
+    (d && ["READY", "NEEDS_ATTENTION"].includes(d.status)) || (!d && hasKeys);
+  const showOptions =
+    !isLocked &&
+    !(d && BUSY_DOC.includes(d.status)) &&
+    (!hasKeys || showReplace);
 
   return (
     <div className="space-y-4">
@@ -110,8 +185,13 @@ export default function AnswerKey() {
               ✓
             </span>
             <div>
-              <p className="font-semibold text-ok">Official Answer Key Verified &amp; Locked</p>
-              <p className="text-xs text-mute mt-0.5">The official answer key is verified and locked for student evaluation.</p>
+              <p className="font-semibold text-ok">
+                Official Answer Key Verified &amp; Locked
+              </p>
+              <p className="text-xs text-mute mt-0.5">
+                The official answer key is verified and locked for student
+                evaluation.
+              </p>
             </div>
           </div>
           <StatusBadge status="VERIFIED" />
@@ -122,8 +202,14 @@ export default function AnswerKey() {
         <Card className="space-y-4 p-5 shadow-soft">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-3">
             <div>
-              <h2 className="text-sm font-semibold text-ink">Answer Key Source Options</h2>
-              <p className="text-xs text-mute">{exam.standard_profile_id?"Upload the marking scheme matching this full board-pattern paper. AI drafts cannot replace the uploaded scheme.":"Provide an answer key document or generate verified model answers with AI."}</p>
+              <h2 className="text-sm font-semibold text-ink">
+                Answer Key Source Options
+              </h2>
+              <p className="text-xs text-mute">
+                {exam.standard_profile_id
+                  ? "Upload the marking scheme matching this full board-pattern paper. AI drafts cannot replace the uploaded scheme."
+                  : "Provide an answer key document or generate verified model answers with AI."}
+              </p>
             </div>
             <div className="flex items-center gap-2">
               <div className="flex rounded-lg border border-line bg-sunken p-0.5 text-xs">
@@ -131,7 +217,9 @@ export default function AnswerKey() {
                   type="button"
                   onClick={() => setSourceMode("upload")}
                   className={`rounded-md px-3 py-1 font-medium transition-colors ${
-                    sourceMode === "upload" ? "bg-surface font-semibold text-pen shadow-xs" : "text-mute hover:text-brown"
+                    sourceMode === "upload"
+                      ? "bg-surface font-semibold text-pen shadow-xs"
+                      : "text-mute hover:text-brown"
                   }`}
                 >
                   Upload
@@ -141,14 +229,20 @@ export default function AnswerKey() {
                   onClick={() => setSourceMode("ai")}
                   disabled={!!exam.standard_profile_id}
                   className={`rounded-md px-3 py-1 font-medium transition-colors ${
-                    sourceMode === "ai" ? "bg-surface font-semibold text-pen shadow-xs" : "text-mute hover:text-brown"
+                    sourceMode === "ai"
+                      ? "bg-surface font-semibold text-pen shadow-xs"
+                      : "text-mute hover:text-brown"
                   }`}
                 >
                   Generate with AI
                 </button>
               </div>
               {hasKeys && (
-                <Button small variant="ghost" onClick={() => setShowReplace(false)}>
+                <Button
+                  small
+                  variant="ghost"
+                  onClick={() => setShowReplace(false)}
+                >
                   Cancel
                 </Button>
               )}
@@ -164,9 +258,12 @@ export default function AnswerKey() {
           ) : (
             <div className="rounded-lg border border-dashed border-line bg-sunken/40 p-8 text-center space-y-3.5">
               <div className="max-w-md mx-auto space-y-1">
-                <p className="font-bold text-sm text-ink">Generate Answer Key with AI</p>
+                <p className="font-bold text-sm text-ink">
+                  Generate Answer Key with AI
+                </p>
                 <p className="text-xs text-mute leading-relaxed">
-                  Drafts model answers, marking criteria and keywords for each question.
+                  Drafts model answers, marking criteria and keywords for each
+                  question.
                 </p>
               </div>
               <div>
@@ -176,7 +273,9 @@ export default function AnswerKey() {
                   onClick={generateAi}
                   className="shadow-xs"
                 >
-                  {aiBusy ? "Reading Question Paper & Generating Answers…" : `Generate Answers for ${exam.question_count} Question(s)`}
+                  {aiBusy
+                    ? "Reading Question Paper & Generating Answers…"
+                    : `Generate Answers for ${exam.question_count} Question(s)`}
                 </Button>
               </div>
               <ErrorPanel error={aiError} />
@@ -185,7 +284,14 @@ export default function AnswerKey() {
         </Card>
       )}
 
-      {d && <DocProgress doc={d} onChanged={after} canRetry={exam.status === "ANSWER_KEY_UPLOADED"} rebuildWarning="Reading again rebuilds the answer key rows. Edits you made to extracted rows will be lost." />}
+      {d && (
+        <DocProgress
+          doc={d}
+          onChanged={after}
+          canRetry={exam.status === "ANSWER_KEY_UPLOADED"}
+          rebuildWarning="Reading again rebuilds the answer key rows. Edits you made to extracted rows will be lost."
+        />
+      )}
 
       {!hasKeys && !d && !showOptions && (
         <Card className="p-8 text-center text-sm text-mute shadow-soft">
@@ -234,11 +340,19 @@ export default function AnswerKey() {
               </div>
 
               {!isLocked && (
-                <Button small variant="soft" onClick={() => setShowReplace((v) => !v)}>
+                <Button
+                  small
+                  variant="soft"
+                  onClick={() => setShowReplace((v) => !v)}
+                >
                   {showReplace ? "Hide Options" : "Replace / Re-generate"}
                 </Button>
               )}
-              {!isLocked && <Button small variant="primary" busy={busy} onClick={verify}>Verify Answer Key</Button>}
+              {!isLocked && (
+                <Button small variant="primary" busy={busy} onClick={verify}>
+                  Verify Answer Key
+                </Button>
+              )}
               {isLocked && <StatusBadge status="VERIFIED" />}
             </div>
           </div>
@@ -252,7 +366,11 @@ export default function AnswerKey() {
               </p>
               <div className="flex flex-wrap gap-2">
                 {k.missing_question_ids.map((id) => (
-                  <Button key={id} small onClick={() => setDlg({ kind: "add", qid: id })}>
+                  <Button
+                    key={id}
+                    small
+                    onClick={() => setDlg({ kind: "add", qid: id })}
+                  >
                     Add Answer for Q{qLabel(id)}
                   </Button>
                 ))}
@@ -261,7 +379,10 @@ export default function AnswerKey() {
           )}
 
           {/* Two-panel Answer Key Workspace */}
-          <div className="grid gap-4 lg:grid-cols-2" style={{ minHeight: "65vh" }}>
+          <div
+            className="grid gap-4 lg:grid-cols-2"
+            style={{ minHeight: "65vh" }}
+          >
             {/* Left Panel: Scan Viewer */}
             <Card
               className={`h-[calc(100vh-16rem)] min-h-[30rem] overflow-hidden shadow-soft ${
@@ -269,9 +390,22 @@ export default function AnswerKey() {
               }`}
             >
               {d && k.document_id ? (
-                <PageViewer kind="answer-key" docId={k.document_id} pages={d.pages} page={page} onPage={setPage} highlight={selRow?.page_number === page ? selRow.bbox : null} />
+                <PageViewer
+                  kind="answer-key"
+                  docId={k.document_id}
+                  pages={d.pages}
+                  page={page}
+                  onPage={setPage}
+                  highlight={selRow?.page_number === page ? selRow.bbox : null}
+                />
               ) : exam.question_paper ? (
-                <PageViewer kind="question-paper" docId={exam.question_paper.id} pages={exam.question_paper.pages} page={page} onPage={setPage} />
+                <PageViewer
+                  kind="question-paper"
+                  docId={exam.question_paper.id}
+                  pages={exam.question_paper.pages}
+                  page={page}
+                  onPage={setPage}
+                />
               ) : (
                 <div className="flex h-full items-center justify-center p-6 text-sm text-mute">
                   No document scan to display.
@@ -291,7 +425,9 @@ export default function AnswerKey() {
                   <Card
                     key={r.id}
                     className={`p-4 transition-all shadow-soft ${
-                      isSelected ? "border-pen ring-2 ring-pen/20" : "hover:border-line"
+                      isSelected
+                        ? "border-pen ring-2 ring-pen/20"
+                        : "hover:border-line"
                     } ${r.mapping_status !== "MAPPED" || r.mark_mismatch || (r.rubric?.problems.length ?? 0) > 0 ? "border-mark/50 bg-mark-soft/10" : ""}`}
                   >
                     <button
@@ -306,56 +442,124 @@ export default function AnswerKey() {
                     >
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <span className="font-bold text-ink text-base">
-                          Label “{r.raw_question_number ?? "none"}” &rarr; {r.exam_question_id ? `Question ${qLabel(r.exam_question_id)}` : "not mapped"}
+                          Label “{r.raw_question_number ?? "none"}” &rarr;{" "}
+                          {r.exam_question_id
+                            ? `Question ${qLabel(r.exam_question_id)}`
+                            : "not mapped"}
                         </span>
                         <div className="flex flex-wrap items-center gap-1.5">
-                          {r.mark_mismatch && <Badge tone="mark">MARK MISMATCH</Badge>}
+                          {r.mark_mismatch && (
+                            <Badge tone="mark">MARK MISMATCH</Badge>
+                          )}
                           <Badge tone="pen">{r.marks ?? "–"} marks</Badge>
-                          <Badge tone="mute">conf. {pct(r.ocr_confidence)}</Badge>
+                          <Badge tone="mute">
+                            conf. {pct(r.ocr_confidence)}
+                          </Badge>
                           <StatusBadge status={r.mapping_status} />
                         </div>
                       </div>
                       {r.mapping_note && r.mapping_status !== "MAPPED" && (
-                        <p className="mt-1 text-xs font-semibold text-mark">{r.mapping_note}</p>
+                        <p className="mt-1 text-xs font-semibold text-mark">
+                          {r.mapping_note}
+                        </p>
                       )}
-                      <div className={`doc-text mt-2.5 text-sm text-ink/90 ${isSelected ? "" : "line-clamp-4"}`}>
+                      <div
+                        className={`doc-text mt-2.5 text-sm text-ink/90 ${isSelected ? "" : "line-clamp-4"}`}
+                      >
                         <MathView text={r.answer_text} />
                       </div>
                       {r.rubric ? (
                         <RubricView
                           rubric={r.rubric}
                           status={r.rubric_status}
-                          questionMarks={k.questions?.find((q) => q.id === r.exam_question_id)?.max_marks}
+                          questionMarks={
+                            k.questions?.find(
+                              (q) => q.id === r.exam_question_id,
+                            )?.max_marks
+                          }
                         />
-                      ) : r.criteria.length > 0 && (
-                        <div className="mt-2.5 space-y-1">
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            <span className="text-[11px] text-mute font-semibold uppercase tracking-wider">Criteria:</span>
-                            {r.criteria.map((c, cIdx) => (
-                              <span
-                                key={cIdx}
-                                className="inline-flex items-center gap-1 rounded bg-sunken px-2 py-0.5 text-xs text-ink border border-line/60"
-                              >
-                                <span className="font-semibold text-pen text-[11px]">Mark {cIdx + 1}:</span>
-                                <span>{c}</span>
+                      ) : (
+                        r.criteria.length > 0 && (
+                          <div className="mt-2.5 space-y-1">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className="text-[11px] text-mute font-semibold uppercase tracking-wider">
+                                Criteria:
                               </span>
-                            ))}
+                              {r.criteria.map((c, cIdx) => (
+                                <span
+                                  key={cIdx}
+                                  className="inline-flex items-center gap-1 rounded bg-sunken px-2 py-0.5 text-xs text-ink border border-line/60"
+                                >
+                                  <span className="font-semibold text-pen text-[11px]">
+                                    Mark {cIdx + 1}:
+                                  </span>
+                                  <span>{c}</span>
+                                </span>
+                              ))}
+                            </div>
                           </div>
-                        </div>
+                        )
                       )}
                       <span className="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold text-pen">
                         {isSelected ? "Show less" : "Show more"}
-                        <IconChevronDown size={13} className={`transition-transform ${isSelected ? "rotate-180" : ""}`} />
+                        <IconChevronDown
+                          size={13}
+                          className={`transition-transform ${isSelected ? "rotate-180" : ""}`}
+                        />
                       </span>
                     </button>
+
+                    {isSelected && r.visuals?.length ? (
+                      <div className="mt-3 space-y-2 rounded-lg border border-line bg-sunken p-2.5">
+                        <p className="text-xs font-medium text-mute">
+                          Extracted marking-scheme visuals
+                        </p>
+                        {r.visuals.map((visual, index) => (
+                          <figure
+                            key={index}
+                            className="rounded border border-line/60 bg-surface p-2"
+                          >
+                            <AuthImage
+                              path={`/crops/answer-key/${r.id}/visuals/${index}`}
+                              alt={`${visual.kind} for marking-scheme row ${r.raw_question_number ?? ""}`}
+                              className="max-h-64 rounded object-contain"
+                            />
+                            <figcaption className="mt-1 text-xs text-mute">
+                              <b className="capitalize text-ink">
+                                {visual.kind}:
+                              </b>{" "}
+                              {visual.description}
+                              {visual.labels.length
+                                ? ` · Labels: ${visual.labels.join(", ")}`
+                                : ""}
+                            </figcaption>
+                          </figure>
+                        ))}
+                      </div>
+                    ) : null}
 
                     {/* Action Buttons */}
                     <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-line/50 pt-2.5">
                       {!isLocked && (
                         <>
-                          <Button small onClick={() => setDlg({ kind: "edit", row: r })}>Edit</Button>
-                          <Button small onClick={() => setDlg({ kind: "split", row: r })}>Split</Button>
-                          <Button small onClick={() => setDlg({ kind: "merge", row: r })}>Merge</Button>
+                          <Button
+                            small
+                            onClick={() => setDlg({ kind: "edit", row: r })}
+                          >
+                            Edit
+                          </Button>
+                          <Button
+                            small
+                            onClick={() => setDlg({ kind: "split", row: r })}
+                          >
+                            Split
+                          </Button>
+                          <Button
+                            small
+                            onClick={() => setDlg({ kind: "merge", row: r })}
+                          >
+                            Merge
+                          </Button>
                           <Button
                             small
                             variant="ghost"
@@ -391,17 +595,53 @@ export default function AnswerKey() {
         />
       )}
 
-      {dlg?.kind === "edit" && dlg.row && k && <KeyDlg row={dlg.row} k={k} onClose={() => setDlg(null)} onDone={after} />}
-      {dlg?.kind === "add" && k && <KeyDlg qid={dlg.qid} k={k} onClose={() => setDlg(null)} onDone={after} examId={exam.id} />}
-      {dlg?.kind === "split" && dlg.row && <SplitKeyModal row={dlg.row} onClose={() => setDlg(null)} onDone={after} />}
-      {dlg?.kind === "merge" && dlg.row && k && <MergeKeyModal row={dlg.row} allKeys={k.keys} onClose={() => setDlg(null)} onDone={after} />}
+      {dlg?.kind === "edit" && dlg.row && k && (
+        <KeyDlg
+          row={dlg.row}
+          k={k}
+          onClose={() => setDlg(null)}
+          onDone={after}
+        />
+      )}
+      {dlg?.kind === "add" && k && (
+        <KeyDlg
+          qid={dlg.qid}
+          k={k}
+          onClose={() => setDlg(null)}
+          onDone={after}
+          examId={exam.id}
+        />
+      )}
+      {dlg?.kind === "split" && dlg.row && (
+        <SplitKeyModal
+          row={dlg.row}
+          onClose={() => setDlg(null)}
+          onDone={after}
+        />
+      )}
+      {dlg?.kind === "merge" && dlg.row && k && (
+        <MergeKeyModal
+          row={dlg.row}
+          allKeys={k.keys}
+          onClose={() => setDlg(null)}
+          onDone={after}
+        />
+      )}
       {dlg?.kind === "delete" && dlg.row && (
         <Confirm
           title="Delete Answer Row"
           danger
           confirmLabel="Delete"
-          body={<p className="text-sm text-ink">Remove the answer row for “{dlg.row.raw_question_number}”? This action is recorded in the audit trail.</p>}
-          onConfirm={async () => { await api(`/answer-keys/${dlg.row!.id}`, { method: "DELETE" }); await after(); }}
+          body={
+            <p className="text-sm text-ink">
+              Remove the answer row for “{dlg.row.raw_question_number}”? This
+              action is recorded in the audit trail.
+            </p>
+          }
+          onConfirm={async () => {
+            await api(`/answer-keys/${dlg.row!.id}`, { method: "DELETE" });
+            await after();
+          }}
           onClose={() => setDlg(null)}
         />
       )}
@@ -439,19 +679,25 @@ function ReviewGeneratedModal({
 }) {
   const [items, setItems] = useState<GeneratedAnswerItem[]>(() =>
     initialAnswers.map((ans) => {
-      const target = Math.max(1, Math.round(Number(ans.marks ?? ans.max_marks ?? 1) || 1));
-      const crit = ans.criteria && ans.criteria.length > 0 ? [...ans.criteria] : [];
+      const target = Math.max(
+        1,
+        Math.round(Number(ans.marks ?? ans.max_marks ?? 1) || 1),
+      );
+      const crit =
+        ans.criteria && ans.criteria.length > 0 ? [...ans.criteria] : [];
       while (crit.length < target) {
         crit.push("");
       }
       return { ...ans, criteria: crit };
-    })
+    }),
   );
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<unknown>(null);
 
   const updateItem = (index: number, patch: Partial<GeneratedAnswerItem>) => {
-    setItems((prev) => prev.map((item, i) => (i === index ? { ...item, ...patch } : item)));
+    setItems((prev) =>
+      prev.map((item, i) => (i === index ? { ...item, ...patch } : item)),
+    );
   };
 
   const handleSave = async () => {
@@ -462,7 +708,9 @@ function ReviewGeneratedModal({
         ...it,
         criteria: it.criteria.map((c) => c.trim()).filter(Boolean),
         keywords: it.keywords.map((k) => k.trim()).filter(Boolean),
-        accepted_answers: it.accepted_answers.map((a) => a.trim()).filter(Boolean),
+        accepted_answers: it.accepted_answers
+          .map((a) => a.trim())
+          .filter(Boolean),
       }));
       await onSave(cleaned);
     } catch (e) {
@@ -478,7 +726,9 @@ function ReviewGeneratedModal({
       onClose={onClose}
       footer={
         <>
-          <Button onClick={onClose} disabled={busy}>Discard</Button>
+          <Button onClick={onClose} disabled={busy}>
+            Discard
+          </Button>
           <Button variant="primary" busy={busy} onClick={handleSave}>
             Approve &amp; Save Answer Key ({items.length} answers)
           </Button>
@@ -489,20 +739,28 @@ function ReviewGeneratedModal({
         <div className="rounded-lg border border-pen/30 bg-pen-soft/40 p-3.5 text-sm text-ink shadow-xs">
           <p className="font-semibold text-pen">Generated Model Answers</p>
           <p className="text-xs text-mute mt-0.5">
-            Check and adjust the answers before saving. You approve the key before it is used.
+            Check and adjust the answers before saving. You approve the key
+            before it is used.
           </p>
         </div>
         <ErrorPanel error={err} />
         <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1">
           {items.map((item, idx) => (
-            <Card key={item.exam_question_id || idx} className="p-4 space-y-3 shadow-soft">
+            <Card
+              key={item.exam_question_id || idx}
+              className="p-4 space-y-3 shadow-soft"
+            >
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line pb-2">
-                <span className="font-bold text-base text-ink">Question {item.question_number}</span>
+                <span className="font-bold text-base text-ink">
+                  Question {item.question_number}
+                </span>
                 <Badge tone="pen">{item.max_marks ?? "–"} marks</Badge>
               </div>
               {item.question_text && (
                 <div className="rounded-lg bg-sunken p-2.5 text-xs text-mute font-doc">
-                  <span className="font-semibold text-ink block mb-0.5">Question Text:</span>
+                  <span className="font-semibold text-ink block mb-0.5">
+                    Question Text:
+                  </span>
                   <MathView text={item.question_text} />
                 </div>
               )}
@@ -526,12 +784,18 @@ function ReviewGeneratedModal({
                       min={0}
                       value={item.marks != null ? item.marks : ""}
                       onChange={(e) => {
-                        const val = e.target.value ? Number(e.target.value) : null;
+                        const val = e.target.value
+                          ? Number(e.target.value)
+                          : null;
                         const target = val ? Math.max(1, Math.round(val)) : 1;
                         let nextCrit = [...item.criteria];
                         if (val && nextCrit.length < target) {
                           while (nextCrit.length < target) nextCrit.push("");
-                        } else if (val && nextCrit.length > target && nextCrit.slice(target).every((c) => !c.trim())) {
+                        } else if (
+                          val &&
+                          nextCrit.length > target &&
+                          nextCrit.slice(target).every((c) => !c.trim())
+                        ) {
                           nextCrit = nextCrit.slice(0, target);
                         }
                         updateItem(idx, { marks: val, criteria: nextCrit });
@@ -546,7 +810,9 @@ function ReviewGeneratedModal({
                       rows={3}
                       className="text-xs"
                       value={item.keywords.join("\n")}
-                      onChange={(e) => updateItem(idx, { keywords: lines(e.target.value) })}
+                      onChange={(e) =>
+                        updateItem(idx, { keywords: lines(e.target.value) })
+                      }
                     />
                   )}
                 </Field>
@@ -557,7 +823,11 @@ function ReviewGeneratedModal({
                       rows={3}
                       className="text-xs"
                       value={item.accepted_answers.join("\n")}
-                      onChange={(e) => updateItem(idx, { accepted_answers: lines(e.target.value) })}
+                      onChange={(e) =>
+                        updateItem(idx, {
+                          accepted_answers: lines(e.target.value),
+                        })
+                      }
                     />
                   )}
                 </Field>
@@ -575,25 +845,52 @@ function ReviewGeneratedModal({
   );
 }
 
-function KeyDlg({ row, qid, k, examId, onClose, onDone }: { row?: AnswerKeyRow; qid?: string; k: KeysResponse; examId?: string; onClose: () => void; onDone: () => Promise<void> }) {
+function KeyDlg({
+  row,
+  qid,
+  k,
+  examId,
+  onClose,
+  onDone,
+}: {
+  row?: AnswerKeyRow;
+  qid?: string;
+  k: KeysResponse;
+  examId?: string;
+  onClose: () => void;
+  onDone: () => Promise<void>;
+}) {
   const initialQid = row?.exam_question_id ?? qid ?? "";
   const initialQ = k.questions.find((x) => x.id === initialQid);
   const [question, setQuestion] = useState(initialQid);
   const [text, setText] = useState(row?.answer_text ?? "");
-  const [marks, setMarks] = useState(row?.marks != null ? String(row.marks) : (initialQ?.max_marks != null ? String(initialQ.max_marks) : ""));
+  const [marks, setMarks] = useState(
+    row?.marks != null
+      ? String(row.marks)
+      : initialQ?.max_marks != null
+        ? String(initialQ.max_marks)
+        : "",
+  );
 
   const getInitialCriteria = () => {
-    const initial = row?.criteria && row.criteria.length > 0 ? [...row.criteria] : [];
-    const target = Math.max(1, Math.round(Number(row?.marks ?? initialQ?.max_marks ?? 1) || 1));
+    const initial =
+      row?.criteria && row.criteria.length > 0 ? [...row.criteria] : [];
+    const target = Math.max(
+      1,
+      Math.round(Number(row?.marks ?? initialQ?.max_marks ?? 1) || 1),
+    );
     while (initial.length < target) {
       initial.push("");
     }
     return initial;
   };
 
-  const [criteriaList, setCriteriaList] = useState<string[]>(getInitialCriteria);
+  const [criteriaList, setCriteriaList] =
+    useState<string[]>(getInitialCriteria);
   const [keywords, setKeywords] = useState((row?.keywords ?? []).join("\n"));
-  const [accepted, setAccepted] = useState((row?.accepted_answers ?? []).join("\n"));
+  const [accepted, setAccepted] = useState(
+    (row?.accepted_answers ?? []).join("\n"),
+  );
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<unknown>(null);
@@ -632,7 +929,10 @@ function KeyDlg({ row, qid, k, examId, onClose, onDone }: { row?: AnswerKeyRow; 
           while (next.length < target) next.push("");
           return next;
         }
-        if (prev.length > target && prev.slice(target).every((c) => !c.trim())) {
+        if (
+          prev.length > target &&
+          prev.slice(target).every((c) => !c.trim())
+        ) {
           return prev.slice(0, target);
         }
         return prev;
@@ -641,47 +941,91 @@ function KeyDlg({ row, qid, k, examId, onClose, onDone }: { row?: AnswerKeyRow; 
   };
 
   const call = async (fn: () => Promise<unknown>, close = true) => {
-    setBusy(true); setErr(null);
-    try { await fn(); await onDone(); if (close) onClose(); else setBusy(false); }
-    catch (e) { setErr(e); setBusy(false); }
+    setBusy(true);
+    setErr(null);
+    try {
+      await fn();
+      await onDone();
+      if (close) onClose();
+      else setBusy(false);
+    } catch (e) {
+      setErr(e);
+      setBusy(false);
+    }
   };
 
   const save = () => {
     const cleanedCriteria = criteriaList.map((c) => c.trim()).filter(Boolean);
-    return call(() => row
-      ? api(`/answer-keys/${row.id}`, {
-          method: "PATCH",
-          json: {
-            ...(question && question !== row.exam_question_id ? { exam_question_id: question } : {}),
-            answer_text: text,
-            marks: marks ? Number(marks) : null,
-            criteria: cleanedCriteria,
-            keywords: lines(keywords),
-            accepted_answers: lines(accepted),
-            reason: reason || undefined,
-          },
-        })
-      : api(`/exams/${examId}/answer-keys`, {
-          method: "POST",
-          json: {
-            exam_question_id: question,
-            answer_text: text,
-            marks: marks ? Number(marks) : null,
-            criteria: cleanedCriteria,
-            keywords: lines(keywords),
-            accepted_answers: lines(accepted),
-          },
-        }));
+    return call(() =>
+      row
+        ? api(`/answer-keys/${row.id}`, {
+            method: "PATCH",
+            json: {
+              ...(question && question !== row.exam_question_id
+                ? { exam_question_id: question }
+                : {}),
+              answer_text: text,
+              marks: marks ? Number(marks) : null,
+              criteria: cleanedCriteria,
+              keywords: lines(keywords),
+              accepted_answers: lines(accepted),
+              reason: reason || undefined,
+            },
+          })
+        : api(`/exams/${examId}/answer-keys`, {
+            method: "POST",
+            json: {
+              exam_question_id: question,
+              answer_text: text,
+              marks: marks ? Number(marks) : null,
+              criteria: cleanedCriteria,
+              keywords: lines(keywords),
+              accepted_answers: lines(accepted),
+            },
+          }),
+    );
   };
 
-  const resolve = (choice: string) => call(() => api(`/answer-keys/${row!.id}`, { method: "PATCH", json: { mismatch_resolution: choice, reason: reason || undefined } }));
+  const resolve = (choice: string) =>
+    call(() =>
+      api(`/answer-keys/${row!.id}`, {
+        method: "PATCH",
+        json: { mismatch_resolution: choice, reason: reason || undefined },
+      }),
+    );
 
   return (
-    <Modal title={row ? `Edit Answer for “${row.raw_question_number}”` : "Add Answer"} wide onClose={onClose} footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" busy={busy} disabled={!question || !text.trim()} onClick={save}>Save</Button></>}>
+    <Modal
+      title={
+        row ? `Edit Answer for “${row.raw_question_number}”` : "Add Answer"
+      }
+      wide
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button
+            variant="primary"
+            busy={busy}
+            disabled={!question || !text.trim()}
+            onClick={save}
+          >
+            Save
+          </Button>
+        </>
+      }
+    >
       <div className="space-y-4">
-        <Field label="Maps to Question" hint="Select the question this answer belongs to.">
+        <Field
+          label="Maps to Question"
+          hint="Select the question this answer belongs to."
+        >
           {(id) => (
-            <Select id={id} value={question} onChange={(e) => handleQuestionChange(e.target.value)}>
+            <Select
+              id={id}
+              value={question}
+              onChange={(e) => handleQuestionChange(e.target.value)}
+            >
               <option value="">Choose a question</option>
               {k.questions.map((x) => (
                 <option key={x.id} value={x.id}>
@@ -693,16 +1037,41 @@ function KeyDlg({ row, qid, k, examId, onClose, onDone }: { row?: AnswerKeyRow; 
         </Field>
         {row?.mark_mismatch && q && (
           <div className="rounded-lg border border-mark/50 bg-mark-soft/30 p-3.5 text-sm">
-            <p className="font-semibold text-mark">Mark mismatch: key says {row.marks}, question {q.display_number} is worth {q.max_marks}.</p>
+            <p className="font-semibold text-mark">
+              Mark mismatch: key says {row.marks}, question {q.display_number}{" "}
+              is worth {q.max_marks}.
+            </p>
             <div className="mt-2.5 flex flex-wrap gap-2">
-              <Button small busy={busy} onClick={() => resolve("keep_question_marks")}>Keep question's {q.max_marks} marks</Button>
-              <Button small busy={busy} disabled={!reason} onClick={() => resolve("use_key_marks")}>Change question to {row.marks} marks (needs reason)</Button>
+              <Button
+                small
+                busy={busy}
+                onClick={() => resolve("keep_question_marks")}
+              >
+                Keep question's {q.max_marks} marks
+              </Button>
+              <Button
+                small
+                busy={busy}
+                disabled={!reason}
+                onClick={() => resolve("use_key_marks")}
+              >
+                Change question to {row.marks} marks (needs reason)
+              </Button>
             </div>
-            <div className="mt-2"><Input aria-label="Reason" placeholder="Reason for changing marks" value={reason} onChange={(e) => setReason(e.target.value)} /></div>
+            <div className="mt-2">
+              <Input
+                aria-label="Reason"
+                placeholder="Reason for changing marks"
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+              />
+            </div>
           </div>
         )}
         <Field label="Official Answer Text">
-          {(id) => <MathTextarea id={id} rows={6} value={text} onChange={setText} />}
+          {(id) => (
+            <MathTextarea id={id} rows={6} value={text} onChange={setText} />
+          )}
         </Field>
         <div className="grid gap-4 sm:grid-cols-3">
           <Field label="Marks">
@@ -718,10 +1087,26 @@ function KeyDlg({ row, qid, k, examId, onClose, onDone }: { row?: AnswerKeyRow; 
             )}
           </Field>
           <Field label="Accepted Answers (one per line)">
-            {(id) => <Textarea id={id} rows={3} value={accepted} onChange={(e) => setAccepted(e.target.value)} placeholder="Alternative phrasing or spellings..." />}
+            {(id) => (
+              <Textarea
+                id={id}
+                rows={3}
+                value={accepted}
+                onChange={(e) => setAccepted(e.target.value)}
+                placeholder="Alternative phrasing or spellings..."
+              />
+            )}
           </Field>
           <Field label="Keywords (one per line)">
-            {(id) => <Textarea id={id} rows={3} value={keywords} onChange={(e) => setKeywords(e.target.value)} placeholder="Must-include terms..." />}
+            {(id) => (
+              <Textarea
+                id={id}
+                rows={3}
+                value={keywords}
+                onChange={(e) => setKeywords(e.target.value)}
+                placeholder="Must-include terms..."
+              />
+            )}
           </Field>
         </div>
         <CriteriaEditor
@@ -735,7 +1120,15 @@ function KeyDlg({ row, qid, k, examId, onClose, onDone }: { row?: AnswerKeyRow; 
   );
 }
 
-function SplitKeyModal({ row, onClose, onDone }: { row: AnswerKeyRow; onClose: () => void; onDone: () => Promise<void> }) {
+function SplitKeyModal({
+  row,
+  onClose,
+  onDone,
+}: {
+  row: AnswerKeyRow;
+  onClose: () => void;
+  onDone: () => Promise<void>;
+}) {
   const [pos, setPos] = useState(Math.floor(row.answer_text.length / 2));
   const [num, setNum] = useState("");
   const [marks, setMarks] = useState("");
@@ -745,28 +1138,97 @@ function SplitKeyModal({ row, onClose, onDone }: { row: AnswerKeyRow; onClose: (
   const tail = row.answer_text.slice(pos);
 
   const save = async () => {
-    setBusy(true); setErr(null);
+    setBusy(true);
+    setErr(null);
     try {
-      await api(`/answer-keys/${row.id}/split`, { method: "POST", json: { at_char: pos, new_label: num, new_marks: marks ? Number(marks) : null } });
-      await onDone(); onClose();
-    } catch (e) { setErr(e); setBusy(false); }
+      await api(`/answer-keys/${row.id}/split`, {
+        method: "POST",
+        json: {
+          at_char: pos,
+          new_label: num,
+          new_marks: marks ? Number(marks) : null,
+        },
+      });
+      await onDone();
+      onClose();
+    } catch (e) {
+      setErr(e);
+      setBusy(false);
+    }
   };
 
   return (
-    <Modal title={`Split Answer “${row.raw_question_number ?? "none"}”`} wide onClose={onClose} footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" busy={busy} disabled={pos <= 0 || !num.trim()} onClick={save}>Split here</Button></>}>
+    <Modal
+      title={`Split Answer “${row.raw_question_number ?? "none"}”`}
+      wide
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button
+            variant="primary"
+            busy={busy}
+            disabled={pos <= 0 || !num.trim()}
+            onClick={save}
+          >
+            Split here
+          </Button>
+        </>
+      }
+    >
       <div className="space-y-4">
-        <p className="text-xs text-mute">Adjust slider to choose where to split this answer row into two.</p>
+        <p className="text-xs text-mute">
+          Adjust slider to choose where to split this answer row into two.
+        </p>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="New Question Label (e.g. Q4 or 4(b))">{(id) => <Input id={id} value={num} onChange={(e) => setNum(e.target.value)} />}</Field>
-          <Field label="Marks for New Row (optional)">{(id) => <Input id={id} type="number" min={0} step={0.5} value={marks} onChange={(e) => setMarks(e.target.value)} />}</Field>
+          <Field label="New Question Label (e.g. Q4 or 4(b))">
+            {(id) => (
+              <Input
+                id={id}
+                value={num}
+                onChange={(e) => setNum(e.target.value)}
+              />
+            )}
+          </Field>
+          <Field label="Marks for New Row (optional)">
+            {(id) => (
+              <Input
+                id={id}
+                type="number"
+                min={0}
+                step={0.5}
+                value={marks}
+                onChange={(e) => setMarks(e.target.value)}
+              />
+            )}
+          </Field>
         </div>
         <div>
-          <input type="range" min={1} max={Math.max(1, row.answer_text.length - 1)} value={pos} onChange={(e) => setPos(Number(e.target.value))} className="w-full accent-pen" />
-          <p className="text-xs text-mute mt-1 font-mono">Character {pos} of {row.answer_text.length}</p>
+          <input
+            type="range"
+            min={1}
+            max={Math.max(1, row.answer_text.length - 1)}
+            value={pos}
+            onChange={(e) => setPos(Number(e.target.value))}
+            className="w-full accent-pen"
+          />
+          <p className="text-xs text-mute mt-1 font-mono">
+            Character {pos} of {row.answer_text.length}
+          </p>
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
-          <div className="rounded-lg border border-line bg-surface p-3 text-xs"><p className="mb-1 font-semibold text-mute uppercase">Kept in Current Row</p><p className="font-mono text-ink">{head}</p></div>
-          <div className="rounded-lg border border-line bg-sunken p-3 text-xs"><p className="mb-1 font-semibold text-mute uppercase">Moved to New Row ({num || "..."})</p><p className="font-mono text-ink">{tail}</p></div>
+          <div className="rounded-lg border border-line bg-surface p-3 text-xs">
+            <p className="mb-1 font-semibold text-mute uppercase">
+              Kept in Current Row
+            </p>
+            <p className="font-mono text-ink">{head}</p>
+          </div>
+          <div className="rounded-lg border border-line bg-sunken p-3 text-xs">
+            <p className="mb-1 font-semibold text-mute uppercase">
+              Moved to New Row ({num || "..."})
+            </p>
+            <p className="font-mono text-ink">{tail}</p>
+          </div>
         </div>
         <ErrorPanel error={err} />
       </div>
@@ -774,31 +1236,73 @@ function SplitKeyModal({ row, onClose, onDone }: { row: AnswerKeyRow; onClose: (
   );
 }
 
-function MergeKeyModal({ row, allKeys, onClose, onDone }: { row: AnswerKeyRow; allKeys: AnswerKeyRow[]; onClose: () => void; onDone: () => Promise<void> }) {
+function MergeKeyModal({
+  row,
+  allKeys,
+  onClose,
+  onDone,
+}: {
+  row: AnswerKeyRow;
+  allKeys: AnswerKeyRow[];
+  onClose: () => void;
+  onDone: () => Promise<void>;
+}) {
   const [otherId, setOtherId] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<unknown>(null);
   const others = allKeys.filter((k) => k.id !== row.id);
 
   const save = async () => {
-    setBusy(true); setErr(null);
+    setBusy(true);
+    setErr(null);
     try {
-      await api(`/answer-keys/${row.id}/merge`, { method: "POST", json: { other_id: otherId } });
-      await onDone(); onClose();
-    } catch (e) { setErr(e); setBusy(false); }
+      await api(`/answer-keys/${row.id}/merge`, {
+        method: "POST",
+        json: { other_id: otherId },
+      });
+      await onDone();
+      onClose();
+    } catch (e) {
+      setErr(e);
+      setBusy(false);
+    }
   };
 
   return (
-    <Modal title={`Merge Answer “${row.raw_question_number ?? "none"}”`} onClose={onClose} footer={<><Button onClick={onClose}>Cancel</Button><Button variant="primary" busy={busy} disabled={!otherId} onClick={save}>Merge</Button></>}>
+    <Modal
+      title={`Merge Answer “${row.raw_question_number ?? "none"}”`}
+      onClose={onClose}
+      footer={
+        <>
+          <Button onClick={onClose}>Cancel</Button>
+          <Button
+            variant="primary"
+            busy={busy}
+            disabled={!otherId}
+            onClick={save}
+          >
+            Merge
+          </Button>
+        </>
+      }
+    >
       <div className="space-y-4">
-        <p className="text-xs text-mute">Append another row's answer text into this one. The merged row will be removed.</p>
+        <p className="text-xs text-mute">
+          Append another row's answer text into this one. The merged row will be
+          removed.
+        </p>
         <Field label="Choose Row to Merge into This One">
           {(id) => (
-            <Select id={id} value={otherId} onChange={(e) => setOtherId(e.target.value)}>
+            <Select
+              id={id}
+              value={otherId}
+              onChange={(e) => setOtherId(e.target.value)}
+            >
               <option value="">Select row...</option>
               {others.map((k) => (
                 <option key={k.id} value={k.id}>
-                  {k.raw_question_number ?? "(no number)"} — {k.answer_text.slice(0, 50)}
+                  {k.raw_question_number ?? "(no number)"} —{" "}
+                  {k.answer_text.slice(0, 50)}
                 </option>
               ))}
             </Select>

@@ -17,10 +17,22 @@ Return valid JSON only."""
 
 def prompt(q, key, student, options, instructions):
     tree = key.rubric["cbse_tree"]
+    question_visuals = [
+        {k: v for k, v in item.items() if k != "crop_file"}
+        for item in (q.structure or {}).get("visuals", [])
+    ]
+    scheme_visuals = [
+        {k: v for k, v in item.items() if k != "crop_file"}
+        for item in (key.rubric or {}).get("visuals", [])
+    ]
     return f"""QUESTION {q.display_number} (maximum marks: {q.max_marks:g})
 {q.question_text}
+QUESTION VISUAL EVIDENCE (source descriptions and visible labels):
+{json.dumps(question_visuals, ensure_ascii=False)}
 OFFICIAL UPLOADED MARKING SCHEME:
 {key.answer_text}
+MARKING-SCHEME VISUAL EVIDENCE (source descriptions and visible labels):
+{json.dumps(scheme_visuals, ensure_ascii=False)}
 GENERAL EXAMINER INSTRUCTIONS:
 {json.dumps(instructions, ensure_ascii=False)}
 REVIEWED SCORING TREE:

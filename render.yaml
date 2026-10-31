@@ -37,7 +37,7 @@ services:
       - key: OPENROUTER_API_KEY
         sync: false
       - key: OPENROUTER_MODEL
-        value: qwen/qwen3-vl-8b-instruct
+        value: deepseek/deepseek-v4.1-flash-1017
       - key: AI_REQUEST_LOGPROBS
         value: "true"
       - key: INDIC_OCR_ENABLED
