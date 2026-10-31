@@ -10,7 +10,7 @@ AI_UNAVAILABLE_MESSAGE = (
 )
 AI_BAD_RESPONSE_MESSAGE = "InternVL3.5 4B failed to return a valid structured response."
 INDIC_UNAVAILABLE_MESSAGE = (
-    "IndicOCR is not available. Start the IndicOCR service (indic_ocr_service) "
+    "IndicOCR is not available. Start the IndicOCR service "
     "and check INDIC_OCR_URL."
 )
 INDIC_BAD_RESPONSE_MESSAGE = "IndicOCR failed to read this page."
@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     internvl_num_ctx: int = 8192
     internvl_num_predict: int = 4096
 
-    # Indian-language subjects are read by IndicOCR instead of InternVL (see indic_ocr_service/)
+    # Indian-language subjects are read by IndicOCR instead of InternVL (separate IndicOCR service)
     indic_ocr_enabled: bool = False
     indic_ocr_url: str = "http://127.0.0.1:8090"
     indic_ocr_timeout: int = 300
@@ -47,23 +47,46 @@ class Settings(BaseSettings):
     database_url: str = ""
     secret_key: str = ""
     access_token_minutes: int = 480
-    data_dir: str = "../data"
+    data_dir: str = "data"
     pdf_render_dpi: int = 300
     ocr_max_side: int = 2560
     max_upload_mb: int = 50
-    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    # Web (school + teacher) :5173, Admin :5174, Parents :5175
+    cors_origins: str = ("http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,"
+                         "http://localhost:5175,http://127.0.0.1:5175")
     min_label_confidence: float = 0.4
+
+    # Links in emails (invites, resets, signup checks) open these apps
+    web_url: str = "http://localhost:5173"
+    admin_url: str = "http://localhost:5174"
+    parent_url: str = "http://localhost:5175"
+    # Email. Without SMTP_HOST, emails are written to data/outbox/ instead of being sent (development).
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = "ADEM <noreply@localhost>"
+    smtp_starttls: bool = True
+    # Google sign-in: the OAuth Client ID. Empty = Google sign-in is switched off.
+    google_client_id: str = ""
+    # Supabase project. The secret key is server-only and must never reach a frontend.
+    supabase_url: str = ""
+    supabase_publishable_key: str = ""
+    supabase_secret_key: str = ""
+    supabase_jwks_url: str = ""
+    # Sign-in protection
+    login_max_failures: int = 5
+    login_lock_minutes: int = 15
+    # Policy versions recorded with each consent
+    privacy_version: str = "2026-10"
+    terms_version: str = "2026-10"
 
     @property
     def data_path(self) -> Path:
-        if self.data_dir and self.data_dir != "../data":
-            p = Path(self.data_dir).resolve()
-            p.mkdir(parents=True, exist_ok=True)
-            return p
-        root_data = Path(__file__).resolve().parent.parent.parent / "data"
-        if root_data.exists():
-            return root_data
-        p = Path(self.data_dir).resolve()
+        # a relative DATA_DIR is taken from the backend folder, not from wherever the server was started
+        p = Path(self.data_dir)
+        if not p.is_absolute():
+            p = Path(__file__).resolve().parents[1] / p
         p.mkdir(parents=True, exist_ok=True)
         return p
 

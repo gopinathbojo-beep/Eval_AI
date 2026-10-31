@@ -1,0 +1,26 @@
+{
+  "subject": "Mathematics Basic", "code": "241", "names": ["mathematics basic", "maths basic", "math basic", "basic maths", "basic mathematics", "basic"],
+  "session": "2026-27", "total_marks": 80, "duration_minutes": 180,
+  "sections": [
+    {"name": "A", "marks": 20, "questions": [
+      {"q": "1-18", "marks": 1, "kind": "mcq"},
+      {"q": "19-20", "marks": 1, "kind": "assertion_reason"}]},
+    {"name": "B", "marks": 10, "questions": [
+      {"q": 21, "marks": 2, "kind": "short", "choice": ["A", "B"]},
+      {"q": "22-24", "marks": 2, "kind": "short"},
+      {"q": 25, "marks": 2, "kind": "short", "choice": ["A", "B"]}]},
+    {"name": "C", "marks": 18, "questions": [
+      {"q": 26, "marks": 3, "kind": "short"},
+      {"q": 27, "marks": 3, "kind": "proof", "choice": ["A", "B"]},
+      {"q": "28-29", "marks": 3, "kind": "short"},
+      {"q": 30, "marks": 3, "kind": "short", "choice": ["A", "B"]},
+      {"q": 31, "marks": 3, "kind": "short"}]},
+    {"name": "D", "marks": 20, "questions": [
+      {"q": 32, "marks": 5, "kind": "proof"},
+      {"q": 33, "marks": 5, "kind": "long", "choice": ["A", "B"]},
+      {"q": 34, "marks": 5, "kind": "long"},
+      {"q": 35, "marks": 5, "kind": "long", "choice": ["A", "B"]}]},
+    {"name": "E", "marks": 12, "questions": [
+      {"q": "36-38", "marks": 4, "kind": "case", "parts": [1, 1, 2], "part_labels": "i", "part_choice": "iii"}]}
+  ]
+}

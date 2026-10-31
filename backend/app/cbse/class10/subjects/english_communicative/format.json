@@ -1,0 +1,22 @@
+{
+  "subject": "English Communicative", "code": "101", "names": ["english communicative", "communicative", "english comm"],
+  "session": "2026-27", "total_marks": 80, "duration_minutes": 180,
+  "sections": [
+    {"name": "A", "title": "Reading Skills", "marks": 22, "questions": [
+      {"q": 1, "marks": 12, "kind": "passage", "parts": [1, 1, 1, 2, 1, 1, 1, 1, 2, 1], "part_labels": "I"},
+      {"q": 2, "marks": 10, "kind": "passage", "parts": [1, 1, 1, 1, 2, 1, 1, 2], "part_labels": "I"}]},
+    {"name": "B", "title": "Writing Skills", "marks": 22, "questions": [
+      {"q": 3, "marks": 3, "kind": "letter"},
+      {"q": 4, "marks": 4, "kind": "description"},
+      {"q": 5, "marks": 7, "kind": "letter", "choice": ["A", "B"]},
+      {"q": 6, "marks": 8, "kind": "article", "choice": ["A", "B"]}]},
+    {"name": "C", "title": "Grammar", "marks": 10, "questions": [
+      {"q": 7, "marks": 3, "kind": "grammar", "parts": [1, 1, 1], "part_labels": "i"},
+      {"q": 8, "marks": 4, "kind": "grammar", "parts": [1, 1, 1, 1], "part_labels": "i"},
+      {"q": 9, "marks": 3, "kind": "grammar", "parts": [1, 2], "part_labels": "I"}]},
+    {"name": "D", "title": "Literature Textbook", "marks": 26, "questions": [
+      {"q": 10, "marks": 8, "kind": "extract", "parts": [4, 4, 4], "part_labels": "A", "any": 2},
+      {"q": 11, "marks": 10, "kind": "short", "parts": [2, 2, 2, 2, 2, 2], "part_labels": "I", "any": 5},
+      {"q": 12, "marks": 8, "kind": "long", "choice": ["I", "II"]}]}
+  ]
+}

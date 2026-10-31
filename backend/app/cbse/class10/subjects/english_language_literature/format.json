@@ -1,0 +1,19 @@
+{
+  "subject": "English Language and Literature", "code": "184",
+  "names": ["english language and literature", "english language & literature", "english lang", "english l&l", "english"],
+  "session": "2026-27", "total_marks": 80, "duration_minutes": 180,
+  "sections": [
+    {"name": "A", "title": "Reading Skills", "marks": 20, "questions": [
+      {"q": 1, "marks": 10, "kind": "passage", "parts": [1, 1, 1, 2, 1, 1, 1, 2], "part_labels": "I"},
+      {"q": 2, "marks": 10, "kind": "passage", "parts": [1, 1, 1, 1, 2, 1, 1, 1, 1], "part_labels": "I"}]},
+    {"name": "B", "title": "Writing Skills and Grammar", "marks": 20, "questions": [
+      {"q": 3, "marks": 10, "kind": "grammar", "parts": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], "part_labels": "I", "any": 10},
+      {"q": 4, "marks": 5, "kind": "letter", "choice": ["A", "B"]},
+      {"q": 5, "marks": 5, "kind": "analytical_paragraph", "choice": ["A", "B"]}]},
+    {"name": "C", "title": "Literature Textbook", "marks": 40, "questions": [
+      {"q": "6-7", "marks": 5, "kind": "extract", "choice": ["A", "B"], "parts": [1, 1, 1, 2], "part_labels": "I"},
+      {"q": 8, "marks": 12, "kind": "short", "parts": [3, 3, 3, 3, 3], "part_labels": "I", "any": 4},
+      {"q": 9, "marks": 6, "kind": "short", "parts": [3, 3, 3], "part_labels": "I", "any": 2},
+      {"q": "10-11", "marks": 6, "kind": "long", "choice": ["A", "B"]}]}
+  ]
+}

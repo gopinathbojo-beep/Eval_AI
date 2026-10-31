@@ -5,9 +5,9 @@ from sqlalchemy import create_engine, inspect, text
 
 from app.ocr.indic import blocks_to_result
 from app.ocr.schemas import AnswerKeyItem, AnswerKeyPageResult, QuestionItem, QuestionPageResult
-from app.cbse.formatter.common import choices
-from app.cbse.formatter.common.paper import parse_question_paper_structure
-from app.cbse.formatter.common.keys import segment_answer_keys
+from app.cbse.common import choices
+from app.cbse.common.paper import parse_question_paper_structure
+from app.cbse.common.keys import segment_answer_keys
 
 
 def _paper(*items, total=None):

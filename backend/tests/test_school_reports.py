@@ -5,7 +5,7 @@ from app.database import SessionLocal
 from app.models import (AnswerSheetDocument, Evaluation, EvaluationItem, Exam, ExamQuestion, SchoolClass, Student, Subject,
                         Teacher)
 from app.services.report_templates import normalize
-from app.cbse import grading
+from app.cbse.common import grading
 from .conftest import make_png
 
 

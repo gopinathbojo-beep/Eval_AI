@@ -10,11 +10,11 @@ from ..ocr.internvl import AIResponseError, AIUnavailable, chat_structured, chec
 from ..ocr.indic import text_model_for
 from ..ocr.schemas import EvaluationResult
 from ..cbse import formatter
-from ..cbse.formatter.common import choices
-from ..cbse.formatter.common.mark_rules import EvaluationValidationError, validate_evaluation
+from ..cbse.common import choices
+from ..cbse.common.mark_rules import EvaluationValidationError, validate_evaluation
 from .job_queue import keyed_lock, submit
 from .mapping_service import exam_questions
-from ..cbse.formatter.common.numbering import parent_number
+from ..cbse.common.numbering import parent_number
 from .state import set_state
 
 log = logging.getLogger("adem.evaluation")
@@ -255,7 +255,7 @@ def evaluate_item(db: Session, ev: Evaluation, q: ExamQuestion, item: Evaluation
         for a in resolved.constituent_answers:
             a.status = "EVALUATING"
         db.commit()
-        fmt = formatter.current()  # the subject's own grading rules, see app/formatter
+        fmt = formatter.current()  # the subject's own grading rules, see cbse/formatter.py
         # "write on any one topic" answered on several: each graded, the best counts
         attempts = fmt.grading_attempts(q.question_text, resolved.combined_text) or [(None, resolved.combined_text)]
         try:

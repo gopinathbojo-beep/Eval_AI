@@ -21,7 +21,7 @@ from reportlab.pdfgen import canvas
 from reportlab.platypus import HRFlowable, Image, KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from sqlalchemy.orm import Session
 
-from ..cbse import grading
+from ..cbse.common import grading
 from ..deps import err, get_evaluation, get_exam
 from ..documents.storage import abs_path
 from ..models import AuditLog, Evaluation, EvaluationItem, Exam, ExamQuestion, SchoolClass, SchoolProfile, Student, Teacher

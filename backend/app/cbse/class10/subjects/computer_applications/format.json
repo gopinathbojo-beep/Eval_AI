@@ -1,0 +1,27 @@
+{
+  "subject": "Computer Applications", "code": "165", "names": ["computer applications", "computer application", "computer"],
+  "session": "2026-27", "total_marks": 50, "duration_minutes": 120,
+  "sections": [
+    {"name": "A", "marks": 12, "questions": [
+      {"q": "1-9", "marks": 1, "kind": "mcq"},
+      {"q": 10, "marks": 1, "kind": "true_false"},
+      {"q": "11-12", "marks": 1, "kind": "assertion_reason"}]},
+    {"name": "B", "marks": 14, "questions": [
+      {"q": 13, "marks": 2, "kind": "short"},
+      {"q": 14, "marks": 2, "kind": "short", "choice": ["A", "B"]},
+      {"q": 15, "marks": 2, "kind": "short"},
+      {"q": 16, "marks": 2, "kind": "code", "choice": ["A", "B"]},
+      {"q": 17, "marks": 2, "kind": "short"},
+      {"q": 18, "marks": 2, "kind": "short", "choice": ["A", "B"]},
+      {"q": 19, "marks": 2, "kind": "short"}]},
+    {"name": "C", "marks": 12, "questions": [
+      {"q": 20, "marks": 3, "kind": "code", "parts": [1, 1, 1], "part_labels": "I"},
+      {"q": 21, "marks": 3, "kind": "short", "parts": [1, 1, 1], "part_labels": "I"},
+      {"q": 22, "marks": 3, "kind": "code", "choice": ["A", "B"]},
+      {"q": 23, "marks": 3, "kind": "code", "parts": [1, 1, 1], "part_labels": "I"}]},
+    {"name": "D", "marks": 4, "questions": [
+      {"q": 24, "marks": 4, "kind": "code", "choice": ["A", "B"]}]},
+    {"name": "E", "marks": 8, "questions": [
+      {"q": "25-26", "marks": 4, "kind": "case", "parts": [1, 1, 1, 1], "part_labels": "I"}]}
+  ]
+}

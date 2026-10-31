@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 import pytest
-from app.cbse.formatter.common.numbering import normalize_question_number as n
-from app.cbse.formatter.common.mapping import map_label, flag_duplicates, MAPPED, NEEDS_REVIEW, UNMAPPED
+from app.cbse.common.numbering import normalize_question_number as n
+from app.cbse.common.mapping import map_label, flag_duplicates, MAPPED, NEEDS_REVIEW, UNMAPPED
 
 
 @dataclass
@@ -154,7 +154,7 @@ def test_maths_angle_bracket_formats_and_skipped_questions():
 
 
 def test_subquestion_tokens_with_commas_and_brackets():
-    from app.cbse.formatter.common.numbering import extract_subquestion_token
+    from app.cbse.common.numbering import extract_subquestion_token
     assert extract_subquestion_token("a,") == "a"
     assert extract_subquestion_token("b,") == "b"
     assert extract_subquestion_token("c,") == "c"
@@ -167,7 +167,7 @@ def test_subquestion_tokens_with_commas_and_brackets():
 
 
 def test_extract_label_from_text_prefix():
-    from app.cbse.formatter.common.numbering import extract_label_from_text_prefix
+    from app.cbse.common.numbering import extract_label_from_text_prefix
     lbl, rest = extract_label_from_text_prefix("Q1, force & pressure :\nThe pressure exerted...")
     assert lbl == "1"
     assert "force & pressure" in rest

@@ -9,16 +9,16 @@ from ..models import (AnswerKey, AnswerSheetDocument, AuditLog, Evaluation, Eval
 from ..security import current_teacher
 from ..serializers import (EVALUATION_VIEW_LOAD, answer_view, doc_view, evaluation_view, item_view, question_view,
                            student_view)
-from ..cbse.formatter.common import choices
+from ..cbse.common import choices
 from ..services.audit import audit
 from ..services.job_queue import submit
 from ..services.exam_files import purge_exam_files, save_reports_and_schedule, stored_report
 from ..services.evaluation_service import (ExamSnapshot, approve_clean_items, finalize, finalize_issues,
                                            refresh_evaluation_status, review_reasons, run_evaluation)
-from ..cbse.formatter.common.outcomes import summarize as summarize_outcomes
-from ..cbse.formatter.common.mapping import map_label
+from ..cbse.common.outcomes import summarize as summarize_outcomes
+from ..cbse.common.mapping import map_label
 from ..services.mapping_service import apply_student_mapping, exam_questions, mapping_summary
-from ..cbse.formatter.common.numbering import normalize_question_number
+from ..cbse.common.numbering import normalize_question_number
 from ..services.school_reports import build_evaluation_pdf_report, build_exam_pdf_report
 from ..services.state import set_state
 from ..services.student_identity import in_flight

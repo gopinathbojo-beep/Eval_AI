@@ -596,12 +596,13 @@ def generate_marksheet_bytes(db: Session, teacher_id: str | None = None) -> io.B
 
 def sync_root_marksheet_file(db: Session, teacher_id: str | None = None, stream: io.BytesIO | None = None) -> bool:
     """
-    Safely writes the dynamically updated workbook to Student_Marksheet.xlsx in the project root.
+    Safely writes the dynamically updated workbook to Student_Marksheet.xlsx in the data directory.
     If the file is locked open in Excel, saves to Student_Marksheet_Updated.xlsx as a fallback.
     """
     try:
         import os
-        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+        from ..config import get_settings
+        base_dir = str(get_settings().data_path)
         target_path = os.path.join(base_dir, "Student_Marksheet.xlsx")
         data = stream.getvalue() if stream is not None else generate_marksheet_bytes(db, teacher_id=teacher_id).getvalue()
         try:

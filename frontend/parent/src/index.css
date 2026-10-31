@@ -1,0 +1,251 @@
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+@import "@fontsource/source-serif-4/400.css";
+@import "@fontsource/source-serif-4/600.css";
+@import "@fontsource/source-serif-4/400-italic.css";
+@import "@fontsource/fraunces/700.css";
+@import "@fontsource/fraunces/700-italic.css";
+@import "katex/dist/katex.min.css";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * "Examiner's Desk" palette — cream exam paper, teal ink on a chalkboard-green
+ * cover, a coral marking pen and a yellow highlighter.
+ */
+:root {
+  --paper: 250 245 230;       /* Cream desk paper #faf5e6 */
+  --surface: 255 252 243;     /* Fresh answer sheet #fffcf3 */
+  --sunken: 243 236 218;      /* Folded margin #f3ecda */
+  --line: 229 219 195;        /* Pencil rule #e5dbc3 */
+  --hover: 246 235 205;       /* Butter-cream hover #f6ebcd */
+  --brown: 122 72 38;         /* Walnut hover text #7a4826 */
+  --ink: 24 33 29;            /* Green-black ink #18211d */
+  --mute: 90 101 95;          /* Graphite #5a655f */
+  --pen: 14 94 112;           /* Teal fountain ink #0e5e70 */
+  --pen-fill: 15 118 110;     /* Solid teal behind text (bg-pen): primary buttons, active tabs #0f766e */
+  --on-pen: 255 255 255;      /* Text on pen-fill: white */
+  --pen-soft: 222 238 240;
+  --mark: 196 58 40;          /* Coral marking pen #c43a28 */
+  --mark-soft: 251 231 225;
+  --ok: 23 115 77;            /* Green tick #17734d */
+  --ok-soft: 226 241 231;
+  --warn: 168 98 0;           /* Amber query #a86200 */
+  --warn-soft: 249 236 205;
+  --hl: 255 214 102;          /* Highlighter */
+
+  --cover: 29 53 46;          /* Chalkboard cover #1d352e */
+  --cover-ink: 226 234 228;
+  --cover-line: 255 255 255;
+  --cover-brown: 217 168 108;  /* Tan hover text on the cover #d9a86c */
+  color-scheme: light;
+}
+
+/*
+ * "Midnight Slate & Teal" dark theme, applied by <html data-theme="dark"> (see context/Theme.tsx).
+ * All text tokens meet WCAG AA (4.5:1) on paper, surface, sunken, hover and the sidebar.
+ */
+[data-theme="dark"] {
+  color-scheme: dark;         /* native scrollbars, date pickers and form controls follow the theme */
+  --paper: 17 24 39;          /* Main background #111827 */
+  --surface: 31 41 55;        /* Cards, elevated surfaces #1f2937 */
+  --sunken: 24 33 48;         /* Insets, table heads #182130 */
+  --line: 55 65 81;           /* Borders, dividers #374151 */
+  --hover: 40 51 68;          /* Hover rows/items #283344 */
+  --brown: 94 234 212;        /* Hover text: teal highlight #5eead4 */
+  --ink: 229 231 235;         /* Primary text #e5e7eb */
+  --mute: 156 163 175;        /* Secondary text #9ca3af */
+  --pen: 94 234 212;          /* Teal highlights, links, active text #5eead4 */
+  --pen-fill: 15 118 110;     /* Primary teal fill #0f766e */
+  --on-pen: 255 255 255;      /* Text on primary teal: white */
+  --pen-soft: 19 58 63;       /* Teal tint #133a3f */
+  --mark: 248 113 113;        /* Error #f87171 */
+  --mark-soft: 69 32 38;      /* #452026 */
+  --ok: 52 211 153;           /* Success / finalized #34d399 */
+  --ok-soft: 19 58 50;        /* #133a32 */
+  --warn: 251 191 36;         /* Warning / pending review #fbbf24 */
+  --warn-soft: 66 52 22;      /* #423416 */
+  --hl: 251 191 36;
+
+  --cover: 11 23 27;          /* Sidebar #0b171b */
+  --cover-ink: 229 231 235;
+  --cover-line: 255 255 255;
+  --cover-brown: 94 234 212;  /* Sidebar hover/active text #5eead4 */
+}
+
+/* A yellow highlighter under light text is unreadable; use dark text for selections */
+[data-theme="dark"] ::selection {
+  background: rgb(var(--hl) / 0.85);
+  color: rgb(var(--paper));
+}
+
+/* Theme switch: the new theme is revealed by a growing circle (context/Theme.tsx), so the
+   default cross-fade of the view transition is turned off */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+::view-transition-old(root) { z-index: 1; }
+::view-transition-new(root) { z-index: 2; }
+
+/* Fallback for browsers without View Transitions: short colour fade while the theme flips */
+.theme-fade,
+.theme-fade *,
+.theme-fade *::before,
+.theme-fade *::after {
+  transition: background-color 0.35s ease, border-color 0.35s ease, color 0.35s ease, fill 0.35s ease, stroke 0.35s ease !important;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  @apply bg-paper text-ink font-sans antialiased;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "tnum" 1; /* aligned numerals for marks */
+}
+
+h1, h2 {
+  font-family: "Source Serif 4", "Noto Serif Tamil", Georgia, serif;
+  letter-spacing: -0.01em;
+}
+
+::selection {
+  background: rgb(var(--hl) / 0.55);
+  color: rgb(var(--ink));
+}
+
+:focus-visible {
+  outline: 2px solid rgb(var(--pen));
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Custom refined scrollbars */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgb(var(--line));
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: rgb(var(--mute) / 0.5);
+}
+
+/* Desk surface: faint paper grain from layered dots */
+.desk {
+  background-color: rgb(var(--paper));
+  background-image: radial-gradient(rgb(var(--ink) / 0.045) 1px, transparent 1px);
+  background-size: 18px 18px;
+}
+
+/* Exercise-book ruling: horizontal rules with a red margin line */
+.ruled {
+  background-image:
+    linear-gradient(90deg, transparent 2.75rem, rgb(var(--mark) / 0.35) 2.75rem, rgb(var(--mark) / 0.35) calc(2.75rem + 1px), transparent calc(2.75rem + 1px)),
+    repeating-linear-gradient(180deg, transparent 0, transparent 1.75rem, rgb(var(--pen) / 0.12) 1.75rem, rgb(var(--pen) / 0.12) calc(1.75rem + 1px));
+}
+
+/* Short red margin rule used beside page titles */
+.margin-rule {
+  position: relative;
+}
+.margin-rule::before {
+  content: "";
+  position: absolute;
+  left: -0.875rem;
+  top: 0.2em;
+  bottom: 0.2em;
+  width: 2px;
+  border-radius: 2px;
+  background: rgb(var(--mark) / 0.7);
+}
+
+/* Highlighter swipe behind text */
+.hl {
+  background: linear-gradient(104deg, transparent 0.2em, rgb(var(--hl) / 0.55) 0.35em, rgb(var(--hl) / 0.4) 92%, transparent 98%);
+  background-size: 100% 0.62em;
+  background-position: 0 88%;
+  background-repeat: no-repeat;
+  padding: 0 0.15em;
+  margin: 0 -0.15em;
+}
+
+/* The theme is set by <html data-theme="dark">, not a .dark class */
+[data-theme="dark"] .hl {
+  background-image: linear-gradient(104deg, transparent 0.2em, rgb(var(--hl) / 0.32) 0.35em, rgb(var(--hl) / 0.22) 92%, transparent 98%);
+}
+
+/* Rubber-stamp status label */
+.stamp {
+  font-family: "IBM Plex Sans", system-ui, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 10.5px;
+  font-weight: 600;
+  border-width: 1.5px;
+  border-style: solid;
+  border-radius: 4px;
+  line-height: 1.35;
+}
+
+/* Distinctive teacher red pen marks badge: a hand-circled score */
+.pen-score {
+  position: relative;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+  padding: 4px 16px;
+  color: rgb(var(--mark));
+  font-family: "Source Serif 4", Georgia, serif;
+  font-weight: 600;
+  line-height: 1.1;
+  white-space: nowrap;
+  isolation: isolate;
+}
+.pen-score::before {
+  content: "";
+  position: absolute;
+  inset: -1px -2px;
+  border: 2px solid rgb(var(--mark));
+  border-radius: 48% 52% 46% 54% / 58% 44% 56% 42%;
+  transform: rotate(-3deg);
+  background-color: rgb(var(--mark-soft) / 0.55);
+  z-index: -1;
+}
+.pen-score small {
+  font-size: 0.72em;
+  opacity: 0.85;
+}
+
+.doc-text {
+  @apply font-doc whitespace-pre-wrap leading-relaxed;
+}
+
+/* Soft transition utilities */
+.transition-ui {
+  transition-property: color, background-color, border-color, text-decoration-color, fill, stroke, opacity, box-shadow, transform;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms;
+}

@@ -1,0 +1,23 @@
+{
+  "subject": "Mathematics Standard", "code": "041",
+  "names": ["mathematics standard", "maths standard", "math standard", "standard maths", "mathematics", "maths", "math"],
+  "session": "2026-27", "total_marks": 80, "duration_minutes": 180,
+  "sections": [
+    {"name": "A", "marks": 20, "questions": [
+      {"q": "1-18", "marks": 1, "kind": "mcq"},
+      {"q": "19-20", "marks": 1, "kind": "assertion_reason"}]},
+    {"name": "B", "marks": 10, "questions": [
+      {"q": "21-22", "marks": 2, "kind": "short", "choice": ["A", "B"]},
+      {"q": "23-25", "marks": 2, "kind": "short"}]},
+    {"name": "C", "marks": 18, "questions": [
+      {"q": "26-27", "marks": 3, "kind": "short"},
+      {"q": 28, "marks": 3, "kind": "short", "choice": ["A", "B"]},
+      {"q": "29-30", "marks": 3, "kind": "short"},
+      {"q": 31, "marks": 3, "kind": "short", "choice": ["A", "B"]}]},
+    {"name": "D", "marks": 20, "questions": [
+      {"q": "32-33", "marks": 5, "kind": "long"},
+      {"q": "34-35", "marks": 5, "kind": "long", "choice": ["A", "B"]}]},
+    {"name": "E", "marks": 12, "questions": [
+      {"q": "36-38", "marks": 4, "kind": "case", "parts": [1, 1, 2], "part_labels": "i", "part_choice": "iii"}]}
+  ]
+}
