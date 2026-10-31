@@ -283,10 +283,17 @@ def _split_page_call(system: str, user: str, schema: Type[T], image_path: Path,
             )
             raw = _call_once(system, region_prompt, path, format="json", model=model)
             parsed = _measured(schema.model_validate(extract_json_object(raw)), raw)
-            for collection in ("questions", "answers"):
+            for collection in ("questions", "answers", "fragments"):
                 for item in getattr(parsed, collection, []) or []:
-                    if getattr(item, "bbox", None) is not None:
-                        item.bbox.y += start
+                    bbox = getattr(item, "bbox", None)
+                    if isinstance(bbox, dict):
+                        bbox["y"] = float(bbox.get("y", 0)) + start
+                    elif bbox is not None:
+                        bbox.y += start
+                    for visual in getattr(item, "visuals", []) or []:
+                        visual_bbox = getattr(visual, "bbox", None)
+                        if isinstance(visual_bbox, dict):
+                            visual_bbox["y"] = float(visual_bbox.get("y", 0)) + start
             parsed_regions.append(parsed)
             raw_regions.append(raw)
     finally:
@@ -294,24 +301,45 @@ def _split_page_call(system: str, user: str, schema: Type[T], image_path: Path,
             path.unlink(missing_ok=True)
 
     merged = parsed_regions[0].model_copy(deep=True)
-    collection = next((name for name in ("questions", "answers") if hasattr(merged, name)), None)
+    collection = next(
+        (name for name in ("questions", "answers", "fragments") if hasattr(merged, name)),
+        None,
+    )
     if collection is None:
         raise ValueError("This extraction result cannot be merged after splitting")
     items = list(getattr(merged, collection) or [])
     seen = {
-        (getattr(item, "raw_question_number", None) or getattr(item, "question_number", None),
+        (getattr(item, "raw_question_number", None) or getattr(item, "question_number", None)
+         or getattr(item, "root", None),
          (getattr(item, "question_text", None) or getattr(item, "answer_text", None) or "").strip()[:120])
         for item in items
     }
     for item in getattr(parsed_regions[1], collection) or []:
         signature = (
-            getattr(item, "raw_question_number", None) or getattr(item, "question_number", None),
+            getattr(item, "raw_question_number", None) or getattr(item, "question_number", None)
+            or getattr(item, "root", None),
             (getattr(item, "question_text", None) or getattr(item, "answer_text", None) or "").strip()[:120],
         )
         if signature not in seen:
             items.append(item)
             seen.add(signature)
     setattr(merged, collection, items)
+    if hasattr(merged, "instructions"):
+        merged.instructions = list(dict.fromkeys(
+            list(getattr(parsed_regions[0], "instructions", []) or [])
+            + list(getattr(parsed_regions[1], "instructions", []) or [])
+        ))
+    if hasattr(merged, "issues"):
+        merged.issues = list(dict.fromkeys(
+            list(getattr(parsed_regions[0], "issues", []) or [])
+            + list(getattr(parsed_regions[1], "issues", []) or [])
+        ))
+    if hasattr(merged, "metadata"):
+        metadata = dict(getattr(parsed_regions[0], "metadata", {}) or {})
+        for key, value in (getattr(parsed_regions[1], "metadata", {}) or {}).items():
+            if metadata.get(key) is None and value is not None:
+                metadata[key] = value
+        merged.metadata = metadata
     return AICall(merged, "\n\n--- SPLIT REGION ---\n\n".join(raw_regions), 2)
 
 

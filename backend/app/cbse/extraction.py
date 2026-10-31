@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 from typing import Literal
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 import json
 
 
@@ -25,6 +25,19 @@ class Node(BaseModel):
     response_type: Literal["open", "mcq"] = "open"
     deductions: list[Deduction] = Field(default_factory=list)
     children: list[Node] = Field(default_factory=list)
+
+    @field_validator("audience", mode="before")
+    @classmethod
+    def normalize_audience(cls, value):
+        # Vision models occasionally express a single tag as a JSON array.
+        # Accept that harmless representation without weakening branch checks.
+        if isinstance(value, list):
+            if not value:
+                return None
+            if len(value) == 1:
+                return value[0]
+            raise ValueError("audience must contain at most one branch tag")
+        return value
 
 
 class VisualEvidence(BaseModel):
