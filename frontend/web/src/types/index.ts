@@ -108,7 +108,7 @@ export interface QuestionsResponse {
 export interface AnswerKeyRow {
   id: string; raw_question_number: string | null; normalized_number: string | null; exam_question_id: string | null;
   answer_text: string; marks: number | null; criteria: string[]; accepted_answers: string[]; keywords: string[];
-  page_number: number | null; bbox: BBox | null; has_crop: boolean; ocr_confidence: number | null;
+  page_number: number | null; bbox: BBox | null; has_crop: boolean; has_figure?: boolean; ocr_confidence: number | null;
   mapping_status: string; mapping_note: string | null; mapping_candidates: string[]; mark_mismatch: boolean;
   verification_status: string;
   rubric: Rubric | null; rubric_status: "UNREVIEWED" | "CONFIRMED";

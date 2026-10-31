@@ -9,6 +9,7 @@ import { PageViewer } from "../../components/PageViewer";
 import { IconChevronDown } from "../../components/Icons";
 import { CriteriaEditor } from "../../components/CriteriaEditor";
 import { RubricView } from "../../components/RubricView";
+import { AuthImage } from "../../components/AuthImage";
 import { SaveToVerifiedCollectionModal } from "../../components/SaveToVerifiedCollectionModal";
 import { useExam } from "../ExamWorkspace";
 
@@ -320,6 +321,17 @@ export default function AnswerKey() {
                       <div className={`doc-text mt-2.5 text-sm text-ink/90 ${isSelected ? "" : "line-clamp-4"}`}>
                         <MathView text={r.answer_text} />
                       </div>
+                      {/* The figure printed with the answer in the marking scheme (diagram, table) */}
+                      {r.has_figure && (
+                        <div className="mt-3 rounded-lg border border-line bg-sunken p-2.5">
+                          <p className="mb-1 text-xs font-medium text-mute">Figure</p>
+                          <AuthImage
+                            path={`/crops/answer-key/${r.id}`}
+                            alt={`Figure of answer ${r.raw_question_number ?? ""}`}
+                            className="max-h-64 rounded border border-line/60 bg-surface object-contain"
+                          />
+                        </div>
+                      )}
                       {r.rubric ? (
                         <RubricView
                           rubric={r.rubric}

@@ -69,6 +69,7 @@ def key_view(k: AnswerKey) -> dict:
         "answer_text": k.answer_text, "marks": k.marks, "criteria": k.criteria,
         "accepted_answers": k.accepted_answers, "keywords": k.keywords, "page_number": k.page_number,
         "bbox": k.bbox, "has_crop": bool(k.crop_file), "ocr_confidence": k.ocr_confidence,
+        "has_figure": bool(k.crop_file) and not k.bbox,  # a typed scheme's diagram (pipeline._figure_crop)
         "mapping_status": k.mapping_status, "mapping_note": k.mapping_note,
         "mapping_candidates": k.mapping_candidates, "mark_mismatch": k.mark_mismatch,
         "verification_status": k.verification_status,
