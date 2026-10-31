@@ -1,6 +1,7 @@
 {
   "name": "adem-frontends",
   "private": true,
+<<<<<<< 7c662e7
   "description": "The ADEM web apps. One npm install here fills the shared node_modules for all of them.",
   "workspaces": [
     "web",
@@ -13,5 +14,43 @@
     "dev:parents": "npm run dev -w adem-parents",
     "build": "npm run build --workspaces",
     "typecheck": "npm run typecheck --workspaces"
+=======
+  "version": "1.0.0",
+  "type": "module",
+  "engines": { "node": ">=24.0.0 <25" },
+  "scripts": {
+    "dev": "vite",
+    "configure:api": "node scripts/configure-render.mjs",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@fontsource/fraunces": "^5.3.0",
+    "@fontsource/ibm-plex-sans": "^5.0.0",
+    "@fontsource/source-serif-4": "^5.0.0",
+    "@types/katex": "^0.16.8",
+    "katex": "^0.19.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^7.18.5"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "autoprefixer": "^10.4.19",
+    "postcss": "^8.4.40",
+    "tailwindcss": "^3.4.7",
+    "typescript": "^5.5.4",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5",
+    "jsdom": "^29.0.0",
+    "@testing-library/react": "^16.3.0",
+    "@playwright/test": "^1.58.0",
+    "@types/node": "^24.0.0"
+>>>>>>> kishore/Version2.0
   }
 }

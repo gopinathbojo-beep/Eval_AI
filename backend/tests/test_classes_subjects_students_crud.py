@@ -10,21 +10,21 @@ def test_classes_crud(client, auth):
     c, h = client, auth
 
     # 1. Create class
-    r = c.post("/api/classes", headers=h, json={"name": "Grade 7-Z"})
+    r = c.post("/api/classes", headers=h, json={"name": "10-Z"})
     assert r.status_code == 201, r.text
     cl_id = r.json()["id"]
-    assert r.json()["name"] == "Grade 7-Z"
+    assert r.json()["name"] == "10-Z"
 
     # 2. Update class name
-    r_update = c.patch(f"/api/classes/{cl_id}", headers=h, json={"name": "Grade 7-X"})
+    r_update = c.patch(f"/api/classes/{cl_id}", headers=h, json={"name": "10-X"})
     assert r_update.status_code == 200, r_update.text
-    assert r_update.json()["name"] == "Grade 7-X"
+    assert r_update.json()["name"] == "10-X"
 
     # 3. List classes
     r_list = c.get("/api/classes", headers=h)
     assert r_list.status_code == 200
     names = [x["name"] for x in r_list.json()]
-    assert "Grade 7-X" in names
+    assert "10-X" in names
 
     # 4. Delete class
     r_del = c.delete(f"/api/classes/{cl_id}", headers=h)
@@ -57,7 +57,7 @@ def test_students_crud_and_name_update(client, auth):
     c, h = client, auth
 
     # Create temporary class
-    r_cls = c.post("/api/classes", headers=h, json={"name": "Grade 9-A"})
+    r_cls = c.post("/api/classes", headers=h, json={"name": "12-A"})
     cl_id = r_cls.json()["id"]
 
     try:
@@ -99,7 +99,7 @@ def test_cascade_delete_class_and_subject_with_assigned_exams(client, auth):
     c, h = client, auth
 
     # 1. Create Class, Subject, Student, Exam
-    cls = c.post("/api/classes", headers=h, json={"name": "Cascade Class 10"}).json()
+    cls = c.post("/api/classes", headers=h, json={"name": "10-Cascade"}).json()
     sub = c.post("/api/subjects", headers=h, json={"name": "Cascade Subject 10"}).json()
     st = c.post("/api/students", headers=h, json={
         "name": "Cascade Student", "roll_number": "999", "class_id": cls["id"]
@@ -121,10 +121,10 @@ def test_cascade_delete_class_and_subject_with_assigned_exams(client, auth):
     # Exam should be gone
     assert c.get(f"/api/exams/{exam['id']}", headers=h).status_code == 404
     # Student should be gone
-    assert c.get(f"/api/students?class_id={cls['id']}", headers=h).json() == []
+    assert c.get(f"/api/students?class_id={cls['id']}", headers=h).status_code == 404
 
     # 3. Create another exam for subject, then delete subject
-    cls2 = c.post("/api/classes", headers=h, json={"name": "Cascade Class 11"}).json()
+    cls2 = c.post("/api/classes", headers=h, json={"name": "12-Cascade"}).json()
     exam2 = c.post("/api/exams", headers=h, json={
         "name": "Cascade Exam 2", "academic_year": "2026-27",
         "class_id": cls2["id"], "subject_id": sub["id"],
@@ -144,12 +144,12 @@ def test_cascade_delete_class_and_subject_with_assigned_exams(client, auth):
 
 def test_class_is_std_plus_section(client, auth):
     c, h = client, auth
-    r = c.post("/api/classes", headers=h, json={"std": " 11 ", "section": "1"})
-    assert r.status_code == 201 and (r.json()["name"], r.json()["std"], r.json()["section"]) == ("11-1", "11", "1")
-    nosec = c.post("/api/classes", headers=h, json={"std": "Grade 12"}).json()
-    assert (nosec["name"], nosec["section"]) == ("Grade 12", None)
-    old = c.post("/api/classes", headers=h, json={"name": "Grade 9-B"}).json()          # older clients still work
-    assert (old["std"], old["section"]) == ("Grade 9", "B")
-    upd = c.patch(f"/api/classes/{nosec['id']}", headers=h, json={"std": "Grade 12", "section": "Science"}).json()
-    assert upd["name"] == "Grade 12-Science"
+    r = c.post("/api/classes", headers=h, json={"std": " 12 ", "section": "1"})
+    assert r.status_code == 201 and (r.json()["name"], r.json()["std"], r.json()["section"]) == ("12-1", "12", "1")
+    nosec = c.post("/api/classes", headers=h, json={"std": "12"}).json()
+    assert (nosec["name"], nosec["section"]) == ("12", None)
+    old = c.post("/api/classes", headers=h, json={"name": "12-B"}).json()          # older clients still work
+    assert (old["std"], old["section"]) == ("12", "B")
+    upd = c.patch(f"/api/classes/{nosec['id']}", headers=h, json={"std": "12", "section": "Science"}).json()
+    assert upd["name"] == "12-Science"
     assert c.post("/api/classes", headers=h, json={"section": "A"}).status_code == 400

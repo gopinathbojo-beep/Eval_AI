@@ -16,6 +16,7 @@ from .job_queue import keyed_lock, submit
 from .mapping_service import exam_questions
 from ..cbse.common.numbering import parent_number
 from .state import set_state
+from .audit import audit
 
 log = logging.getLogger("adem.evaluation")
 _ANSWER_STATES = {"MAPPED", "EVALUATING", "EVALUATED", "APPROVED"}
@@ -263,6 +264,10 @@ def evaluate_item(db: Session, ev: Evaluation, q: ExamQuestion, item: Evaluation
             for title, text in attempts:
                 prompt = prompts.evaluation_prompt(q.display_number, q.question_text, key.answer_text, rubric_criteria(key),
                                                    key.accepted_answers, key.keywords, q.max_marks, text)
+                exam_owner = db.get(Exam, ev.exam_id).teacher_id
+                audit(db, exam_id=ev.exam_id, teacher_id=exam_owner, entity_type="evaluation", entity_id=ev.id,
+                      action="ai_grading_request")
+                db.commit()
                 call = chat_structured(prompts.EVAL_SYSTEM, prompt, EvaluationResult, model=model)
                 item.raw_response = call.raw
                 res = validate_evaluation(call.parsed, q.max_marks)  # type: ignore[arg-type]
@@ -331,6 +336,8 @@ def _run_evaluation(ev_id: str, only_question_ids: list[str] | None) -> None:
         ev = db.get(Evaluation, ev_id)
         exam = db.get(Exam, ev.exam_id)
         ev.run_status = "RUNNING"
+        audit(db, exam_id=exam.id, teacher_id=exam.teacher_id, entity_type="evaluation", entity_id=ev.id,
+              action="ai_evaluation_started", new={"question_retry": bool(only_question_ids)})
         if exam.status in ("READY_FOR_EVALUATION", "REVIEW_REQUIRED", "EVALUATING"):
             set_state(exam, "EVALUATING")
         db.commit()
@@ -365,12 +372,18 @@ def _run_evaluation(ev_id: str, only_question_ids: list[str] | None) -> None:
             set_state(exam, "REVIEW_REQUIRED")
         db.commit()
         refresh_evaluation_status(db, ev)
+        audit(db, exam_id=exam.id, teacher_id=exam.teacher_id, entity_type="evaluation", entity_id=ev.id,
+              action="ai_evaluation_failed" if ev.run_status == "ERROR" else "ai_evaluation_completed")
+        db.commit()
     except Exception:
         log.exception("Evaluation run crashed")
         db.rollback()
         ev = db.get(Evaluation, ev_id)
         if ev:
             ev.run_status = "ERROR"
+            failed_exam = db.get(Exam, ev.exam_id)
+            audit(db, exam_id=ev.exam_id, teacher_id=failed_exam.teacher_id, entity_type="evaluation", entity_id=ev.id,
+                  action="ai_evaluation_failed")
             db.commit()
     finally:
         db.close()

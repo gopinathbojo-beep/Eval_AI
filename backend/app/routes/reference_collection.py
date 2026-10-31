@@ -73,8 +73,7 @@ def list_reference_examples(
     t: Teacher = Depends(current_teacher),
 ):
     """Retrieve verified reference examples, ensuring seed collection is loaded."""
-    seed_verified_reference_collection(db)
-    q = db.query(VerifiedReferenceExample)
+    q = db.query(VerifiedReferenceExample).filter_by(workspace_id=t.workspace_id, teacher_id=t.id)
     if subject:
         q = q.filter(VerifiedReferenceExample.subject.ilike(f"%{subject}%"))
     if document_type:
@@ -97,6 +96,7 @@ def add_reference_example(
 
     ex = VerifiedReferenceExample(
         teacher_id=t.id,
+        workspace_id=t.workspace_id,
         document_type=body.document_type,
         subject=body.subject,
         source_document=body.source_document,
@@ -124,7 +124,7 @@ def get_diagnostics(
     t: Teacher = Depends(current_teacher),
 ):
     """Return objective, honest accuracy benchmarks (CER, WER, question numbering accuracy, marks accuracy)."""
-    metrics = compute_reference_collection_metrics(db)
+    metrics = compute_reference_collection_metrics(db, workspace_id=t.workspace_id, teacher_id=t.id)
     return {
         "status": "OK",
         "model": "blaifa/InternVL3_5:4B (Ollama)",

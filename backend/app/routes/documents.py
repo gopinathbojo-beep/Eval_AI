@@ -29,11 +29,16 @@ EXT = {
 
 def _save(db: Session, kind: str, exam_id: str, data: bytes, ext: str, mime: str, filename: str, **extra):
     model = KINDS[kind][0]
-    doc_id = str(uuid.uuid4())
+    from .uploads import direct_upload_id
+    doc_id = direct_upload_id.get() or str(uuid.uuid4())
     d = doc_dir(kind, exam_id, doc_id, extra.get("student_id"))
     path = d / f"original.{ext}"
-    with open(path, "xb") as f:  # 'x': never overwrite an original
-        f.write(data)
+    if direct_upload_id.get() and path.is_file():
+        if path.read_bytes() != data:
+            raise err(409, "UPLOAD_CONFLICT", "This upload already contains another file.")
+    else:
+        with open(path, "xb") as f:  # 'x': never overwrite an original
+            f.write(data)
     doc = model(id=doc_id, exam_id=exam_id, original_filename=filename[:290], original_file=rel(path),
                 mime_type=mime, file_size=len(data), status="UPLOADED", stage="Queued", **extra)
     db.add(doc)
@@ -207,6 +212,11 @@ async def upload_answer_sheet(exam_id: str, bg: BackgroundTasks, file: UploadFil
                               db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     exam = get_exam(db, t, exam_id)
     _require_sheet_state(exam)
+    if t.role == "PARENT":
+        child = db.query(Student).filter_by(class_id=exam.class_id).one()
+        if student_id and student_id != child.id:
+            raise err(404, "NOT_FOUND", "Student not found.")
+        student_id = child.id
     if not (student_id or student_name or roll_number):
         docs = await _save_unassigned(db, t, exam, [file])
         for d in docs:
@@ -221,6 +231,8 @@ async def upload_answer_sheet(exam_id: str, bg: BackgroundTasks, file: UploadFil
             raise err(400, "STUDENT_REQUIRED", "Select a student, or enter a name and roll number.")
         st = db.query(Student).filter_by(class_id=exam.class_id, roll_number=roll_number.strip()).first()
         if st is None:
+            if t.role == "TEACHER":
+                raise err(403, "MANAGEMENT_REQUIRED", "Ask school management to add this student to the roster.")
             st = Student(class_id=exam.class_id, name=student_name.strip(), roll_number=roll_number.strip())
             db.add(st)
             db.flush()
@@ -290,6 +302,11 @@ async def upload_answer_sheets_bulk(exam_id: str, bg: BackgroundTasks, files: li
                                     db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     """Many sheets at once. Each is matched to its student from the details written on it, then read as usual."""
     exam = get_exam(db, t, exam_id)
+    if t.role == "PARENT":
+        if len(files) != 1:
+            raise err(400, "ONE_CHILD_ONLY", "Upload one answer sheet for your child per exam.")
+        result = await upload_answer_sheet(exam_id, bg, files[0], None, None, None, db, t)
+        return {"uploaded": 1, "documents": [result["document"]]}
     docs = await _save_unassigned(db, t, exam, files)
     for d in docs:  # one job per sheet, so sheets are identified and read in parallel
         bg.add_task(submit, exam.id, identify_sheets, [d.id], t.id)

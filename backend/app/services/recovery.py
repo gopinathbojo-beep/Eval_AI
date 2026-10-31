@@ -13,9 +13,12 @@ IDENTIFY_INTERRUPTED = "Reading the student details was interrupted by a server 
 def recover_interrupted_jobs() -> None:
     db = SessionLocal()
     try:
+        from ..config import get_settings
+        from .persistent_queue import protected_exams
+        protected = protected_exams(db) if get_settings().durable_jobs else []
         n_docs = 0
         for model in (QuestionPaperDocument, AnswerKeyDocument, AnswerSheetDocument):
-            for doc in db.query(model).filter(model.status.in_(BUSY)).all():
+            for doc in db.query(model).filter(model.status.in_(BUSY), model.exam_id.notin_(protected)).all():
                 if model is AnswerSheetDocument and doc.student_id is None:
                     # not yet identified: hand it to the teacher instead of failing it
                     doc.status, doc.stage = "NEEDS_STUDENT", "Pick the student"
@@ -24,12 +27,12 @@ def recover_interrupted_jobs() -> None:
                 else:
                     doc.status, doc.stage, doc.error_message = "FAILED", "Interrupted", INTERRUPTED
                 n_docs += 1
-        running = db.query(Evaluation).filter_by(run_status="RUNNING").all()
+        running = db.query(Evaluation).filter(Evaluation.run_status == "RUNNING", Evaluation.exam_id.notin_(protected)).all()
         for ev in running:
             ev.run_status = "ERROR"
             for a in db.query(StudentAnswer).filter_by(evaluation_id=ev.id, status="EVALUATING").all():
                 a.status = "MAPPED"
-        for exam in db.query(Exam).filter_by(status="EVALUATING").all():
+        for exam in db.query(Exam).filter(Exam.status == "EVALUATING", Exam.id.notin_(protected)).all():
             exam.status = "REVIEW_REQUIRED"
         db.commit()
         if n_docs or running:

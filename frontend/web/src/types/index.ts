@@ -1,3 +1,4 @@
+<<<<<<< 7c662e7:frontend/web/src/types/index.ts
 export interface Teacher { id: string; name: string; email: string }
 export type Role = "school_manager" | "teacher";
 export interface User extends Teacher {
@@ -15,6 +16,17 @@ export interface StaffRow {
   last_login_at: string | null; created_at: string | null;
 }
 export interface ClassRow { id: string; name: string; std: string; section: string | null; student_count: number }
+=======
+export interface Teacher {
+  id: string; name: string; email: string; is_admin: boolean;
+  role: "ADMIN" | "MANAGEMENT" | "TEACHER" | "PARENT" | "UNASSIGNED";
+  workspace_id: string | null; must_change_password: boolean;
+  approval_status: "PENDING" | "APPROVED" | "REJECTED"; profile_complete: boolean;
+  profile: { institution?: string; subject?: string; city?: string; phone?: string; experience_years?: number; school_name?: string; address?: string; state?: string; postcode?: string; principal_name?: string; affiliation_number?: string; child_name?: string; child_class?: "10" | "12" } | null;
+  rejection_reason: string | null; email_verified: boolean;
+}
+export interface ClassRow { id: string; name: string; std: string; section: string | null; student_count: number; assigned_subject_ids?: string[] | null }
+>>>>>>> kishore/Version2.0:frontend/src/types/index.ts
 export interface Subject { id: string; name: string; code: string | null }
 export interface Student {
   id: string; name: string; roll_number: string; class_id: string; class_name: string | null;

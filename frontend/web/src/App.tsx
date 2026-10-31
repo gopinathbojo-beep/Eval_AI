@@ -25,6 +25,12 @@ const EvaluationPage = lazy(() => import("./pages/EvaluationPage"));
 const ResultsList = lazy(() => import("./pages/Results").then((m) => ({ default: m.ResultsList })));
 const ResultPage = lazy(() => import("./pages/Results").then((m) => ({ default: m.ResultPage })));
 const EvaluationsList = lazy(() => import("./pages/Results").then((m) => ({ default: m.EvaluationsList })));
+const Admin = lazy(() => import("./pages/Admin"));
+const Register = lazy(() => import("./pages/Register"));
+const Onboarding = lazy(() => import("./pages/Onboarding"));
+const Account = lazy(() => import("./pages/Account"));
+const Management = lazy(() => import("./pages/Management"));
+const Family = lazy(() => import("./pages/Family"));
 
 const Teachers = lazy(() => import("./pages/school/Teachers"));
 
@@ -39,6 +45,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+<<<<<<< 7c662e7:frontend/web/src/App.tsx
       <Route path="/signup" element={<Signup />} />
       <Route path="/verify-email" element={<VerifyEmail />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
@@ -49,10 +56,18 @@ export default function App() {
         <Route path="/school" element={<Navigate to="/school/teachers" replace />} />
         <Route path="/school/teachers" element={<Suspended><Teachers /></Suspended>} />
       </Route>
+=======
+      <Route path="/register" element={<Suspended><Register /></Suspended>} />
+      <Route path="/onboarding" element={<Suspended><Onboarding /></Suspended>} />
+      <Route path="/account" element={<Suspended><Account /></Suspended>} />
+>>>>>>> kishore/Version2.0:frontend/src/App.tsx
       <Route element={<AppLayout />}>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/teacher/*" element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/admin" element={<Suspended><Admin /></Suspended>} />
+        <Route path="/management" element={<Suspended><Management /></Suspended>} />
+        <Route path="/family" element={<Suspended><Family /></Suspended>} />
         <Route path="/classes" element={<Suspended><Classes /></Suspended>} />
         <Route path="/subjects" element={<Suspended><Subjects /></Suspended>} />
         <Route path="/students" element={<Suspended><Students /></Suspended>} />

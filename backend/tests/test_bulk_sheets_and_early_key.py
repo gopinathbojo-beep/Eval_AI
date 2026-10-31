@@ -41,7 +41,7 @@ def _exam_ready_for_sheets(c, h, class_name):
 
 def test_bulk_sheets_are_matched_to_students_or_held(client, auth):
     c, h = client, auth
-    cls, eid = _exam_ready_for_sheets(c, h, "BULK-8A")
+    cls, eid = _exam_ready_for_sheets(c, h, "10-BulkA")
     mk = lambda name, roll, reg=None, section="A": j(c.post("/api/students", headers=h, json={  # noqa: E731
         "name": name, "roll_number": roll, "class_id": cls["id"], "registration_number": reg, "section": section}), 201)
     asha, ravi, meena, kumar = mk("Asha Devi", "1", "REG-001"), mk("Ravi Kumar", "2"), mk("Meena S", "3", "REG-003"), mk("Asha K", "4", "REG-004")
@@ -95,7 +95,7 @@ def test_bulk_sheets_are_matched_to_students_or_held(client, auth):
 
 def test_bulk_sheets_are_graded_in_turn_and_finalized_together(client, auth):
     c, h = client, auth
-    cls, eid = _exam_ready_for_sheets(c, h, "BULK-8B")
+    cls, eid = _exam_ready_for_sheets(c, h, "10-BulkB")
     mk = lambda name, roll: j(c.post("/api/students", headers=h, json={  # noqa: E731
         "name": name, "roll_number": roll, "class_id": cls["id"]}), 201)
     clean, messy, unsure = mk("Clean Kid", "1"), mk("Messy Kid", "2"), mk("Unsure Kid", "3")
@@ -137,20 +137,24 @@ def test_bulk_sheets_are_graded_in_turn_and_finalized_together(client, auth):
 def test_student_import_export(client, auth):
     c, h = client, auth
     data = _xlsx([["Class list"], ["Student Name", "Roll No", "Reg No", "Class", "Sec"],
-                  ["Lakshmi", 1, "IMP-1", "IMP 9", "A"], ["Arun", 2, "IMP-2", "IMP 9", "B"], ["Bala", 3, "IMP-3", "IMP 9", "A"],
-                  ["Dup Roll", 1, None, "IMP 9", "A"], ["", "", "", "", ""], ["No Roll", None, None, "IMP 9", None]])
+                  ["Lakshmi", 1, "IMP-1", "12", "ImportA"], ["Arun", 2, "IMP-2", "12", "ImportB"], ["Bala", 3, "IMP-3", "12", "ImportA"],
+                  ["Dup Roll", 1, None, "12", "ImportA"], ["", "", "", "", ""], ["No Roll", None, None, "12", None]])
     r = j(c.post("/api/students/import", headers=h, files={"file": ("s.xlsx", data, "application/octet-stream")}), 200)
     assert r["created"] == 3 and r["updated"] == 0 and [e["row"] for e in r["errors"]] == [6, 8]
+    assert not r["committed"]
+    data = _xlsx([["Name", "Roll Number", "Registration Number", "Class", "Section"],
+                  ["Lakshmi", 1, "IMP-1", "12", "ImportA"], ["Arun", 2, "IMP-2", "12", "ImportB"], ["Bala", 3, "IMP-3", "12", "ImportA"]])
+    assert j(c.post("/api/students/import", headers=h, files={"file": ("s.xlsx", data)}, data={"confirm":"true"}), 200)["committed"]
     names = {x["name"] for x in j(c.get("/api/classes", headers=h))}
-    assert {"IMP 9-A", "IMP 9-B"} <= names and "IMP 9" not in names          # one class per class + section
+    assert {"12-ImportA", "12-ImportB"} <= names
     # re-import updates by registration number instead of duplicating
-    data = _xlsx([["Name", "Roll Number", "Registration Number", "Class", "Section"], ["Lakshmi R", 1, "IMP-1", "imp 9 a", "A"]])
+    data = _xlsx([["Name", "Roll Number", "Registration Number", "Class", "Section"], ["Lakshmi", 1, "IMP-1", "12", "ImportA"]])
     assert j(c.post("/api/students/import", headers=h, files={"file": ("s.xlsx", data, "x")}), 200)["updated"] == 1
     assert c.post("/api/students/import", headers=h, files={"file": ("s.csv", b"a,b", "text/csv")}).status_code == 400
 
-    cls = next(x for x in j(c.get("/api/classes", headers=h)) if x["name"] == "IMP 9-A")
+    cls = next(x for x in j(c.get("/api/classes", headers=h)) if x["name"] == "12-ImportA")
     st = j(c.get(f"/api/students?class_id={cls['id']}", headers=h))
-    assert {(s["name"], s["registration_number"], s["section"]) for s in st} == {("Lakshmi R", "IMP-1", "A"), ("Bala", "IMP-3", "A")}
+    assert {(s["name"], s["registration_number"], s["section"]) for s in st} == {("Lakshmi", "IMP-1", "ImportA"), ("Bala", "IMP-3", "ImportA")}
     r = c.post("/api/students", headers=h, json={"name": "X", "roll_number": "9", "class_id": cls["id"], "registration_number": "imp 1"})
     assert r.status_code == 409 and r.json()["code"] == "DUPLICATE_REG"
 
@@ -158,6 +162,6 @@ def test_student_import_export(client, auth):
     assert x.status_code == 200
     rows = list(load_workbook(BytesIO(x.content)).active.iter_rows(values_only=True))
     assert rows[0] == ("Name", "Roll Number", "Registration Number", "Class", "Section") and len(rows) == 3
-    assert rows[1][3] == "IMP 9-A"
+    assert rows[1][3] == "12-ImportA"
     p = c.get("/api/students/export?format=pdf", headers=h)
     assert p.status_code == 200 and p.content.startswith(b"%PDF")

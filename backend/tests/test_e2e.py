@@ -187,7 +187,13 @@ def test_full_workflow(client, auth):
     assert rep_pdf.status_code == 200 and rep_pdf.content.startswith(b"%PDF")
     from io import BytesIO
     from openpyxl import load_workbook
+<<<<<<< 7c662e7
     assert "K-Level Analysis" not in load_workbook(BytesIO(c.get("/api/reports/marksheet", headers=h).content)).sheetnames
+=======
+    workbook = load_workbook(BytesIO(c.get("/api/reports/marksheet", headers=h).content))
+    assert "K-Level Analysis" not in workbook.sheetnames
+    assert "Grade" in [cell.value for cell in workbook.active[1]]
+>>>>>>> kishore/Version2.0
     # audit trail
     logs = j(c.get(f"/api/exams/{eid}/audit-logs", headers=h), 200)
     actions = {l["action"] for l in logs}
@@ -222,7 +228,7 @@ def test_full_workflow(client, auth):
 
 def test_duplicate_mapping_and_ai_unavailable(client, auth):
     c, h = client, auth
-    cls = j(c.post("/api/classes", json={"name": "9-B"}, headers=h), 201)
+    cls = j(c.post("/api/classes", json={"name": "12-B"}, headers=h), 201)
     sub = j(c.post("/api/subjects", json={"name": "Botany"}, headers=h), 201)
     eid = j(c.post("/api/exams", headers=h, json={"name": "T2", "academic_year": "26", "class_id": cls["id"],
             "subject_id": sub["id"], "exam_type": "Unit", "total_marks": 15}), 201)["id"]

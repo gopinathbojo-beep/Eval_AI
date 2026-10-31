@@ -3,7 +3,13 @@ setlocal enabledelayedexpansion
 title ADEM - Start
 cd /d "%~dp0"
 echo ========================================================
+<<<<<<< 7c662e7
 echo                      ADEM - Start
+=======
+echo                 Starting ADEM Services
+echo   Backend (FastAPI) + Web (Vite)
+echo   Models: wherever backend\.env points (Ollama + IndicOCR)
+>>>>>>> kishore/Version2.0
 echo ========================================================
 echo.
 
@@ -23,6 +29,7 @@ set "INDIC_URL=http://127.0.0.1:8090"
 for /f "tokens=1,* delims==" %%a in ('findstr /b /c:"INTERNVL_API_URL=" "%BACKEND%\.env" 2^>nul') do set "INTERNVL_URL=%%b"
 for /f "tokens=1,* delims==" %%a in ('findstr /b /c:"INDIC_OCR_URL=" "%BACKEND%\.env" 2^>nul') do set "INDIC_URL=%%b"
 
+<<<<<<< 7c662e7
 echo [1/3] Models...
 echo !INDIC_URL! | findstr /i "127.0.0.1 localhost" >nul
 if !errorlevel! equ 0 if exist "%INDIC_DIR%\start.bat" (
@@ -31,9 +38,14 @@ if !errorlevel! equ 0 if exist "%INDIC_DIR%\start.bat" (
     echo  - IndicOCR starting locally; the model takes a while to load
     timeout /t 10 /nobreak >nul
 )
+=======
+echo [1/3] Models ...
+call :check "IndicOCR" "!INDIC_URL!/health"
+>>>>>>> kishore/Version2.0
 call :check "Ollama  " "!INTERNVL_URL!/api/tags"
 call :check "IndicOCR" "!INDIC_URL!/health"
 
+<<<<<<< 7c662e7
 echo [2/3] Backend on http://localhost:8000 ...
 start "ADEM Backend (8000)" /D "%BACKEND%" cmd /k .venv\Scripts\python.exe -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 timeout /t 3 /nobreak >nul
@@ -58,6 +70,23 @@ echo   Mobile    Expo window (scan the QR code)
 echo   Ollama    !INTERNVL_URL!
 echo   IndicOCR  !INDIC_URL!
 echo   Emails without SMTP: backend\data\outbox\
+=======
+echo [2/3] Starting Backend on http://0.0.0.0:8000 ...
+start "ADEM - Backend (FastAPI :8000)" cmd /k "cd /d "%~dp0backend" && if exist .venv\Scripts\activate.bat (call .venv\Scripts\activate.bat && python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload) else (uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload)"
+
+timeout /t 2 /nobreak >nul
+
+echo [3/3] Starting Web Frontend on http://localhost:5173 ...
+start "ADEM - Web Frontend (Vite :5173)" cmd /k "cd /d "%~dp0frontend" && npm.cmd run dev"
+
+echo.
+echo ========================================================
+echo All services launched:
+echo   - Backend:       http://127.0.0.1:8000
+echo   - Web Frontend:  http://localhost:5173
+echo   - Ollama:        !INTERNVL_URL!
+echo   - IndicOCR:      !INDIC_URL! (Tamil and other Indian languages)
+>>>>>>> kishore/Version2.0
 echo ========================================================
 echo Close a window (or run stop.bat) to stop that service.
 pause

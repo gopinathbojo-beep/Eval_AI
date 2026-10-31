@@ -10,16 +10,17 @@ from ..documents.storage import abs_path, data_root, read_validated_upload, rel,
 from ..models import ReportTemplate, SchoolProfile, Student, Teacher
 from ..security import current_teacher
 from ..services.audit import audit
-from ..services.report_templates import KINDS, active_template_id, list_presets, normalize, resolve
+from ..services.report_templates import KINDS, active_template_id, list_presets, normalize, resolve, family_config
 from ..services.school_reports import build_report_cards, render_preview, report_card_terms
+from ..workspaces import owner_id
 
 router = APIRouter(prefix="/api")
 
 
 def _profile(db: Session, t: Teacher) -> SchoolProfile:
-    p = db.query(SchoolProfile).filter_by(teacher_id=t.id).first()
+    p = db.query(SchoolProfile).filter_by(teacher_id=owner_id(db, t)).first()
     if p is None:
-        p = SchoolProfile(teacher_id=t.id)
+        p = SchoolProfile(teacher_id=owner_id(db, t))
         db.add(p)
         db.flush()
     return p
@@ -46,8 +47,15 @@ def get_school_profile(db: Session = Depends(get_db), t: Teacher = Depends(curre
 
 @router.put("/school-profile")
 def put_school_profile(body: ProfileIn, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    if not body.name.strip() or not body.address.strip():
+        raise err(400, "SCHOOL_DETAILS_REQUIRED", "School name and address are required.")
     p = _profile(db, t)
     p.name, p.address, p.principal_name = body.name.strip(), body.address.strip(), body.principal_name.strip()
+    from ..models import Workspace
+    ws = db.get(Workspace, t.workspace_id)
+    if ws:
+        ws.name = p.name
+    t.profile = {**(t.profile or {}), "school_name": p.name, "address": p.address, "principal_name": p.principal_name}
     db.commit()
     return _profile_view(p)
 
@@ -58,10 +66,11 @@ async def upload_logo(file: UploadFile = File(...), db: Session = Depends(get_db
     if len(data) > 3 * 1024 * 1024:
         raise err(413, "FILE_TOO_LARGE", "The logo must be 3 MB or smaller.")
     p = _profile(db, t)
-    d = safe_join(data_root(), "school", t.id)
+    d = safe_join(data_root(), "school", owner_id(db, t))
     d.mkdir(parents=True, exist_ok=True)
     for old in d.glob("logo.*"):
-        old.unlink()
+        from ..documents.cloud import remove_file
+        remove_file(old)
     path = d / f"logo.{'jpg' if ext == 'jpeg' else ext}"
     path.write_bytes(data)
     p.logo_file = rel(path)
@@ -74,8 +83,8 @@ def delete_logo(db: Session = Depends(get_db), t: Teacher = Depends(current_teac
     p = _profile(db, t)
     if p.logo_file:
         f = abs_path(p.logo_file)
-        if f.is_file():
-            f.unlink()
+        from ..documents.cloud import remove_file
+        remove_file(f)
         p.logo_file = None
     db.commit()
     return _profile_view(p)
@@ -83,7 +92,7 @@ def delete_logo(db: Session = Depends(get_db), t: Teacher = Depends(current_teac
 
 @router.get("/school-profile/logo")
 def get_logo(db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
-    p = db.query(SchoolProfile).filter_by(teacher_id=t.id).first()
+    p = db.query(SchoolProfile).filter_by(teacher_id=owner_id(db, t)).first()
     f = abs_path(p.logo_file) if p and p.logo_file else None
     if f is None or not f.is_file():
         raise err(404, "NOT_FOUND", "No logo uploaded.")
@@ -100,7 +109,7 @@ def _kind(kind: str) -> str:
 
 def _template(db: Session, t: Teacher, tid: str) -> ReportTemplate:
     row = db.get(ReportTemplate, tid)
-    if row is None or row.teacher_id != t.id:
+    if row is None or row.teacher_id != owner_id(db, t):
         raise err(404, "NOT_FOUND", "Template not found.")
     return row
 
@@ -114,7 +123,7 @@ def list_templates(kind: str = Query(...), db: Session = Depends(get_db), t: Tea
     kind = _kind(kind)
     p = _profile(db, t)
     db.commit()
-    rows = db.query(ReportTemplate).filter_by(teacher_id=t.id, kind=kind).order_by(ReportTemplate.created_at).all()
+    rows = db.query(ReportTemplate).filter_by(teacher_id=owner_id(db, t), kind=kind).order_by(ReportTemplate.created_at).all()
     return {"templates": list_presets(kind) + [_template_view(r) for r in rows], "active_id": active_template_id(p, kind)}
 
 
@@ -132,7 +141,7 @@ class TemplatePatch(BaseModel):
 @router.post("/report-templates", status_code=201)
 def create_template(body: TemplateIn, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     kind = _kind(body.kind)
-    row = ReportTemplate(teacher_id=t.id, kind=kind, name=body.name.strip(), config=normalize(kind, body.config))
+    row = ReportTemplate(teacher_id=owner_id(db, t), kind=kind, name=body.name.strip(), config=normalize(kind, body.config))
     db.add(row)
     db.flush()
     audit(db, exam_id=None, teacher_id=t.id, entity_type="report_template", entity_id=row.id, action="report_template_created",
@@ -200,8 +209,9 @@ def _pdf(pdf: bytes, filename: str, inline: bool = False) -> Response:
 def preview_draft(body: PreviewIn, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     """Sample-data PDF of an unsaved draft (the web editor's live preview)."""
     kind = _kind(body.kind)
-    p = db.query(SchoolProfile).filter_by(teacher_id=t.id).first()
-    return _pdf(render_preview(kind, normalize(kind, body.config), p), f"preview-{kind}.pdf", inline=True)
+    p = db.query(SchoolProfile).filter_by(teacher_id=owner_id(db, t)).first()
+    cfg = normalize(kind, body.config)
+    return _pdf(render_preview(kind, family_config(cfg) if t.role == "PARENT" else cfg, p), f"preview-{kind}.pdf", inline=True)
 
 
 @router.get("/report-templates/{tid}/preview")
@@ -210,8 +220,9 @@ def preview_saved(tid: str, kind: str = Query(...), db: Session = Depends(get_db
     kind = _kind(kind)
     if not tid.startswith("preset:"):
         _template(db, t, tid)
-    p = db.query(SchoolProfile).filter_by(teacher_id=t.id).first()
-    return _pdf(render_preview(kind, resolve(db, t, kind, tid), p), f"preview-{kind}.pdf")
+    p = db.query(SchoolProfile).filter_by(teacher_id=owner_id(db, t)).first()
+    cfg = resolve(db, t, kind, tid)
+    return _pdf(render_preview(kind, family_config(cfg) if t.role == "PARENT" else cfg, p), f"preview-{kind}.pdf")
 
 
 # ---------- report cards

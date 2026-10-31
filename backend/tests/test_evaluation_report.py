@@ -213,7 +213,7 @@ def test_download_evaluation_report_pdf_e2e(client, auth):
     assert "Mathematics" in clean_text
     assert "18.5" in clean_text
     assert "92.5%" in clean_text
-    assert "A1" in clean_text                                                   # CBSE grade for 92.5%
+    assert "A-1" in clean_text                                                 # highest finalized candidate's relative grade
     assert "Adjusted by teacher: Awarded half mark for clear intermediate step" in clean_text
     assert "Accepted correct final simplification" in clean_text
     assert "Page 1 of" in clean_text
@@ -221,7 +221,7 @@ def test_download_evaluation_report_pdf_e2e(client, auth):
 
 def test_download_evaluation_report_unfinalized_rejected(client, auth):
     c, h = client, auth
-    cls = c.post("/api/classes", json={"name": "9-B"}, headers=h).json()
+    cls = c.post("/api/classes", json={"name": "12-B"}, headers=h).json()
     sub = c.post("/api/subjects", json={"name": "Physics"}, headers=h).json()
     exam = c.post(
         "/api/exams",
@@ -300,6 +300,6 @@ def test_download_evaluation_report_auth_and_isolation(client, auth):
     login_b = c.post("/api/auth/login", json={"email": "other@school.org", "password": "password123"}).json()
     h_b = {"Authorization": f"Bearer {login_b['access_token']}"}
 
-    # Request with Teacher B's credentials -> 404
+    # An account without a completed workspace is gated before resource access.
     res_iso = c.get("/api/evaluations/nonexistent-id/report.pdf", headers=h_b)
-    assert res_iso.status_code == 404
+    assert res_iso.status_code == 403

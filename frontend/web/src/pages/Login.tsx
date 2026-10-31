@@ -3,7 +3,18 @@ import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/Auth";
 import { Button, ErrorPanel, Field, Input } from "../components/ui";
 import { BrandLabel } from "../components/Brand";
+<<<<<<< 7c662e7:frontend/web/src/pages/Login.tsx
 import { GoogleButton } from "../components/GoogleButton";
+=======
+import { useApi } from "../hooks/useApi";
+
+const oauthErrors: Record<string, string> = {
+  not_allowed: "This Google account does not have access. Ask the administrator to add or enable your email address.",
+  failed: "Google sign-in could not be completed. Please try again.",
+  unavailable: "Google sign-in is temporarily unavailable. Try email and password instead.",
+  not_configured: "Google sign-in has not been configured yet. Use email and password.",
+};
+>>>>>>> kishore/Version2.0:frontend/src/pages/Login.tsx
 
 /** Decorative graded answer sheet: ruled paper, red ticks and a circled score. */
 function GradedSheet() {
@@ -59,14 +70,28 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+  const { data: providers } = useApi<{ google: boolean; google_start_url: string }>("/auth/providers");
+  const oauthError = new URLSearchParams(loc.search).get("oauth_error");
 
+<<<<<<< 7c662e7:frontend/web/src/pages/Login.tsx
   if (user) return <Navigate to={(loc.state as { from?: string } | null)?.from ?? homeFor(user.role)} replace />;
+=======
+  const from = (loc.state as { from?: unknown } | null)?.from;
+  const destination = typeof from === "string" && from.startsWith("/") && !from.startsWith("//") && !from.includes("\\") && from !== "/login"
+    ? from : teacher?.is_admin ? "/admin" : "/dashboard";
+  if (teacher) return <Navigate to={teacher.must_change_password ? "/account" : !teacher.is_admin && !teacher.profile_complete ? "/onboarding" : destination} replace />;
+>>>>>>> kishore/Version2.0:frontend/src/pages/Login.tsx
 
   const run = async (fn: () => Promise<void>) => {
     setBusy(true);
     setError(null);
     try {
+<<<<<<< 7c662e7:frontend/web/src/pages/Login.tsx
       await fn();
+=======
+      const user = await login(email, password);
+      nav(user.must_change_password ? "/account" : !user.is_admin && !user.profile_complete ? "/onboarding" : destination === "/dashboard" && user.is_admin ? "/admin" : destination, { replace: true });
+>>>>>>> kishore/Version2.0:frontend/src/pages/Login.tsx
     } catch (err) {
       setError(err);
       setBusy(false);
@@ -114,10 +139,24 @@ export default function Login() {
           </h1>
           <p className="mt-2 text-sm text-mute">School management and teachers sign in here.</p>
 
+<<<<<<< 7c662e7:frontend/web/src/pages/Login.tsx
           <div className="mt-8">
             <GoogleButton onToken={google} />
           </div>
           <form onSubmit={submit} className="mt-4 space-y-5">
+=======
+          {oauthError && <p role="alert" className="mt-4 rounded-md bg-mark-soft p-3 text-sm text-mark">{oauthErrors[oauthError] ?? oauthErrors.failed}</p>}
+          {providers?.google && (
+            <div className="mt-6">
+              <a className="flex w-full items-center justify-center gap-3 rounded-md border border-line bg-surface px-4 py-2.5 text-sm font-medium text-ink hover:bg-hover" href={providers.google_start_url}>
+                <span aria-hidden className="font-bold text-pen">G</span> Continue with Google
+              </a>
+              <p className="mt-4 text-center text-xs text-mute">or sign in with email and password</p>
+            </div>
+          )}
+
+          <form onSubmit={submit} className="mt-8 space-y-5">
+>>>>>>> kishore/Version2.0:frontend/src/pages/Login.tsx
             <Field label="Email address">
               {(id) => (
                 <Input
@@ -156,12 +195,18 @@ export default function Login() {
             </Button>
           </form>
 
+<<<<<<< 7c662e7:frontend/web/src/pages/Login.tsx
           <div className="mt-8 space-y-2 border-t border-dashed border-line pt-4 text-sm text-mute">
             <p>
               New school? <Link to="/signup" className="text-pen hover:underline">Register your school</Link>
             </p>
             <p className="text-xs">Teachers: your school management sends you an invitation by email.</p>
           </div>
+=======
+          <p className="mt-8 border-t border-dashed border-line pt-4 text-xs text-mute">
+            New to Eval AI? <Link to="/register" className="font-semibold text-pen underline">Register your school or family</Link>.
+          </p>
+>>>>>>> kishore/Version2.0:frontend/src/pages/Login.tsx
         </div>
       </section>
     </div>

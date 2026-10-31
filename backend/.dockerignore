@@ -1,0 +1,13 @@
+*
+!Dockerfile
+!requirements.lock
+!app/
+!app/**
+!scripts/
+!scripts/**
+!alembic.ini
+!migrations/
+!migrations/**
+**/__pycache__
+**/*.pyc
+scripts/e2e_server.py

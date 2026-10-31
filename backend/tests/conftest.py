@@ -5,10 +5,18 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 _tmp = tempfile.mkdtemp(prefix="adem-test-")
 os.environ["DATA_DIR"] = _tmp
+os.environ["DATABASE_URL"] = ""
+os.environ["AI_PROVIDER"] = "ollama"
+os.environ["STORAGE_PROVIDER"] = "local"
+os.environ["DURABLE_JOBS"] = "false"
+os.environ["AUTO_MIGRATE"] = "false"
+os.environ["INDIC_OCR_ENABLED"] = "false"
 os.environ["SECRET_KEY"] = "test-secret-at-least-32-bytes-long-for-jwt-security"
 os.environ["PDF_RENDER_DPI"] = "72"
 os.environ["INTERNVL_MAX_RETRIES"] = "1"
 os.environ["JOB_QUEUE_INLINE"] = "true"  # queued GPU jobs finish before the request returns
+os.environ["GOOGLE_CLIENT_ID"] = ""  # tests must not read real OAuth credentials
+os.environ["GOOGLE_CLIENT_SECRET"] = ""
 
 import fitz  # noqa: E402  (pymupdf)
 import pytest  # noqa: E402
@@ -114,12 +122,19 @@ def ollama_stub():
 def client(ollama_stub):
     from app.main import app
     from app.database import SessionLocal
-    from app.models import Teacher
+    from app.models import Teacher, Workspace
+    from datetime import datetime, timezone
     from app.security import hash_password
     with TestClient(app) as c:
         db = SessionLocal()
         if not db.query(Teacher).filter_by(email="rao@school.org").first():
-            db.add(Teacher(name="Ms Rao", email="rao@school.org", password_hash=hash_password("password123")))
+            teacher = Teacher(name="Ms Rao", email="rao@school.org", role="MANAGEMENT", profile_completed_at=datetime.now(timezone.utc), password_hash=hash_password("password123"))
+            db.add(teacher)
+            db.flush()
+            ws = Workspace(name="Test school", kind="SCHOOL", owner_id=teacher.id)
+            db.add(ws)
+            db.flush()
+            teacher.workspace_id = ws.id
             db.commit()
         db.close()
         yield c

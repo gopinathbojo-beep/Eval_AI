@@ -5,7 +5,7 @@ from io import BytesIO
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill
 from sqlalchemy.orm import Session
-from ..models import SchoolClass, Student
+from ..models import SchoolClass, Student, Teacher
 
 COLUMNS = ["Name", "Roll Number", "Registration Number", "Class", "Section"]
 _HEADER_ALIASES = {
@@ -87,6 +87,7 @@ def import_students(db: Session, teacher_id: str, data: bytes, default_class: Sc
 
     classes = {class_key(c.name): c for c in db.query(SchoolClass).filter_by(teacher_id=teacher_id)}
     created = updated = 0
+    preview = []
     errors: list[dict] = []
     seen_regs: dict[str, int] = {}
     seen_rolls: dict[tuple[str, str], int] = {}
@@ -102,10 +103,13 @@ def import_students(db: Session, teacher_id: str, data: bytes, default_class: Sc
             errors.append({"row": n, "reason": "A value is too long."})
             continue
         if cls_name:
+            if split_class_name(class_name_for(cls_name, section))[0] not in {"10", "12"}:
+                errors.append({"row": n, "reason": "Only CBSE Classes 10 and 12 are supported."})
+                continue
             cls_name = class_name_for(cls_name, section)
             c = classes.get(class_key(cls_name))
             if c is None:
-                c = SchoolClass(teacher_id=teacher_id, name=cls_name)
+                c = SchoolClass(teacher_id=teacher_id, workspace_id=db.get(Teacher, teacher_id).workspace_id, name=cls_name)
                 db.add(c)
                 db.flush()
                 classes[class_key(cls_name)] = c
@@ -132,9 +136,13 @@ def import_students(db: Session, teacher_id: str, data: bytes, default_class: Sc
                                                f"{roll} in {c.name} is {by_roll.name}."})
             continue
         st = existing or by_roll
+        if st and (st.name.casefold() != name.casefold() or reg and st.registration_number and norm_reg(reg) != norm_reg(st.registration_number)):
+            errors.append({"row": n, "reason": "Student identity conflicts with an existing record. Edit that student explicitly before importing."})
+            continue
         if st is None:
             db.add(Student(class_id=c.id, name=name, roll_number=roll, registration_number=reg or None, section=section or None))
             created += 1
+            action = "Add"
         else:
             if st.class_id != c.id and db.query(Student).filter_by(class_id=c.id, roll_number=roll).first():
                 errors.append({"row": n, "reason": f"Roll number {roll} already exists in {c.name}."})
@@ -145,8 +153,10 @@ def import_students(db: Session, teacher_id: str, data: bytes, default_class: Sc
             if section:
                 st.section = section
             updated += 1
+            action = "Update"
+        preview.append({"row": n, "name": name, "roll_number": roll, "class_name": c.name, "action": action})
         db.flush()
-    return {"created": created, "updated": updated, "errors": errors}
+    return {"created": created, "updated": updated, "errors": errors, "rows": preview}
 
 
 def _rows(students: list[Student]) -> list[list[str]]:

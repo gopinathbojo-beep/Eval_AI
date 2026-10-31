@@ -28,6 +28,16 @@ def _init_fonts() -> tuple[str, str]:
     arial_bi_path = os.path.join(windows_font_dir, "arialbi.ttf")
 
     try:
+        # The production container runs Linux; Windows-only font lookup loses Unicode symbols.
+        linux_fonts = "/usr/share/fonts/truetype/noto"
+        noto = os.path.join(linux_fonts, "NotoSans-Regular.ttf")
+        noto_bold = os.path.join(linux_fonts, "NotoSans-Bold.ttf")
+        if os.path.exists(noto) and os.path.exists(noto_bold):
+            for suffix, filename in (("", "Regular"), ("-Bold", "Bold"), ("-Italic", "Italic"), ("-BoldItalic", "BoldItalic")):
+                pdfmetrics.registerFont(TTFont("ADEM-Font" + suffix, os.path.join(linux_fonts, f"NotoSans-{filename}.ttf")))
+            pdfmetrics.registerFontFamily("ADEM-Font", normal="ADEM-Font", bold="ADEM-Font-Bold",
+                                          italic="ADEM-Font-Italic", boldItalic="ADEM-Font-BoldItalic")
+            return "ADEM-Font", "ADEM-Font-Bold"
         if os.path.exists(segoe_path) and os.path.exists(segoe_bold_path):
             pdfmetrics.registerFont(TTFont("ADEM-Font", segoe_path))
             pdfmetrics.registerFont(TTFont("ADEM-Font-Bold", segoe_bold_path))
