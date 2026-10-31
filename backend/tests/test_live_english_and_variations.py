@@ -15,15 +15,15 @@ from app.ocr.schemas import (
     StudentAnswerItem,
     StudentPageResult,
 )
-from app.cbse.formatter.common import choices
-from app.cbse.formatter.common.paper import (
+from app.cbse.common import choices
+from app.cbse.common.paper import (
     parse_question_paper_structure,
     extract_section_marks_rule,
     extract_exam_total_marks,
 )
-from app.cbse.formatter.common.keys import segment_answer_keys
-from app.cbse.formatter.common.numbering import normalize_question_number
-from app.cbse.formatter.common.mapping import map_label, MAPPED
+from app.cbse.common.keys import segment_answer_keys
+from app.cbse.common.numbering import normalize_question_number
+from app.cbse.common.mapping import map_label, MAPPED
 
 
 # =========================================================================

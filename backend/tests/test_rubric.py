@@ -1,5 +1,5 @@
 """Marking rubrics built from answer keys (app/formatter/common/rubric.py), on lines from the papers in exam/."""
-from app.cbse.formatter.common.rubric import build_rubric
+from app.cbse.common.rubric import build_rubric
 
 
 def kinds(r):

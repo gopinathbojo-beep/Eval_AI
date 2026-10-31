@@ -6,8 +6,8 @@ import pytest
 from app.ocr.indic import blocks_to_result
 from app.ocr.schemas import QuestionPageResult
 from app.services import paper_format
-from app.cbse.formatter.common import choices
-from app.cbse.formatter.common.paper import parse_question_paper_structure
+from app.cbse.common import choices
+from app.cbse.common.paper import parse_question_paper_structure
 
 WEB = "www.Padasalai.Net www.TrbTnpsc.com"
 FOOT = "Kindly Send Me Your Study Materials To Us Email ID: padasalai.net@gmail.com"

@@ -1,0 +1,32 @@
+{
+  "subject": "Social Science", "code": "087", "names": ["social science", "social studies", "social", "sst"],
+  "session": "2026-27", "total_marks": 80, "duration_minutes": 180,
+  "sections": [
+    {"name": "A", "title": "History", "marks": 20, "questions": [
+      {"q": "1-4", "marks": 1, "kind": "mcq"},
+      {"q": 5, "marks": 2, "kind": "short"},
+      {"q": 6, "marks": 3, "kind": "short", "choice": ["A", "B"]},
+      {"q": 7, "marks": 5, "kind": "long", "choice": ["A", "B"]},
+      {"q": 8, "marks": 4, "kind": "case", "parts": [1, 1, 2], "part_labels": "1.1"},
+      {"q": 9, "marks": 2, "kind": "map", "parts": [1, 1], "part_labels": "A"}]},
+    {"name": "B", "title": "Geography", "marks": 20, "questions": [
+      {"q": "10-14", "marks": 1, "kind": "mcq"},
+      {"q": 15, "marks": 1, "kind": "assertion_reason"},
+      {"q": 16, "marks": 2, "kind": "short"},
+      {"q": 17, "marks": 5, "kind": "long", "choice": ["A", "B"]},
+      {"q": 18, "marks": 4, "kind": "case", "parts": [1, 2, 1], "part_labels": "1.1"},
+      {"q": 19, "marks": 3, "kind": "map", "parts": [1, 2], "part_labels": "I"}]},
+    {"name": "C", "title": "Political Science", "marks": 20, "questions": [
+      {"q": 20, "marks": 1, "kind": "assertion_reason"},
+      {"q": "21-23", "marks": 1, "kind": "mcq"},
+      {"q": "24-25", "marks": 2, "kind": "short"},
+      {"q": 26, "marks": 3, "kind": "short"},
+      {"q": 27, "marks": 5, "kind": "long", "choice": ["A", "B"]},
+      {"q": 28, "marks": 4, "kind": "case", "parts": [1, 2, 1], "part_labels": "1.1"}]},
+    {"name": "D", "title": "Economics", "marks": 20, "questions": [
+      {"q": "29-33", "marks": 1, "kind": "mcq"},
+      {"q": 34, "marks": 1, "kind": "assertion_reason"},
+      {"q": "35-37", "marks": 3, "kind": "short"},
+      {"q": 38, "marks": 5, "kind": "long", "choice": ["A", "B"]}]}
+  ]
+}

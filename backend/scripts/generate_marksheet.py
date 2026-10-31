@@ -17,7 +17,7 @@ if backend_dir not in sys.path:
 from app.database import SessionLocal
 from app.services.marksheet import generate_marksheet_workbook
 
-OUTPUT_PATH = os.path.join(backend_dir, "..", "Student_Marksheet.xlsx")
+OUTPUT_PATH = os.path.join(backend_dir, "data", "Student_Marksheet.xlsx")
 
 def main():
     print("=" * 60)
@@ -33,7 +33,7 @@ def main():
             print(f"\nSUCCESS! Generated workbook with sheets: {wb.sheetnames}")
             print(f"Saved to:\n  {out_file}\n")
         except PermissionError:
-            fallback = os.path.normpath(os.path.join(backend_dir, "..", "Student_Marksheet_Updated.xlsx"))
+            fallback = os.path.normpath(os.path.join(backend_dir, "data", "Student_Marksheet_Updated.xlsx"))
             wb.save(fallback)
             print("\nNote: 'Student_Marksheet.xlsx' is currently open in Excel.")
             print(f"Saved updated marksheet to:\n  {fallback}\n")

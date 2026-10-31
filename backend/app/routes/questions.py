@@ -7,10 +7,10 @@ from ..deps import err, get_exam
 from ..models import Exam, ExamQuestion, QuestionPaperDocument, Teacher
 from ..security import current_teacher
 from ..serializers import question_view
-from ..cbse.formatter.common import choices
+from ..cbse.common import choices
 from ..services.audit import audit
-from ..cbse.formatter.common.outcomes import normalize_course_outcome
-from ..cbse.formatter.common.numbering import normalize_question_number
+from ..cbse.common.outcomes import normalize_course_outcome
+from ..cbse.common.numbering import normalize_question_number
 from ..services.state import set_state
 
 router = APIRouter(prefix="/api")

@@ -39,7 +39,7 @@ class _Job:
     fn: Callable
     args: tuple
     paper_format: str | None = None  # the exam subject's format, see services/paper_format.py
-    subject: str | None = None  # the exam subject's formatter, see app/formatter
+    subject: str | None = None  # the exam subject's formatter, see cbse/formatter.py
     tamil_grading: bool = False  # grading a paper IndicOCR read: passed over only by jobs of its own exam
     exam_id: str | None = None
     skips: int = 0

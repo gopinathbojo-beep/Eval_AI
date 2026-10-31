@@ -11,35 +11,12 @@ from ..models import (AnswerKey, AnswerKeyDocument, AnswerSheetDocument, AuditLo
                       EvaluationItem, Exam, ExamQuestion, QuestionPaperDocument, SchoolClass,
                       Student, StudentAnswer, Subject, Teacher)
 from ..ocr.internvl import AIUnavailable, check_model
-from ..security import create_token, current_teacher, verify_password
+from ..security import current_teacher
 from ..serializers import EVALUATION_VIEW_LOAD, doc_view, evaluation_view, student_view
 from ..services.audit import audit
 from ..services.student_io import export_pdf, export_xlsx, import_students, reg_taken, split_class_name
 
 router = APIRouter(prefix="/api")
-
-
-# ---------- auth ----------
-class LoginIn(BaseModel):
-    email: str
-    password: str
-
-
-def teacher_view(t: Teacher) -> dict:
-    return {"id": t.id, "name": t.name, "email": t.email}
-
-
-@router.post("/auth/login")
-def login(body: LoginIn, db: Session = Depends(get_db)):
-    t = db.query(Teacher).filter_by(email=body.email.strip().lower()).first()
-    if not t or not verify_password(body.password, t.password_hash):
-        raise err(401, "INVALID_CREDENTIALS", "Email or password is incorrect.")
-    return {"access_token": create_token(t.id), "token_type": "bearer", "teacher": teacher_view(t)}
-
-
-@router.get("/auth/me")
-def me(t: Teacher = Depends(current_teacher)):
-    return teacher_view(t)
 
 
 # ---------- system ----------

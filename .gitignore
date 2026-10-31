@@ -53,3 +53,8 @@ yarn-error.*
 /Student_Marksheet*.xlsx
 
 gpu_server/ollama.log*
+
+# sample papers and student answer sheets stay out of git
+/exam/
+/exam.zip
+.pytest_cache/

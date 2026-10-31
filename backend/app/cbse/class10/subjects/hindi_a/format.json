@@ -1,0 +1,21 @@
+{
+  "subject": "Hindi Course A", "code": "002", "names": ["hindi course a", "hindi a", "hindi (a)", "hindi-a", "हिंदी अ", "hindi", "हिंदी"],
+  "session": "2026-27", "total_marks": 80, "duration_minutes": 180,
+  "sections": [
+    {"name": "क", "title": "अपठित बोध", "marks": 14, "questions": [
+      {"q": "1-2", "marks": 7, "kind": "passage", "parts": [1, 1, 1, 2, 2], "part_labels": "I"}]},
+    {"name": "ख", "title": "व्यावहारिक व्याकरण", "marks": 16, "questions": [
+      {"q": "3-6", "marks": 4, "kind": "grammar", "parts": [1, 1, 1, 1, 1], "part_labels": "I", "any": 4}]},
+    {"name": "ग", "title": "पाठ्य पुस्तक एवं पूरक पाठ्य पुस्तक", "marks": 30, "questions": [
+      {"q": 7, "marks": 5, "kind": "extract_mcq", "parts": [1, 1, 1, 1, 1], "part_labels": "I"},
+      {"q": 8, "marks": 6, "kind": "short", "parts": [2, 2, 2, 2], "part_labels": "I", "any": 3},
+      {"q": 9, "marks": 5, "kind": "extract_mcq", "parts": [1, 1, 1, 1, 1], "part_labels": "I"},
+      {"q": 10, "marks": 6, "kind": "short", "parts": [2, 2, 2, 2], "part_labels": "I", "any": 3},
+      {"q": 11, "marks": 8, "kind": "short", "parts": [4, 4, 4], "part_labels": "I", "any": 2}]},
+    {"name": "घ", "title": "रचनात्मक लेखन", "marks": 20, "questions": [
+      {"q": 12, "marks": 6, "kind": "paragraph", "parts": [6, 6, 6], "part_labels": "i", "any": 1},
+      {"q": 13, "marks": 5, "kind": "letter", "choice": ["A", "B"]},
+      {"q": 14, "marks": 5, "kind": "resume_email", "choice": ["A", "B"]},
+      {"q": 15, "marks": 4, "kind": "advertisement_message", "choice": ["A", "B"]}]}
+  ]
+}

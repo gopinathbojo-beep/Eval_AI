@@ -17,13 +17,14 @@ from ..ocr.internvl import AIResponseError, AIUnavailable, chat_structured, chec
 from ..ocr.indic import IndicResponseError, IndicUnavailable, check_indic, read_page, text_model_for, uses_indic_ocr
 from .ai_labeler import label_key_criteria, label_question_types
 from ..ocr.schemas import AnswerKeyPageResult, QuestionPageResult, StudentPageResult
-from ..cbse.formatter.common.paper import apply_pdf_question_text, parse_question_paper_structure, StructuredQuestion
-from ..cbse.formatter.common.keys import segment_answer_keys
+from ..cbse.common.paper import apply_pdf_question_text, parse_question_paper_structure, StructuredQuestion
+from ..cbse.common.keys import segment_answer_keys
 from .job_queue import keyed_lock
-from ..cbse.formatter.common.answers import segment_student_answers
+from ..cbse.common.answers import segment_student_answers
 from .mapping_service import apply_key_mapping, apply_student_mapping
 from .state import set_state
 from ..cbse import formatter
+from ..cbse.common import standards
 
 log = logging.getLogger("adem.pipeline")
 
@@ -311,6 +312,12 @@ def _build_questions(db: Session, doc, exam: Exam, wd: Path, results) -> None:
                 )
             )
 
+    # The CBSE paper design of this standard and subject (class10/subjects/<subject>/format.json): marks the parser missed, mismatches
+    design = standards.for_exam(exam)
+    design_problems = standards.check(struct, design) if design else []
+    for problem in design_problems:
+        log.info("Exam %s vs CBSE %s design: %s", exam.id, design["subject"], problem)
+
     # Reconcile exam total marks, duration, and instructions if printed on paper
     if struct.exam_max_marks and abs(exam.total_marks - struct.exam_max_marks) > 1e-9:
         log.info("Detected paper max marks %g vs exam total %g", struct.exam_max_marks, exam.total_marks)
@@ -376,7 +383,9 @@ def _build_questions(db: Session, doc, exam: Exam, wd: Path, results) -> None:
                 "qp_code": struct.qp_code,
                 "sections": struct.sections,
                 "unclassified_blocks": struct.unclassified_blocks,
-            }, f, indent=2)
+                "cbse_design": design["subject"] if design else None,
+                "cbse_design_problems": design_problems,
+            }, f, indent=2, ensure_ascii=False)
     except Exception as e:
         log.warning("Could not write structure.json: %s", e)
 

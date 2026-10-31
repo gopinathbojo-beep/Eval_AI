@@ -1,7 +1,7 @@
 import pytest
 from app.ocr.parser import extract_json_object, ParseError
 from app.ocr.schemas import QuestionPageResult, EvaluationResult, StudentPageResult
-from app.cbse.formatter.common.mark_rules import validate_evaluation, EvaluationValidationError
+from app.cbse.common.mark_rules import validate_evaluation, EvaluationValidationError
 
 
 def test_plain():

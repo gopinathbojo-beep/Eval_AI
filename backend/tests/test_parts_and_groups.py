@@ -3,10 +3,10 @@ at Q1, an OR with no label after it, and part labels printed without their quest
 from types import SimpleNamespace
 
 from app.ocr.schemas import AnswerKeyItem, AnswerKeyPageResult, QuestionItem, QuestionPageResult
-from app.cbse.formatter.common import choices
-from app.cbse.formatter.common.paper import parse_question_paper_structure
-from app.cbse.formatter.common.keys import segment_answer_keys
-from app.cbse.formatter.common.numbering import normalize_question_number, part_labels
+from app.cbse.common import choices
+from app.cbse.common.paper import parse_question_paper_structure
+from app.cbse.common.keys import segment_answer_keys
+from app.cbse.common.numbering import normalize_question_number, part_labels
 
 PASSAGE = ("Almost all creatures care for their young ones. Many animals play with their babies and show their love by "
            "touching and hugging them. Birds also teach their fledglings how to go about in the world as adults.")

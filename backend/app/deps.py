@@ -18,7 +18,7 @@ def get_exam(db: Session, teacher: Teacher, exam_id: str) -> Exam:
     if exam is None or exam.teacher_id != teacher.id:
         raise err(404, "NOT_FOUND", "Exam not found.")
     paper_format.set_for_exam(exam)  # the rest of the request parses with this subject's format
-    formatter.set_for_exam(exam)  # ... and this subject's formatter (app/formatter)
+    formatter.set_for_exam(exam)  # ... and this subject's formatter (cbse/formatter.py)
     return exam
 
 

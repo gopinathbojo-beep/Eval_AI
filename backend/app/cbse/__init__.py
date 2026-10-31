@@ -1,9 +1,13 @@
 """Everything CBSE-specific: the app evaluates CBSE exams only.
 
-formatter/  how papers, answer keys and answer sheets are read, answers mapped to questions (common/mapping.py) and
-            marks checked (common/mark_rules.py, common/rubric.py); one folder per subject over common/
-grading.py  the 9-point grades (A1..D2 by rank among passed students, E below the pass mark)
-syllabus/   chapters and unit weightage per class and subject
+class10/subjects/<subject>/  one folder per subject of the standard: its formatter (__init__.py), its paper design
+class12/subjects/<subject>/  (format.json) and, when added, its syllabus (syllabus.json)
+common/                      what every class and subject shares: reading papers, keys and answer sheets (paper.py,
+                             keys.py, answers.py), mapping answers to questions (mapping.py), marks and rubrics
+                             (mark_rules.py, rubric.py), paper designs (standards.py), the 9-point grades
+                             (grading.py), syllabus loading (syllabus.py)
+common/subjects/<subject>/   a subject's rules every class shares (tamil/, english/, maths/, physics/, chemistry/)
+formatter.py                 which of these folders reads and grades a given exam
 
 The shared engine stays outside: page reading (ocr/), the job queue, evaluation and storage (services/).
 """

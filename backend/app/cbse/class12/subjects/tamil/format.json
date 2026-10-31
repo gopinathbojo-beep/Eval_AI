@@ -1,0 +1,23 @@
+{
+  "subject": "Tamil", "code": "106", "names": ["tamil", "தமிழ்"],
+  "session": "2025-26", "total_marks": 80, "duration_minutes": 180,
+  "sections": [
+    {"name": "அ", "title": "படித்தல்", "marks": 10, "questions": [
+      {"q": 1, "marks": 5, "kind": "passage_mcq", "parts": [1, 1, 1, 1, 1], "part_labels": "I"},
+      {"q": 2, "marks": 5, "kind": "passage", "parts": [1, 1, 1, 1, 1], "part_labels": "I"}]},
+    {"name": "ஆ", "title": "இலக்கணம்", "marks": 12, "questions": [
+      {"q": "3-6", "marks": 3, "kind": "grammar_mcq", "parts": [1, 1, 1, 1, 1], "part_labels": "I", "any": 3}]},
+    {"name": "இ", "title": "இலக்கியம்", "marks": 31, "questions": [
+      {"q": 7, "marks": 5, "kind": "poem_mcq", "parts": [1, 1, 1, 1, 1], "part_labels": "I"},
+      {"q": 8, "marks": 5, "kind": "passage", "parts": [1, 1, 1, 1, 1], "part_labels": "I"},
+      {"q": 9, "marks": 6, "kind": "short", "parts": [3, 3, 3, 3], "part_labels": "I", "any": 2},
+      {"q": 10, "marks": 15, "kind": "long", "parts": [5, 5, 5, 5, 5], "part_labels": "I", "any": 3}]},
+    {"name": "ஈ", "title": "துணைப்பாடம்", "marks": 12, "questions": [
+      {"q": 11, "marks": 7, "kind": "essay", "one_of": 3},
+      {"q": 12, "marks": 5, "kind": "character_sketch", "one_of": 2}]},
+    {"name": "உ", "title": "படைப்புத்திறன்", "marks": 15, "questions": [
+      {"q": 13, "marks": 6, "kind": "letter", "one_of": 2},
+      {"q": 14, "marks": 3, "kind": "interview"},
+      {"q": 15, "marks": 6, "kind": "essay", "one_of": 3}]}
+  ]
+}
