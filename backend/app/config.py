@@ -99,7 +99,9 @@ class Settings(BaseSettings):
     internvl_timeout: int = 300
     internvl_max_retries: int = 2
     internvl_num_ctx: int = 8192
-    internvl_num_predict: int = 4096
+    # Dense CBSE pages can require more than 4K output tokens when the model
+    # returns verbatim questions, tables, layout evidence and bounding boxes.
+    internvl_num_predict: int = 8192
 
     # Indian-language subjects are read by IndicOCR instead of InternVL (see indic_ocr_service/)
     indic_ocr_enabled: bool = False

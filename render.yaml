@@ -44,6 +44,8 @@ services:
         value: "false"
       - key: INTERNVL_PARALLEL_JOBS
         value: "1"
+      - key: INTERNVL_NUM_PREDICT
+        value: "8192"
       - key: PDF_RENDER_DPI
         value: "120"
       - key: OCR_MAX_SIDE
