@@ -29,6 +29,7 @@ class SegmentedKey:
     page_number: int = 1
     bbox: dict | None = None
     ocr_confidence: float | None = None
+    figure: dict | None = None  # a typed scheme's diagram beside the answer (fractions of the page), cut as its crop
 
 
 # One marking point: "1 Mark: ...", "1 mark per ...", "(... marks ...)"
@@ -358,7 +359,7 @@ def keys_from_pdf_tables(page_results: list[tuple[dict, Any]],
         marks = max_marks.get(norm) or max_marks.get(parent_number(norm)) or stated
         out.append(SegmentedKey(raw_question_number=key["label"], normalized_number=norm, answer_text=body, marks=marks,
                                 criteria=key["criteria"], accepted_answers=[key["answer"]] if key["answer"] else [],
-                                page_number=key["page"], bbox=_union(key["figures"])))
+                                page_number=key["page"], figure=_union(key["figures"])))
     return out
 
 

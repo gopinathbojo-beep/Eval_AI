@@ -452,6 +452,8 @@ def _build_answer_key(db: Session, doc, exam: Exam, wd: Path, results) -> None:
         n += 1
         p = pages_by_num.get(k.page_number) or results[0][0]
         nb, crop = _bbox_and_crop(p, k.bbox, wd, f"k{n:03d}")
+        if not crop and k.figure:  # a typed scheme's answer: its figure, not a crop
+            crop = _figure_crop([(k.page_number, k.figure)], pages_by_num, wd, f"k{n:03d}-figure")
         db.add(AnswerKey(
             exam_id=exam.id,
             document_id=doc.id,
