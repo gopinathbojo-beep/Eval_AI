@@ -4,7 +4,7 @@ test("admin can filter accounts and inspect activity without approval actions", 
   page,
 }) => {
   await page.goto("/login");
-  await page.getByLabel("Email address").fill("seyamesh91@gmail.com");
+  await page.getByLabel("Email address").fill("owner@adem.test");
   await page
     .getByLabel("Password", { exact: true })
     .fill("owner-test-password-123");

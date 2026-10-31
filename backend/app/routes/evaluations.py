@@ -10,6 +10,7 @@ from ..security import current_teacher
 from ..serializers import (EVALUATION_VIEW_LOAD, answer_view, doc_view, evaluation_view, item_view, question_view,
                            student_view)
 from ..cbse.common import choices
+from ..services import credits
 from ..services.audit import audit
 from ..services.job_queue import submit
 from ..services.exam_files import purge_exam_files, save_reports_and_schedule
@@ -315,10 +316,23 @@ def run(ev_id: str, bg: BackgroundTasks, db: Session = Depends(get_db), t: Teach
         if doc.status == "NEEDS_ATTENTION":
             issues.append({"question": "Answer sheet", "reason": "Some pages could not be read. Retry them first."})
         raise err(400, "MAPPING_INCOMPLETE", f"{len(issues)} issue(s) must be resolved before evaluation can run.", issues)
+    try:  # the sheet's credits are held now, charged when grading succeeds and returned if it fails
+        credits.hold_evaluation(db, ev, exam, t.id)
+    except credits.InsufficientCredits as e:
+        db.rollback()
+        raise err(402, "INSUFFICIENT_CREDITS", f"Not enough credits to grade this sheet: it needs {e.needed}, "
+                  f"{e.available} available. Ask your school manager to buy credits.")
     ev.run_status, ev.run_progress = "RUNNING", 0
     db.commit()
     bg.add_task(submit, ev.exam_id, run_evaluation, ev.id, grading=True)
     return {"run_status": "RUNNING"}
+
+
+@router.get("/evaluations/{ev_id}/quote")
+def evaluation_quote(ev_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    """What grading this sheet will cost before it is started (spec 6.3): credits, balance, free when paid already."""
+    ev = get_evaluation(db, t, ev_id)
+    return credits.quote(db, ev, db.get(Exam, ev.exam_id))
 
 
 class ItemPatch(BaseModel):

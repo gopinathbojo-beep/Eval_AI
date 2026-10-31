@@ -70,7 +70,7 @@ class Settings(BaseSettings):
     cookie_secure: bool = False
     allowed_hosts: str = "localhost,127.0.0.1,testserver"
     login_attempts_per_minute: int = 20
-    admin_email: str = "seyamesh91@gmail.com"
+    admin_email: str = ""  # the platform owner (Super Admin); empty = none, create console users with app.create_admin
     google_client_id: str = Field(default_factory=lambda: _root_oauth("GOOGLE_CLIENT_ID", "Client_ID"),
                                   validation_alias=AliasChoices("GOOGLE_CLIENT_ID", "Client_ID"))
     google_client_secret: str = Field(default_factory=lambda: _root_oauth("GOOGLE_CLIENT_SECRET", "Client_secret"),
@@ -125,13 +125,9 @@ class Settings(BaseSettings):
     pdf_render_dpi: int = 300
     ocr_max_side: int = 2560
     max_upload_mb: int = 50
-<<<<<<< 7c662e7
-    # Web (school + teacher) :5173, Admin :5174, Parents :5175
+    # Web (school + teacher) :5173, Admin :5174, Parents :5175; :4173 is vite preview
     cors_origins: str = ("http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,"
-                         "http://localhost:5175,http://127.0.0.1:5175")
-=======
-    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173"
->>>>>>> kishore/Version2.0
+                         "http://localhost:5175,http://127.0.0.1:5175,http://localhost:4173,http://127.0.0.1:4173")
     min_label_confidence: float = 0.4
 
     # Links in emails (invites, resets, signup checks) open these apps
@@ -145,8 +141,7 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_from: str = "ADEM <noreply@localhost>"
     smtp_starttls: bool = True
-    # Google sign-in: the OAuth Client ID. Empty = Google sign-in is switched off.
-    google_client_id: str = ""
+    # Google sign-in (google_client_id / google_client_secret) is defined above: empty = switched off.
     # Supabase project. The secret key is server-only and must never reach a frontend.
     supabase_url: str = ""
     supabase_publishable_key: str = ""
@@ -158,6 +153,15 @@ class Settings(BaseSettings):
     # Policy versions recorded with each consent
     privacy_version: str = "2026-10"
     terms_version: str = "2026-10"
+    # Razorpay. Empty keys = simulation mode: orders and payments are simulated, no money moves.
+    razorpay_key_id: str = ""
+    razorpay_key_secret: str = ""
+    razorpay_webhook_secret: str = ""
+    # GST on credit packs (pack prices include it) and the details printed on invoices
+    gst_percent: float = 18.0
+    invoice_legal_name: str = "ADEM"
+    invoice_gstin: str = ""
+    invoice_address: str = ""
 
     @property
     def data_path(self) -> Path:
@@ -165,6 +169,7 @@ class Settings(BaseSettings):
         p = Path(self.data_dir)
         if not p.is_absolute():
             p = Path(__file__).resolve().parents[1] / p
+        p = p.resolve()  # "backend/../data" -> "D:/Eval_AI/data": stored file paths are compared against it
         p.mkdir(parents=True, exist_ok=True)
         return p
 

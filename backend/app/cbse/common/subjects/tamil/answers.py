@@ -109,6 +109,36 @@ def segment(page_results: list[tuple[dict, Any]], canonical_questions: list[Any]
     def start(num: int, part: str | None, label: str, page: int, bbox: dict | None) -> None:
         answers.append({"num": num, "part": part, "label": label, "texts": [], "page": page, "bbox": bbox, "confs": []})
 
+    for page, bbox, conf, label, piece, from_heading in blocks(page_results):
+        norm = normalize_question_number(label) if label else None
+        top = int(parent_number(norm)) if norm and parent_number(norm).isdigit() else None
+        last = answers[-1]["num"] if answers else 0
+        parts = subpart_path(norm)
+        # "வினா 1. படித்துப் புரிந்து ..." after Q6: a handwritten 7 read as 1. A வினா heading going backwards
+        # is the next question when it carries that question's title.
+        if (from_heading and top is not None and answers and top <= last
+                and (not tops or last + 1 in tops) and _same_title(piece, texts_by_num.get(last + 1))):
+            top, label, norm = last + 1, str(last + 1), str(last + 1)
+
+        # The next question: a number the paper has, moving forward (the first answer may be any of them:
+        # the student skipped the opening questions)
+        if top is not None and (not tops or top in tops) and last < top and (not answers or top <= last + _MAX_SKIP + 1):
+            part = parts[0] if parts and f"{top}({parts[0]})" in exam_norms else None
+            start(top, part, label, page, bbox)
+            if parts and not part:
+                piece = f"{_part_marker(parts[0])} {piece}"
+        elif not answers:
+            continue  # the sheet's title lines, the student's name: no answer yet
+        else:
+            piece = continue_piece(answers, label, norm, parts, piece, page, bbox, exam_norms)
+        add_text(answers[-1], piece, conf, page, bbox)
+
+    return emit(answers, exam_norms)
+
+
+def blocks(page_results: list[tuple[dict, Any]]):
+    """The sheet's text in reading order, cut at every question heading: (page, bbox, confidence, label, text,
+    opened by a வினா heading). Page furniture, பகுதி headings, total lines and OCR noise are left out."""
     for page_info, page_res in page_results:
         page = page_info["page_number"]
         for item in getattr(page_res, "answers", []):
@@ -124,51 +154,48 @@ def segment(page_results: list[tuple[dict, Any]], canonical_questions: list[Any]
                     continue
                 if not label and tamil_format.is_total_line(piece):
                     continue
-                norm = normalize_question_number(label) if label else None
-                top = int(parent_number(norm)) if norm and parent_number(norm).isdigit() else None
-                last = answers[-1]["num"] if answers else 0
-                parts = subpart_path(norm)
-                # "வினா 1. படித்துப் புரிந்து ..." after Q6: a handwritten 7 read as 1. A வினா heading going backwards
-                # is the next question when it carries that question's title.
-                if (from_heading and top is not None and answers and top <= last
-                        and (not tops or last + 1 in tops) and _same_title(piece, texts_by_num.get(last + 1))):
-                    top, label, norm = last + 1, str(last + 1), str(last + 1)
+                yield page, bbox, conf, label, piece, from_heading
 
-                # The next question: a number the paper has, moving forward (the first answer may be any of them:
-                # the student skipped the opening questions)
-                if top is not None and (not tops or top in tops) and last < top and (not answers or top <= last + _MAX_SKIP + 1):
-                    part = parts[0] if parts and f"{top}({parts[0]})" in exam_norms else None
-                    start(top, part, label, page, bbox)
-                    if parts and not part:
-                        piece = f"{_part_marker(parts[0])} {piece}"
-                elif not answers:
-                    continue  # the sheet's title lines, the student's name: no answer yet
-                else:
-                    cur = answers[-1]
-                    if norm and norm.startswith("(") and parts:
-                        tok = parts[-1]
-                        if f"{cur['num']}({tok})" in exam_norms:  # the paper scores this part on its own
-                            start(cur["num"], tok, f"{cur['num']}({tok})", page, bbox)
-                        elif not re.match(rf"^\s*\(?{re.escape(_part_marker(tok)[:-1])}[)\.]", piece):
-                            piece = f"{_part_marker(tok)} {piece}"
-                    elif label:
-                        piece = f"{label} {piece}"  # a number that is no question here: keep it in the text
-                cur = answers[-1]
-                if piece:
-                    cur["texts"].append(piece)
-                if conf is not None:
-                    cur["confs"].append(conf)
-                if bbox and cur["page"] == page:
-                    cur["bbox"] = _merge_bboxes(cur["bbox"], bbox)
 
+def continue_piece(answers: list[dict], label: str | None, norm: str | None, parts: list[str], piece: str,
+                   page: int, bbox: dict | None, exam_norms: set[str | None]) -> str:
+    """A piece that goes on in the current answer: a part the paper scores on its own starts its own answer, another
+    part label is written into the text ("ஆ) ..."), and so is a number that opens no question here."""
+    cur = answers[-1]
+    if norm and norm.startswith("(") and parts:
+        tok = parts[-1]
+        if f"{cur['num']}({tok})" in exam_norms:  # the paper scores this part on its own
+            answers.append({"num": cur["num"], "part": tok, "label": f"{cur['num']}({tok})", "texts": [], "page": page,
+                            "bbox": bbox, "confs": []})
+        elif not re.match(rf"^\s*\(?{re.escape(_part_marker(tok)[:-1])}[)\.]", piece):
+            piece = f"{_part_marker(tok)} {piece}"
+    elif label:
+        piece = f"{label} {piece}"  # a number that is no question here: keep it in the text
+    return piece
+
+
+def add_text(cur: dict, piece: str, conf: float | None, page: int, bbox: dict | None) -> None:
+    if piece:
+        cur["texts"].append(piece)
+    if conf is not None:
+        cur["confs"].append(conf)
+    if bbox and cur["page"] == page:
+        cur["bbox"] = _merge_bboxes(cur["bbox"], bbox)
+
+
+def emit(answers: list[dict], exam_norms: set[str | None], confidence: dict[int, float] | None = None) -> list[SegmentedAnswer]:
+    """The answers built as {num, part, label, texts, page, bbox, confs}, roman parts split. confidence: how sure the
+    segmenter is where answers[k] starts."""
     out = []
-    for i, a in enumerate((piece for a in answers for piece in _roman_split(a, exam_norms)), 1):
+    pieces = ((k, piece) for k, a in enumerate(answers) for piece in _roman_split(a, exam_norms))
+    for i, (k, a) in enumerate(pieces, 1):
         norm = f"{a['num']}({a['part']})" if a["part"] else str(a["num"])
         text = "\n".join(a["texts"]).strip()
         out.append(SegmentedAnswer(
             raw_question_number=a["label"], normalized_number=norm, answer_text=text, raw_ocr_text=text,
             page_number=a["page"], bbox=a["bbox"],
             ocr_confidence=round(sum(a["confs"]) / len(a["confs"]), 2) if a["confs"] else None, position=i,
+            boundary_confidence=(confidence or {}).get(k),
         ))
     return out
 

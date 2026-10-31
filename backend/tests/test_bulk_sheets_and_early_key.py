@@ -1,6 +1,6 @@
 from io import BytesIO
 from openpyxl import Workbook, load_workbook
-from .conftest import BEHAVIOUR, make_pdf, make_png
+from .conftest import assign, BEHAVIOUR, make_pdf, make_png
 
 
 def j(r, code=None):
@@ -18,10 +18,11 @@ def _xlsx(rows) -> bytes:
     return buf.getvalue()
 
 
-def _exam_ready_for_sheets(c, h, class_name):
+def _exam_ready_for_sheets(c, m, h, class_name):
     """Question paper + answer key uploaded together; the key waits and starts by itself once questions are verified."""
-    cls = j(c.post("/api/classes", json={"name": class_name}, headers=h), 201)
-    sub = j(c.post("/api/subjects", json={"name": f"Biology {class_name}"}, headers=h), 201)
+    cls = j(c.post("/api/classes", json={"name": class_name}, headers=m), 201)
+    sub = j(c.post("/api/subjects", json={"name": f"Biology {class_name}"}, headers=m), 201)
+    assign(cls["id"], sub["id"])
     eid = j(c.post("/api/exams", headers=h, json={"name": "Bulk", "academic_year": "2026-27", "class_id": cls["id"],
                                                    "subject_id": sub["id"], "exam_type": "Unit", "total_marks": 15}), 201)["id"]
     key = j(c.post(f"/api/exams/{eid}/answer-key", headers=h, files={"file": ("key.png", make_png(), "image/png")}), 202)
@@ -39,10 +40,10 @@ def _exam_ready_for_sheets(c, h, class_name):
     return cls, eid
 
 
-def test_bulk_sheets_are_matched_to_students_or_held(client, auth):
-    c, h = client, auth
-    cls, eid = _exam_ready_for_sheets(c, h, "10-BulkA")
-    mk = lambda name, roll, reg=None, section="A": j(c.post("/api/students", headers=h, json={  # noqa: E731
+def test_bulk_sheets_are_matched_to_students_or_held(client, auth, teach):
+    c, m, h = client, auth, teach
+    cls, eid = _exam_ready_for_sheets(c, m, h, "10-BulkA")
+    mk = lambda name, roll, reg=None, section="A": j(c.post("/api/students", headers=m, json={  # noqa: E731
         "name": name, "roll_number": roll, "class_id": cls["id"], "registration_number": reg, "section": section}), 201)
     asha, ravi, meena, kumar = mk("Asha Devi", "1", "REG-001"), mk("Ravi Kumar", "2"), mk("Meena S", "3", "REG-003"), mk("Asha K", "4", "REG-004")
 
@@ -93,10 +94,10 @@ def test_bulk_sheets_are_matched_to_students_or_held(client, auth):
     assert j(c.get(f"/api/exams/{eid}/answer-sheets/unassigned", headers=h)) == []
 
 
-def test_bulk_sheets_are_graded_in_turn_and_finalized_together(client, auth):
-    c, h = client, auth
-    cls, eid = _exam_ready_for_sheets(c, h, "10-BulkB")
-    mk = lambda name, roll: j(c.post("/api/students", headers=h, json={  # noqa: E731
+def test_bulk_sheets_are_graded_in_turn_and_finalized_together(client, auth, teach):
+    c, m, h = client, auth, teach
+    cls, eid = _exam_ready_for_sheets(c, m, h, "10-BulkB")
+    mk = lambda name, roll: j(c.post("/api/students", headers=m, json={  # noqa: E731
         "name": name, "roll_number": roll, "class_id": cls["id"]}), 201)
     clean, messy, unsure = mk("Clean Kid", "1"), mk("Messy Kid", "2"), mk("Unsure Kid", "3")
 

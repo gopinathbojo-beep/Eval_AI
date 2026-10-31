@@ -1036,6 +1036,7 @@ function MarksTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<vo
             >
               {d.items.length ? "Re-run AI (Unapproved)" : "Run AI Evaluation"}
             </Button>
+            <CostHint evId={ev.id} />
 
             <Button
               variant="secondary"
@@ -1507,5 +1508,18 @@ function MarksDlg({
         <ErrorPanel error={err} />
       </div>
     </Modal>
+  );
+}
+
+/** What running the AI on this sheet costs, shown before the teacher starts it (spec 6.3). */
+function CostHint({ evId }: { evId: string }) {
+  const { data } = useApi<{ credits: number; free: boolean; balance: number | null; enough: boolean; reason: string }>(
+    `/evaluations/${evId}/quote`);
+  if (!data || data.balance === null) return null;
+  return (
+    <span className={`text-xs ${data.enough ? "text-mute" : "font-semibold text-mark"}`} title={data.reason}>
+      {data.free ? "Free (already paid)" : `${data.credits} credit${data.credits === 1 ? "" : "s"}`} · balance {data.balance}
+      {!data.enough && " · not enough credits"}
+    </span>
   );
 }

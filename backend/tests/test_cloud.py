@@ -12,7 +12,7 @@ from app.models import BackgroundJob, PendingUpload, Teacher, Workspace
 from app.ocr import remote, internvl
 from app.ocr.schemas import QuestionPageResult
 from app.security import create_token
-from tests.conftest import make_pdf
+from tests.conftest import assign, make_pdf
 
 
 @pytest.fixture
@@ -78,10 +78,12 @@ def test_storage_cache_hydration_and_cloud_retention(client, private_storage):
             cloud.key_for(invalid)
 
 
-def test_signed_upload_completion_is_authorized_validated_and_idempotent(client, auth, private_storage):
+def test_signed_upload_completion_is_authorized_validated_and_idempotent(client, auth, teach, private_storage):
     objects, _ = private_storage
     cls = client.post("/api/classes", headers=auth, json={"std":"10","section":"Cloud"}).json()
     subject = client.post("/api/subjects", headers=auth, json={"name":"Cloud English"}).json()
+    assign(cls["id"], subject["id"])
+    auth = teach  # the teacher runs the exam; management only built the roster
     exam = client.post("/api/exams", headers=auth, json={"name":"Cloud exam","class_id":cls["id"],"subject_id":subject["id"],"exam_type":"Unit","total_marks":7}).json()
     content = make_pdf()
     lease = client.post(f"/api/exams/{exam['id']}/uploads", headers=auth, json={"kind":"question-paper","filename":"paper.pdf","file_size":len(content)})
@@ -91,7 +93,7 @@ def test_signed_upload_completion_is_authorized_validated_and_idempotent(client,
     with SessionLocal() as db:
         row = db.get(PendingUpload, uid)
         objects[row.object_key] = b"not the announced file"
-        other = Teacher(name="Other",email=f"{uuid4().hex}@example.com",role="MANAGEMENT",password_hash="!unused",profile_completed_at=datetime.now(timezone.utc))
+        other = Teacher(name="Other",email=f"{uuid4().hex}@example.com",role="TEACHER",password_hash="!unused",profile_completed_at=datetime.now(timezone.utc))  # a teacher of another school
         db.add(other); db.flush()
         ws = Workspace(name="Other school",kind="SCHOOL",owner_id=other.id)
         db.add(ws); db.flush(); other.workspace_id=ws.id;db.commit()
@@ -149,10 +151,10 @@ def test_versioned_migrations_are_repeatable(tmp_path):
         config.attributes["connection"]=connection
         command.upgrade(config,"head"); command.upgrade(config,"head")
         assert set(Base.metadata.tables) <= set(inspect(connection).get_table_names())
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar() == "20261030_uploads"
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar() == "20261101_accounts"
 
 
-def test_durable_queue_deduplicates_recovers_queued_and_flags_interrupted(client, auth, monkeypatch):
+def test_durable_queue_deduplicates_recovers_queued_and_flags_interrupted(client, auth, teach, monkeypatch):
     from app.services import persistent_queue as pq, job_queue as jq
     from app.services.pipeline import process_document
     monkeypatch.setattr(jq,"_waiting",[])
@@ -160,7 +162,8 @@ def test_durable_queue_deduplicates_recovers_queued_and_flags_interrupted(client
     monkeypatch.setattr(jq,"_ensure_workers",lambda:None)
     cls=client.post('/api/classes',headers=auth,json={'std':'12','section':'Durable'}).json()
     sub=client.post('/api/subjects',headers=auth,json={'name':'Durable English'}).json()
-    exam=client.post('/api/exams',headers=auth,json={'name':'Durable','class_id':cls['id'],'subject_id':sub['id'],'exam_type':'Unit','total_marks':2}).json()
+    assign(cls['id'],sub['id'])
+    exam=client.post('/api/exams',headers=teach,json={'name':'Durable','class_id':cls['id'],'subject_id':sub['id'],'exam_type':'Unit','total_marks':2}).json()
     job=jq._Job('internvl',process_document,('question-paper','document-id'),exam_id=exam['id'])
     job_id=pq.persist(job)
     assert job_id and pq.persist(job) is None

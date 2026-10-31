@@ -64,7 +64,7 @@ def test_owner_manages_teacher_and_revokes_sessions(client, owner_headers, auth)
     rows = client.get("/api/admin/users?q=managed@example.com", headers=owner_headers).json()
     assert rows["total"] == 1
     events = client.get(f"/api/admin/activity?user_id={user['id']}", headers=owner_headers).json()["events"]
-    assert {"password_login"} <= {e["action"] for e in events}
+    assert {"LOGIN_PASSWORD"} <= {e["action"] for e in events}
     assert all("new_value" not in event for event in events)
 
 
@@ -142,7 +142,7 @@ def test_google_owner_and_password_methods_coexist(google_provider):
         reset = browser.patch(f"/api/admin/users/{me['id']}", json={"password": "owner-new-password-123"}, headers=headers)
         assert reset.status_code == 200
         assert browser.get("/api/auth/me").status_code == 200  # own session is renewed
-        assert browser.post("/api/auth/logout", headers=headers).status_code == 204
+        assert browser.post("/api/auth/logout", headers=headers).status_code == 200
         password_login = browser.post("/api/auth/login", json={"email": me["email"], "password": "owner-new-password-123", "browser_session": True}, headers=headers)
         assert password_login.status_code == 200
         assert password_login.json()["teacher"]["is_admin"] is True

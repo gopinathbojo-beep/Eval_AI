@@ -39,8 +39,9 @@ function TeacherEditor({
   const [password, setPassword] = useState("");
   const [active, setActive] = useState(row?.is_active ?? true);
   const [pairs, setPairs] = useState<Pair[]>(row?.assignments ?? []);
-  const [cid, setCid] = useState(classes[0]?.id ?? "");
-  const [sid, setSid] = useState(subjects[0]?.id ?? "");
+  // nothing chosen up front: management picks each class and subject a teacher gets
+  const [cid, setCid] = useState("");
+  const [sid, setSid] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const submit = async (e: FormEvent) => {
@@ -150,6 +151,7 @@ function TeacherEditor({
               value={cid}
               onChange={(e) => setCid(e.target.value)}
             >
+              <option value="">Choose a class</option>
               {classes.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
@@ -161,6 +163,7 @@ function TeacherEditor({
               value={sid}
               onChange={(e) => setSid(e.target.value)}
             >
+              <option value="">Choose a subject</option>
               {subjects.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.name}

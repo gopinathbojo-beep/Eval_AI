@@ -12,6 +12,7 @@ os.environ["DURABLE_JOBS"] = "false"
 os.environ["AUTO_MIGRATE"] = "false"
 os.environ["INDIC_OCR_ENABLED"] = "false"
 os.environ["SECRET_KEY"] = "test-secret-at-least-32-bytes-long-for-jwt-security"
+os.environ["ADMIN_EMAIL"] = "owner@adem.test"  # the platform owner in tests
 os.environ["PDF_RENDER_DPI"] = "72"
 os.environ["INTERNVL_MAX_RETRIES"] = "1"
 os.environ["JOB_QUEUE_INLINE"] = "true"  # queued GPU jobs finish before the request returns
@@ -118,6 +119,15 @@ def ollama_stub():
     srv.shutdown()
 
 
+@pytest.fixture(autouse=True)
+def _fresh_login_limits():
+    """Each test starts with no sign-in attempts counted (both the per-minute and the per-15-minute limits)."""
+    from app.login_limiter import login_limiter
+    from app.services import accounts
+    login_limiter._attempts.clear()
+    accounts._hits.clear()
+
+
 @pytest.fixture(scope="session")
 def client(ollama_stub):
     from app.main import app
@@ -135,6 +145,12 @@ def client(ollama_stub):
             db.add(ws)
             db.flush()
             teacher.workspace_id = ws.id
+            # the school's teacher: runs exams for the classes and subjects management assigns (spec 04)
+            db.add(Teacher(name="Mr Kumar", email="teacher@school.org", role="TEACHER", workspace_id=ws.id,
+                           profile_completed_at=datetime.now(timezone.utc), password_hash=hash_password("password123")))
+            from app.services import credits  # grading costs credits: the test school has plenty
+            credits.post(db, credits.wallet_for(db, "school", ws.id), "ADMIN_GRANT", 100000, "test-school-grant",
+                         note="Test credits")
             db.commit()
         db.close()
         yield c
@@ -145,6 +161,26 @@ def auth(client):
     r = client.post("/api/auth/login", json={"email": "rao@school.org", "password": "password123"})
     assert r.status_code == 200, r.text
     return {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+
+@pytest.fixture(scope="session")
+def teach(client):
+    """The school's teacher (teacher@school.org): exams are created and graded by teachers, not management."""
+    r = client.post("/api/auth/login", json={"email": "teacher@school.org", "password": "password123"})
+    assert r.status_code == 200, r.text
+    return {"Authorization": f"Bearer {r.json()['access_token']}"}
+
+
+def assign(class_id: str, subject_id: str, email: str = "teacher@school.org") -> None:
+    """Management assigns the teacher to a class and subject (done in the database to keep tests short)."""
+    from app.database import SessionLocal
+    from app.models import Teacher, TeacherAssignment
+    db = SessionLocal()
+    t = db.query(Teacher).filter_by(email=email).one()
+    if not db.query(TeacherAssignment).filter_by(teacher_id=t.id, class_id=class_id, subject_id=subject_id).first():
+        db.add(TeacherAssignment(teacher_id=t.id, class_id=class_id, subject_id=subject_id))
+        db.commit()
+    db.close()
 
 
 def make_pdf(pages: int = 1) -> bytes:

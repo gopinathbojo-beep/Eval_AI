@@ -65,12 +65,9 @@ yarn-error.*
 /Student_Marksheet*.xlsx
 
 gpu_server/ollama.log*
-<<<<<<< 7c662e7
 
 # sample papers and student answer sheets stay out of git
 /exam/
 /exam.zip
 .pytest_cache/
-=======
 .bat
->>>>>>> kishore/Version2.0

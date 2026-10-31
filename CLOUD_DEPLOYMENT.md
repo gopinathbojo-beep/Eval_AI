@@ -47,7 +47,7 @@ From the `frontend` directory run:
 npm run configure:api -- https://YOUR-SERVICE.onrender.com
 ```
 
-This replaces the safe placeholder in `frontend/vercel.json` with your real API origin. Commit and push that file, then redeploy Vercel. Keep browser API calls on `/api`; the same-origin proxy preserves secure session cookies.
+This replaces the safe placeholder in `frontend/web/vercel.json` (the Vercel project's root directory is `frontend/web`) with your real API origin. Commit and push that file, then redeploy Vercel. Keep browser API calls on `/api`; the same-origin proxy preserves secure session cookies.
 
 ## 9. Complete Google OAuth
 

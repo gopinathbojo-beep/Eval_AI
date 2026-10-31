@@ -3,25 +3,24 @@
 The portal is part of every sign-in: a parent's account cannot open the school app, and so on. Answers never reveal
 whether an email has an account (forgot-password, signup) until the password has been checked."""
 from __future__ import annotations
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from ..config import get_settings
 from ..database import get_db
 from ..deps import err
-from ..models import Consent, School, SignupRequest, User
-from ..security import ROLE_SCOPE, SCOPE_ROLE, create_token, current_user, hash_password, verify_password
-from ..services import credits, mailer
-from ..services.accounts import (PORTAL_LABEL, check_password, consume_link, issue_link, locked_minutes, normalize_email,
+from ..login_limiter import login_limiter
+from ..models import Consent, School, SchoolProfile, SignupRequest, User
+from ..security import (ALGO, PORTAL_ROLES, SESSION_COOKIE, create_token, current_user, hash_password,
+                        require_browser_request, set_session_cookie, verify_password)
+from ..services import credits, mailer, school_setup
+from ..services.accounts import (ROLE_APP, check_password, consume_link, issue_link, locked_minutes, normalize_email,
                                  now, phone_key, rate_limit, record_failure, record_success, school_active, user_view,
                                  verify_google)
 from ..services.audit import audit
 
 router = APIRouter(prefix="/api")
-Portal = str  # "admin" | "school" | "teacher" | "parent" | "web"
-# The roles each sign-in page accepts. The web app has one sign-in for school management and their invited teachers;
-# the session's scope still comes from the role (see create_token).
-PORTAL_ROLES = {**{p: (r,) for p, r in SCOPE_ROLE.items()}, "web": ("school_manager", "teacher")}
+Portal = str  # "admin" | "school" | "teacher" | "parent" | "web"; the roles each accepts are security.PORTAL_ROLES
 
 
 def _ip(request: Request) -> str:
@@ -40,16 +39,26 @@ def _check_portal(portal: str) -> str:
 
 
 def _role_label(role: str) -> str:
-    return PORTAL_LABEL[ROLE_SCOPE[role]]
+    return ROLE_APP.get(role, "School")
 
 
-def _session(db: Session, u: User, request: Request, how: str) -> dict:
+def _session(db: Session, u: User, request: Request, how: str, portal: str = "web", response: Response | None = None,
+             browser: bool = False) -> dict:
+    """A signed-in session: the web app gets an HttpOnly cookie (browser), the admin and parent apps a bearer token."""
+    if not browser and request.headers.get("x-requested-with") == "EvalAI":
+        require_browser_request(request)  # the web app (signup, invite, verify-email): its session is the cookie
+        browser = True
     record_success(u)
     audit(db, exam_id=None, teacher_id=u.id, entity_type="user", entity_id=u.id, action=f"LOGIN_{how}", ip=_ip(request))
     db.commit()
     view = user_view(u)
-    # `teacher` keeps the teacher web app's existing login response working
-    return {"access_token": create_token(u), "token_type": "bearer", "user": view, "teacher": view}
+    if response is not None:
+        response.headers["Cache-Control"] = "no-store"
+    if browser and response is not None:
+        set_session_cookie(response, u)
+        return {"user": view, "teacher": view}
+    # `teacher` keeps the web app's existing login response working
+    return {"access_token": create_token(u, portal=portal), "token_type": "bearer", "user": view, "teacher": view}
 
 
 def _admit(db: Session, u: User, portal: str) -> None:
@@ -60,20 +69,26 @@ def _admit(db: Session, u: User, portal: str) -> None:
         raise err(403, "INVITE_PENDING", "Accept the invitation in your email first.")
     if u.status != "active":
         raise err(403, "ACCOUNT_DISABLED", "This account is not active. Contact support.")
-    if u.role == "teacher" and not school_active(db, u):
+    if u.workspace is not None and not u.workspace.is_active:
+        raise err(403, "WORKSPACE_DISABLED", "Your workspace has been disabled. Contact the administrator.")
+    if u.role == "TEACHER" and not school_active(db, u):
         raise err(403, "SCHOOL_NOT_ACTIVE", "Your school is not active yet.")
 
 
 # ---------- sign in ----------
 class LoginIn(BaseModel):
-    email: str
-    password: str
-    portal: Portal = "teacher"
+    email: str = Field(max_length=320)
+    password: str = Field(max_length=1024)
+    portal: Portal = "web"
+    browser_session: bool = False  # the web app: keep the session in a cookie instead of returning a token
 
 
 @router.post("/auth/login")
-def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
+def login(body: LoginIn, request: Request, response: Response, db: Session = Depends(get_db)):
     portal = _check_portal(body.portal)
+    if body.browser_session:
+        require_browser_request(request)
+    login_limiter.check(_ip(request) or "unknown", get_settings().login_attempts_per_minute)
     rate_limit("login", _ip(request), 30, 15 * 60)
     u = db.query(User).filter_by(email=normalize_email(body.email)).first()
     bad = err(401, "INVALID_CREDENTIALS", "Email or password is incorrect.")
@@ -87,16 +102,17 @@ def login(body: LoginIn, request: Request, db: Session = Depends(get_db)):
         db.commit()
         raise bad
     _admit(db, u, portal)
-    return _session(db, u, request, "PASSWORD")
+    return _session(db, u, request, "PASSWORD", portal, response, body.browser_session)
 
 
 class GoogleIn(BaseModel):
     id_token: str
     portal: Portal
+    browser_session: bool = False
 
 
 @router.post("/auth/google")
-def google_login(body: GoogleIn, request: Request, db: Session = Depends(get_db)):
+def google_login(body: GoogleIn, request: Request, response: Response, db: Session = Depends(get_db)):
     portal = _check_portal(body.portal)
     rate_limit("login", _ip(request), 30, 15 * 60)
     g = verify_google(body.id_token)
@@ -112,7 +128,7 @@ def google_login(body: GoogleIn, request: Request, db: Session = Depends(get_db)
     if u.google_sub is None:
         u.google_sub = g["sub"]  # first Google sign-in links the account
     u.email_verified_at = u.email_verified_at or now()
-    return _session(db, u, request, "GOOGLE")
+    return _session(db, u, request, "GOOGLE", portal, response, body.browser_session)
 
 
 @router.get("/auth/me")
@@ -120,10 +136,30 @@ def me(u: User = Depends(current_user)):
     return user_view(u)
 
 
+def _signed_in(request: Request, db: Session) -> User | None:
+    """The account behind the request's cookie or bearer token, or None (logout works with an expired session)."""
+    import jwt
+    raw = request.cookies.get(SESSION_COOKIE)
+    auth = request.headers.get("authorization", "")
+    if auth.lower().startswith("bearer "):
+        raw = auth[7:]
+    try:
+        payload = jwt.decode(raw or "", get_settings().jwt_secret, algorithms=[ALGO])
+    except jwt.PyJWTError:
+        return None
+    return db.get(User, payload.get("sub"))
+
+
 @router.post("/auth/logout")
-def logout(request: Request, u: User = Depends(current_user), db: Session = Depends(get_db)):
-    audit(db, exam_id=None, teacher_id=u.id, entity_type="user", entity_id=u.id, action="LOGOUT", ip=_ip(request))
-    db.commit()
+def logout(request: Request, response: Response, db: Session = Depends(get_db)):
+    if request.cookies.get(SESSION_COOKIE):
+        require_browser_request(request)
+    u = _signed_in(request, db)
+    if u is not None:
+        audit(db, exam_id=None, teacher_id=u.id, entity_type="user", entity_id=u.id, action="LOGOUT", ip=_ip(request))
+        db.commit()
+    response.delete_cookie(SESSION_COOKIE, path="/api", secure=get_settings().cookie_secure, httponly=True,
+                           samesite="strict")
     return {"ok": True}
 
 
@@ -141,7 +177,7 @@ class ChangePasswordIn(BaseModel):
 
 
 @router.post("/auth/change-password")
-def change_password(body: ChangePasswordIn, request: Request, u: User = Depends(current_user),
+def change_password(body: ChangePasswordIn, request: Request, response: Response, u: User = Depends(current_user),
                     db: Session = Depends(get_db)):
     if u.password_hash and not verify_password(body.current_password, u.password_hash):
         raise err(400, "WRONG_PASSWORD", "Your current password is incorrect.")
@@ -151,7 +187,10 @@ def change_password(body: ChangePasswordIn, request: Request, u: User = Depends(
     u.token_version = (u.token_version or 0) + 1  # other sessions end; this one gets a fresh token
     audit(db, exam_id=None, teacher_id=u.id, entity_type="user", entity_id=u.id, action="PASSWORD_CHANGED", ip=_ip(request))
     db.commit()
-    return {"access_token": create_token(u), "token_type": "bearer", "user": user_view(u)}
+    if request.cookies.get(SESSION_COOKIE):
+        set_session_cookie(response, u)  # the web app's cookie carries the new session version
+    return {"access_token": create_token(u, portal=getattr(request.state, "portal", "web")), "token_type": "bearer",
+            "user": user_view(u)}
 
 
 # ---------- password reset ----------
@@ -211,7 +250,7 @@ class AcceptInviteIn(BaseModel):
 
 
 @router.post("/auth/invite/accept")
-def accept_invite(body: AcceptInviteIn, request: Request, db: Session = Depends(get_db)):
+def accept_invite(body: AcceptInviteIn, request: Request, response: Response, db: Session = Depends(get_db)):
     link = consume_link(db, "invite", body.token, peek=True)
     u = db.get(User, link.user_id)
     if body.id_token:
@@ -227,10 +266,11 @@ def accept_invite(body: AcceptInviteIn, request: Request, db: Session = Depends(
     consume_link(db, "invite", body.token)
     u.status = "active"
     u.email_verified_at = now()
-    if u.role == "teacher" and not school_active(db, u):
+    u.profile_completed_at = u.profile_completed_at or now()  # the school entered the details when inviting
+    if u.role == "TEACHER" and not school_active(db, u):
         db.commit()
         raise err(403, "SCHOOL_NOT_ACTIVE", "Your account is ready, but your school is not active yet.")
-    return _session(db, u, request, "INVITE")
+    return _session(db, u, request, "INVITE", "admin" if u.role == "ADMIN" else "web", response)
 
 
 # ---------- public signup (schools and parents) ----------
@@ -275,20 +315,32 @@ def _create_account(db: Session, req: SignupRequest, ip: str, google_sub: str | 
     p = req.payload
     s = get_settings()
     if req.kind == "school":
-        school = School(name=p["school_name"], address=p.get("address", ""), city=p.get("city", ""),
-                        state=p.get("state", ""), phone=p["phone"], status="PENDING")
+        # the management account owns the school workspace, which waits for the platform team's approval
+        u = User(name=p["manager_name"], email=req.email, phone=p["phone"], role="MANAGEMENT",
+                 password_hash=p.get("password_hash"), google_sub=google_sub, email_verified_at=now(),
+                 registration_source="PUBLIC", profile_completed_at=now(),
+                 profile={k: p.get(k, "") for k in ("phone", "school_name", "address", "city", "state")})
+        db.add(u)
+        db.flush()
+        school = School(kind="SCHOOL", name=p["school_name"], owner_id=u.id, address=p.get("address", ""),
+                        city=p.get("city", ""), state=p.get("state", ""), phone=p["phone"], status="PENDING")
         db.add(school)
         db.flush()
-        u = User(name=p["manager_name"], email=req.email, phone=p["phone"], role="school_manager", school_id=school.id,
-                 password_hash=p.get("password_hash"), google_sub=google_sub, email_verified_at=now())
-        db.add(u)
-        db.flush()
+        u.workspace_id = school.id
+        db.add(SchoolProfile(teacher_id=u.id, name=school.name, address=school.address))
+        school_setup.default_subjects(db, school)  # every CBSE subject; management assigns them to teachers
         credits.wallet_for(db, "school", school.id)  # the signup credits follow approval
     else:
-        u = User(name=p["name"], email=req.email, phone=p["phone"], role="parent",
-                 password_hash=p.get("password_hash"), google_sub=google_sub, email_verified_at=now())
+        # the family workspace exists at once; the child's details come with the profile (PUT /auth/profile)
+        u = User(name=p["name"], email=req.email, phone=p["phone"], role="PARENT",
+                 password_hash=p.get("password_hash"), google_sub=google_sub, email_verified_at=now(),
+                 registration_source="PUBLIC")
         db.add(u)
         db.flush()
+        family = School(kind="FAMILY", name=p["name"], owner_id=u.id, phone=p["phone"], status="ACTIVE")
+        db.add(family)
+        db.flush()
+        u.workspace_id = family.id
         credits.grant_signup_bonus(db, "parent", u.id, req.phone_key)
     kinds = ["terms", "privacy"] + (["child_data"] if req.kind == "parent" else [])
     for k in kinds:
@@ -346,7 +398,7 @@ class VerifyIn(BaseModel):
 
 
 @router.post("/public/signup/verify-email")
-def verify_email(body: VerifyIn, request: Request, db: Session = Depends(get_db)):
+def verify_email(body: VerifyIn, request: Request, response: Response, db: Session = Depends(get_db)):
     link = consume_link(db, "verify", body.token)
     req = db.get(SignupRequest, link.signup_id)
     if db.query(User).filter_by(email=req.email).first() is not None:
@@ -355,7 +407,7 @@ def verify_email(body: VerifyIn, request: Request, db: Session = Depends(get_db)
     u = _create_account(db, req, _ip(request))
     if req.kind == "school":
         _notify_school_pending(u)
-    return _session(db, u, request, "SIGNUP")
+    return _session(db, u, request, "SIGNUP", "school" if req.kind == "school" else "parent", response)
 
 
 class GoogleSignupIn(BaseModel):
@@ -366,7 +418,7 @@ class GoogleSignupIn(BaseModel):
 
 
 @router.post("/public/signup/google")
-def signup_google(body: GoogleSignupIn, request: Request, db: Session = Depends(get_db)):
+def signup_google(body: GoogleSignupIn, request: Request, response: Response, db: Session = Depends(get_db)):
     """Signup with Google: the address is already verified, so the account is created at once."""
     rate_limit("signup", _ip(request), 20, 60 * 60)
     if body.kind not in ("school", "parent") or getattr(body, body.kind) is None:
@@ -383,7 +435,7 @@ def signup_google(body: GoogleSignupIn, request: Request, db: Session = Depends(
     u = _create_account(db, req, _ip(request), google_sub=g["sub"])
     if body.kind == "school":
         _notify_school_pending(u)
-    return _session(db, u, request, "SIGNUP")
+    return _session(db, u, request, "SIGNUP", "school" if body.kind == "school" else "parent", response)
 
 
 def _notify_school_pending(u: User) -> None:

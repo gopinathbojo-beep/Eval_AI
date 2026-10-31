@@ -1,32 +1,25 @@
-<<<<<<< 7c662e7:frontend/web/src/types/index.ts
-export interface Teacher { id: string; name: string; email: string }
-export type Role = "school_manager" | "teacher";
-export interface User extends Teacher {
-  phone: string;
-  role: Role;
-  school: { id: string; name: string; status: "PENDING" | "ACTIVE" | "SUSPENDED" } | null;
-  status: string;
-  must_change_password: boolean;
-  has_password: boolean;
-  google_linked: boolean;
+export type Role = "ADMIN" | "MANAGEMENT" | "TEACHER" | "PARENT" | "UNASSIGNED";
+/** The signed-in account (GET /auth/me): school management, a teacher, a parent, or a console account. */
+export interface Teacher {
+  id: string; name: string; email: string; phone: string; is_admin: boolean;
+  role: Role; admin_role: "super_admin" | "admin" | "viewer" | null;
+  workspace_id: string | null; must_change_password: boolean;
+  approval_status: "PENDING" | "APPROVED" | "REJECTED" | "INVITED"; profile_complete: boolean;
+  profile: { institution?: string; subject?: string; city?: string; phone?: string; experience_years?: number; school_name?: string; address?: string; state?: string; postcode?: string; principal_name?: string; affiliation_number?: string; child_name?: string; child_class?: "10" | "12" } | null;
+  rejection_reason: string | null; email_verified: boolean;
+  /** The account's school or family workspace. */
+  school: { id: string; name: string; status: "PENDING" | "ACTIVE" | "SUSPENDED"; kind: "SCHOOL" | "FAMILY" } | null;
+  status: "invited" | "active" | "suspended";
+  has_password: boolean; google_linked: boolean; last_login_at: string | null;
 }
-export interface Session { access_token: string; user: User }
+export type User = Teacher;
+/** A session the server handed back. The web app keeps it in an HttpOnly cookie; access_token is for the other apps. */
+export interface Session { access_token?: string; user: User; teacher?: User }
 export interface StaffRow {
   id: string; name: string; email: string; phone: string; status: "invited" | "active" | "suspended";
   last_login_at: string | null; created_at: string | null;
 }
-export interface ClassRow { id: string; name: string; std: string; section: string | null; student_count: number }
-=======
-export interface Teacher {
-  id: string; name: string; email: string; is_admin: boolean;
-  role: "ADMIN" | "MANAGEMENT" | "TEACHER" | "PARENT" | "UNASSIGNED";
-  workspace_id: string | null; must_change_password: boolean;
-  approval_status: "PENDING" | "APPROVED" | "REJECTED"; profile_complete: boolean;
-  profile: { institution?: string; subject?: string; city?: string; phone?: string; experience_years?: number; school_name?: string; address?: string; state?: string; postcode?: string; principal_name?: string; affiliation_number?: string; child_name?: string; child_class?: "10" | "12" } | null;
-  rejection_reason: string | null; email_verified: boolean;
-}
 export interface ClassRow { id: string; name: string; std: string; section: string | null; student_count: number; assigned_subject_ids?: string[] | null }
->>>>>>> kishore/Version2.0:frontend/src/types/index.ts
 export interface Subject { id: string; name: string; code: string | null }
 export interface Student {
   id: string; name: string; roll_number: string; class_id: string; class_name: string | null;
@@ -75,7 +68,7 @@ export interface Question {
   choice_group?: string | null; // either/or alternatives share it ("34" for 34(அ) OR 34(ஆ)); a choice counts once
   answer_any?: number | null; // the section says "answer any N"; compulsory questions always count
   compulsory?: boolean;
-  page_start: number | null; page_end?: number | null; bbox: BBox | null; has_crop: boolean; ocr_confidence: number | null;
+  page_start: number | null; page_end?: number | null; bbox: BBox | null; has_crop: boolean; has_figure?: boolean; ocr_confidence: number | null;
   verification_status: "UNVERIFIED" | "VERIFIED" | "NEEDS_REVIEW"; review_reason: string | null;
   course_outcome?: string | null;
 }

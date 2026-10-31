@@ -71,8 +71,11 @@ function normalizeMathText(raw: string): string {
     const hasMathDelim = trimmed.includes("\\(") || trimmed.includes("\\[") || trimmed.includes("$$") || trimmed.includes("$");
     const hasMathIndicator = /\\frac|\\sqrt|_\{[a-zA-Z0-9_]+\}|\^\{?[0-9a-zA-Z+-]+\}?|\\times|\\div|\\pm|\\pi|\\cdot|\\,|×|÷/.test(trimmed);
     const hasEquation = trimmed.includes("=") || trimmed.includes("≈");
+    // a sentence with a formula in it ("If HCF (2520, 6600) = 40 and LCM ... = 252 × k, then the value of k is"):
+    // as math its words would run together, so it stays text
+    const isProse = /[A-Za-z]{2,}\s+[A-Za-z]{2,}\s+[A-Za-z]{2,}/.test(trimmed.replace(/\\[a-zA-Z]+/g, ""));
 
-    if (!hasMathDelim && hasMathIndicator && hasEquation) {
+    if (!hasMathDelim && hasMathIndicator && hasEquation && !isProse) {
       const labelMatch = trimmed.match(/^([0-9]+\.|\([a-zA-Z0-9]+\)|[a-zA-Z]\.|\bQ[0-9]+[a-z]?\.?)\s+/);
       if (labelMatch) {
         const lbl = labelMatch[0];
@@ -183,9 +186,61 @@ function parseMathTokens(raw: string): MathToken[] {
   return finalTokens;
 }
 
+const TABLE_ROW = /^\s*\|.*\|\s*$/;
+const TABLE_RULE = /^\s*\|(?:\s*:?-{3,}:?\s*\|)+\s*$/;
+
+/** Splits text into plain parts and data tables written as "| a | b |" rows (a question's frequency table). */
+function splitTables(raw: string): Array<{ text: string } | { rows: string[][] }> {
+  const parts: Array<{ text: string } | { rows: string[][] }> = [];
+  let text: string[] = [];
+  let rows: string[][] = [];
+  const flush = () => {
+    if (rows.length) parts.push({ rows });
+    if (text.length) parts.push({ text: text.join("\n") });
+    rows = [];
+    text = [];
+  };
+  for (const line of raw.split("\n")) {
+    if (TABLE_ROW.test(line)) {
+      if (text.length) flush();
+      if (!TABLE_RULE.test(line)) rows.push(line.trim().slice(1, -1).split("|").map((c) => c.trim()));
+    } else {
+      if (rows.length) flush();
+      text.push(line);
+    }
+  }
+  flush();
+  return parts;
+}
+
 export function MathView({ text, className = "", inline = false }: MathViewProps) {
   const renderedElements = useMemo(() => {
     if (!text) return null;
+
+    const parts = splitTables(text);
+    if (parts.some((p) => "rows" in p)) {
+      return parts.map((p, i) =>
+        "rows" in p ? (
+          <div key={i} className="my-2 overflow-x-auto">
+            <table className="border-collapse text-sm">
+              <tbody>
+                {p.rows.map((row, r) => (
+                  <tr key={r}>
+                    {row.map((cell, c) => (
+                      <td key={c} className={`border border-line px-2 py-1 text-center ${c === 0 ? "font-medium" : ""}`}>
+                        <MathView text={cell} inline />
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : p.text.trim() ? (
+          <MathView key={i} text={p.text.replace(/^\n+|\n+$/g, "")} />
+        ) : null,
+      );
+    }
 
     const tokens = parseMathTokens(text);
 

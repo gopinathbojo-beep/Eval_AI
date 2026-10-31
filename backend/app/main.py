@@ -10,18 +10,30 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from .config import get_settings
 from .database import init_db
-<<<<<<< 7c662e7
-from .routes import answer_keys, auth, core, documents, evaluations, questions, reference_collection, school, staff
-=======
-from .routes import admin, answer_keys, core, documents, evaluations, google_auth, questions, reference_collection, registration, school, management, uploads
+from .routes import (admin, answer_keys, auth, console, core, credits, documents, evaluations, google_auth, management,
+                     parent, questions, reference_collection, registration, rollover, school, staff, support, uploads)
 from .services.admin_accounts import ensure_owner
->>>>>>> kishore/Version2.0
 from .services.exam_files import start_purge_scheduler
 from .services.recovery import recover_interrupted_jobs
 from sqlalchemy import text
 from .database import SessionLocal
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+
+
+def _error_log() -> None:
+    """Warnings and errors (with their tracebacks) also go to data/logs/server.log, so a failed request can be read
+    after the console window is gone. Rotates at 5 MB, keeps 3 old files."""
+    from logging.handlers import RotatingFileHandler
+    folder = get_settings().data_path / "logs"
+    folder.mkdir(parents=True, exist_ok=True)
+    handler = RotatingFileHandler(folder / "server.log", maxBytes=5_000_000, backupCount=3, encoding="utf-8")
+    handler.setLevel(logging.WARNING)
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    logging.getLogger().addHandler(handler)
+
+
+_error_log()
 
 
 class PrivateAccessLog(logging.Filter):
@@ -109,18 +121,15 @@ def create_app() -> FastAPI:
         return JSONResponse({"code": "SERVER_ERROR", "message": "Something went wrong on the server. Details are in the server log."},
                             status_code=500)
 
-<<<<<<< 7c662e7
-    for r in (auth.router, core.router, documents.router, questions.router, answer_keys.router, evaluations.router, reference_collection.router,
-              school.router, staff.router):
-=======
     from .documents.cloud import StorageError
     @app.exception_handler(StorageError)
     async def storage_error(_: Request, exc: StorageError):
         return JSONResponse({"code": "STORAGE_UNAVAILABLE", "message": str(exc)}, status_code=503)
 
-    for r in (core.router, documents.router, questions.router, answer_keys.router, evaluations.router, reference_collection.router,
-              school.router, admin.router, google_auth.router, registration.router, management.router, uploads.router):
->>>>>>> kishore/Version2.0
+    for r in (auth.router, core.router, documents.router, questions.router, answer_keys.router, evaluations.router,
+              reference_collection.router, school.router, staff.router, admin.router, google_auth.router,
+              registration.router, management.router, uploads.router, credits.router, support.router, console.router, parent.router,
+              rollover.router):
         app.include_router(r)
 
     @app.get("/api/health")

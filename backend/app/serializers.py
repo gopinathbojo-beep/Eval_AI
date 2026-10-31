@@ -55,6 +55,8 @@ def question_view(q: ExamQuestion) -> dict:
         "section": q.section, "choice_group": q.choice_group, "answer_any": q.answer_any, "compulsory": q.compulsory,
         "position": q.position, "page_start": q.page_start, "page_end": q.page_end,
         "bbox": q.bbox, "has_crop": bool(q.crop_file), "document_id": q.document_id,
+        # a typed paper's question has no bbox: its crop is the figure printed with it (pipeline._figure_crop)
+        "has_figure": bool(q.crop_file) and not q.bbox,
         "ocr_confidence": q.ocr_confidence, "verification_status": q.verification_status,
         "review_reason": q.review_reason,
     }

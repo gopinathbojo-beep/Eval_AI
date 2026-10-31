@@ -519,8 +519,20 @@ export default function Questions() {
                           </span>
                         </button>
 
+                        {/* The figure printed with the question (diagram, picture) */}
+                        {q.has_figure && (
+                          <div className="mt-3 rounded-lg border border-line bg-sunken p-2.5">
+                            <p className="mb-1 text-xs font-medium text-mute">Figure</p>
+                            <AuthImage
+                              path={`/crops/question/${q.id}`}
+                              alt={`Figure of question ${q.display_number}`}
+                              className="max-h-64 rounded border border-line/60 bg-surface object-contain"
+                            />
+                          </div>
+                        )}
+
                         {/* Show OCR image crop if selected and available */}
-                        {isSelected && q.has_crop && (
+                        {isSelected && q.has_crop && !q.has_figure && (
                           <div className="mt-3 rounded-lg border border-line bg-sunken p-2.5">
                             <p className="mb-1 text-xs font-medium text-mute">What was detected (source crop)</p>
                             <AuthImage

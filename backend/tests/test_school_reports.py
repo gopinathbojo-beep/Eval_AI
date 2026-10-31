@@ -5,11 +5,7 @@ from app.database import SessionLocal
 from app.models import (AnswerSheetDocument, Evaluation, EvaluationItem, Exam, ExamQuestion, SchoolClass, Student, Subject,
                         Teacher)
 from app.services.report_templates import normalize
-<<<<<<< 7c662e7
 from app.cbse.common import grading
-=======
-from app.services.school_reports import relative_grades
->>>>>>> kishore/Version2.0
 from .conftest import make_png
 
 
@@ -24,7 +20,6 @@ def _text(pdf: bytes) -> str:
     return re.sub(r"\s+", " ", "".join(p.get_text() for p in doc)), doc.page_count
 
 
-<<<<<<< 7c662e7
 def test_cbse_grades_by_rank_among_passed():
     # 16 passed students with distinct scores: two per eighth, A1 for the top two ... D2 for the last two
     g = grading.grades({**{i: 100.0 - i for i in range(15)}, "borderline": 32.5, "fail": 32.4, "absent": None})
@@ -43,17 +38,6 @@ def test_cbse_grades_keep_ties_together():
     # 4 passed: one per other eighth (A1, B1, C1, D1); a tie of the last two goes up to C1
     g = grading.grades({"a": 90, "b": 80, "c": 70, "d": 70})
     assert [g[k] for k in "abcd"] == ["A1", "B1", "C1", "C1"]
-=======
-def test_relative_grades():
-    scores = {str(i): 100 - i * 8 for i in range(8)}
-    scores.update(failed=32.9, missing=None)
-    grades = relative_grades(scores)
-    assert [grades[str(i)] for i in range(8)] == ["A-1", "A-2", "B-1", "B-2", "C-1", "C-2", "D-1", "D-2"]
-    assert grades["failed"] == "E" and grades["missing"] == "–"
-    assert relative_grades({"a": 80, "b": 80, "c": 50})["a"] == relative_grades({"a": 80, "b": 80, "c": 50})["b"]
-    assert relative_grades({"only": 33}) == {"only": "A-1"}
-    assert relative_grades({"failed_subject": 90}, {"failed_subject"}) == {"failed_subject": "E"}
->>>>>>> kishore/Version2.0
 
 
 def test_template_normalize_keeps_known_keys_only():
@@ -129,12 +113,7 @@ def test_school_profile_templates_and_report_cards(client, auth):
     assert r.status_code == 200 and "Asha" in r.headers["content-disposition"]
     text, pages = _text(r.content)
     assert pages == 1 and "Green Valley School" in text and "Progress Report · Term 1 · 2026-27" in text
-<<<<<<< 7c662e7
     assert "122 / 160" in text and "76.25%" in text and "A1" in text and "Dr. R. Iyer" in text  # top of 2
-=======
-    assert "122 / 160" in text and "76.25%" in text and "A-1" in text and "Dr. R. Iyer" in text
-    assert "K Level" not in text and "Knowledge Level" not in text
->>>>>>> kishore/Version2.0
     assert "Class Rank" not in text                                             # hidden by the template
     whole = c.get(f"/api/classes/{cls_id}/report-cards?academic_year=2026-27&exam_type=Term 1", headers=h)
     text, pages = _text(whole.content)
@@ -189,8 +168,4 @@ def test_exam_wise_report(client, auth):
     assert "Exam Result Analysis" in text and "Maths Unit Test" in text and "2 evaluated, 1 pending" in text
     assert "Meena" in text and "Arjun" in text and "Kavya" in text and "Not evaluated" in text
     assert "55%" in text and "1 / 2" in text and "50%" in text                  # average, passed, pass %
-<<<<<<< 7c662e7
     assert "Question-wise Analysis" in text and "Knowledge Level" not in text
-=======
-    assert "Question-wise Analysis" in text and "Knowledge Level" not in text and "K Level" not in text
->>>>>>> kishore/Version2.0

@@ -15,6 +15,7 @@ os.environ["INTERNVL_ENABLED"] = "false"
 os.environ["CORS_ORIGINS"] = "http://127.0.0.1:4174"
 os.environ["GOOGLE_CLIENT_ID"] = ""
 os.environ["GOOGLE_CLIENT_SECRET"] = ""
+os.environ["ADMIN_EMAIL"] = "owner@adem.test"
 
 from app.database import SessionLocal, init_db
 from app.models import Teacher, Workspace
@@ -32,6 +33,6 @@ if __name__ == "__main__":
         db.add(workspace)
         db.flush()
         user.workspace_id = workspace.id
-        db.add(Teacher(name="Owner", email="seyamesh91@gmail.com", password_hash=hash_password("owner-test-password-123")))
+        db.add(Teacher(name="Owner", email="owner@adem.test", role="ADMIN", admin_role="super_admin", password_hash=hash_password("owner-test-password-123")))
         db.commit()
     uvicorn.run("app.main:app", host="127.0.0.1", port=18000)

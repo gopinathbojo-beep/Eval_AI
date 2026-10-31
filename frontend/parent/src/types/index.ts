@@ -1,6 +1,6 @@
 export interface Issue { question: string; reason: string }
 
-export type Role = "platform_admin" | "school_manager" | "teacher" | "parent";
+export type Role = "ADMIN" | "MANAGEMENT" | "TEACHER" | "PARENT" | "UNASSIGNED";
 
 export interface User {
   id: string;
