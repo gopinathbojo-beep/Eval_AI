@@ -346,6 +346,41 @@ def test_validation_blocks_specific_source_errors(client, auth, change, code):
     )
 
 
+def test_accepted_questions_continue_to_waiting_key_despite_cbse_findings(client, auth, monkeypatch):
+    from app.routes import documents
+
+    eid, _ = make_board(client, auth)
+    queued = []
+    monkeypatch.setattr(documents, "submit", lambda *args: queued.append(args))
+    with SessionLocal() as db:
+        q = db.query(ExamQuestion).filter_by(exam_id=eid).first()
+        q.section = None
+        q.structure = {**q.structure, "issues": ["Review source allocation"]}
+        key_doc = db.query(AnswerKeyDocument).filter_by(exam_id=eid).one()
+        key_doc.status = "WAITING"
+        db.commit()
+    prefix = f"/api/exams/{eid}"
+    # Basic review is still required, even though full board checks are deferred.
+    rejected = client.post(prefix + "/questions/verify", headers=auth)
+    assert rejected.status_code == 400
+    assert rejected.json()["code"] == "QUESTIONS_NOT_READY"
+    assert client.post(prefix + "/questions/accept-valid", headers=auth).status_code == 200
+    result = client.post(prefix + "/questions/verify", headers=auth)
+    assert result.status_code == 200, result.text
+    assert result.json()["answer_key_started"] is True
+    assert len(queued) == 1 and queued[0][2] == "answer-key"
+    with SessionLocal() as db:
+        exam = db.get(Exam, eid)
+        assert exam.status == "ANSWER_KEY_UPLOADED"
+        assert exam.standard_validation["valid"] is False
+        assert any(issue["code"] == "SECTION_MISMATCH" for issue in exam.standard_validation["issues"])
+        from app.cbse.validation import require_ready
+        from fastapi import HTTPException
+        with pytest.raises(HTTPException) as error:
+            require_ready(db, exam)
+        assert error.value.status_code == 409
+
+
 def test_valid_pair_verifies_and_review_invalidates_both_stages(client, auth):
     eid, _ = make_board(client, auth)
     path = f"/api/exams/{eid}"

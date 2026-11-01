@@ -43,7 +43,7 @@ test("management selects exact board variant and subject persists after leaving 
     page.getByRole("region", { name: "CBSE validation" }),
   ).toBeVisible();
   await expect(
-    page.getByText("Corrections required before continuing"),
+    page.getByText("Review these findings before evaluation; accepted questions can continue to the answer key."),
   ).toBeVisible();
   await expect(
     page.getByText("Whole questions are missing from the extracted paper."),

@@ -366,7 +366,9 @@ export function StandardsPanel({
       >
         {data.valid
           ? "Board pattern checks passed"
-          : "Corrections required before continuing"}
+          : phase === "paper"
+            ? "Review these findings before evaluation; accepted questions can continue to the answer key."
+            : "Corrections required before continuing"}
       </p>
       <div className="flex flex-wrap gap-3 text-xs text-mute">
         <span>

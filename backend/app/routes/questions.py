@@ -351,8 +351,6 @@ def accept_valid(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depen
 @router.post("/exams/{exam_id}/questions/verify")
 def verify_questions(exam_id: str, bg: BackgroundTasks, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     exam = get_exam(db, t, exam_id)
-    from ..cbse.validation import require_ready
-    require_ready(db,exam,"paper")
     doc = db.query(QuestionPaperDocument).filter_by(exam_id=exam.id, is_active=True).order_by(QuestionPaperDocument.uploaded_at.desc()).first()
     qs = db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all()
 
@@ -396,6 +394,11 @@ def verify_questions(exam_id: str, bg: BackgroundTasks, db: Session = Depends(ge
     if issues:
         raise err(400, "QUESTIONS_NOT_READY", f"{len(issues)} issue(s) must be resolved before the questions can be verified.", issues)
 
+    # Teacher acceptance unlocks marking-scheme extraction. Persist structural
+    # findings for review; full CBSE readiness remains enforced before grading.
+    if exam.standard_profile_id:
+        from ..cbse.validation import validate
+        validate(db, exam, "paper")
     set_state(exam, "QUESTIONS_VERIFIED")
     audit(db, exam_id=exam.id, teacher_id=t.id, entity_type="exam", entity_id=exam.id, action="questions_verified", new=len(qs))
     db.commit()

@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { api, downloadFile } from "../../api/client";
 import { useApi } from "../../hooks/useApi";
 import type { Question, QuestionsResponse } from "../../types";
@@ -55,6 +56,7 @@ const sectionMarks = (list: Question[]) => {
 };
 
 export default function Questions() {
+  const navigate = useNavigate();
   const { exam, reload: reloadExam } = useExam();
   const doc = exam.question_paper;
   const isDocBusy = !!doc && BUSY_DOC.includes(doc.status);
@@ -113,6 +115,7 @@ export default function Questions() {
     try {
       await fn();
       await after();
+      if (key === "verify") navigate(`/exams/${exam.id}/answer-key`);
     } catch (e) {
       setActionErr(e);
       await Promise.all([reload(), reloadExam()]);

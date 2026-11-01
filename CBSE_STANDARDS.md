@@ -21,7 +21,7 @@ Choose the class first, then the exact subject variant. Duration and maximum mar
 ## Upload and review
 
 1. Upload the full question paper and its matching marking scheme. A scheme uploaded early waits for verified questions.
-2. Review **Questions → CBSE validation**. The panel checks source metadata, successful page reads, whole-question coverage, sections, fixed allocations, nested parts and permitted choices. Compare the extracted questions with the PDF before accepting and verifying them.
+2. Review **Questions → CBSE validation**. The panel checks source metadata, successful page reads, whole-question coverage, sections, fixed allocations, nested parts and permitted choices. Compare the extracted questions with the PDF before accepting and verifying them. Once all complete questions are accepted and page processing is complete, **Verify Questions** opens the answer-key step and releases any waiting scheme. Unresolved CBSE findings are retained for review and do not block scheme extraction.
 3. Review **Answer Key → CBSE validation** and the displayed examiner instructions. Check the complete scheme, criterion allocations, deductions, alternatives and mapping to each whole question before verification.
 4. For extraction mistakes, open **Review source details, parts and marking rules**. Correct document metadata/instructions or the question's parts/marking tree. Enter a reason. The correction is audited and requires fresh verification of both documents. Existing text/mark editors remain available while unlocked.
 5. Resolve every blocking issue. A genuine board-pattern mismatch requires a corrected replacement document. Clearing an extraction note does not suppress structural checks. After evaluation starts, source rules are locked.
@@ -43,7 +43,7 @@ Existing exams with no standard profile continue under their historical workflow
 - `GET /api/exams/{id}/standard-validation?phase=paper|scheme|evaluation`: current checks, persistent evidence, source locations and expected/detected values.
 - `POST /api/exams/{id}/standard-review`: authorized source interpretation corrections with a reason; supports document details, question hierarchy, scheme scoring tree and version options. Revalidates and invalidates previous verification.
 
-Validation runs again at verification, evaluation submission, finalization and worker execution. Cached results never authorize evaluation by themselves. All academic access uses existing workspace and assignment checks; inaccessible IDs return 404.
+Full CBSE readiness is enforced at answer-key verification, evaluation submission, finalization and worker execution. Question verification records teacher acceptance and retains the current validation findings while unlocking scheme extraction. Cached results never authorize evaluation by themselves. All academic access uses existing workspace and assignment checks; inaccessible IDs return 404.
 
 Deploy the backend with additive migration **`20261031_cbse`** before deploying the frontend. Render's existing `AUTO_MIGRATE=true` applies it on startup. For a manually managed database, run `python -m scripts.migrate` from `backend` before starting the updated API. Back up the database before deployment. Do not roll back by dropping columns or deleting evidence; restore a verified backup if necessary.
 
