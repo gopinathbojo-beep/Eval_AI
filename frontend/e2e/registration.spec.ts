@@ -1,31 +1,96 @@
 import { expect, test } from "@playwright/test";
 
+async function answer(page: import("@playwright/test").Page, value: string) {
+  await page.locator("input").fill(value);
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+}
+
+test("mobile landing and registration support edits, password validation and server errors", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await expect(
+    page.getByRole("link", { name: "Login", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: "Register", exact: true }).click();
+  await page.getByRole("button", { name: /^Parent/ }).click();
+  await answer(page, "Original name");
+  await page
+    .getByRole("button", { name: "Edit Full name", exact: true })
+    .click();
+  await expect(page.locator("input")).toHaveValue("Original name");
+  await answer(page, "Updated name");
+  await answer(page, "new-parent@example.com");
+  await answer(page, "short");
+  await expect(
+    page.getByRole("alert").getByText("Use at least 10 characters", { exact: false }),
+  ).toBeVisible();
+  await answer(page, "my-private-password");
+  await expect(
+    page.getByText("my-private-password", { exact: true }),
+  ).toHaveCount(0);
+  await answer(page, "different-password");
+  await expect(
+    page.getByText("That doesn’t match", { exact: false }),
+  ).toBeVisible();
+  await answer(page, "my-private-password");
+  await page.route("**/api/auth/register", (route) =>
+    route.fulfill({
+      status: 409,
+      contentType: "application/json",
+      body: JSON.stringify({
+        code: "EMAIL_EXISTS",
+        message: "An account with this email already exists. Sign in instead.",
+      }),
+    }),
+  );
+  await page
+    .getByRole("button", { name: "Create account", exact: true })
+    .click();
+  await expect(
+    page.getByText("An account with this email already exists.", {
+      exact: false,
+    }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: test.info().outputPath("mobile-registration.png"),
+    fullPage: true,
+  });
+});
+
 test("school registers without approval and provisions a teacher", async ({
   page,
   browser,
 }) => {
   await page.goto("/register");
-  await page.getByLabel("Full name", { exact: true }).fill("School Manager");
-  await page.getByLabel("Email address").fill("school-browser@example.com");
-  await page
-    .getByLabel("Password", { exact: true })
-    .fill("school-password-123");
-  await page
-    .getByLabel("Confirm password", { exact: true })
-    .fill("school-password-123");
+  await page.getByRole("button", { name: /^School management/ }).click();
+  await page.screenshot({
+    path: test.info().outputPath("registration-chat.png"),
+    fullPage: true,
+  });
+  await answer(page, "School Manager");
+  await answer(page, "school-browser@example.com");
+  await answer(page, "school-password-123");
+  await answer(page, "school-password-123");
   await page
     .getByRole("button", { name: "Create account", exact: true })
     .click();
   await expect(page).toHaveURL(/\/onboarding$/);
-  await page
-    .getByLabel("Contact name", { exact: false })
-    .fill("School Manager");
-  await page.getByLabel("Contact number").fill("9876543210");
-  await page.getByLabel("School name", { exact: true }).fill("New CBSE School");
-  await page.getByLabel("School address").fill("School Road");
-  await page.getByLabel("City", { exact: true }).fill("Chennai");
-  await page.getByLabel("State", { exact: true }).fill("Tamil Nadu");
-  await page.getByLabel("Postcode").fill("600001");
+  await answer(page, "School Manager");
+  await answer(page, "9876543210");
+  await answer(page, "New CBSE School");
+  await answer(page, "School Road");
+  await answer(page, "Chennai");
+  await answer(page, "Tamil Nadu");
+  await answer(page, "600001");
+  await page.getByRole("button", { name: "Skip for now" }).click();
+  await page.getByRole("button", { name: "Skip for now" }).click();
   await page.getByRole("button", { name: "Open my workspace" }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
   const c = await page.request.post("/api/classes", {
@@ -98,22 +163,20 @@ test("parent registers with one child and edits the private family profile", asy
   page,
 }) => {
   await page.goto("/register");
-  await page.getByLabel("I am registering as").selectOption("PARENT");
-  await page.getByLabel("Full name", { exact: true }).fill("Parent User");
-  await page.getByLabel("Email address").fill("parent-browser@example.com");
-  await page
-    .getByLabel("Password", { exact: true })
-    .fill("parent-password-123");
-  await page
-    .getByLabel("Confirm password", { exact: true })
-    .fill("parent-password-123");
+  await page.getByRole("button", { name: /^Parent/ }).click();
+  await answer(page, "Parent User");
+  await answer(page, "parent-browser@example.com");
+  await answer(page, "parent-password-123");
+  await answer(page, "parent-password-123");
   await page
     .getByRole("button", { name: "Create account", exact: true })
     .click();
   await expect(page).toHaveURL(/\/onboarding$/);
-  await page.getByLabel("Contact number").fill("9876543210");
-  await page.getByLabel("Child's full name", { exact: true }).fill("Child One");
-  await page.getByLabel("Child's class", { exact: true }).selectOption("12");
+  await answer(page, "Parent User");
+  await answer(page, "9876543210");
+  await answer(page, "Child One");
+  await page.getByRole("button", { name: "Class 12", exact: true }).click();
+  await page.getByRole("button", { name: "Skip for now" }).click();
   await page.getByRole("button", { name: "Open my workspace" }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
   await expect(

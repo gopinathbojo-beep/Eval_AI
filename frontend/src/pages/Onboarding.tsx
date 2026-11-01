@@ -1,8 +1,8 @@
 import { useState, type FormEvent } from "react";
-import { Link, Navigate } from "react-router-dom";
+import { Navigate } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../context/Auth";
-import { BrandLabel } from "../components/Brand";
+import ProfileChat from "../components/ProfileChat";
 import {
   Button,
   Card,
@@ -161,7 +161,7 @@ export function WorkspaceProfile({ editing = false }: { editing?: boolean }) {
 }
 
 export default function Onboarding() {
-  const { teacher, loading, logout } = useAuth();
+  const { teacher, loading } = useAuth();
   if (loading) return <Loading />;
   if (!teacher) return <Navigate to="/login" replace />;
   if (teacher.is_admin || teacher.profile_complete)
@@ -177,18 +177,5 @@ export default function Onboarding() {
         replace
       />
     );
-  return (
-    <main className="desk min-h-full p-6">
-      <div className="mx-auto max-w-2xl space-y-6">
-        <div className="flex justify-between">
-          <BrandLabel onDark={false} />
-          <Button onClick={logout}>Sign out</Button>
-        </div>
-        <WorkspaceProfile />
-        <Link to="/account" className="text-sm underline">
-          Account settings
-        </Link>
-      </div>
-    </main>
-  );
+  return <ProfileChat />;
 }
