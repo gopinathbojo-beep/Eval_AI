@@ -103,3 +103,41 @@ def test_output_limit_merges_cbse_fragments(monkeypatch, tmp_path):
     assert call.parsed.fragments[0].tree.audience == "standard"
     assert call.parsed.instructions == ["instruction-27", "instruction-28"]
     assert call.parsed.metadata["class_level"] == 10
+
+
+def test_nested_split_removes_full_page_text_and_keeps_continuations(monkeypatch, tmp_path):
+    image = tmp_path / "dense.png"
+    cv2.imwrite(str(image), np.full((1200, 700, 3), 255, dtype=np.uint8))
+    calls = []
+
+    def model(system, user, image_path, format=None, model=None):
+        name = Path(image_path).stem
+        calls.append(name)
+        if name in {"dense", "dense_top_split"}:
+            raise internvl.AIResponseError("FAILED_PARSE", "AI response exceeded its token limit", "partial JSON")
+        assert "FULL PAGE TEXT" not in user
+        return json.dumps({"page_number": 5, "fragments": [{
+            "root": 27, "text": name,
+            "bbox": {"x": 0, "y": 10, "width": 50, "height": 20},
+        }]})
+
+    monkeypatch.setattr(internvl, "_call_once", model)
+    call = internvl.chat_structured("system", "Read page 5. <source_text>FULL PAGE TEXT</source_text>", CBSEPage, image)
+    assert len(call.parsed.fragments) == 3
+    assert [f.bbox["y"] for f in call.parsed.fragments] == [10, 294, 562]
+    assert not list(tmp_path.glob("*_split.png"))
+
+
+def test_split_limit_failure_preserves_provider_detail(monkeypatch, tmp_path):
+    image = tmp_path / "unreadable.png"
+    cv2.imwrite(str(image), np.full((1200, 700, 3), 255, dtype=np.uint8))
+
+    def model(*args, **kwargs):
+        raise internvl.AIResponseError("FAILED_PARSE", "AI response exceeded its token limit", "partial JSON")
+
+    monkeypatch.setattr(internvl, "_call_once", model)
+    with pytest.raises(internvl.AIResponseError) as error:
+        internvl.chat_structured("system", "Read page 5.", CBSEPage, image)
+    assert "token limit" in error.value.detail
+    assert error.value.raw == "partial JSON"
+    assert not list(tmp_path.glob("*_split.png"))

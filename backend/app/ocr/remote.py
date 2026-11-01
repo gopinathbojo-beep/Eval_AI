@@ -7,6 +7,12 @@ import httpx
 from ..config import get_settings
 
 
+class CompletionLimitError(ValueError):
+    def __init__(self, raw: str):
+        super().__init__("AI response exceeded its token limit; split the page or increase the configured limit")
+        self.raw = raw
+
+
 def connection():
     s = get_settings()
     if s.ai_provider == "openrouter":
@@ -42,11 +48,11 @@ def call(system: str, user: str, image: Path | None, structured: bool, model: st
     if not choices:
         raise ValueError("AI provider did not return a completion")
     choice = choices[0]
-    if choice.get("finish_reason") == "length":
-        raise ValueError("AI response exceeded its token limit; split the page or increase the configured limit")
     text = (choice.get("message") or {}).get("content") or ""
     if not isinstance(text, str):
         raise ValueError("AI provider returned unsupported content")
+    if choice.get("finish_reason") == "length":
+        raise CompletionLimitError(text)
     return text, (choice.get("logprobs") or {}).get("content")
 
 

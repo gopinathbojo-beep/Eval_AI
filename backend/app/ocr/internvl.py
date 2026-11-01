@@ -93,7 +93,7 @@ def _call_once(system: str, user: str, image_path: Path | None, format: str | No
                 raise AIUnavailable("The AI provider rejected access. Check the API key, model access and available credits.") from None
             raise
         except ValueError as error:
-            raise AIResponseError("FAILED_PARSE", str(error)) from None
+            raise AIResponseError("FAILED_PARSE", str(error), getattr(error, "raw", "")) from None
         _last.logprobs = probabilities
         return raw
     msg: dict = {"role": "user", "content": user}
@@ -255,7 +255,7 @@ def is_looping(raw: str) -> bool:
 
 
 def _split_page_call(system: str, user: str, schema: Type[T], image_path: Path,
-                     model: str | None = None) -> AICall:
+                     model: str | None = None, depth: int = 0) -> AICall:
     """Extract an over-limit page in two overlapping regions and merge its items."""
     import cv2
 
@@ -270,6 +270,7 @@ def _split_page_call(system: str, user: str, schema: Type[T], image_path: Path,
     parsed_regions: list[T] = []
     raw_regions: list[str] = []
     paths: list[Path] = []
+    attempts = 0
     try:
         for label, start, end in regions:
             path = image_path.parent / f"{image_path.stem}_{label.lower()}_split{image_path.suffix}"
@@ -277,12 +278,24 @@ def _split_page_call(system: str, user: str, schema: Type[T], image_path: Path,
             if not cv2.imwrite(str(path), image[start:end, :]):
                 raise ValueError(f"Could not create the {label.lower()} page region")
             region_prompt = (
-                user
+                re.sub(r"<source_text>.*?</source_text>",
+                       "<source_text>Use only the visible cropped image.</source_text>",
+                       user, flags=re.DOTALL)
                 + f"\n\nTOKEN-LIMIT RECOVERY: This image is only the {label} region of the page. "
-                  "Extract every visible item in this region. Do not invent content outside it."
+                  "Extract every visible item in this region. Do not invent content outside it. "
+                  "Use coordinates relative to this cropped image. Keep JSON compact; do not repeat "
+                  "full question text in tree context nodes. Preserve all visible wording once."
             )
-            raw = _call_once(system, region_prompt, path, format="json", model=model)
-            parsed = _measured(schema.model_validate(extract_json_object(raw)), raw)
+            attempts += 1
+            try:
+                raw = _call_once(system, region_prompt, path, format="json", model=model)
+                parsed = _measured(schema.model_validate(extract_json_object(raw)), raw)
+            except AIResponseError as error:
+                if "token limit" not in error.detail.lower() or depth >= 1:
+                    raise
+                recovered = _split_page_call(system, region_prompt, schema, path, model, depth + 1)
+                parsed, raw = recovered.parsed, recovered.raw
+                attempts += recovered.attempts
             for collection in ("questions", "answers", "fragments"):
                 for item in getattr(parsed, collection, []) or []:
                     bbox = getattr(item, "bbox", None)
@@ -311,14 +324,16 @@ def _split_page_call(system: str, user: str, schema: Type[T], image_path: Path,
     seen = {
         (getattr(item, "raw_question_number", None) or getattr(item, "question_number", None)
          or getattr(item, "root", None),
-         (getattr(item, "question_text", None) or getattr(item, "answer_text", None) or "").strip()[:120])
+         (getattr(item, "question_text", None) or getattr(item, "answer_text", None)
+          or getattr(item, "text", None) or "").strip())
         for item in items
     }
     for item in getattr(parsed_regions[1], collection) or []:
         signature = (
             getattr(item, "raw_question_number", None) or getattr(item, "question_number", None)
             or getattr(item, "root", None),
-            (getattr(item, "question_text", None) or getattr(item, "answer_text", None) or "").strip()[:120],
+            (getattr(item, "question_text", None) or getattr(item, "answer_text", None)
+             or getattr(item, "text", None) or "").strip(),
         )
         if signature not in seen:
             items.append(item)
@@ -340,7 +355,7 @@ def _split_page_call(system: str, user: str, schema: Type[T], image_path: Path,
             if metadata.get(key) is None and value is not None:
                 metadata[key] = value
         merged.metadata = metadata
-    return AICall(merged, "\n\n--- SPLIT REGION ---\n\n".join(raw_regions), 2)
+    return AICall(merged, "\n\n--- SPLIT REGION ---\n\n".join(raw_regions), attempts)
 
 
 def chat_structured(system: str, user: str, schema: Type[T], image_path: Path | None = None,
@@ -357,10 +372,18 @@ def chat_structured(system: str, user: str, schema: Type[T], image_path: Path | 
         except AIUnavailable:
             raise
         except AIResponseError as e:
+            raw = e.raw
             if image_path is not None and "token limit" in e.detail.lower():
                 try:
                     log.info("AI output limit reached; retrying %s as two page regions", image_path)
                     return _split_page_call(system, user, schema, Path(image_path), model)
+                except AIUnavailable:
+                    raise
+                except AIResponseError as split_error:
+                    raw = split_error.raw or raw
+                    last_err, kind = f"Split-page recovery failed: {split_error.detail}", split_error.kind
+                    log.warning("Split-page recovery failed for %s: %s", image_path, last_err)
+                    break
                 except Exception as split_error:
                     last_err, kind = f"Split-page recovery failed: {split_error}", "FAILED_PARSE"
                     log.warning("Split-page recovery failed for %s: %s", image_path, split_error)
