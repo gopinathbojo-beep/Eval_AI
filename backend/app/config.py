@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     custom_ai_api_key: str = ""
     custom_ai_model: str = ""
     ai_request_logprobs: bool = False
+    # OCR transcribes source evidence; reserve output tokens for the document.
+    # Text-only grading retains the model's own reasoning defaults.
+    ai_ocr_reasoning_effort: Literal["none", "low", "high"] = "none"
     durable_jobs: bool = False
     auto_migrate: bool = False
     public_web_url: str = ""

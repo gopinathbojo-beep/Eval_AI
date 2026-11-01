@@ -129,6 +129,7 @@ def test_remote_ai_transport_and_unmeasured_confidence(monkeypatch, tmp_path):
     result=internvl.chat_structured("system","read",QuestionPageResult,image)
     assert captured["headers"]["Authorization"] == "Bearer private-ai-key"
     assert captured["json"]["model"] == settings.openrouter_model
+    assert captured["json"]["reasoning"] == {"effort": "none"}
     assert captured["json"]["messages"][1]["content"][1]["image_url"]["url"].startswith("data:image/png;base64,")
     assert result.parsed.questions[0].confidence <= 0.5
     monkeypatch.setattr(settings,"ai_provider","custom")
@@ -138,6 +139,29 @@ def test_remote_ai_transport_and_unmeasured_confidence(monkeypatch, tmp_path):
     internvl.chat_structured("system","read",QuestionPageResult)
     assert captured["json"]["model"] == "private-vlm"
     assert captured["headers"]["Authorization"] == "Bearer endpoint-key"
+    assert "reasoning" not in captured["json"]
+
+
+def test_openrouter_grading_keeps_default_reasoning_and_limit_reports_usage(monkeypatch):
+    settings = get_settings()
+    monkeypatch.setattr(settings, "ai_provider", "openrouter")
+    monkeypatch.setattr(settings, "openrouter_api_key", "test-key")
+    monkeypatch.setattr(settings, "openrouter_model", "test-model")
+    captured = {}
+
+    def post(url, **kwargs):
+        captured.update(kwargs["json"])
+        return httpx.Response(200, json={
+            "choices": [{"message": {"content": '{"partial":'}, "finish_reason": "length"}],
+            "usage": {"completion_tokens": 8192, "completion_tokens_details": {"reasoning_tokens": 8188}},
+        }, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(remote.httpx, "post", post)
+    with pytest.raises(remote.CompletionLimitError) as error:
+        remote.call("Grade", "Use the marking scheme", None, True)
+    assert "reasoning" not in captured
+    assert "reasoning_tokens=8188" in str(error.value)
+    assert error.value.raw == '{"partial":'
 
 
 def test_versioned_migrations_are_repeatable(tmp_path):

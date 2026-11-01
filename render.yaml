@@ -40,6 +40,8 @@ services:
         value: deepseek/deepseek-v4.1-flash-1017
       - key: AI_REQUEST_LOGPROBS
         value: "true"
+      - key: AI_OCR_REASONING_EFFORT
+        value: none
       - key: INDIC_OCR_ENABLED
         value: "false"
       - key: INTERNVL_PARALLEL_JOBS

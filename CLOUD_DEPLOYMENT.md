@@ -37,6 +37,8 @@ Fill the prompted variables with your own values:
 
 Render generates `SECRET_KEY`. Keep it stable across deployments. If your bucket name differs from `eval-ai-documents`, change `SUPABASE_STORAGE_BUCKET`. The bucket must remain private. App tables have row-level security enabled; application authorization is enforced by the backend. The browser receives short-lived upload URLs, never the service-role key.
 
+Keep `AI_OCR_REASONING_EFFORT=none` for OpenRouter page reading. This reserves the output allowance for extracted document content instead of internal reasoning; text-only grading keeps the model's reasoning defaults. Completion logs report token counts and finish reasons without logging credentials or reasoning text. A token-limit diagnostic also includes completion tokens, reasoning tokens and visible character counts. Retry failed pages after deploying a correction; saved failed results are not automatically replaced.
+
 If Render assigns its hostname after the first deployment, update `ALLOWED_HOSTS` to include that exact hostname and redeploy. Startup installs the schema and provisions the protected owner without a default password. It does not import or erase the old SQLite database. A previously initialized database without migration history is rejected rather than overwritten.
 
 Check the Render logs and visit `https://YOUR-SERVICE.onrender.com/api/ready`. It should return HTTP 200. Retain a single service instance and one API worker.

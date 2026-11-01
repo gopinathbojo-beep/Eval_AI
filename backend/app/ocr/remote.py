@@ -2,14 +2,21 @@
 from __future__ import annotations
 import base64
 import mimetypes
+import logging
 from pathlib import Path
 import httpx
 from ..config import get_settings
 
+log = logging.getLogger("adem.ai")
+
 
 class CompletionLimitError(ValueError):
-    def __init__(self, raw: str):
-        super().__init__("AI response exceeded its token limit; split the page or increase the configured limit")
+    def __init__(self, raw: str, completion_tokens=None, reasoning_tokens=None):
+        super().__init__(
+            "AI response exceeded its token limit; "
+            f"completion_tokens={completion_tokens}, reasoning_tokens={reasoning_tokens}, "
+            f"visible_characters={len(raw)}."
+        )
         self.raw = raw
 
 
@@ -33,6 +40,8 @@ def call(system: str, user: str, image: Path | None, structured: bool, model: st
                "max_tokens": s.internvl_num_predict}
     if structured:
         payload["response_format"] = {"type": "json_object"}
+    if image and s.ai_provider == "openrouter":
+        payload["reasoning"] = {"effort": s.ai_ocr_reasoning_effort}
     if s.ai_request_logprobs:
         payload["logprobs"] = True
     headers = {"Authorization": "Bearer " + key}
@@ -48,11 +57,18 @@ def call(system: str, user: str, image: Path | None, structured: bool, model: st
     if not choices:
         raise ValueError("AI provider did not return a completion")
     choice = choices[0]
+    usage = body.get("usage") or {}
+    completion_tokens = usage.get("completion_tokens")
+    reasoning_tokens = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens")
     text = (choice.get("message") or {}).get("content") or ""
     if not isinstance(text, str):
         raise ValueError("AI provider returned unsupported content")
+    log.info(
+        "AI completion model=%s finish=%s completion_tokens=%s reasoning_tokens=%s visible_characters=%d",
+        model or selected, choice.get("finish_reason"), completion_tokens, reasoning_tokens, len(text),
+    )
     if choice.get("finish_reason") == "length":
-        raise CompletionLimitError(text)
+        raise CompletionLimitError(text, completion_tokens, reasoning_tokens)
     return text, (choice.get("logprobs") or {}).get("content")
 
 
