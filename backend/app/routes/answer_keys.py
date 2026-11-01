@@ -24,6 +24,14 @@ from ..services.state import set_state
 router = APIRouter(prefix="/api")
 
 
+def _verification_rubric_problems(key: AnswerKey):
+    rubric = key.rubric or {}
+    # CBSE extraction notes are retained as evidence, not workflow gates.
+    if rubric.get("kind") == "cbse" or "cbse_tree" in rubric:
+        return []
+    return rubric.get("problems") or []
+
+
 def _editable(exam: Exam):
     if exam.status not in ("QUESTIONS_VERIFIED", "ANSWER_KEY_UPLOADED"):
         raise err(409, "ANSWER_KEY_LOCKED", "The answer key is not open for editing.")
@@ -614,7 +622,7 @@ def verify_all_keys(exam_id: str, db: Session = Depends(get_db), t: Teacher = De
             if not primary_issue_type:
                 primary_issue_type = "mark_mismatch"
 
-        for problem in (k.rubric or {}).get("problems") or []:
+        for problem in _verification_rubric_problems(k):
             reasons.append(f"Rubric: {problem}")
             if not primary_issue_type:
                 primary_issue_type = "rubric"
@@ -698,8 +706,6 @@ def verify_all_keys(exam_id: str, db: Session = Depends(get_db), t: Teacher = De
 @router.post("/exams/{exam_id}/answer-keys/verify")
 def verify_keys(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     exam = get_exam(db, t, exam_id)
-    from ..cbse.validation import require_ready
-    require_ready(db,exam,"scheme")
     if exam.status != "ANSWER_KEY_UPLOADED":
         raise err(409, "INVALID_EXAM_STATE", "The answer key can only be verified after it has been uploaded.")
     doc = db.query(AnswerKeyDocument).filter_by(exam_id=exam.id, is_active=True).order_by(AnswerKeyDocument.uploaded_at.desc()).first()
@@ -717,7 +723,7 @@ def verify_keys(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depend
             issues.append({"question": label, "reason": "Answer text is empty"})
         if k.mark_mismatch:
             issues.append({"question": label, "reason": "MARK MISMATCH: key marks differ from the question's maximum marks"})
-        for problem in (k.rubric or {}).get("problems") or []:
+        for problem in _verification_rubric_problems(k):
             issues.append({"question": label, "reason": f"Rubric: {problem}"})
     by_q: dict[str, int] = {}
     for k in keys:

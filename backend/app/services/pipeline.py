@@ -236,10 +236,6 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
         doc.status, doc.stage, doc.error_message = "READY", "Ready for review", None
     db.commit()
 
-    if exam.standard_profile_id:
-        from ..cbse.validation import validate
-        validate(db,exam,"paper" if kind == "question-paper" else "scheme")
-        db.commit()
 
 
 def _load_results(doc, schema):

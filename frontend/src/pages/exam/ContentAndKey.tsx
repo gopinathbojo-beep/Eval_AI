@@ -4,14 +4,13 @@ import Overview from "./Overview";
 import QuestionPaper from "./QuestionPaper";
 import Questions from "./Questions";
 import AnswerKey from "./AnswerKey";
-import { StandardsPanel } from "../../components/StandardsPanel";
 
 interface ContentAndKeyProps {
   defaultSubTab?: "overview" | "paper" | "questions" | "key";
 }
 
 export default function ContentAndKey({ defaultSubTab }: ContentAndKeyProps) {
-  const { exam, reload } = useExam();
+  const { exam } = useExam();
 
   // Determine initial subtab based on prop or exam progress
   const getInitialTab = (): "overview" | "paper" | "questions" | "key" => {
@@ -94,7 +93,6 @@ export default function ContentAndKey({ defaultSubTab }: ContentAndKeyProps) {
       </div>
 
       {/* Render Active Sub-section */}
-      {exam.standard_profile_id && (activeSubTab === "questions" || activeSubTab === "key") && <StandardsPanel key={`${activeSubTab}-${exam.status}`} examId={exam.id} phase={activeSubTab==="questions"?"paper":"scheme"} onChanged={reload}/>}
       <div>
         {activeSubTab === "overview" && <Overview onSelectSubTab={(tab) => setActiveSubTab(tab)} />}
         {activeSubTab === "paper" && <QuestionPaper onReviewQuestions={() => setActiveSubTab("questions")} onOpenAnswerKey={() => setActiveSubTab("key")} />}

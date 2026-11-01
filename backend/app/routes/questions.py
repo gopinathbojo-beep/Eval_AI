@@ -161,8 +161,6 @@ def patch_question(qid: str, body: QuestionPatch, db: Session = Depends(get_db),
             from ..models import AnswerKey
             for key in db.query(AnswerKey).filter_by(exam_question_id=q.id,is_active=True):
                 key.verification_status,key.rubric_status="UNVERIFIED","UNREVIEWED"
-            from ..cbse.validation import validate
-            validate(db,exam,"paper")
     if status:
         if status not in ("VERIFIED", "UNVERIFIED", "NEEDS_REVIEW"):
             raise err(400, "INVALID_STATUS", "Unknown verification status.")
@@ -394,11 +392,6 @@ def verify_questions(exam_id: str, bg: BackgroundTasks, db: Session = Depends(ge
     if issues:
         raise err(400, "QUESTIONS_NOT_READY", f"{len(issues)} issue(s) must be resolved before the questions can be verified.", issues)
 
-    # Teacher acceptance unlocks marking-scheme extraction. Persist structural
-    # findings for review; full CBSE readiness remains enforced before grading.
-    if exam.standard_profile_id:
-        from ..cbse.validation import validate
-        validate(db, exam, "paper")
     set_state(exam, "QUESTIONS_VERIFIED")
     audit(db, exam_id=exam.id, teacher_id=t.id, entity_type="exam", entity_id=exam.id, action="questions_verified", new=len(qs))
     db.commit()

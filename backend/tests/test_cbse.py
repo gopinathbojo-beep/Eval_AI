@@ -299,7 +299,7 @@ def test_production_creation_requires_exact_variant_and_full_pattern(client, aut
         ("source_issue", "EXTRACTION_REVIEW"),
     ],
 )
-def test_validation_blocks_specific_source_errors(client, auth, change, code):
+def test_source_diagnostics_do_not_add_cbse_verification_gates(client, auth, change, code):
     eid, _ = make_board(client, auth)
     with SessionLocal() as db:
         e = db.get(Exam, eid)
@@ -336,14 +336,19 @@ def test_validation_blocks_specific_source_errors(client, auth, change, code):
                 **doc.extraction,
                 "issues": ["Unclear choice instruction"],
             }
+            k.rubric = {**k.rubric, "problems": ["Board-pattern extraction note"]}
         db.commit()
         result = validate(db, e, "scheme")
         assert code in {i["code"] for i in result["issues"]}
         assert not result["valid"]
-    assert (
-        client.post(f"/api/exams/{eid}/answer-keys/verify", headers=auth).status_code
-        == 409
-    )
+        e.status = "ANSWER_KEY_UPLOADED"
+        db.commit()
+    response = client.post(f"/api/exams/{eid}/answer-keys/verify", headers=auth)
+    assert response.json().get("code") != "CBSE_NOT_READY"
+    if change in {"wrong_section", "bad_tree", "wrong_code", "page_count", "source_issue", "missing_question"}:
+        assert response.status_code == 200, response.text
+    elif change in {"marks", "scheme_marks", "missing_key"}:
+        assert response.status_code == 400, response.text
 
 
 def test_accepted_questions_continue_to_waiting_key_despite_cbse_findings(client, auth, monkeypatch):
@@ -372,13 +377,8 @@ def test_accepted_questions_continue_to_waiting_key_despite_cbse_findings(client
     with SessionLocal() as db:
         exam = db.get(Exam, eid)
         assert exam.status == "ANSWER_KEY_UPLOADED"
-        assert exam.standard_validation["valid"] is False
-        assert any(issue["code"] == "SECTION_MISMATCH" for issue in exam.standard_validation["issues"])
-        from app.cbse.validation import require_ready
-        from fastapi import HTTPException
-        with pytest.raises(HTTPException) as error:
-            require_ready(db, exam)
-        assert error.value.status_code == 409
+        # Diagnostics are optional, never a prerequisite for moving forward.
+        assert exam.standard_validation is None
 
 
 def test_valid_pair_verifies_and_review_invalidates_both_stages(client, auth):
@@ -688,7 +688,7 @@ def test_workspace_isolation_on_standards_review(client, auth):
     )
 
 
-def test_worker_rechecks_standard_even_after_state_is_manually_changed(client, auth):
+def test_worker_no_longer_blocks_on_cbse_pattern_checks(client, auth):
     from app.services.evaluation_service import run_evaluation
 
     eid, cid = make_board(client, auth, False)
@@ -723,8 +723,8 @@ def test_worker_rechecks_standard_even_after_state_is_manually_changed(client, a
         db.commit()
     run_evaluation(ev_id)
     with SessionLocal() as db:
-        assert db.get(Evaluation, ev_id).run_status == "ERROR"
-        assert not db.query(EvaluationItem).filter_by(evaluation_id=ev_id).first()
+        assert db.get(Evaluation, ev_id).run_status == "DONE"
+        assert db.query(EvaluationItem).filter_by(evaluation_id=ev_id).first()
 
 
 @pytest.mark.parametrize("role", ["MANAGEMENT", "PARENT", "TEACHER"])

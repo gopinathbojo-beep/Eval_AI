@@ -392,18 +392,3 @@ def validate(db, exam, phase="evaluation"):
     }
     exam.standard_validation = result
     return result
-
-
-def require_ready(db, exam, phase="evaluation"):
-    result = validate(db, exam, phase)
-    db.commit()
-    if not result["valid"]:
-        from ..deps import err
-
-        raise err(
-            409,
-            "CBSE_NOT_READY",
-            "Resolve CBSE validation issues before continuing.",
-            result["issues"],
-        )
-    return result

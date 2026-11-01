@@ -295,8 +295,6 @@ def merge_student_answer(ev_id: str, answer_id: str, body: MergeAnswerIn,
 @router.post("/evaluations/{ev_id}/run", status_code=202)
 def run(ev_id: str, bg: BackgroundTasks, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     ev = get_evaluation(db, t, ev_id)
-    from ..cbse.validation import require_ready
-    require_ready(db,db.get(Exam,ev.exam_id))
     _not_finalized(ev)
     exam = db.get(Exam, ev.exam_id)
     if exam.status == "ANSWER_KEY_VERIFIED":
@@ -409,8 +407,6 @@ def approve_all(ev_id: str, db: Session = Depends(get_db), t: Teacher = Depends(
 @router.post("/evaluations/{ev_id}/items/{item_id}/rerun", status_code=202)
 def rerun_item(ev_id: str, item_id: str, bg: BackgroundTasks, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     ev = get_evaluation(db, t, ev_id)
-    from ..cbse.validation import require_ready
-    require_ready(db,db.get(Exam,ev.exam_id))
     _not_finalized(ev)
     it = db.get(EvaluationItem, item_id)
     if not it or it.evaluation_id != ev.id:

@@ -39,17 +39,10 @@ test("management selects exact board variant and subject persists after leaving 
     .getByRole("button", { name: "Questions", exact: false })
     .first()
     .click();
-  await expect(
-    page.getByRole("region", { name: "CBSE validation" }),
-  ).toBeVisible();
-  await expect(
-    page.getByText("Review these findings before evaluation; accepted questions can continue to the answer key."),
-  ).toBeVisible();
-  await expect(
-    page.getByText("Whole questions are missing from the extracted paper."),
-  ).toBeVisible();
+  await expect(page.getByRole("region", { name: "CBSE validation" })).toHaveCount(0);
+  await expect(page.getByText("Whole questions are missing from the extracted paper.")).toHaveCount(0);
   await page.screenshot({
-    path: test.info().outputPath("cbse-validation.png"),
+    path: test.info().outputPath("questions-without-cbse-validation.png"),
     fullPage: true,
   });
 });

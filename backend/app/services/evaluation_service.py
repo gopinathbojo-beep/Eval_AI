@@ -349,8 +349,6 @@ def _run_evaluation(ev_id: str, only_question_ids: list[str] | None) -> None:
     try:
         ev = db.get(Evaluation, ev_id)
         exam = db.get(Exam, ev.exam_id)
-        from ..cbse.validation import require_ready
-        require_ready(db,exam)
         ev.run_status = "RUNNING"
         audit(db, exam_id=exam.id, teacher_id=exam.teacher_id, entity_type="evaluation", entity_id=ev.id,
               action="ai_evaluation_started", new={"question_retry": bool(only_question_ids)})
@@ -427,9 +425,6 @@ def finalize_issues(db: Session, ev: Evaluation, snap: ExamSnapshot | None = Non
     qs = snap.questions
     has_unresolved = snap.unresolved(ev)
     issues: list[dict] = []
-    from ..cbse.validation import validate
-    board_check = validate(db,db.get(Exam,ev.exam_id))
-    issues.extend({"question":i.get("question") or "CBSE pattern","reason":i["message"]} for i in board_check["issues"])
 
     def add(question: str, reason: str):
         issues.append({"question": question, "reason": reason})
