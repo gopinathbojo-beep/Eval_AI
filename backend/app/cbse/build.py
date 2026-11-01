@@ -57,6 +57,9 @@ def crop_visuals(fragments, wd, prefix):
 
 
 def collect(doc, results):
+    from .layout import ground_visuals
+
+    ground_visuals(doc, results)
     roots = defaultdict(list)
     metadata, instructions, issues = {}, [], []
     for page, result in results:
