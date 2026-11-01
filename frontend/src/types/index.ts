@@ -367,8 +367,11 @@ export interface EvalItem {
   not_attempted_confirmed: boolean;
 }
 export interface Issue {
-  question: string;
-  reason: string;
+  question?: string | null;
+  reason?: string;
+  message?: string;
+  code?: string;
+  page?: number | null;
 }
 export interface EvalQuestion extends Question {
   official_answer: string | null;

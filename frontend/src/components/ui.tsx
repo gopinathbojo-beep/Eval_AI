@@ -353,8 +353,8 @@ export function ErrorPanel({ error, action }: { error: unknown; action?: ReactNo
             <ul className="mt-2.5 space-y-1.5 border-t border-mark/20 pt-2">
               {e.issues.map((i, k) => (
                 <li key={k} className="flex items-baseline gap-2 text-xs">
-                  <span className="rounded bg-mark/10 px-1 py-0.5 font-semibold text-mark">{i.question}</span>
-                  <span className="text-ink">{i.reason}</span>
+                  {i.question && <span className="rounded bg-mark/10 px-1 py-0.5 font-semibold text-mark">Q{i.question}</span>}
+                  <span className="text-ink">{i.reason || i.message || i.code || "Review this validation issue."}{i.page ? ` (page ${i.page})` : ""}</span>
                 </li>
               ))}
             </ul>
