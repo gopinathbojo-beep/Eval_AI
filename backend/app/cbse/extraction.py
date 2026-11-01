@@ -94,11 +94,13 @@ Return this structure:
 "visuals":[{{"kind":"diagram","description":"source-grounded description of visible relationships","labels":["verbatim visible labels"],"bbox":{{"x":0,"y":0,"width":0,"height":0}}}}],
 "tree":{{"id":"q1","kind":"all","label":"1","text":"question/answer context","marks":1,"children":[{{"id":"q1.i","kind":"point","label":"1(i)","text":"visible scored part or marking criterion","marks":1,"children":[]}}]}},"issues":[],"bbox":null}}],"issues":[]}}
 Only include metadata actually printed on THIS page. Never copy expected metadata into extracted metadata.
+The page image is authoritative when PDF text has stray numbers or broken glyphs. Read superscripts, fractions, ranges and equations visually; never invent a denominator from displaced text-layer digits. Retain uncertainty if the image is unreadable.
 Use numeric root labels for whole questions (1..N); passage paragraph numbers and MCQ options are NOT roots.
 Keep scored subparts and step criteria in tree children. A root can continue over many pages: repeat root, set continues true, include ONLY new text/children and stable IDs.
 Tree kinds: all=sum children; choose=best permitted limit children; point=one scored part/criterion; context=unscored passage/diagram/instruction.
 For explicitly capped deductions attach deductions:[{{"id":"q1.accuracy","maximum":1,"text":"Deduct up to one mark for ..."}}] to the applicable tree node. Never invent deductions or caps.
 OR alternatives: choose with limit=1. Answer any N: choose with limit=N, inside its parent question (never apply to an entire unrelated section).
+Every choose node MUST include an explicit numeric limit when printed instructions establish it; include "limit":1 for a printed OR, including a choice nested within a subpart. Never leave that field null for an explicit OR.
 For alternative SOLUTION METHODS of the same required question use choice_type='method'; question/section alternatives use choice_type='question'. Do not confuse accepted equivalent answers with additional required parts.
 Use audience tags 'standard'/'accessible' for visually impaired alternatives and 'financial'/'computerised' for Accountancy Part B branches. These are alternative versions, never additional marks.
 For a marking scheme, point marks must come from its explicit allocations. If only a whole-question total is given, one holistic point with that printed total is acceptable; NEVER invent finer allocations.

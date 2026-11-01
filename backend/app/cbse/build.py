@@ -36,6 +36,7 @@ def crop_visuals(fragments, wd, prefix):
                     abs_path(page["source_file"]),
                     bbox,
                     wd / "crops" / f"{prefix}-visual-{len(output) + 1:02d}.png",
+                    pad=0,
                 )
                 crop_file = rel(path)
             except Exception:

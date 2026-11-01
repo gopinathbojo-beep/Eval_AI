@@ -3,6 +3,7 @@ from io import BytesIO
 from types import SimpleNamespace
 
 import pymupdf
+import pytest
 from PIL import Image
 
 from app.cbse import layout
@@ -111,3 +112,35 @@ def test_vector_diagrams_keep_their_source_bounds(tmp_path, monkeypatch):
     ])
     assert fragment.issues == []
     assert fragment.visuals[0].bbox == {"x": 420, "y": 320, "width": 160, "height": 160}
+
+
+@pytest.mark.parametrize("root", [7, 41])
+def test_tiled_illustrations_and_wrong_ai_boxes_use_printed_ownership(tmp_path, monkeypatch, root):
+    path = tmp_path / "tiles.pdf"
+    pdf = pymupdf.open()
+    page = pdf.new_page(width=600, height=800)
+    page.insert_text((40, 60), f"Q{root}(A) First case study.")
+    page.insert_text((40, 400), f"Q{root + 1}. Second case study.")
+    image = BytesIO()
+    Image.new("RGB", (80, 80), "black").save(image, format="PNG")
+    for rect in [(100, 110, 180, 190), (180, 110, 260, 190), (200, 460, 300, 540)]:
+        page.insert_image(pymupdf.Rect(rect), stream=image.getvalue(), keep_proportion=False)
+    pdf.save(path)
+    pdf.close()
+    monkeypatch.setattr(layout, "abs_path", lambda _: path)
+    fragments = [Fragment(root=n, text="Case study", visuals=[
+        visual("diagram", [], {"x": 0, "y": 0, "width": 10, "height": 10}),
+    ]) for n in (root, root + 1)]
+    layout.ground_visuals(SimpleNamespace(original_file="tiles.pdf"), [(meta(1), Page(page_number=1, fragments=fragments))])
+    assert all(len(f.visuals) == 1 and not f.issues for f in fragments)
+    assert fragments[0].visuals[0].bbox == {"x": 200, "y": 220, "width": 320, "height": 160}
+    assert fragments[1].visuals[0].bbox == {"x": 400, "y": 920, "width": 200, "height": 160}
+
+
+def test_native_images_recover_ai_omissions_without_inventing_diagrams(tmp_path, monkeypatch):
+    doc = source_pdf(tmp_path, monkeypatch)
+    fragments = [Fragment(root=27, text="Source figure", continues=True), Fragment(root=28, text="No image")]
+    layout.ground_visuals(doc, [(meta(2), Page(page_number=2, fragments=fragments))])
+    assert len(fragments[0].visuals) == 1
+    assert fragments[0].visuals[0].kind == "image"
+    assert fragments[1].visuals == []

@@ -8,9 +8,10 @@ import pymupdf
 
 from ..documents.storage import abs_path
 from ..documents.cropping import normalise_bbox
+from .extraction import VisualEvidence
 
 log = logging.getLogger("adem.layout")
-_LABEL = re.compile(r"^(?:Q(?:uestion)?\.?\s*)?(\d{1,3})[.)](?:\(?[A-Za-z]\)?)?$", re.I)
+_LABEL = re.compile(r"^(?:Q(?:uestion)?\.?\s*)?(\d{1,3})(?:[.)]|\([A-Za-z]\))(?:\(?[A-Za-z]\)?)?$", re.I)
 
 
 def _anchors(page):
@@ -28,6 +29,23 @@ def _tokens(text):
 
 def _candidates(page):
     candidates = [("image", pymupdf.Rect(item["bbox"])) for item in page.get_image_info()]
+    # An illustration can be stored as adjoining image tiles. Treat touching,
+    # vertically aligned tiles as one visual instead of ambiguous competitors.
+    changed = True
+    while changed:
+        changed = False
+        for i, (_, first) in enumerate(candidates):
+            for j in range(i + 1, len(candidates)):
+                second = candidates[j][1]
+                overlap = min(first.y1, second.y1) - max(first.y0, second.y0)
+                gap = max(first.x0, second.x0) - min(first.x1, second.x1)
+                if overlap >= .9 * max(first.height, second.height) and abs(gap) <= 2:
+                    candidates[i] = ("image", first | second)
+                    candidates.pop(j)
+                    changed = True
+                    break
+            if changed:
+                break
     drawings = page.get_drawings()
     # Exclude long page rules before grouping local table grids. Some PDFs
     # encode grid lines as thin filled rectangles rather than stroked lines.
@@ -60,12 +78,12 @@ def _rename_root(node, old, new):
 
 
 def ground_visuals(doc, results):
-    """Use source layout once per build; never create visuals for empty questions.
+    """Use source layout once per build; recover only source-confirmed visuals.
 
     A missing/ambiguous match is retained as a review issue, not guessed from
     the nearest question. Raster uploads retain their existing extraction path.
     """
-    if not any(f.visuals for _, result in results for f in result.fragments):
+    if not getattr(doc, "original_file", None):
         return
     source = abs_path(doc.original_file)
     if source.suffix.lower() != ".pdf":
@@ -76,6 +94,7 @@ def ground_visuals(doc, results):
         log.warning("Could not open source PDF for visual layout checks")
         return
     with pdf:
+        placeholders = []
         for meta, result in results:
             number = meta["page_number"] - 1
             if number >= len(pdf):
@@ -130,11 +149,16 @@ def ground_visuals(doc, results):
                             continue
                     else:
                         bbox = normalise_bbox(visual.bbox, meta["ocr_width"], meta["ocr_height"], page.rect.width, page.rect.height)
-                        if not bbox:
-                            continue
-                        predicted = pymupdf.Rect(bbox["x"], bbox["y"], bbox["x"] + bbox["width"], bbox["y"] + bbox["height"])
-                        score = (predicted & rect).get_area() / max(1, min(predicted.get_area(), rect.get_area()))
-                        if score < .5:
+                        score = 0
+                        if bbox:
+                            predicted = pymupdf.Rect(bbox["x"], bbox["y"], bbox["x"] + bbox["width"], bbox["y"] + bbox["height"])
+                            score = (predicted & rect).get_area() / max(1, min(predicted.get_area(), rect.get_area()))
+                        if root == fragment.root:
+                            # Printed ownership is stronger evidence than an AI
+                            # coordinate estimate. Multiple matches still need
+                            # geometric disambiguation below.
+                            score += 2
+                        elif score < .5:
                             continue
                     matches.append((score, index, root, rect))
                 matches.sort(reverse=True, key=lambda match: match[0])
@@ -149,6 +173,38 @@ def ground_visuals(doc, results):
                         target.visuals.append(visual)
                         used.add(index)
                         continue
-                fragment.issues.append(
-                    f"Visual ownership or bounds could not be confirmed on page {meta['page_number']}; review source layout."
-                )
+                issue = f"Visual ownership or bounds could not be confirmed on page {meta['page_number']}; review source layout."
+                fragment.issues.append(issue)
+                if not normalise_bbox(visual.bbox, meta["ocr_width"], meta["ocr_height"], page.rect.width, page.rect.height):
+                    placeholders.append((fragment, issue))
+            # Recover native images the AI omitted, but only inside a confirmed
+            # question band. Never manufacture an image for a text-only question.
+            for index, (kind, rect) in enumerate(candidates):
+                if index in used or kind != "image" or rect.get_area() > page.rect.get_area() * .25:
+                    continue
+                root = owner(rect)
+                target = next((f for f in result.fragments if f.root == root), None)
+                if target is None or rect.width < 20 or rect.height < 8:
+                    continue
+                target.visuals.append(VisualEvidence(
+                    kind="image", description="Embedded source image from the uploaded document.",
+                    labels=[], bbox={"x": rect.x0 * meta["ocr_width"] / page.rect.width,
+                                     "y": rect.y0 * meta["ocr_height"] / page.rect.height,
+                                     "width": rect.width * meta["ocr_width"] / page.rect.width,
+                                     "height": rect.height * meta["ocr_height"] / page.rect.height},
+                ))
+            # A missing-location warning can be resolved by confirmed evidence
+            # on a continuation page; keep unrelated extraction/marking issues.
+        confirmed = {f.root for _, result in results for f in result.fragments if f.visuals}
+        for fragment, issue in placeholders:
+            if fragment.root in confirmed:
+                fragment.issues = [value for value in fragment.issues if value != issue]
+        location_issue = re.compile(r"(?:diagram|figure|bbox).*(?:not visible|unavailable|omitted)", re.I)
+        for _, result in results:
+            for fragment in result.fragments:
+                if fragment.root in confirmed:
+                    fragment.issues = [issue for issue in fragment.issues if not location_issue.search(issue)]
+            def resolved_location(issue):
+                refs = {int(value) for value in re.findall(r"\bQ\s*(\d+)\b", issue, re.I)}
+                return bool(refs and refs <= confirmed and location_issue.search(issue))
+            result.issues = [issue for issue in result.issues if not resolved_location(issue)]

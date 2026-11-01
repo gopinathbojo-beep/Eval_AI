@@ -593,7 +593,7 @@ def test_cbse_visual_evidence_is_tightly_cropped_and_described(tmp_path, monkeyp
     assert visuals[0]["labels"] == ["R1", "R2"]
     assert Path(visuals[0]["crop_file"]).exists()
     with Image.open(visuals[0]["crop_file"]) as crop:
-        assert crop.width == 324 and crop.height == 274
+        assert crop.width == 300 and crop.height == 250
 
 
 def test_workspace_isolation_on_standards_review(client, auth):
