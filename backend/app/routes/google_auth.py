@@ -86,7 +86,7 @@ def teacher_for_google(db: Session, claims: dict) -> Teacher | None:
     bound = db.query(Teacher).filter_by(google_sub=claims["sub"]).first()
     if bound and bound.id != teacher.id:
         return None
-    if not teacher.google_sub and not (teacher.password_hash or "!").startswith("!"):
+    if not teacher.google_sub and not teacher.password_hash.startswith("!"):
         return None  # Password accounts must link Google from their authenticated account settings.
     teacher.google_sub = claims["sub"]
     return teacher

@@ -6,8 +6,7 @@ from openpyxl import Workbook
 
 from ..models import Evaluation, Exam
 from ..workspaces import exams_query
-from ..cbse.common import grading
-from .school_reports import _pct
+from .school_reports import PASS_PERCENT, raw_percentage, relative_grades
 
 
 def marksheet(db, user):
@@ -33,9 +32,11 @@ def marksheet(db, user):
         evaluations = (
             db.query(Evaluation).filter_by(exam_id=exam.id, status="FINALIZED").all()
         )
-        grades = grading.grades({e.id: _pct(e.total_marks, e.maximum_marks) for e in evaluations})
+        grades = relative_grades(
+            {e.id: raw_percentage(e.total_marks, e.maximum_marks) for e in evaluations}
+        )
         for ev in evaluations:
-            pct = _pct(ev.total_marks, ev.maximum_marks)
+            pct = raw_percentage(ev.total_marks, ev.maximum_marks)
             row = [
                 ev.student.name,
                 exam.school_class.name,
@@ -49,7 +50,7 @@ def marksheet(db, user):
                 "Incomplete"
                 if pct is None
                 else "Pass"
-                if grading.is_pass(pct)
+                if pct >= PASS_PERCENT
                 else "Fail",
             ]
             if user.role != "PARENT":

@@ -1,6 +1,8 @@
 # Render + Vercel + Supabase deployment
 
-The API runs as one Docker service on Render. Vercel serves the web frontend and proxies `/api` to Render. Supabase PostgreSQL stores application records; a **private** Supabase Storage bucket stores documents and reports. OpenRouter provides vision and grading through `qwen/qwen3-vl-8b-instruct`. No local GPU or IndicOCR is required for this configuration.
+For the new CBSE board-paper workflow and its migration/release checks, see [CBSE_STANDARDS.md](CBSE_STANDARDS.md).
+
+The API runs as one Docker service on Render. Vercel serves the web frontend and proxies `/api` to Render. Supabase PostgreSQL stores application records; a **private** Supabase Storage bucket stores documents and reports. OpenRouter provides multilingual vision and grading through `google/gemini-3.5-flash-lite`. No local AI service or GPU is required.
 
 ## 5. Push the deployment code
 
@@ -35,6 +37,8 @@ Fill the prompted variables with your own values:
 
 Render generates `SECRET_KEY`. Keep it stable across deployments. If your bucket name differs from `eval-ai-documents`, change `SUPABASE_STORAGE_BUCKET`. The bucket must remain private. App tables have row-level security enabled; application authorization is enforced by the backend. The browser receives short-lived upload URLs, never the service-role key.
 
+Keep `AI_OCR_REASONING_EFFORT=minimal` for page reading and `AI_TEXT_REASONING_EFFORT=low` for grading. These settings reserve output capacity for visible structured results while retaining limited reasoning for grading. Identical text requests are not retried after token-limit failures. Completion logs report token counts and finish reasons without logging credentials or reasoning text. Retry failed pages or evaluation items explicitly; saved results are not automatically replaced.
+
 If Render assigns its hostname after the first deployment, update `ALLOWED_HOSTS` to include that exact hostname and redeploy. Startup installs the schema and provisions the protected owner without a default password. It does not import or erase the old SQLite database. A previously initialized database without migration history is rejected rather than overwritten.
 
 Check the Render logs and visit `https://YOUR-SERVICE.onrender.com/api/ready`. It should return HTTP 200. Retain a single service instance and one API worker.
@@ -47,7 +51,7 @@ From the `frontend` directory run:
 npm run configure:api -- https://YOUR-SERVICE.onrender.com
 ```
 
-This replaces the safe placeholder in `frontend/web/vercel.json` (the Vercel project's root directory is `frontend/web`) with your real API origin. Commit and push that file, then redeploy Vercel. Keep browser API calls on `/api`; the same-origin proxy preserves secure session cookies.
+This replaces the safe placeholder in `frontend/vercel.json` with your real API origin. Commit and push that file, then redeploy Vercel. Keep browser API calls on `/api`; the same-origin proxy preserves secure session cookies.
 
 ## 9. Complete Google OAuth
 
@@ -63,7 +67,7 @@ The API uses `/tmp/eval-ai` only as a disposable processing cache. PostgreSQL re
 
 Render Free sleeps after 15 minutes without incoming traffic and may interrupt background evaluations. Use it for a pilot; use an always-on paid service for reliable evaluation processing. This phase does not introduce a separate worker service or multiple API replicas. See [Render Free limits](https://render.com/docs/free) and [Vercel external rewrites](https://vercel.com/docs/routing/rewrites).
 
-## Local checks and future VLM endpoint
+## Local checks
 
 The backend reads root `.env`, then `backend/.env` if present; process environment variables take precedence. A populated `backend/.env` can override root settings, so avoid stale duplicate values. The legacy root file named `env` is not loaded.
 
@@ -76,4 +80,4 @@ From `backend`:
 
 The check reports connection status without printing credentials. Migrations are also run at startup when `AUTO_MIGRATE=true`.
 
-For your future hosted VLM, set `AI_PROVIDER=custom`, `CUSTOM_AI_BASE_URL=https://YOUR-ENDPOINT/v1`, `CUSTOM_AI_API_KEY` and `CUSTOM_AI_MODEL`. The endpoint must implement OpenAI-compatible chat completions with image input and JSON responses. Keep `INDIC_OCR_ENABLED=false` until a separately hosted IndicOCR service is explicitly configured. If a provider omits token probabilities, OCR confidence is capped for teacher review rather than presented as measured confidence.
+OpenRouter is the only AI provider. Set `OPENROUTER_API_KEY`; the default model is `google/gemini-3.5-flash-lite`. If the provider omits token probabilities, OCR confidence is capped for teacher review rather than presented as measured confidence.

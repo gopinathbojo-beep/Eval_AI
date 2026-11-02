@@ -32,18 +32,20 @@ services:
         sync: false
       - key: SUPABASE_STORAGE_BUCKET
         value: eval-ai-documents
-      - key: AI_PROVIDER
-        value: openrouter
       - key: OPENROUTER_API_KEY
         sync: false
       - key: OPENROUTER_MODEL
-        value: qwen/qwen3-vl-8b-instruct
+        value: google/gemini-3.5-flash-lite
       - key: AI_REQUEST_LOGPROBS
-        value: "true"
-      - key: INDIC_OCR_ENABLED
         value: "false"
-      - key: INTERNVL_PARALLEL_JOBS
+      - key: AI_OCR_REASONING_EFFORT
+        value: minimal
+      - key: AI_TEXT_REASONING_EFFORT
+        value: low
+      - key: AI_PARALLEL_JOBS
         value: "1"
+      - key: AI_MAX_OUTPUT_TOKENS
+        value: "8192"
       - key: PDF_RENDER_DPI
         value: "120"
       - key: OCR_MAX_SIDE

@@ -9,17 +9,16 @@ from ..models import (AnswerKey, AnswerSheetDocument, AuditLog, Evaluation, Eval
 from ..security import current_teacher
 from ..serializers import (EVALUATION_VIEW_LOAD, answer_view, doc_view, evaluation_view, item_view, question_view,
                            student_view)
-from ..cbse.common import choices
-from ..services import credits
+from ..formatter.common import choices
 from ..services.audit import audit
 from ..services.job_queue import submit
 from ..services.exam_files import purge_exam_files, save_reports_and_schedule
 from ..services.evaluation_service import (ExamSnapshot, approve_clean_items, finalize, finalize_issues,
                                            refresh_evaluation_status, review_reasons, run_evaluation)
-from ..cbse.common.outcomes import summarize as summarize_outcomes
-from ..cbse.common.mapping import map_label
+from ..formatter.common.k_level import summarize as summarize_outcomes
+from ..formatter.common.mapping import map_label
 from ..services.mapping_service import apply_student_mapping, exam_questions, mapping_summary
-from ..cbse.common.numbering import normalize_question_number
+from ..formatter.common.numbering import normalize_question_number
 from ..services.school_reports import build_evaluation_pdf_report, build_exam_pdf_report
 from ..services.state import set_state
 from ..services.student_identity import in_flight
@@ -316,23 +315,10 @@ def run(ev_id: str, bg: BackgroundTasks, db: Session = Depends(get_db), t: Teach
         if doc.status == "NEEDS_ATTENTION":
             issues.append({"question": "Answer sheet", "reason": "Some pages could not be read. Retry them first."})
         raise err(400, "MAPPING_INCOMPLETE", f"{len(issues)} issue(s) must be resolved before evaluation can run.", issues)
-    try:  # the sheet's credits are held now, charged when grading succeeds and returned if it fails
-        credits.hold_evaluation(db, ev, exam, t.id)
-    except credits.InsufficientCredits as e:
-        db.rollback()
-        raise err(402, "INSUFFICIENT_CREDITS", f"Not enough credits to grade this sheet: it needs {e.needed}, "
-                  f"{e.available} available. Ask your school manager to buy credits.")
     ev.run_status, ev.run_progress = "RUNNING", 0
     db.commit()
     bg.add_task(submit, ev.exam_id, run_evaluation, ev.id, grading=True)
     return {"run_status": "RUNNING"}
-
-
-@router.get("/evaluations/{ev_id}/quote")
-def evaluation_quote(ev_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
-    """What grading this sheet will cost before it is started (spec 6.3): credits, balance, free when paid already."""
-    ev = get_evaluation(db, t, ev_id)
-    return credits.quote(db, ev, db.get(Exam, ev.exam_id))
 
 
 class ItemPatch(BaseModel):
@@ -483,7 +469,7 @@ def result(ev_id: str, db: Session = Depends(get_db), t: Teacher = Depends(curre
         rows.append({"question_id": q.id, "question": q.display_number, "question_text": q.question_text,
                      "choice_group": q.choice_group, "counted": q.id in counts,
                      "max_marks": q.max_marks, "final_marks": fm, "ai_marks": it.ai_marks if it else None,
-                     "course_outcome": q.course_outcome,
+                     "k_level": q.k_level, "course_outcome": q.course_outcome,
                      "teacher_overridden": bool(it and it.teacher_overridden),
                      "student_answer": a.answer_text if a else None,
                      "official_answer": keys[q.id].answer_text if q.id in keys else None,
@@ -544,7 +530,7 @@ def exam_results(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depen
 
 @router.get("/exams/{exam_id}/outcome-summary")
 def exam_outcome_summary(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
-    """Class performance per course outcome, over evaluations with finalized marks."""
+    """Class performance per Bloom's K level and course outcome, over evaluations with finalized marks."""
     exam = get_exam(db, t, exam_id)
     qs = exam_questions(db, exam.id)
     evs = db.query(Evaluation).filter_by(exam_id=exam.id, status="FINALIZED").all()
@@ -569,7 +555,7 @@ def exam_outcome_summary(exam_id: str, db: Session = Depends(get_db), t: Teacher
             a["percentage"] = round(100.0 * a["average_scored"] / a["max_marks"], 1) if a["max_marks"] else None
             del a["scored"]
         return list(rows.values())
-    return {"finalized_students": len(students),
+    return {"finalized_students": len(students), "k_levels": overall("k_levels"),
             "course_outcomes": overall("course_outcomes"), "students": students}
 
 

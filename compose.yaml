@@ -26,7 +26,7 @@ services:
         max-file: "3"
 
   web:
-    build: ./frontend/web
+    build: ./frontend
     restart: unless-stopped
     read_only: true
     tmpfs:
@@ -64,14 +64,12 @@ services:
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-${Client_secret:-}}
       GOOGLE_REDIRECT_URI: https://${DOMAIN}/api/auth/google/callback
       MAX_UPLOAD_MB: "50"
-      INTERNVL_ENABLED: "true"
-      INTERNVL_MODEL: ${INTERNVL_MODEL:-blaifa/InternVL3_5:4B}
-      INTERNVL_API_URL: ${INTERNVL_API_URL:-http://host.docker.internal:11434}
-      INTERNVL_PARALLEL_JOBS: ${INTERNVL_PARALLEL_JOBS:-1}
-      INDIC_OCR_ENABLED: ${INDIC_OCR_ENABLED:-false}
-      INDIC_OCR_URL: ${INDIC_OCR_URL:-http://host.docker.internal:8090}
-      INDIC_TEXT_MODEL: ${INDIC_TEXT_MODEL:-}
-      INDIC_PARALLEL_JOBS: ${INDIC_PARALLEL_JOBS:-1}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?Set OPENROUTER_API_KEY in .env}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-google/gemini-3.5-flash-lite}
+      AI_PARALLEL_JOBS: ${AI_PARALLEL_JOBS:-1}
+      AI_MAX_OUTPUT_TOKENS: ${AI_MAX_OUTPUT_TOKENS:-8192}
+      AI_OCR_REASONING_EFFORT: ${AI_OCR_REASONING_EFFORT:-minimal}
+      AI_TEXT_REASONING_EFFORT: ${AI_TEXT_REASONING_EFFORT:-low}
     stop_grace_period: 75s
     security_opt: [no-new-privileges:true]
     cap_drop: [ALL]

@@ -35,7 +35,7 @@ def setup_school(browser):
 
 def exam(browser, cls, subject):
     r = browser.post(
-        "/api/exams",
+        "/api/_test/legacy-exams",
         headers=HEADERS,
         json={
             "name": "Term exam",
@@ -49,18 +49,6 @@ def exam(browser, cls, subject):
     return r.json()
 
 
-def db_exam(browser, cls, subject):
-    """An exam of the browser's own school, written directly: school management views exams but cannot create them."""
-    from app.models import Exam
-    owner = browser.get("/api/auth/me").json()["id"]
-    with SessionLocal() as db:
-        row = Exam(teacher_id=owner, class_id=cls["id"], subject_id=subject["id"], name="Term exam",
-                   academic_year="2026-27", exam_type="Term 1", total_marks=80)
-        db.add(row)
-        db.commit()
-        return {"id": row.id}
-
-
 def test_teacher_assignment_management_and_workspace_isolation(client):
     with (
         TestClient(app) as school,
@@ -69,7 +57,7 @@ def test_teacher_assignment_management_and_workspace_isolation(client):
     ):
         cls, subject = setup_school(school)
         c2, s2 = setup_school(other)
-        e2 = db_exam(other, c2, s2)
+        e2 = exam(other, c2, s2)
         email = f"teacher-{uuid4().hex}@example.com"
         created = school.post(
             "/api/management/teachers",
@@ -117,9 +105,8 @@ def test_teacher_assignment_management_and_workspace_isolation(client):
             == 403
         )
         own = exam(teacher, cls, subject)
-        refused = school.post("/api/exams", headers=HEADERS, json={"name": "Term exam", "class_id": cls["id"],
-                              "subject_id": subject["id"], "exam_type": "Term 1", "total_marks": 80})
-        assert refused.status_code == 403 and refused.json()["code"] == "MANAGER_READ_ONLY"  # spec 04
+        management_exam = exam(school, cls, subject)
+        assert teacher.get(f"/api/exams/{management_exam['id']}").status_code == 404
         assert school.get(f"/api/exams/{own['id']}").status_code == 200
         assert teacher.get(f"/api/exams/{e2['id']}").status_code == 404
         assert school.get(f"/api/exams/{e2['id']}").status_code == 404

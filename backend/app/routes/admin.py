@@ -81,7 +81,7 @@ def view(db, user, start=None, end=None):
         "workspace_name": ws.name if ws else None,
         "workspace_active": ws.is_active if ws else True,
         "google_connected": bool(user.google_sub),
-        "password_enabled": not (user.password_hash or "!").startswith("!"),
+        "password_enabled": not user.password_hash.startswith("!"),
         "created_at": stamp(user.created_at),
         "last_login_at": stamp(user.last_login_at),
         **metrics(db, user_id=user.id, start=start, end=end),

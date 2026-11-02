@@ -1,33 +1,45 @@
-# ADEM: AI-assisted Digital Examination Management and Evaluation
+# Eval AI
 
-CBSE Class 10 and 12 exam evaluation for schools, teachers and parents, with one setup and one start script. Two
-folders: `backend/` and `frontend/`. Each app is its own repository. The web apps in `frontend/` share one
-`node_modules` there (npm workspaces): run `npm install` in `frontend/`, not in each app.
+Eval AI evaluates CBSE Class 10 and 12 answer sheets for schools, teachers and parents. Gemini reads question papers, marking schemes, diagrams and student answers through OpenRouter. English, Hindi, Tamil and bilingual documents use the same hosted multimodal pipeline; no local model, GPU or OCR service is required.
 
-| Folder | What it is | Port |
-|---|---|---|
-| `backend/` | FastAPI server and AI pipeline (repo Eval_AI_Backend) | 8000 |
-| `backend/indic_ocr_service/` | IndicOCR service for Tamil and other Indian languages | 8090 |
-| `backend/data/` | Database, uploaded files, email outbox (not in git) | |
-| `backend/exam/`, `backend/docs/` | Sample papers and keys; deployment guide and reports | |
-| `frontend/web/` | School management and the teachers they invite (repo Eval_AI_WEB) | 5173 |
-| `frontend/admin/` | Platform Admin console (repo Eval_AI_Admin) | 5174 |
-| `frontend/parent/` | Parents: children, timed exams, reports (repo Eval_AI_Parents) | 5175 |
-| `mobile/` | Expo mobile app | 8081 |
+## Local setup
 
-## Windows quick start
-1. **`setup.bat`**: creates the Python environments, installs every app, and creates dev accounts.
-2. **`start.bat`**: starts IndicOCR (if local), the backend and all apps, each in its own window.
-3. **`stop.bat`**: stops them all.
+Requirements: Python 3.11, Node.js 24 and an OpenRouter API key. LibreOffice is optional for DOCX uploads.
 
-Dev accounts: Admin `admin@adem.local` / `ChangeMe123` (change at first sign-in); teacher `rao@school.org` /
-`password123`; parent `parent@adem.local` / `password123`. Parents and schools can also sign up in their apps. Without SMTP settings, emails (confirmation links,
-invitations, resets) are saved in `backend/data/outbox/`.
+1. Run `setup.bat` or install `backend/requirements.txt` and frontend packages manually.
+2. Copy `.env.example` to `.env` and set `OPENROUTER_API_KEY`.
+3. Keep `OPENROUTER_MODEL=google/gemini-3.5-flash-lite` unless a tested replacement is intentionally selected.
+4. Run `start.bat`, then open `http://localhost:5173`.
 
-Details: [backend/README.md](backend/README.md).
+The backend is at `http://127.0.0.1:8000`; `/api/system/ai-status` verifies the OpenRouter key and model. Opening `/` on the backend returns `Not Found` by design.
 
-Login	Password	App
-develop@gmail.com	password123	Web, http://localhost:5173: Demo School management, the main login
-admin@adem.local	password123	Admin, http://localhost:5174
-rao@school.org	password123	Web (teacher, assigned to Class 10-A Tamil)
-parent@adem.local	password123	Parents, http://localhost:5175 (asks for the child's details at first sign-in)
+## AI configuration
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `OPENROUTER_API_KEY` | required | Server-side OpenRouter credential |
+| `OPENROUTER_MODEL` | `google/gemini-3.5-flash-lite` | Multimodal extraction and grading model |
+| `AI_OCR_REASONING_EFFORT` | `minimal` | Preserve output capacity during page extraction |
+| `AI_TEXT_REASONING_EFFORT` | `low` | Limited reasoning for grading |
+| `AI_MAX_OUTPUT_TOKENS` | `8192` | Maximum visible/reasoning completion budget |
+| `AI_PARALLEL_JOBS` | `1` | Concurrent paid AI jobs |
+
+Dense pages recover by splitting the rendered page into regions. Rate-limited requests are not automatically repeated. All AI marks remain subject to teacher review and server-side maximum-mark validation.
+
+## Subjects
+
+The catalog retains the supplied Class 10 Hindi Course A/B patterns. Hindi Class 12 and Tamil Classes 10/12 are upload-driven, 3-hour, 80-mark language profiles: their uploaded paper and marking scheme define question counts, sections, choices and allocations.
+
+## Verification
+
+```powershell
+cd backend
+.venv\Scripts\python.exe -m pytest -q
+cd ..\frontend
+npm test
+npm run build
+```
+
+Tests use a local OpenRouter-compatible HTTP stand-in. Before release, run the supplied Maths paper and representative English, Hindi and Tamil documents with the real configured Gemini model.
+
+For Render, Vercel and Supabase deployment, see [CLOUD_DEPLOYMENT.md](CLOUD_DEPLOYMENT.md). For Docker/SQLite deployment, see [DEPLOYMENT.md](DEPLOYMENT.md).

@@ -1,20 +1,4 @@
-"""GPU job queue: jobs grouped by engine, several at a time on the loaded engine, switching engines between groups.
-
-Every job that uses a model (reading papers/keys/sheets, identifying students, grading) is queued here instead of
-running as its own background task. The engine its exam needs is the only one on the GPU:
-  internvl : InternVL in Ollama
-  indic    : IndicOCR service (+ INDIC_TEXT_MODEL in Ollama when one is set). Grading an Indian-language exam with
-             InternVL (no text model set) is an "internvl" job, so InternVL never shares the GPU with IndicOCR.
-Up to INTERNVL_PARALLEL_JOBS / INDIC_PARALLEL_JOBS jobs run at once on the loaded engine. A waiting job for the loaded
-engine may start ahead of older jobs for the other engine, so an English, Tamil, English, Tamil upload runs both English
-jobs, switches once, then both Tamil jobs. A job is passed over at most MAX_SKIPS times; then the running jobs finish,
-the engine switches and it runs. Tamil papers go one after another: a Tamil grading job is passed over only by jobs of
-its own exam (its other sheets still being read), never by another exam's, so a Tamil paper is read with IndicOCR
-(question paper, key, sheets), InternVL loads and grades it, and only then does the next paper's reading start.
-English jobs (InternVL only) follow the grouping and MAX_SKIPS rule above. Switching unloads the models the next engine does not use, and only happens with no
-job running. Jobs live in-process: a restart drops the queue and startup recovery hands the interrupted documents back
-to the teacher.
-"""
+"""Background AI job queue for the single hosted OpenRouter Gemini engine."""
 from __future__ import annotations
 import logging
 import threading
@@ -23,9 +7,7 @@ from typing import Any, Callable
 from ..config import get_settings
 from ..database import SessionLocal
 from ..models import Exam
-from ..ocr.indic import release_indic, uses_indic_ocr
-from ..ocr.internvl import unload_model
-from ..cbse import formatter
+from .. import formatter
 from . import paper_format
 from ..actor import actor_id
 from ..models import Teacher
@@ -42,8 +24,8 @@ class _Job:
     fn: Callable
     args: tuple
     paper_format: str | None = None  # the exam subject's format, see services/paper_format.py
-    subject: str | None = None  # the exam subject's formatter, see cbse/formatter.py
-    tamil_grading: bool = False  # grading a paper IndicOCR read: passed over only by jobs of its own exam
+    subject: str | None = None  # the exam subject's formatter, see app/formatter
+    tamil_grading: bool = False  # compatibility field for persisted jobs from older releases
     exam_id: str | None = None
     skips: int = 0
     actor_id: str | None = None
@@ -71,14 +53,7 @@ def keyed_lock(key: str) -> threading.RLock:
 
 
 def engine_for(exam_id: str | None, grading: bool = False) -> str:
-    db = SessionLocal()
-    try:
-        exam = db.get(Exam, exam_id) if exam_id else None
-        if not (exam and exam.subject and uses_indic_ocr(exam.subject.name)):
-            return "internvl"
-        return "internvl" if grading and not get_settings().indic_text_model.strip() else "indic"
-    finally:
-        db.close()
+    return "openrouter"
 
 
 def format_for(exam_id: str | None) -> str | None:
@@ -102,31 +77,12 @@ def subject_for(exam_id: str | None) -> str | None:
 
 
 def slots(engine: str) -> int:
-    s = get_settings()
-    return max(1, s.indic_parallel_jobs if engine == "indic" else s.internvl_parallel_jobs)
-
-
-def _ollama_models(engine: str) -> set[str]:
-    s = get_settings()
-    if engine == "indic":
-        return {s.indic_text_model.strip()} - {""}  # no text model: IndicOCR alone, InternVL leaves the GPU
-    return {s.internvl_model}
+    return max(1, get_settings().ai_parallel_jobs)
 
 
 def switch_engine(engine: str) -> None:
-    """Make `engine` the only one holding GPU memory. No-op when it already is. Call only with no job running."""
+    """Record the single hosted engine; retained for queue compatibility."""
     global _current_engine
-    if get_settings().ai_provider != "ollama" and not get_settings().indic_ocr_enabled:
-        _current_engine = engine
-        return
-    if engine == _current_engine:
-        return
-    previous = [_current_engine] if _current_engine else ["internvl", "indic"]
-    for model in set().union(*(_ollama_models(p) for p in previous)) - _ollama_models(engine):
-        unload_model(model)
-    if engine != "indic" and "indic" in previous:
-        release_indic()
-    log.info("GPU engine: %s -> %s", _current_engine or "unknown", engine)
     _current_engine = engine
 
 
@@ -227,7 +183,7 @@ def _work() -> None:
 
 
 def _ensure_workers() -> None:
-    want = max(slots("internvl"), slots("indic"))
+    want = slots("openrouter")
     _workers[:] = [w for w in _workers if w.is_alive()]
     while len(_workers) < want:
         w = threading.Thread(target=_work, name=f"gpu-job-queue-{len(_workers) + 1}", daemon=True)
@@ -238,7 +194,7 @@ def _ensure_workers() -> None:
 def submit(exam_id: str | None, fn: Callable, *args: Any, grading: bool = False) -> None:
     """Queue `fn(*args)` for the GPU. `exam_id` decides which engine the job runs on (`grading`: the grading model's)."""
     engine = engine_for(exam_id, grading)
-    tamil_grading = grading and engine != engine_for(exam_id)  # read by IndicOCR, graded by InternVL
+    tamil_grading = False
     job = _Job(engine, fn, args, format_for(exam_id), subject_for(exam_id), tamil_grading, exam_id)
     job.actor_id = actor_id.get()
     if job.actor_id:

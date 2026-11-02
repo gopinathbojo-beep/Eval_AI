@@ -89,9 +89,7 @@ def _linear(spans: list[_Span]) -> str:
     return "".join(out)
 
 
-def _block_rows(spans: list[_Span]) -> list[tuple[float, list[_Span]]]:
-    """The visual lines of some text, each as (its height on the page, its spans): a fraction's numerator and
-    denominator and an exponent belong to the line they sit on."""
+def _block_lines(spans: list[_Span]) -> list[str]:
     rows: list[list[_Span]] = []
     for s in sorted(spans, key=lambda s: s.cy):
         if rows and s.cy - rows[-1][0].cy <= 0.3 * max(s.size, rows[-1][0].size):
@@ -105,48 +103,26 @@ def _block_rows(spans: list[_Span]) -> list[tuple[float, list[_Span]]]:
     owner = list(range(len(rows)))
     size = [max(s.size for s in r) for r in rows]
     inked = [[s for s in r if s.text.strip()] or r for r in rows]  # a trailing space says nothing about a row's extent
-    # a row that is only the word "OR" (between a part's alternatives) is a line of its own, never a fraction piece
-    alone = {k for k, r in enumerate(rows) if "".join(s.text for s in r).strip().upper() == "OR"}
     x0 = [min(s.x0 for s in r) for r in inked]
     x1 = [max(s.x1 for s in r) for r in inked]
-    cy = [sum(s.cy for s in r) / len(r) for r in inked]  # where its ink sits (a stray space may sit higher)
-    # Fractions stacked over each other just above and just below a line, at the same distance, are that line's
-    # numerators and denominators, even when they start before the line's first symbol ("sinθ/cosθ = 4/3") or are
-    # longer than it ("√5 = (p − 2q)/3q"); ordinary lines are further apart than this
-    for j in range(len(rows)):
-        if owner[j] != j or not chars[j]:  # a row of spaces is no line
-            continue
-        for a in range(j):
-            for b in range(j + 1, len(rows)):
-                da, db = cy[j] - cy[a], cy[b] - cy[j]
-                if (not {a, b, j} & alone and chars[a] and chars[b] and owner[a] == a and owner[b] == b and 0.3 * size[j] < da < 0.85 * size[j]
-                        and 0.3 * size[j] < db < 0.85 * size[j] and abs(da - db) < 0.35 * size[j]
-                        and max(size[a], size[b]) <= size[j] * 1.05
-                        and x0[a] < x1[b] and x0[b] < x1[a]  # one over the other
-                        and x1[a] >= x0[j] - 2 * size[j] and x0[a] <= x1[j] + size[j]):
-                    owner[a] = owner[b] = j
     changed = True
     while changed:
         changed = False
         for i in sorted(range(len(rows)), key=lambda k: chars[k]):
-            if i in alone or owner[i] != i or any(owner[k] == i for k in range(len(rows)) if k != i):
+            if owner[i] != i or any(owner[k] == i for k in range(len(rows)) if k != i):
                 continue  # already attached, or already owns pieces
             best = None
             for j in range(len(rows)):
                 o = owner[j]
                 # an exponent may hang past the line's last letter by about one character ("b³")
-                if (o != i and o not in alone and chars[o] > chars[i] and abs(rows[j][0].cy - rows[i][0].cy) < 0.85 * size[o]
+                if (o != i and chars[o] > chars[i] and abs(rows[j][0].cy - rows[i][0].cy) < 0.85 * size[o]
                         and x0[o] - 2 <= x0[i] and x1[i] <= x1[o] + size[o]
                         and (best is None or abs(rows[j][0].cy - rows[i][0].cy) < best[0])):
                     best = (abs(rows[j][0].cy - rows[i][0].cy), o)
             if best:
                 owner[i], changed = best[1], True
-    return [(sum(x.cy for x in rows[i]) / len(rows[i]), [s for k, r in enumerate(rows) if owner[k] == i for s in r])
+    return [_linear([s for k, r in enumerate(rows) if owner[k] == i for s in r])
             for i in range(len(rows)) if owner[i] == i]
-
-
-def _block_lines(spans: list[_Span]) -> list[str]:
-    return [_linear(line) for _, line in _block_rows(spans)]
 
 
 def page_text(page) -> str:
@@ -161,179 +137,6 @@ def page_text(page) -> str:
              for b in blocks if b.get("type") == 0
              for line in b.get("lines", []) for s in line.get("spans", []) if s.get("text")]
     return "\n".join(_block_lines(spans)) + "\n"
-
-
-def _tables(page):
-    """The page's ruled tables of three or more columns, the tables drawn inside another's cell (a question's data
-    table: "Class | 0-5 | 5-10 ..."), and the page's text spans."""
-    try:
-        found = [t for t in page.find_tables().tables if t.col_count >= 3]
-        blocks = page.get_text("dict")["blocks"] if found else []
-    except Exception:
-        return [], [], []
-    tables = [t for t in found if not any(_inside(t.bbox, other.bbox) for other in found if other is not t)]
-    spans = [_Span(_plain(s["text"]), s["bbox"][0], s["bbox"][2], (s["bbox"][1] + s["bbox"][3]) / 2, s["size"])
-             for b in blocks if b.get("type") == 0
-             for line in b.get("lines", []) for s in line.get("spans", []) if s.get("text")]
-    # a data table fills its cells; justified prose taken for a table leaves most of them empty
-    nested = [t for t in found if not any(t is k for k in tables) and _filled(t, spans) >= 0.6]
-    return [_Merged(t, spans) for t in tables], nested, spans
-
-
-def _filled(t, spans: list[_Span]) -> float:
-    cells = [box for row in t.rows for box in row.cells]
-    return sum(1 for box in cells if box and any(s.text.strip() for s in _in_box(spans, box))) / max(1, len(cells))
-
-
-@dataclass
-class _Row:
-    cells: list
-    bbox: tuple | None
-
-
-class _Merged:
-    """A ruled table whose rows are mended: a row holding only a question number, under a row with the question's
-    text and marks but no number (the table's ruling split one row in two), becomes one row."""
-
-    def __init__(self, t, spans: list[_Span]):
-        self.bbox = t.bbox
-        rows = [_Row(list(r.cells), tuple(r.bbox) if r.bbox else None) for r in t.rows]
-        text = lambda box: "".join(s.text for s in _in_box(spans, box)).strip()  # noqa: E731
-        out: list[_Row] = []
-        for r in rows:
-            prev = out[-1] if out else None
-            if (prev and len(r.cells) == len(prev.cells) >= 3 and r.cells[0] and text(r.cells[0])
-                    and not any(text(b) for b in r.cells[1:] if b)
-                    and not (prev.cells[0] and text(prev.cells[0])) and prev.cells[-1] and text(prev.cells[-1])):
-                prev.cells = [_union(a, b) for a, b in zip(prev.cells, r.cells)]
-                prev.bbox = _union(prev.bbox, r.bbox)
-                continue
-            out.append(r)
-        self.rows = out
-
-
-def _union(a, b):
-    if not a or not b:
-        return a or b
-    return (min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3]))
-
-
-def _inside(a, b, tol: float = 2) -> bool:
-    return a[0] >= b[0] - tol and a[1] >= b[1] - tol and a[2] <= b[2] + tol and a[3] <= b[3] + tol
-
-
-def _in_box(spans: list[_Span], box) -> list[_Span]:
-    if not box:
-        return []
-    x0, y0, x1, y1 = box
-    return [s for s in spans if x0 - 1 <= (s.x0 + s.x1) / 2 <= x1 + 1 and y0 - 1 <= s.cy <= y1 + 1]
-
-
-def _table_lines(t, spans: list[_Span]) -> list[str]:
-    """A data table as "| Class | 0-5 | 5-10 |" rows under a "|---|" rule after the first, so it stays a table."""
-    rows = [[" ".join(" ".join(_block_lines(_in_box(spans, box))).split()).replace("|", "/") for box in row.cells]
-            for row in t.rows]
-    rows = [r for r in rows if any(r)]
-    if not rows:
-        return []
-    lines = ["| " + " | ".join(r) + " |" for r in rows]
-    lines.insert(1, "|" + "---|" * len(rows[0]))
-    return lines
-
-
-def _cell_text(spans: list[_Span], box, nested) -> str:
-    """A cell's text rebuilt like page_text, with a data table inside it kept as table rows at its place."""
-    mine = _in_box(spans, box)
-    inner = sorted((t for t in nested if box and _inside(t.bbox, box)), key=lambda t: t.bbox[1])
-    lines, top = [], float("-inf")
-    for t in inner:
-        lines += _block_lines([s for s in mine if top <= s.cy < t.bbox[1] and not _in_box([s], t.bbox)])
-        lines += _table_lines(t, spans)
-        top = t.bbox[3]
-    lines += _block_lines([s for s in mine if s.cy >= top and not any(_in_box([s], t.bbox) for t in inner)])
-    return "\n".join(lines).strip()
-
-
-def table_rows(page) -> list[list[str]]:
-    """The rows of the page's ruled tables, each cell's text rebuilt like page_text (superscripts, fractions): the
-    CBSE question paper table "Q.No. | Question | Marks". A cell spanning the row (a section heading) comes back as
-    the first cell with the others empty; a data table inside a cell as "| a | b |" lines. [] when the page has no
-    ruled table of three or more columns."""
-    tables, nested, spans = _tables(page)
-    return [[_cell_text(spans, box, nested) for box in row.cells] for t in tables for row in t.rows]
-
-
-_FIGURE_MIN = 30  # points: smaller pictures are an equation or a symbol set in the line ("0° < θ < 90°")
-
-
-def _figure_parts(page) -> list[tuple]:
-    """Pictures on the page: embedded images, and drawings with curves or slanted lines (a circle and its
-    tangents). Straight ruled lines and boxes are table borders and fills, not figures."""
-    parts = []
-    try:
-        parts += [tuple(im["bbox"]) for im in page.get_image_info()]
-        for d in page.get_drawings():
-            if any(it[0] in ("c", "qu") or (it[0] == "l" and abs(it[1].x - it[2].x) > 1 and abs(it[1].y - it[2].y) > 1)
-                   for it in d["items"]):
-                parts.append(tuple(d["rect"]))
-    except Exception:
-        return []
-    return [p for p in parts if p[2] > p[0] and p[3] > p[1]]
-
-
-def _clusters(boxes: list[tuple], gap: float = 12) -> list[tuple]:
-    """Boxes that touch or nearly touch merged into one: a figure drawn as many pieces is one picture."""
-    out = [list(b) for b in boxes]
-    merged = True
-    while merged:
-        merged = False
-        for i in range(len(out)):
-            for j in range(i + 1, len(out)):
-                a, b = out[i], out[j]
-                if a[0] - gap <= b[2] and b[0] - gap <= a[2] and a[1] - gap <= b[3] and b[1] - gap <= a[3]:
-                    out[i] = [min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3])]
-                    del out[j]
-                    merged = True
-                    break
-            if merged:
-                break
-    return [tuple(b) for b in out]
-
-
-def table_figures(page) -> list[list[dict]]:
-    """Like table_rows, but each row's figures (the circle of Q24, the fan of Q36) as boxes in fractions of the page
-    {"x", "y", "width", "height"}, to be cut from the page image: the text layer has no picture in it. Data tables
-    inside a cell are text (table_rows), not figures."""
-    tables, nested, _ = _tables(page)
-    if not tables:
-        return []
-    parts = [p for p in _figure_parts(page) if not any(_inside(p, t.bbox) for t in nested)]
-    w, h = page.rect.width, page.rect.height
-    rows = []
-    for t in tables:
-        for row in t.rows:
-            box = row.bbox
-            mine = [p for p in parts if box and box[0] - 1 <= (p[0] + p[2]) / 2 <= box[2] + 1
-                    and box[1] - 1 <= (p[1] + p[3]) / 2 <= box[3] + 1]
-            rows.append([{"x": c[0] / w, "y": c[1] / h, "width": (c[2] - c[0]) / w, "height": (c[3] - c[1]) / h, "top": c[1]}
-                         for c in _clusters(mine)
-                         if c[2] - c[0] >= _FIGURE_MIN and c[3] - c[1] >= _FIGURE_MIN])
-    return rows
-
-
-def table_cell_lines(page) -> list[list[list[tuple[float, str]]]]:
-    """Like table_rows, but each cell as its visual lines with their height on the page: (y, text). A marking
-    scheme's marks column ("½", "1", "½+½") then lines up with the solution step each mark belongs to."""
-    tables, _, spans = _tables(page)
-    rows = []
-    for t in tables:
-        for row in t.rows:
-            cells = []
-            for box in row.cells:  # the lines as page_text builds them (fractions on their line), with their height
-                lines = [(round(y, 1), _linear(ln).strip()) for y, ln in _block_rows(_in_box(spans, box))]
-                cells.append([ln for ln in lines if ln[1]])
-            rows.append(cells)
-    return rows
 
 
 def _docx_to_pdf(src: Path, out_dir: Path) -> Path:

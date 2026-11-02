@@ -1,5 +1,6 @@
 from __future__ import annotations
-from fastapi import APIRouter, BackgroundTasks, Depends
+import re
+from fastapi import APIRouter, BackgroundTasks, Depends, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from ..database import get_db
@@ -7,10 +8,11 @@ from ..deps import err, get_exam
 from ..models import Exam, ExamQuestion, QuestionPaperDocument, Teacher
 from ..security import current_teacher
 from ..serializers import question_view
-from ..cbse.common import choices
+from ..formatter.common import choices
 from ..services.audit import audit
-from ..cbse.common.outcomes import normalize_course_outcome
-from ..cbse.common.numbering import normalize_question_number
+from ..formatter.common.k_level import K_LEVELS, normalize_course_outcome
+from ..formatter.common.k_level import apply_suggestions as apply_k_suggestions
+from ..formatter.common.numbering import normalize_question_number
 from ..services.state import set_state
 
 router = APIRouter(prefix="/api")
@@ -58,6 +60,8 @@ def list_questions(exam_id: str, db: Session = Depends(get_db), t: Teacher = Dep
     exam = get_exam(db, t, exam_id)
     qs = db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all()
     doc = db.query(QuestionPaperDocument).filter_by(exam_id=exam.id, is_active=True).order_by(QuestionPaperDocument.uploaded_at.desc()).first()
+    if exam.status != "FINALIZED" and apply_k_suggestions(qs):
+        db.commit()
     # Reconcile state if extraction completed and questions exist but exam status is still QUESTION_PAPER_UPLOADED
     if exam.status == "QUESTION_PAPER_UPLOADED" and qs and (not doc or doc.status in ("READY", "NEEDS_ATTENTION")):
         set_state(exam, "QUESTIONS_EXTRACTED")
@@ -113,6 +117,20 @@ def list_questions(exam_id: str, db: Session = Depends(get_db), t: Teacher = Dep
     }
 
 
+@router.get("/exams/{exam_id}/questions/export.pdf")
+def export_questions_pdf(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    from ..services.extracted_pdf import questions_pdf
+
+    exam = get_exam(db, t, exam_id)
+    rows = db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all()
+    if not rows:
+        raise err(409, "NO_EXTRACTED_QUESTIONS", "There are no extracted questions to download.")
+    filename = re.sub(r"[^A-Za-z0-9_-]+", "_", exam.name).strip("_") or "Exam"
+    return Response(questions_pdf(exam, rows), media_type="application/pdf", headers={
+        "Content-Disposition": f'attachment; filename="{filename}_Extracted_Questions.pdf"',
+    })
+
+
 class QuestionPatch(BaseModel):
     display_number: str | None = None
     question_text: str | None = None
@@ -140,6 +158,10 @@ def patch_question(qid: str, body: QuestionPatch, db: Session = Depends(get_db),
                 audit(db, exam_id=exam.id, teacher_id=t.id, entity_type="exam_question", entity_id=q.id,
                       action="question_number_changed", old=q.display_number, new=norm, reason=reason)
             q.display_number, q.normalized_number = norm, norm
+            if exam.standard_profile_id:
+                if not norm.isdigit():
+                    raise err(400,"CBSE_WHOLE_QUESTION","Use a whole-question number; edit subparts in the CBSE hierarchy.")
+                q.structure = {**(q.structure or {}),"root":int(norm)}
             content_changed = True
             continue
         old = getattr(q, field)
@@ -150,6 +172,10 @@ def patch_question(qid: str, body: QuestionPatch, db: Session = Depends(get_db),
             content_changed = True
     if content_changed:
         q.verification_status, q.review_reason = "UNVERIFIED", None
+        if exam.standard_profile_id:
+            from ..models import AnswerKey
+            for key in db.query(AnswerKey).filter_by(exam_question_id=q.id,is_active=True):
+                key.verification_status,key.rubric_status="UNVERIFIED","UNREVIEWED"
     if status:
         if status not in ("VERIFIED", "UNVERIFIED", "NEEDS_REVIEW"):
             raise err(400, "INVALID_STATUS", "Unknown verification status.")
@@ -169,17 +195,26 @@ def patch_question(qid: str, body: QuestionPatch, db: Session = Depends(get_db),
 
 
 class OutcomePatch(BaseModel):
+    k_level: str | None = None
     course_outcome: str | None = None
 
 
 @router.patch("/exam-questions/{qid}/outcome")
 def patch_question_outcome(qid: str, body: OutcomePatch, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
-    """Course outcome tag. It never changes marks, so it stays editable until the exam is finalized."""
+    """K level / course outcome tags. They never change marks, so they stay editable until the exam is finalized."""
     q = _get_q(db, t, qid)
     exam = get_exam(db, t, q.exam_id)
     if exam.status == "FINALIZED":
         raise err(409, "EXAM_FINALIZED", "This exam is finalized.")
     data = body.model_dump(exclude_unset=True)
+    if "k_level" in data:
+        k = (data["k_level"] or "").strip().upper() or None
+        if k is not None and k not in K_LEVELS:
+            raise err(400, "INVALID_K_LEVEL", "K level must be one of K1 to K6.")
+        if k != q.k_level or q.k_level_source != "TEACHER":
+            audit(db, exam_id=exam.id, teacher_id=t.id, entity_type="exam_question", entity_id=q.id,
+                  action="question_k_level_set", old=q.k_level, new=k)
+        q.k_level, q.k_level_source = k, "TEACHER"
     if "course_outcome" in data:
         co = normalize_course_outcome(data["course_outcome"])
         if co != q.course_outcome:
@@ -188,6 +223,22 @@ def patch_question_outcome(qid: str, body: OutcomePatch, db: Session = Depends(g
         q.course_outcome = co
     db.commit()
     return question_view(q)
+
+
+@router.post("/exams/{exam_id}/questions/confirm-k-levels")
+def confirm_k_levels(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    """Accept every suggested K level as the teacher's own."""
+    exam = get_exam(db, t, exam_id)
+    if exam.status == "FINALIZED":
+        raise err(409, "EXAM_FINALIZED", "This exam is finalized.")
+    qs = db.query(ExamQuestion).filter_by(exam_id=exam.id, k_level_source="SUGGESTED").all()
+    for q in qs:
+        q.k_level_source = "TEACHER"
+    if qs:
+        audit(db, exam_id=exam.id, teacher_id=t.id, entity_type="exam", entity_id=exam.id,
+              action="k_levels_confirmed", new=len(qs))
+    db.commit()
+    return {"confirmed": len(qs)}
 
 
 class QuestionCreate(BaseModel):
@@ -377,7 +428,7 @@ class PromoteBlockBody(BaseModel):
 
 @router.post("/exams/{exam_id}/promote-block")
 def promote_block(exam_id: str, body: PromoteBlockBody, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
-    get_exam(db, t, exam_id)  # the teacher's own exam (404 otherwise)
+    get_exam(db,t,exam_id)
     exam = _require_editable(db, exam_id)
     doc = db.query(QuestionPaperDocument).filter_by(exam_id=exam.id, is_active=True).order_by(QuestionPaperDocument.uploaded_at.desc()).first()
     qs = db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all()
@@ -429,7 +480,7 @@ class DismissBlockBody(BaseModel):
 
 @router.post("/exams/{exam_id}/dismiss-block")
 def dismiss_block(exam_id: str, body: DismissBlockBody, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
-    get_exam(db, t, exam_id)  # the teacher's own exam (404 otherwise)
+    get_exam(db,t,exam_id)
     exam = _require_editable(db, exam_id)
     doc = db.query(QuestionPaperDocument).filter_by(exam_id=exam.id, is_active=True).order_by(QuestionPaperDocument.uploaded_at.desc()).first()
 

@@ -1,5 +1,5 @@
 import pytest
-from .conftest import assign, BEHAVIOUR, MODEL, make_pdf, make_png
+from .conftest import BEHAVIOUR, MODEL, make_pdf, make_png
 
 H = {}
 
@@ -23,12 +23,11 @@ def test_ai_status(client, auth):
     assert s["available"] and s["model"] == MODEL
 
 
-def test_full_workflow(client, auth, teach):
-    c, m, h = client, auth, teach
-    cls = j(c.post("/api/classes", json={"name": "10-A"}, headers=m), 201)
-    sub = j(c.post("/api/subjects", json={"name": "Biology"}, headers=m), 201)
-    assign(cls["id"], sub["id"])
-    exam = j(c.post("/api/exams", headers=h, json={"name": "Term 1", "academic_year": "2026-27", "class_id": cls["id"],
+def test_full_workflow(client, auth):
+    c, h = client, auth
+    cls = j(c.post("/api/classes", json={"name": "10-A"}, headers=h), 201)
+    sub = j(c.post("/api/subjects", json={"name": "Biology"}, headers=h), 201)
+    exam = j(c.post("/api/_test/legacy-exams", headers=h, json={"name": "Term 1", "academic_year": "2026-27", "class_id": cls["id"],
              "subject_id": sub["id"], "exam_type": "Unit", "total_marks": 15}), 201)
     eid = exam["id"]
     assert exam["status"] == "DRAFT"
@@ -50,7 +49,7 @@ def test_full_workflow(client, auth, teach):
     assert [p["ocr_status"] for p in qp["pages"]] == ["OK", "FAILED_PARSE"]
     diag = j(c.get(f"/api/documents/question-paper/{qp['id']}/pages/2/ocr", headers=h), 200)
     assert diag["status"] == "FAILED_PARSE" and "cannot read" in diag["raw"]
-    assert "InternVL3.5 4B failed to return a valid structured response" in qp["error_message"]
+    assert "Gemini did not return a valid structured response" in qp["error_message"]
     # verification is blocked while a page failed
     r = c.post(f"/api/exams/{eid}/questions/verify", headers=h)
     assert r.status_code == 400 and r.json()["code"] == "QUESTIONS_NOT_READY"
@@ -66,6 +65,13 @@ def test_full_workflow(client, auth, teach):
     assert [q["max_marks"] for q in qs["questions"]] == [2, 5, 3, 5]
     assert qs["questions"][0]["has_crop"]
     assert j(c.get(f"/api/exams/{eid}", headers=h))["status"] == "QUESTIONS_EXTRACTED"
+    exported_questions = c.get(f"/api/exams/{eid}/questions/export.pdf", headers=h)
+    assert exported_questions.status_code == 200
+    assert exported_questions.headers["content-type"] == "application/pdf"
+    assert "Extracted_Questions.pdf" in exported_questions.headers["content-disposition"]
+    with pytest.importorskip("fitz").open(stream=exported_questions.content, filetype="pdf") as exported:
+        text = "\n".join(page.get_text() for page in exported)
+        assert "Extracted Question Paper" in text and "Define osmosis" in text
 
     # verify requires explicit acceptance
     r = c.post(f"/api/exams/{eid}/questions/verify", headers=h)
@@ -93,6 +99,13 @@ def test_full_workflow(client, auth, teach):
     assert by_label["3 (a)"]["exam_question_id"] == qid["3(a)"]
     assert by_label["3b"]["exam_question_id"] == qid["3(b)"]
     assert by_label["2"]["mark_mismatch"] is True
+    exported_key = c.get(f"/api/exams/{eid}/answer-keys/export.pdf", headers=h)
+    assert exported_key.status_code == 200
+    assert exported_key.headers["content-type"] == "application/pdf"
+    assert "Extracted_Answer_Key.pdf" in exported_key.headers["content-disposition"]
+    with pytest.importorskip("fitz").open(stream=exported_key.content, filetype="pdf") as exported:
+        text = "\n".join(page.get_text() for page in exported)
+        assert "Extracted Answer Key" in text and "Movement of water" in text
     r = c.post(f"/api/exams/{eid}/answer-keys/verify", headers=h)
     assert r.status_code == 400 and any("MARK MISMATCH" in i["reason"] for i in r.json()["issues"])
     j(c.patch(f"/api/answer-keys/{by_label['2']['id']}", json={"mismatch_resolution": "keep_question_marks"}, headers=h), 200)
@@ -102,8 +115,7 @@ def test_full_workflow(client, auth, teach):
     qs2 = j(c.get(f"/api/exams/{eid}/questions", headers=h))
     assert [q["max_marks"] for q in qs2["questions"]] == [2, 5, 3, 5]
 
-    # --- student answer sheet (the student is on the roster, which management keeps)
-    j(c.post("/api/students", headers=m, json={"name": "Asha", "roll_number": "7", "class_id": cls["id"]}), 201)
+    # --- student answer sheet
     BEHAVIOUR["sheet"] = "main"
     r = c.post(f"/api/exams/{eid}/answer-sheets", headers=h, data={"student_name": "Asha", "roll_number": "7"},
                files={"file": ("sheet.pdf", make_pdf(1), "application/pdf")})
@@ -180,16 +192,23 @@ def test_full_workflow(client, auth, teach):
     assert res["finalized"] and [(q["question"], q["final_marks"], q["max_marks"]) for q in res["questions"]] == \
         [("1", 2, 2), ("2", 1, 5), ("3(a)", 3, 3), ("3(b)", 5, 5)]
     assert res["questions"][1]["ai_marks"] == 0 and res["questions"][1]["official_answer"]
-    assert "k_level" not in res["questions"][0] and "k_levels" not in res["outcomes"]
-    j(c.patch(f"/api/exam-questions/{qid['2']}/outcome", json={"course_outcome": "2"}, headers=h), 200)
+    # K levels suggested from the question wording: Define->K1, Explain/Describe->K2, Draw->K3
+    assert [q["k_level"] for q in res["questions"]] == ["K1", "K2", "K2", "K3"]
+    k = {r["key"]: (r["scored"], r["max_marks"]) for r in res["outcomes"]["k_levels"]}
+    assert k == {"K1": (2, 2), "K2": (1 + 3, 5 + 3), "K3": (5, 5)}
+    j(c.patch(f"/api/exam-questions/{qid['2']}/outcome", json={"k_level": "k4", "course_outcome": "2"}, headers=h), 200)
+    assert c.patch(f"/api/exam-questions/{qid['2']}/outcome", json={"k_level": "K9"}, headers=h).status_code == 400
     summ = j(c.get(f"/api/exams/{eid}/outcome-summary", headers=h), 200)
-    assert summ["finalized_students"] == 1 and "k_levels" not in summ
+    assert summ["finalized_students"] == 1
+    assert {r["key"]: r["percentage"] for r in summ["k_levels"]} == {"K1": 100.0, "K2": 100.0, "K3": 100.0, "K4": 20.0}
     assert [r["key"] for r in summ["course_outcomes"]] == ["CO2", "Untagged"]
     rep_pdf = c.get(f"/api/evaluations/{evid}/report.pdf", headers=h)
     assert rep_pdf.status_code == 200 and rep_pdf.content.startswith(b"%PDF")
     from io import BytesIO
     from openpyxl import load_workbook
-    assert "K-Level Analysis" not in load_workbook(BytesIO(c.get("/api/reports/marksheet", headers=h).content)).sheetnames
+    workbook = load_workbook(BytesIO(c.get("/api/reports/marksheet", headers=h).content))
+    assert "K-Level Analysis" not in workbook.sheetnames
+    assert "Grade" in [cell.value for cell in workbook.active[1]]
     # audit trail
     logs = j(c.get(f"/api/exams/{eid}/audit-logs", headers=h), 200)
     actions = {l["action"] for l in logs}
@@ -222,27 +241,26 @@ def test_full_workflow(client, auth, teach):
     assert "attachment" in rep_pdf.headers["content-disposition"] and "__" not in rep_pdf.headers["content-disposition"]
 
 
-def test_duplicate_mapping_and_ai_unavailable(client, auth, teach):
-    c, m, h = client, auth, teach
-    cls = j(c.post("/api/classes", json={"name": "12-B"}, headers=m), 201)
-    sub = j(c.post("/api/subjects", json={"name": "Botany"}, headers=m), 201)
-    assign(cls["id"], sub["id"])
-    eid = j(c.post("/api/exams", headers=h, json={"name": "T2", "academic_year": "26", "class_id": cls["id"],
+def test_duplicate_mapping_and_ai_unavailable(client, auth):
+    c, h = client, auth
+    cls = j(c.post("/api/classes", json={"name": "12-B"}, headers=h), 201)
+    sub = j(c.post("/api/subjects", json={"name": "Botany"}, headers=h), 201)
+    eid = j(c.post("/api/_test/legacy-exams", headers=h, json={"name": "T2", "academic_year": "26", "class_id": cls["id"],
             "subject_id": sub["id"], "exam_type": "Unit", "total_marks": 15}), 201)["id"]
-    # Ollama down -> clear AI_ERROR, nothing invented
-    from app.config import get_settings
-    s = get_settings(); good = s.internvl_api_url
-    s.internvl_api_url = "http://127.0.0.1:1"
+    # OpenRouter down -> clear AI_ERROR, nothing invented
+    from app.ocr import remote
+    good = remote.OPENROUTER_BASE_URL
+    remote.OPENROUTER_BASE_URL = "http://127.0.0.1:1"
     try:
         j(c.post(f"/api/exams/{eid}/question-paper", headers=h, files={"file": ("p.pdf", make_pdf(2), "application/pdf")}), 202)
         qp = j(c.get(f"/api/exams/{eid}/question-paper", headers=h))
         assert qp["status"] == "AI_ERROR"
-        assert qp["error_message"] == "InternVL3.5 4B is not available. Start Ollama and ensure blaifa/InternVL3_5:4B is installed."
+        assert qp["error_message"] == "OpenRouter is unavailable. Check the API key, Gemini model access and credit balance."
         assert j(c.get(f"/api/exams/{eid}/questions", headers=h))["questions"] == []
         st = j(c.get("/api/system/ai-status", headers=h))
         assert st["available"] is False
     finally:
-        s.internvl_api_url = good
+        remote.OPENROUTER_BASE_URL = good
     j(c.post(f"/api/documents/question-paper/{qp['id']}/reprocess", headers=h), 202)
     assert j(c.get(f"/api/exams/{eid}/question-paper", headers=h))["status"] == "READY"
     j(c.post(f"/api/exams/{eid}/questions/accept-valid", headers=h), 200)
@@ -253,7 +271,6 @@ def test_duplicate_mapping_and_ai_unavailable(client, auth, teach):
     j(c.post(f"/api/exams/{eid}/answer-keys/verify", headers=h), 200)
 
     BEHAVIOUR["sheet"] = "dup"
-    j(c.post("/api/students", headers=m, json={"name": "Ravi", "roll_number": "3", "class_id": cls["id"]}), 201)
     ev = j(c.post(f"/api/exams/{eid}/answer-sheets", headers=h, data={"student_name": "Ravi", "roll_number": "3"},
                   files={"file": ("s.png", make_png(), "image/png")}), 202)
     d = j(c.get(f"/api/evaluations/{ev['id']}", headers=h))

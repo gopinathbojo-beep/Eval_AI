@@ -28,7 +28,7 @@ def test_browser_session_and_csrf(client):
         assert browser.get("/api/auth/me").status_code == 200
         assert browser.post("/api/classes", json={"name": "Forged class"}).status_code == 403
         assert browser.post("/api/classes", json={"name": "Forged class"}, headers=evil).status_code == 403
-        assert browser.post("/api/auth/logout", headers=headers).status_code == 200
+        assert browser.post("/api/auth/logout", headers=headers).status_code == 204
         assert browser.get("/api/auth/me").status_code == 401
 
 

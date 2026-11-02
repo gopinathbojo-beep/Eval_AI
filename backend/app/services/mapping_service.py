@@ -1,41 +1,53 @@
 """DB-aware wrappers around the pure mapping rules."""
 from __future__ import annotations
 from typing import Any
+import re
 from sqlalchemy.orm import Session
-from ..cbse import formatter
+from .. import formatter
 from ..config import get_settings
 from ..models import AnswerKey, Evaluation, ExamQuestion, StudentAnswer
-from ..cbse.common.mapping import MAPPED, NEEDS_REVIEW, UNMAPPED, flag_duplicates, map_label, detect_mapping_anomalies
-from ..cbse.common.numbering import part_labels
+from ..formatter.common.mapping import MAPPED, NEEDS_REVIEW, UNMAPPED, flag_duplicates, map_label, detect_mapping_anomalies
+from ..formatter.common.numbering import part_labels
 
 DUP_NOTE = "DUPLICATE_MAPPING: another answer also maps to this question"
 _RECOMPUTABLE = {"UNMAPPED", "NEEDS_REVIEW", "MAPPED"}
+
+
+def conflicting_answer_heading(text: str, number: str | None) -> str | None:
+    """An explicit Qn / n> header is evidence; numbered working steps are not."""
+    expected = re.match(r"\d+", number or "")
+    if not expected:
+        return None
+    for line in [line.strip() for line in text.splitlines() if line.strip()][:4]:
+        if re.match(r"^section\b", line, re.I):
+            continue
+        heading = re.match(r"^(?:Q(?:uestion)?\s*\.?\s*(\d+)(?=\W|$)|(\d+)\s*>)", line, re.I)
+        root = (heading[1] or heading[2]) if heading else None
+        return root if root and root != expected[0] else None
+    return None
 
 
 def exam_questions(db: Session, exam_id: str) -> list[ExamQuestion]:
     return db.query(ExamQuestion).filter_by(exam_id=exam_id).order_by(ExamQuestion.position).all()
 
 
-def key_texts(db: Session, exam_id: str, questions: list[ExamQuestion]) -> dict[str, str]:
-    """The exam's active key text per question number ("7" -> ...), to compare answers with."""
-    numbers = {q.id: q.normalized_number for q in questions if q.normalized_number}
-    out: dict[str, str] = {}
-    for k in db.query(AnswerKey).filter_by(exam_id=exam_id, is_active=True):
-        if (n := numbers.get(k.exam_question_id)) and k.answer_text:
-            out[n] = f"{out[n]}\n{k.answer_text}" if n in out else k.answer_text
-    return out
-
-
 def apply_student_mapping(db: Session, ev: Evaluation) -> None:
     qs = exam_questions(db, ev.exam_id)
-    keys = key_texts(db, ev.exam_id, qs)
     minc = get_settings().min_label_confidence
     answers = db.query(StudentAnswer).filter_by(evaluation_id=ev.id).order_by(StudentAnswer.position).all()
+    cbse_roots = {q.normalized_number:q for q in qs if getattr(q,"structure",None)}
     total_ans = len(answers)
     in_part = dict(zip((a.id for a in answers), part_labels(answers, qs)))
     prev_qid = None
     suggested: list[tuple[StudentAnswer, list[dict]]] = []  # unlabelled answers placed by content alone
     for a in answers:
+        conflict = conflicting_answer_heading(a.answer_text or "", a.normalized_number or a.raw_question_number)
+        if conflict and a.status in _RECOMPUTABLE:
+            candidate = next((q for q in qs if q.normalized_number == conflict), None)
+            a.status = "NEEDS_REVIEW"
+            a.mapping_note = f"The answer text starts with question {conflict}, conflicting with its extracted label. Review the mapping."
+            a.mapping_candidates = [candidate.id] if candidate else []
+            continue
         if a.status == "IGNORED" or a.status not in _RECOMPUTABLE:
             if a.exam_question_id:
                 prev_qid = a.exam_question_id
@@ -53,8 +65,18 @@ def apply_student_mapping(db: Session, ev: Evaluation) -> None:
             answer_position=a.position,
             total_answers=total_ans,
             prev_question_id=prev_qid,
-            keys=keys,
         )
+        if cbse_roots and a.raw_question_number and (a.ocr_confidence or 0) >= minc:
+            from ..formatter.common.numbering import normalize_question_number
+            import re
+            label = normalize_question_number(a.raw_question_number) or ""
+            match = re.match(r"^(\d+)(?:$|[.(])",label)
+            root = cbse_roots.get(match.group(1)) if match else None
+            if root:
+                a.normalized_number,a.exam_question_id = label,root.id
+                a.status,a.mapping_note,a.mapping_candidates = "MAPPED","Part of whole CBSE question",[]
+                prev_qid = root.id
+                continue
         a.normalized_number = res.normalized_number
         a.exam_question_id = res.question_id
         a.mapping_note = res.note
@@ -67,6 +89,7 @@ def apply_student_mapping(db: Session, ev: Evaluation) -> None:
     _spread_content_suggestions(answers, qs, suggested)
     live = [a for a in answers if a.status != "IGNORED"]
     dups = flag_duplicates(live)
+    dups -= {q.id for q in cbse_roots.values()}  # Whole questions intentionally contain several answer blocks.
     for a in live:
         if a.exam_question_id in dups and a.status in _RECOMPUTABLE:
             a.status, a.mapping_note = "NEEDS_REVIEW", DUP_NOTE
@@ -168,6 +191,9 @@ def refresh_key_state(db: Session, exam_id: str) -> None:
         elif k.mapping_status == "NEEDS_REVIEW" and (k.mapping_note or "").startswith("DUPLICATE_MAPPING"):
             k.mapping_status, k.mapping_note = "MAPPED", None
         q = qmap.get(k.exam_question_id) if k.exam_question_id else None
+        if (getattr(q,"structure",None) or {}).get("root"):
+            k.mark_mismatch = bool(q and k.marks != q.max_marks)
+            continue  # Never silently repair printed CBSE allocations or rebuild its rubric.
         # Inherit question max_marks if answer key marks was missing
         if (k.marks is None or k.marks == 0.0) and q and q.max_marks is not None:
             k.marks = q.max_marks
@@ -184,7 +210,7 @@ def refresh_key_state(db: Session, exam_id: str) -> None:
 def refresh_rubric(key: AnswerKey, q: ExamQuestion | None) -> None:
     """Rebuild the key's marking rubric with the subject's formatter. A rubric that comes out different from the one
     the teacher confirmed needs confirming again; the same rubric keeps its confirmation."""
-    if q is None:
+    if q is None or (getattr(q,"structure",None) or {}).get("root"):
         return
     built = formatter.current().build_rubric(q.question_text, key.answer_text, list(key.criteria or []), q.max_marks)
     new = built.to_dict() if built is not None else None
@@ -218,5 +244,5 @@ def mapping_summary(db: Session, ev: Evaluation) -> dict:
         "missing": len(missing),
         "ignored": len(answers) - len(live),
         "missing_question_ids": [q.id for q in missing],
-        "anomalies": detect_mapping_anomalies(live, qs),
+        "anomalies": [a for a in detect_mapping_anomalies(live,qs) if not (a["type"]=="DUPLICATE_ASSIGNMENT" and a.get("question_id") in {q.id for q in qs if getattr(q,"structure",None)})],
     }

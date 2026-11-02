@@ -7,15 +7,14 @@ from dataclasses import dataclass, field
 from ..models import AnswerKey, AnswerSheetDocument, Evaluation, Exam, ExamQuestion, EvaluationItem, StudentAnswer
 from ..ocr import prompts
 from ..ocr.internvl import AIResponseError, AIUnavailable, chat_structured, check_model
-from ..ocr.indic import text_model_for
+from ..config import ai_bad_response_message
 from ..ocr.schemas import EvaluationResult
-from ..cbse import formatter
-from ..cbse.common import choices
-from ..cbse.common.mark_rules import EvaluationValidationError, validate_evaluation
-from . import credits
+from .. import formatter
+from ..formatter.common import choices
+from ..formatter.common.mark_rules import EvaluationValidationError, validate_evaluation
 from .job_queue import keyed_lock, submit
-from .mapping_service import exam_questions
-from ..cbse.common.numbering import parent_number
+from .mapping_service import exam_questions, conflicting_answer_heading
+from ..formatter.common.numbering import parent_number
 from .state import set_state
 from .audit import audit
 
@@ -119,6 +118,8 @@ def resolve_student_answer(db: Session, ev: Evaluation, q: ExamQuestion, snap: E
         constituent = direct_answers
         # Combine all answer blocks / cross-page continuations
         combined_parts = [a.answer_text.strip() for a in constituent if a.answer_text and a.answer_text.strip()]
+        if getattr(q,"structure",None):
+            combined_parts = [f"[{a.raw_question_number or q.display_number}]\n{a.answer_text.strip()}" for a in constituent if a.answer_text and a.answer_text.strip()]
         combined_text = "\n\n".join(combined_parts)
     elif sub_answers:
         constituent = sub_answers
@@ -133,6 +134,15 @@ def resolve_student_answer(db: Session, ev: Evaluation, q: ExamQuestion, snap: E
         combined_text = ""
 
     if constituent:
+        for answer in constituent:
+            conflict = conflicting_answer_heading(answer.answer_text or "", q.normalized_number)
+            if conflict:
+                return ResolvedAnswer(
+                    status=STUDENT_ANSWER_MAPPING_REVIEW,
+                    primary_answer=answer,
+                    constituent_answers=constituent,
+                    reason=f"Answer text starts with question {conflict}, but is mapped to {q.display_number}. Review the mapping before grading.",
+                )
         if combined_text.strip():
             return ResolvedAnswer(
                 status=STUDENT_ANSWER_FOUND,
@@ -234,16 +244,6 @@ def rubric_criteria(key: AnswerKey) -> list[str]:
     return out
 
 
-def _point_asker(model: str | None, raws: list[str]):
-    """ask(system, prompt, schema) for the formatter's point grader: one narrow question to the grading model, its raw
-    reply kept for the item."""
-    def ask(system: str, prompt: str, schema):
-        call = chat_structured(system, prompt, schema, model=model)
-        raws.append(call.raw)
-        return call.parsed
-    return ask
-
-
 def _reset_item(item: EvaluationItem) -> None:
     item.ai_marks = item.ai_decision = item.ai_feedback = item.ai_confidence = None
     item.matched_points, item.missing_points = [], []
@@ -267,39 +267,34 @@ def evaluate_item(db: Session, ev: Evaluation, q: ExamQuestion, item: Evaluation
         for a in resolved.constituent_answers:
             a.status = "EVALUATING"
         db.commit()
-        fmt = formatter.current()  # the subject's own grading rules, see cbse/formatter.py
+        fmt = formatter.current()  # the subject's own grading rules, see app/formatter
         # "write on any one topic" answered on several: each graded, the best counts
         attempts = fmt.grading_attempts(q.question_text, resolved.combined_text) or [(None, resolved.combined_text)]
-        # a rubric the teacher confirmed once may be graded point by point (Tamil point questions, see the formatter)
-        rubric = key.rubric if getattr(key, "rubric_status", None) == "CONFIRMED" else None
         try:
             graded = []
             for title, text in attempts:
-                # an MCQ is marked against the key's option, not by the model (which asked MCQs for working)
-                res = fmt.grade_objective(getattr(q, "question_type", None), q.question_text, key.answer_text, text,
-                                          q.max_marks)
-                if res is not None:
-                    graded.append((title, validate_evaluation(res, q.max_marks), None))
-                    continue
+                prompt = prompts.evaluation_prompt(q.display_number, q.question_text, key.answer_text, rubric_criteria(key),
+                                                   key.accepted_answers, key.keywords, q.max_marks, text)
+                system = prompts.EVAL_SYSTEM
+                exam_record = db.get(Exam,ev.exam_id)
+                if getattr(exam_record,"standard_profile_id",None):
+                    from ..cbse import grading
+                    from ..cbse.validation import active_doc
+                    from ..models import AnswerKeyDocument
+                    scheme_doc = active_doc(db,AnswerKeyDocument,exam_record.id)
+                    prompt = grading.prompt(q,key,text,exam_record.standard_options or {},(scheme_doc.extraction or {}).get("instructions",[]))
+                    system = grading.SYSTEM
                 exam_owner = db.get(Exam, ev.exam_id).teacher_id
                 audit(db, exam_id=ev.exam_id, teacher_id=exam_owner, entity_type="evaluation", entity_id=ev.id,
                       action="ai_grading_request")
                 db.commit()
-                raws: list[str] = []
-                # the question's text rides along: its own numbers ("Twelve minutes") prove no step (common/steps.py)
-                res = fmt.grade_points({**rubric, "question_text": q.question_text} if rubric else rubric, text,
-                                       q.max_marks, _point_asker(model, raws))
-                if res is not None:  # the backend added up the points; the model only answered per point
-                    raw = "\n".join(raws) or None
-                    item.raw_response = raw
-                    graded.append((title, validate_evaluation(res, q.max_marks), raw))
-                    continue
-                prompt = prompts.evaluation_prompt(q.display_number, q.question_text, key.answer_text, rubric_criteria(key),
-                                                   key.accepted_answers, key.keywords, q.max_marks, text)
-                call = chat_structured(prompts.EVAL_SYSTEM, prompt, EvaluationResult, model=model)
+                call = chat_structured(system, prompt, EvaluationResult, model=model)
                 item.raw_response = call.raw
-                res = validate_evaluation(call.parsed, q.max_marks)  # type: ignore[arg-type]
-                res = fmt.check_deductions(res, text, key.answer_text, q.max_marks)
+                if getattr(exam_record,"standard_profile_id",None):
+                    res = grading.validate_result(call.parsed,q,key,exam_record.standard_options or {},text)
+                else:
+                    res = validate_evaluation(call.parsed, q.max_marks)  # type: ignore[arg-type]
+                    res = fmt.check_deductions(res, text, key.answer_text, q.max_marks)
                 graded.append((title, res, call.raw))
             title, res, _ = max(graded, key=lambda g: g[1].marks_awarded)  # the first of equal best
             item.ai_marks, item.ai_decision = res.marks_awarded, res.decision
@@ -320,7 +315,7 @@ def evaluate_item(db: Session, ev: Evaluation, q: ExamQuestion, item: Evaluation
                 a.status = "MAPPED"
         except AIResponseError as e:
             item.raw_response = e.raw
-            item.status, item.error = "EVALUATION_ERROR", "InternVL3.5 4B failed to return a valid structured response."
+            item.status, item.error = "EVALUATION_ERROR", f"{ai_bad_response_message()} {e.detail}"
             for a in resolved.constituent_answers:
                 a.status = "MAPPED"
             log.error("Eval AI error q=%s: %s", q.display_number, e.detail)
@@ -370,8 +365,8 @@ def _run_evaluation(ev_id: str, only_question_ids: list[str] | None) -> None:
             set_state(exam, "EVALUATING")
         db.commit()
         try:
-            model = text_model_for(exam.subject.name if exam.subject else None)  # Tamil etc. graded by a model that reads it
-            check_model(model)
+            model = None  # the single configured OpenRouter Gemini model grades every language
+            check_model()
             qs = [q for q in exam_questions(db, ev.exam_id) if not only_question_ids or q.id in only_question_ids]
             ev.run_total, ev.run_progress = len(qs), 0
             db.commit()
@@ -390,11 +385,9 @@ def _run_evaluation(ev_id: str, only_question_ids: list[str] | None) -> None:
                 ev.run_progress += 1
                 db.commit()
             ev.run_status = "DONE"
-            credits.settle_evaluation(db, ev.id, success=True)
         except AIUnavailable as e:
             log.error("AI unavailable during evaluation: %s", e.detail)
             ev.run_status = "ERROR"
-            credits.settle_evaluation(db, ev.id, success=False)
         db.refresh(exam)
         others_running = db.query(Evaluation).filter(Evaluation.exam_id == exam.id, Evaluation.id != ev.id,
                                                      Evaluation.run_status == "RUNNING").first()
@@ -411,7 +404,6 @@ def _run_evaluation(ev_id: str, only_question_ids: list[str] | None) -> None:
         ev = db.get(Evaluation, ev_id)
         if ev:
             ev.run_status = "ERROR"
-            credits.settle_evaluation(db, ev.id, success=False)
             failed_exam = db.get(Exam, ev.exam_id)
             audit(db, exam_id=ev.exam_id, teacher_id=failed_exam.teacher_id, entity_type="evaluation", entity_id=ev.id,
                   action="ai_evaluation_failed")
@@ -541,7 +533,7 @@ def auto_evaluate_sheet(doc_id: str) -> None:
     """Grade a freshly read sheet straight away when nothing needs the teacher first (pages read, answers mapped).
 
     Sheets with unread pages or unmapped answers are left for the teacher; review_reasons() lists why. Grading is
-    queued as its own job on the grading model's engine, so a Tamil sheet is graded once InternVL is back on the GPU.
+    queued as its own OpenRouter job, using the same Gemini model for every language.
     """
     db = SessionLocal()
     try:
@@ -553,12 +545,6 @@ def auto_evaluate_sheet(doc_id: str) -> None:
             return
         if any(a.status in ("UNMAPPED", "NEEDS_REVIEW") for a in db.query(StudentAnswer).filter_by(evaluation_id=ev.id)):
             return
-        try:
-            credits.hold_evaluation(db, ev, db.get(Exam, ev.exam_id))
-        except credits.InsufficientCredits:
-            db.rollback()
-            log.info("Sheet %s waits for credits before grading", doc_id)
-            return  # left for the teacher, who sees the credits needed when starting it
         ev.run_status, ev.run_progress = "RUNNING", 0
         db.commit()
         ev_id, exam_id = ev.id, ev.exam_id

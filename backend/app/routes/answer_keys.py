@@ -1,7 +1,8 @@
 from __future__ import annotations
 import logging
+import re
 from typing import Literal
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from ..database import get_db
@@ -11,17 +12,24 @@ from ..models import (AnswerKey, AnswerKeyDocument, Evaluation, EvaluationItem, 
                       QuestionPaperDocument, Teacher)
 from ..ocr import prompts
 from ..ocr.internvl import chat_structured, check_model
-from ..ocr.indic import text_model_for
 from ..ocr.schemas import GeneratedAnswerKeyResult
 from ..security import current_teacher
 from ..serializers import key_view
 from ..services.audit import audit
-from ..cbse.common.mapping import map_label
+from ..formatter.common.mapping import map_label
 from ..services.mapping_service import exam_questions, refresh_key_state, refresh_rubric
-from ..cbse.common.numbering import normalize_question_number
+from ..formatter.common.numbering import normalize_question_number
 from ..services.state import set_state
 
 router = APIRouter(prefix="/api")
+
+
+def _verification_rubric_problems(key: AnswerKey):
+    rubric = key.rubric or {}
+    # CBSE extraction notes are retained as evidence, not workflow gates.
+    if rubric.get("kind") == "cbse" or "cbse_tree" in rubric:
+        return []
+    return rubric.get("problems") or []
 
 
 def _editable(exam: Exam):
@@ -58,6 +66,24 @@ def list_keys(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depends(
                            "question_text": q.question_text} for q in qs],
             "missing_question_ids": [q.id for q in qs if q.id not in covered],
             "locked": is_locked}
+
+
+@router.get("/exams/{exam_id}/answer-keys/export.pdf")
+def export_answer_keys_pdf(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    from ..services.extracted_pdf import answer_keys_pdf
+
+    exam = get_exam(db, t, exam_id)
+    questions = exam_questions(db, exam.id)
+    qmap = {q.id: q for q in questions}
+    rows = db.query(AnswerKey).filter_by(exam_id=exam.id, is_active=True).all()
+    rows.sort(key=lambda key: (qmap[key.exam_question_id].position if key.exam_question_id in qmap else 10**9,
+                               key.created_at))
+    if not rows:
+        raise err(409, "NO_EXTRACTED_ANSWER_KEY", "There is no extracted answer key to download.")
+    filename = re.sub(r"[^A-Za-z0-9_-]+", "_", exam.name).strip("_") or "Exam"
+    return Response(answer_keys_pdf(exam, rows, qmap), media_type="application/pdf", headers={
+        "Content-Disposition": f'attachment; filename="{filename}_Extracted_Answer_Key.pdf"',
+    })
 
 
 class KeyPatch(BaseModel):
@@ -273,7 +299,7 @@ def generate_answer_keys_ai(exam_id: str, db: Session = Depends(get_db), t: Teac
     if not qs:
         raise err(400, "NO_QUESTIONS", "There are no verified questions in this exam to generate answers for.")
 
-    model = text_model_for(exam.subject.name if exam.subject else None)
+    model = None
     check_model(model)
 
     q_dicts = [
@@ -289,7 +315,7 @@ def generate_answer_keys_ai(exam_id: str, db: Session = Depends(get_db), t: Teac
     ]
 
     img_path = None
-    # Only supply heavy image to Ollama if some questions have empty or very short text (e.g. diagrams/figures)
+    # Only send the image when text alone is insufficient (e.g. diagrams/figures).
     if any(len((q.question_text or "").strip()) < 10 for q in qs):
         qp = db.query(QuestionPaperDocument).filter_by(exam_id=exam.id, is_active=True).first()
         if qp and qp.pages and qp.pages[0].get("processed_file"):
@@ -361,7 +387,7 @@ def generate_answer_keys_ai(exam_id: str, db: Session = Depends(get_db), t: Teac
     q_order = {q.id: idx for idx, q in enumerate(qs)}
     matched_answers.sort(key=lambda x: q_order.get(x["exam_question_id"], 999))
 
-    return {"answers": matched_answers}
+    return {"answers": matched_answers,"source":"AI_DRAFT","can_save_as_scheme":not bool(exam.standard_profile_id)}
 
 
 class SaveGeneratedItem(BaseModel):
@@ -380,6 +406,8 @@ class SaveGeneratedIn(BaseModel):
 @router.post("/exams/{exam_id}/answer-keys/save-ai", status_code=201)
 def save_generated_answer_keys(exam_id: str, body: SaveGeneratedIn, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     exam = get_exam(db, t, exam_id)
+    if exam.standard_profile_id:
+        raise err(409,"UPLOADED_SCHEME_REQUIRED","Generated answers are drafts. Upload the matching marking scheme for a CBSE board-pattern exam.")
     if exam.status in ("DRAFT", "QUESTION_PAPER_UPLOADED", "QUESTIONS_EXTRACTED"):
         raise err(409, "QUESTIONS_NOT_VERIFIED", "Verify the questions before saving an answer key.")
     if db.query(EvaluationItem).join(Evaluation, Evaluation.id == EvaluationItem.evaluation_id).filter(Evaluation.exam_id == exam.id).first():
@@ -612,7 +640,7 @@ def verify_all_keys(exam_id: str, db: Session = Depends(get_db), t: Teacher = De
             if not primary_issue_type:
                 primary_issue_type = "mark_mismatch"
 
-        for problem in (k.rubric or {}).get("problems") or []:
+        for problem in _verification_rubric_problems(k):
             reasons.append(f"Rubric: {problem}")
             if not primary_issue_type:
                 primary_issue_type = "rubric"
@@ -713,7 +741,7 @@ def verify_keys(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depend
             issues.append({"question": label, "reason": "Answer text is empty"})
         if k.mark_mismatch:
             issues.append({"question": label, "reason": "MARK MISMATCH: key marks differ from the question's maximum marks"})
-        for problem in (k.rubric or {}).get("problems") or []:
+        for problem in _verification_rubric_problems(k):
             issues.append({"question": label, "reason": f"Rubric: {problem}"})
     by_q: dict[str, int] = {}
     for k in keys:

@@ -1,0 +1,308 @@
+[
+  {
+    "profile_id": "cbse-10-165",
+    "version": "2026-27.1",
+    "kind": "question-paper",
+    "path": "exam/Class 10/ComputerApplication-SQP.pdf",
+    "sha256": "207a00e9633d36f5676aff26e0d79d2fbfd024c015976617aca9da1fc06cf254",
+    "page_count": 5,
+    "text_pages": 5
+  },
+  {
+    "profile_id": "cbse-10-165",
+    "version": "2026-27.1",
+    "kind": "answer-key",
+    "path": "exam/Class 10/ComputerApplication-MS.pdf",
+    "sha256": "c65aa84caab295ee52cccf4e849d2c398b501830f6db458a024a65d0cc4b3c49",
+    "page_count": 5,
+    "text_pages": 5
+  },
+  {
+    "profile_id": "cbse-10-101",
+    "version": "2026-27.1",
+    "kind": "question-paper",
+    "path": "exam/Class 10/EnglishComm-SQP.pdf",
+    "sha256": "ebc24ab4746b25179813d2a0878e0a93e4ff959d5aceed64c83ec42dad335ac1",
+    "page_count": 9,
+    "text_pages": 9
+  },
+  {
+    "profile_id": "cbse-10-101",
+    "version": "2026-27.1",
+    "kind": "answer-key",
+    "path": "exam/Class 10/EnglishComm-MS.pdf",
+    "sha256": "b4f8b09a335ccfca69c8752f51406c82313975b1fbcc41862d3a5c2b5b88a249",
+    "page_count": 5,
+    "text_pages": 5
+  },
+  {
+    "profile_id": "cbse-10-184",
+    "version": "2026-27.1",
+    "kind": "question-paper",
+    "path": "exam/Class 10/EnglishL-SQP.pdf",
+    "sha256": "211cdf7db97794fe6ef997035a49b9fe690f32be77819a7983d7785bf90c9fed",
+    "page_count": 11,
+    "text_pages": 11
+  },
+  {
+    "profile_id": "cbse-10-184",
+    "version": "2026-27.1",
+    "kind": "answer-key",
+    "path": "exam/Class 10/EnglishL-MS.pdf",
+    "sha256": "35c525185dc8d78288946a1d53a10e37d908e544002cf38b195a41eeda3b515a",
+    "page_count": 9,
+    "text_pages": 9
+  },
+  {
+    "profile_id": "cbse-10-002",
+    "version": "2026-27.1",
+    "kind": "question-paper",
+    "path": "exam/Class 10/HindiCourseA-SQP.pdf",
+    "sha256": "9a093d5f8cffcfa1d133e03314592cb1670785f088b193f581f36b654a6ae864",
+    "page_count": 12,
+    "text_pages": 12
+  },
+  {
+    "profile_id": "cbse-10-002",
+    "version": "2026-27.1",
+    "kind": "answer-key",
+    "path": "exam/Class 10/HindiCourseA-MS.pdf",
+    "sha256": "86145aa2750f418abfd4741a1c039989fce66f85f42799f2f0dd467d2680d7fe",
+    "page_count": 10,
+    "text_pages": 10
+  },
+  {
+    "profile_id": "cbse-10-085",
+    "version": "2026-27.1",
+    "kind": "question-paper",
+    "path": "exam/Class 10/HindiCourseB-SQP.pdf",
+    "sha256": "05d85760fe3d1103004f839af31ed6b1c85233b5236185adb0cd278bb75e16ac",
+    "page_count": 11,
+    "text_pages": 11
+  },
+  {
+    "profile_id": "cbse-10-085",
+    "version": "2026-27.1",
+    "kind": "answer-key",
+    "path": "exam/Class 10/HindiCourseB-MS.pdf",
+    "sha256": "52de19c85dfc6b1c9e18c03373207703830bb28fd73857884a61f9e1576cc9c0",
+    "page_count": 8,
+    "text_pages": 8
+  },
+  {
+    "profile_id": "cbse-10-241",
+    "version": "2026-27.1",
+    "kind": "question-paper",
+    "path": "exam/Class 10/MathsBasic-SQP.pdf",
+    "sha256": "f93dc38bc98654d2c5e65f0d77a186f1c1fade722c467348d983ec40a85f183d",
+    "page_count": 8,
+    "text_pages": 8
+  },
+  {
+    "profile_id": "cbse-10-241",
+    "version": "2026-27.1",
+    "kind": "answer-key",
+    "path": "exam/Class 10/MathsBasic-MS.pdf",
+    "sha256": "f46a7b8a3bd1a3b3127b9ee2a57cda5568238a141e908b971684479750d8c8be",
+    "page_count": 11,
+    "text_pages": 11
+  },
+  {
+    "profile_id": "cbse-10-041",
+    "version": "2026-27.1",
+    "kind": "question-paper",
+    "path": "exam/Class 10/MathsStandard-SQP.pdf",
+    "sha256": "9dec9cd2850c410b73b08c77d341f3e8b0ec4e533d852c0a25b4dadd49a262be",
+    "page_count": 6,
+    "text_pages": 6
+  },
+  {
+    "profile_id": "cbse-10-041",
+    "version": "2026-27.1",
+    "kind": "answer-key",
+    "path": "exam/Class 10/MathsStandard-MS.pdf",
+    "sha256": "5447c8c31176395b51315aec8bf5f92edd4293811013c9ab260dec74592beb29",
+    "page_count": 12,
+    "text_pages": 12
+  },
+  {
+    "profile_id": "cbse-10-086",
+    "version": "2026-27.1",
+    "kind": "question-paper",
+    "path": "exam/Class 10/Science-SQP.pdf",
+    "sha256": "09bf85a26357d9b3c44976e722a4532c383a99ccbd97e8fc9a0fb06c8ac64eff",
+    "page_count": 15,
+    "text_pages": 15
+  },
+  {
+    "profile_id": "cbse-10-086",
+    "version": "2026-27.1",
+    "kind": "answer-key",
+    "path": "exam/Class 10/Science-MS.pdf",
+    "sha256": "58226ef89c7adb7fe5c99aaee5c25ff4605457573b4aed61bcb9b39f7fc10b4c",
+    "page_count": 12,
+    "text_pages": 12
+  },
+  {
+    "profile_id": "cbse-10-087",
+    "version": "2026-27.1",
+    "kind": "question-paper",
+    "path": "exam/Class 10/SocialScience-SQP.pdf",
+    "sha256": "048679b1708f171a80f6538860f917196f36f87318c0c6278defa69ca40207bf",
+    "page_count": 12,
+    "text_pages": 12
+  },
+  {
+    "profile_id": "cbse-10-087",
+    "version": "2026-27.1",
+    "kind": "answer-key",
+    "path": "exam/Class 10/SocialScience-MS.pdf",
+    "sha256": "d21f30a143e1e53c1597a05aee4dd2b882cab79f4d2886bb8d938af7b903de1c",
+    "page_count": 8,
+    "text_pages": 8
+  },
+  {
+    "profile_id": "cbse-12-055",
+    "version": "2026-27.1",
+    "kind": "question-paper",
+    "path": "exam/Class 12/Accountancy-SQP.pdf",
+    "sha256": "35298fb86c3a53abc95fa5e5eeef9c91468449dcd288959a2a38491ddd16bb17",
+    "page_count": 13,
+    "text_pages": 13
+  },
+  {
+    "profile_id": "cbse-12-055",
+    "version": "2026-27.1",
+    "kind": "answer-key",
+    "path": "exam/Class 12/Accountancy-MS.pdf",
+    "sha256": "a56accd3c4f783e567201bc4a97dc6bc2be3dfdc7f17bb63cfdd8cbc62fe307b",
+    "page_count": 13,
+    "text_pages": 13
+  },
+  {
+    "profile_id": "cbse-12-044",
+    "version": "2026-27.1",
+    "kind": "question-paper",
+    "path": "exam/Class 12/Biology-SQP.pdf",
+    "sha256": "fdc0617326bf0ad69d35b3601c3707372fe4d91d61050bbf7dbe8c5bf12e2e36",
+    "page_count": 12,
+    "text_pages": 12
+  },
+  {
+    "profile_id": "cbse-12-044",
+    "version": "2026-27.1",
+    "kind": "answer-key",
+    "path": "exam/Class 12/Biology-MS.pdf",
+    "sha256": "867f80267cd70b7a064b169e5fa8747abcebcc765d89d6c36b4caea9d06dd474",
+    "page_count": 8,
+    "text_pages": 8
+  },
+  {
+    "profile_id": "cbse-12-043",
+    "version": "2026-27.1",
+    "kind": "question-paper",
+    "path": "exam/Class 12/Chemistry-SQP.pdf",
+    "sha256": "fb94ce8e81d196eb7f5d6034d8992c11c15c4c2f1ae09e3476632d0d3752303d",
+    "page_count": 12,
+    "text_pages": 12
+  },
+  {
+    "profile_id": "cbse-12-043",
+    "version": "2026-27.1",
+    "kind": "answer-key",
+    "path": "exam/Class 12/Chemistry-MS.pdf",
+    "sha256": "9ad0ccd3f7c7db7316e56c09547dc434e7d057885b367e7aeac51a87fbcb3774",
+    "page_count": 12,
+    "text_pages": 12
+  },
+  {
+    "profile_id": "cbse-12-083",
+    "version": "2026-27.1",
+    "kind": "question-paper",
+    "path": "exam/Class 12/ComputerScience-SQP.pdf",
+    "sha256": "97b79fa6503c63f6d0b11658cac568097219977a9a6fb746b72f5b2760192822",
+    "page_count": 8,
+    "text_pages": 8
+  },
+  {
+    "profile_id": "cbse-12-083",
+    "version": "2026-27.1",
+    "kind": "answer-key",
+    "path": "exam/Class 12/ComputerScience-MS.pdf",
+    "sha256": "2a84372a52140d24168c9fcfa250a63b90d530cb6914fa8f8c4d893f19ab9124",
+    "page_count": 10,
+    "text_pages": 10
+  },
+  {
+    "profile_id": "cbse-12-301",
+    "version": "2026-27.1",
+    "kind": "question-paper",
+    "path": "exam/Class 12/EnglishCore-SQP.pdf",
+    "sha256": "41f618fd95d77e4a17a5d0f5781dc9e80bf029c41cc903c434f55554e1040440",
+    "page_count": 12,
+    "text_pages": 12
+  },
+  {
+    "profile_id": "cbse-12-301",
+    "version": "2026-27.1",
+    "kind": "answer-key",
+    "path": "exam/Class 12/EnglishCore-MS.pdf",
+    "sha256": "306e8e4b5b9101e973d2e5dbf391634e103a1509caebc0600a9b40ece1d2c1b3",
+    "page_count": 9,
+    "text_pages": 9
+  },
+  {
+    "profile_id": "cbse-12-001",
+    "version": "2026-27.1",
+    "kind": "question-paper",
+    "path": "exam/Class 12/EnglishElective-SQP.pdf",
+    "sha256": "f17cdc388cc8c45f74c7a98ed0f3608e17f664850d90431e5cafccdc360b60ef",
+    "page_count": 12,
+    "text_pages": 12
+  },
+  {
+    "profile_id": "cbse-12-001",
+    "version": "2026-27.1",
+    "kind": "answer-key",
+    "path": "exam/Class 12/EnglishElective-MS.pdf",
+    "sha256": "d58e8df8b4be6469650995dc7db54d6fd1959c56b81d60e1d6b084b9baf52745",
+    "page_count": 7,
+    "text_pages": 7
+  },
+  {
+    "profile_id": "cbse-12-042",
+    "version": "2026-27.1",
+    "kind": "question-paper",
+    "path": "exam/Class 12/Physics-SQP.pdf",
+    "sha256": "ab406f5a98544cbef94c467a8e45b6471a7b206ee8ad31188eb165412f68e556",
+    "page_count": 10,
+    "text_pages": 10
+  },
+  {
+    "profile_id": "cbse-12-042",
+    "version": "2026-27.1",
+    "kind": "answer-key",
+    "path": "exam/Class 12/Physics-MS.pdf",
+    "sha256": "7aec844a3c6f4c4dbec23daed6553e5ea6e9e61624cce6a8cc5c2dd86d4b8f80",
+    "page_count": 15,
+    "text_pages": 15
+  },
+  {
+    "profile_id": "cbse-12-028",
+    "version": "2026-27.1",
+    "kind": "question-paper",
+    "path": "exam/Class 12/PolSci-SQP.pdf",
+    "sha256": "18adea2486f55a4613a4bdd49bd07b87c2a486a1e41e331b2822d2a74a85b1ee",
+    "page_count": 9,
+    "text_pages": 9
+  },
+  {
+    "profile_id": "cbse-12-028",
+    "version": "2026-27.1",
+    "kind": "answer-key",
+    "path": "exam/Class 12/PolSci-MS.pdf",
+    "sha256": "844c174b105a4fa090067342ffaf495a83f84463efacbf622a4f7fa5331ea692",
+    "page_count": 10,
+    "text_pages": 10
+  }
+]

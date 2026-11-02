@@ -12,7 +12,7 @@ from app.models import BackgroundJob, PendingUpload, Teacher, Workspace
 from app.ocr import remote, internvl
 from app.ocr.schemas import QuestionPageResult
 from app.security import create_token
-from tests.conftest import assign, make_pdf
+from tests.conftest import make_pdf
 
 
 @pytest.fixture
@@ -78,13 +78,11 @@ def test_storage_cache_hydration_and_cloud_retention(client, private_storage):
             cloud.key_for(invalid)
 
 
-def test_signed_upload_completion_is_authorized_validated_and_idempotent(client, auth, teach, private_storage):
+def test_signed_upload_completion_is_authorized_validated_and_idempotent(client, auth, private_storage):
     objects, _ = private_storage
     cls = client.post("/api/classes", headers=auth, json={"std":"10","section":"Cloud"}).json()
     subject = client.post("/api/subjects", headers=auth, json={"name":"Cloud English"}).json()
-    assign(cls["id"], subject["id"])
-    auth = teach  # the teacher runs the exam; management only built the roster
-    exam = client.post("/api/exams", headers=auth, json={"name":"Cloud exam","class_id":cls["id"],"subject_id":subject["id"],"exam_type":"Unit","total_marks":7}).json()
+    exam = client.post("/api/_test/legacy-exams", headers=auth, json={"name":"Cloud exam","class_id":cls["id"],"subject_id":subject["id"],"exam_type":"Unit","total_marks":7}).json()
     content = make_pdf()
     lease = client.post(f"/api/exams/{exam['id']}/uploads", headers=auth, json={"kind":"question-paper","filename":"paper.pdf","file_size":len(content)})
     assert lease.status_code == 201, lease.text
@@ -93,7 +91,7 @@ def test_signed_upload_completion_is_authorized_validated_and_idempotent(client,
     with SessionLocal() as db:
         row = db.get(PendingUpload, uid)
         objects[row.object_key] = b"not the announced file"
-        other = Teacher(name="Other",email=f"{uuid4().hex}@example.com",role="TEACHER",password_hash="!unused",profile_completed_at=datetime.now(timezone.utc))  # a teacher of another school
+        other = Teacher(name="Other",email=f"{uuid4().hex}@example.com",role="MANAGEMENT",password_hash="!unused",profile_completed_at=datetime.now(timezone.utc))
         db.add(other); db.flush()
         ws = Workspace(name="Other school",kind="SCHOOL",owner_id=other.id)
         db.add(ws); db.flush(); other.workspace_id=ws.id;db.commit()
@@ -118,9 +116,8 @@ def test_signed_upload_completion_is_authorized_validated_and_idempotent(client,
 
 def test_remote_ai_transport_and_unmeasured_confidence(monkeypatch, tmp_path):
     settings = get_settings()
-    monkeypatch.setattr(settings,"ai_provider","openrouter")
     monkeypatch.setattr(settings,"openrouter_api_key","private-ai-key")
-    monkeypatch.setattr(settings,"openrouter_model","qwen/qwen3-vl-8b-instruct")
+    monkeypatch.setattr(settings,"openrouter_model","google/gemini-3.5-flash-lite")
     image=tmp_path/"page.png";image.write_bytes(b"test image")
     captured={}
     raw='{"questions":[{"raw_question_number":"1","question_text":"A question","marks":2,"confidence":0.99}]}'
@@ -131,15 +128,30 @@ def test_remote_ai_transport_and_unmeasured_confidence(monkeypatch, tmp_path):
     result=internvl.chat_structured("system","read",QuestionPageResult,image)
     assert captured["headers"]["Authorization"] == "Bearer private-ai-key"
     assert captured["json"]["model"] == settings.openrouter_model
+    assert captured["json"]["reasoning"] == {"effort": "minimal"}
     assert captured["json"]["messages"][1]["content"][1]["image_url"]["url"].startswith("data:image/png;base64,")
     assert result.parsed.questions[0].confidence <= 0.5
-    monkeypatch.setattr(settings,"ai_provider","custom")
-    monkeypatch.setattr(settings,"custom_ai_base_url","https://private-model.example/v1")
-    monkeypatch.setattr(settings,"custom_ai_api_key","endpoint-key")
-    monkeypatch.setattr(settings,"custom_ai_model","private-vlm")
-    internvl.chat_structured("system","read",QuestionPageResult)
-    assert captured["json"]["model"] == "private-vlm"
-    assert captured["headers"]["Authorization"] == "Bearer endpoint-key"
+
+
+def test_openrouter_grading_limits_reasoning_and_reports_token_usage(monkeypatch):
+    settings = get_settings()
+    monkeypatch.setattr(settings, "openrouter_api_key", "test-key")
+    monkeypatch.setattr(settings, "openrouter_model", "test-model")
+    captured = {}
+
+    def post(url, **kwargs):
+        captured.update(kwargs["json"])
+        return httpx.Response(200, json={
+            "choices": [{"message": {"content": '{"partial":'}, "finish_reason": "length"}],
+            "usage": {"completion_tokens": 8192, "completion_tokens_details": {"reasoning_tokens": 8188}},
+        }, request=httpx.Request("POST", url))
+
+    monkeypatch.setattr(remote.httpx, "post", post)
+    with pytest.raises(remote.CompletionLimitError) as error:
+        remote.call("Grade", "Use the marking scheme", None, True)
+    assert captured["reasoning"] == {"effort": "low"}
+    assert "reasoning_tokens=8188" in str(error.value)
+    assert error.value.raw == '{"partial":'
 
 
 def test_versioned_migrations_are_repeatable(tmp_path):
@@ -151,10 +163,12 @@ def test_versioned_migrations_are_repeatable(tmp_path):
         config.attributes["connection"]=connection
         command.upgrade(config,"head"); command.upgrade(config,"head")
         assert set(Base.metadata.tables) <= set(inspect(connection).get_table_names())
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar() == "20261101_accounts"
+        for name,table in Base.metadata.tables.items():
+            assert {column.name for column in table.columns} <= {column["name"] for column in inspect(connection).get_columns(name)}
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar() == "20261031_cbse"
 
 
-def test_durable_queue_deduplicates_recovers_queued_and_flags_interrupted(client, auth, teach, monkeypatch):
+def test_durable_queue_deduplicates_recovers_queued_and_flags_interrupted(client, auth, monkeypatch):
     from app.services import persistent_queue as pq, job_queue as jq
     from app.services.pipeline import process_document
     monkeypatch.setattr(jq,"_waiting",[])
@@ -162,8 +176,7 @@ def test_durable_queue_deduplicates_recovers_queued_and_flags_interrupted(client
     monkeypatch.setattr(jq,"_ensure_workers",lambda:None)
     cls=client.post('/api/classes',headers=auth,json={'std':'12','section':'Durable'}).json()
     sub=client.post('/api/subjects',headers=auth,json={'name':'Durable English'}).json()
-    assign(cls['id'],sub['id'])
-    exam=client.post('/api/exams',headers=teach,json={'name':'Durable','class_id':cls['id'],'subject_id':sub['id'],'exam_type':'Unit','total_marks':2}).json()
+    exam=client.post('/api/_test/legacy-exams',headers=auth,json={'name':'Durable','class_id':cls['id'],'subject_id':sub['id'],'exam_type':'Unit','total_marks':2}).json()
     job=jq._Job('internvl',process_document,('question-paper','document-id'),exam_id=exam['id'])
     job_id=pq.persist(job)
     assert job_id and pq.persist(job) is None

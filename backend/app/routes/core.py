@@ -8,12 +8,13 @@ from datetime import datetime, timezone
 from ..config import AI_UNAVAILABLE_MESSAGE, get_settings
 from ..database import get_db
 from ..deps import err, get_exam
-from ..models import (AnswerKey, AnswerKeyDocument, AnswerSheetDocument, AuditLog, Evaluation,
-                      EvaluationItem, Exam, ExamQuestion, QuestionPaperDocument, SchoolClass,
-                      Student, StudentAnswer, Subject, Teacher, TeacherAssignment)
+from ..models import (AnswerKey, AnswerKeyDocument, AnswerSheetDocument, AuditLog, BackgroundJob,
+                      Evaluation, EvaluationItem, Exam, ExamQuestion, PendingUpload,
+                      QuestionPaperDocument, SchoolClass, Student, StudentAnswer, Subject, Teacher,
+                      TeacherAssignment, VerifiedReferenceExample)
 from ..ocr.internvl import AIUnavailable, check_model
-from ..security import current_teacher
-from ..services.accounts import account_view
+from ..security import SESSION_COOKIE, create_token, current_account, current_teacher, is_admin, require_browser_request, set_session_cookie, verify_password
+from ..login_limiter import login_limiter
 from ..serializers import EVALUATION_VIEW_LOAD, doc_view, evaluation_view, student_view
 from ..services.audit import audit
 from ..services.student_io import export_pdf, export_xlsx, import_students, reg_taken, split_class_name
@@ -22,9 +23,58 @@ from ..workspaces import owner_id, exams_query, classes_query, subjects_query, a
 router = APIRouter(prefix="/api")
 
 
+# ---------- auth ----------
+class LoginIn(BaseModel):
+    email: str = Field(max_length=320)
+    password: str = Field(max_length=1024)
+    browser_session: bool = False
+
+
 def teacher_view(t: Teacher) -> dict:
-    """The account as the apps see it. Sign-in, sign-out and /auth/me are in routes/auth.py."""
-    return account_view(t)
+    return {"id": t.id, "name": t.name, "email": t.email, "is_admin": is_admin(t),
+            "approval_status": t.approval_status, "profile_complete": bool(t.profile_completed_at),
+            "profile": t.profile, "rejection_reason": None, "email_verified": bool(t.google_sub),
+            "role": "ADMIN" if is_admin(t) else t.role, "workspace_id": t.workspace_id,
+            "must_change_password": t.must_change_password}
+
+
+@router.post("/auth/login")
+def login(body: LoginIn, request: Request, response: Response, db: Session = Depends(get_db)):
+    if body.browser_session:
+        require_browser_request(request)
+    s = get_settings()
+    login_limiter.check(request.client.host if request.client else "unknown", s.login_attempts_per_minute)
+    t = db.query(Teacher).filter_by(email=body.email.strip().lower()).first()
+    if not t or not verify_password(body.password, t.password_hash):
+        raise err(401, "INVALID_CREDENTIALS", "Email or password is incorrect.")
+    if not t.is_active:
+        raise err(403, "ACCOUNT_DISABLED", "Your account has been disabled. Contact the administrator.")
+    if t.workspace_id:
+        from ..models import Workspace
+        ws = db.get(Workspace, t.workspace_id)
+        if not ws or not ws.is_active:
+            raise err(403, "WORKSPACE_DISABLED", "Your workspace has been disabled. Contact the administrator.")
+    t.last_login_at = datetime.now(timezone.utc)
+    audit(db, exam_id=None, teacher_id=t.id, entity_type="teacher", entity_id=t.id, action="password_login")
+    db.commit()
+    access_token = create_token(t.id, t.session_version)
+    response.headers["Cache-Control"] = "no-store"
+    if body.browser_session:
+        set_session_cookie(response, t)
+        return {"teacher": teacher_view(t)}
+    return {"access_token": access_token, "token_type": "bearer", "teacher": teacher_view(t)}
+
+
+@router.post("/auth/logout", status_code=204)
+def logout(request: Request, response: Response):
+    require_browser_request(request)
+    response.delete_cookie(SESSION_COOKIE, path="/api", secure=get_settings().cookie_secure,
+                           httponly=True, samesite="strict")
+
+
+@router.get("/auth/me")
+def me(t: Teacher = Depends(current_account)):
+    return teacher_view(t)
 
 
 # ---------- system ----------
@@ -77,6 +127,9 @@ def cascade_delete_exam_records(db: Session, exam_id: str):
     db.query(QuestionPaperDocument).filter_by(exam_id=exam_id).delete(synchronize_session=False)
     db.query(ExamQuestion).filter_by(exam_id=exam_id).delete(synchronize_session=False)
     db.query(AuditLog).filter_by(exam_id=exam_id).delete(synchronize_session=False)
+    db.query(VerifiedReferenceExample).filter_by(exam_id=exam_id).delete(synchronize_session=False)
+    db.query(PendingUpload).filter_by(exam_id=exam_id).delete(synchronize_session=False)
+    db.query(BackgroundJob).filter_by(exam_id=exam_id).delete(synchronize_session=False)
     db.query(Exam).filter_by(id=exam_id).delete(synchronize_session=False)
 
     try:
@@ -401,10 +454,12 @@ class ExamIn(BaseModel):
     academic_year: str | None = None
     class_id: str
     subject_id: str
-    exam_type: str
+    exam_type: str = "Board pattern"
+    standard_profile_id: str | None = None
+    standard_options: dict | None = None
     exam_date: str | None = None
     duration_minutes: int | None = Field(None, gt=0)
-    total_marks: float = Field(gt=0)
+    total_marks: float | None = Field(None, gt=0)
     instructions: str | None = None
 
 
@@ -425,7 +480,8 @@ def exam_view(e: Exam) -> dict:
             "total_marks": e.total_marks, "instructions": e.instructions, "status": e.status,
             "files_purge_at": e.files_purge_at.isoformat() if e.files_purge_at else None,
             "files_purged_at": e.files_purged_at.isoformat() if e.files_purged_at else None,
-            "created_at": e.created_at.isoformat()}
+            "created_at": e.created_at.isoformat(), "standard_profile_id":e.standard_profile_id,
+            "standard_version":e.standard_version,"standard_options":e.standard_options}
 
 
 @router.get("/exams")
@@ -438,7 +494,8 @@ def create_exam(body: ExamIn, db: Session = Depends(get_db), t: Teacher = Depend
     c, s = db.get(SchoolClass, body.class_id), db.get(Subject, body.subject_id)
     if not c or c.teacher_id != owner_id(db, t) or not s or s.teacher_id != owner_id(db, t) or not assigned(db, t, c.id, s.id):
         raise err(404, "NOT_FOUND", "Class or subject not found in your assignments.")
-    data = body.model_dump()
+    from ..cbse.catalog import creation_data
+    data = creation_data(body,c,s)
     if not data.get("academic_year"):
         from datetime import datetime
         now = datetime.now()
@@ -470,6 +527,10 @@ def patch_exam(exam_id: str, body: ExamPatch, db: Session = Depends(get_db), t: 
     e = get_exam(db, t, exam_id)
     if e.status == "FINALIZED":
         raise err(409, "EXAM_FINALIZED", "A finalized exam cannot be edited.")
+    if e.standard_profile_id:
+        for field in ("total_marks","duration_minutes","exam_type","academic_year"):
+            if field in body.model_fields_set and getattr(body,field) != getattr(e,field):
+                raise err(400,"CBSE_FIXED_PATTERN","Board-pattern totals, duration, type and academic year are fixed.")
     for k, v in body.model_dump(exclude_unset=True).items():
         old = getattr(e, k)
         if v != old:

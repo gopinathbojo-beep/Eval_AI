@@ -3,7 +3,6 @@ Tests for Classes, Subjects, and Students CRUD and dynamic Marksheet export.
 """
 
 from __future__ import annotations
-from .conftest import assign
 import pytest
 
 
@@ -96,17 +95,16 @@ def test_dynamic_marksheet_download_endpoint(client, auth):
     assert len(r.content) > 1000  # valid binary Excel workbook
 
 
-def test_cascade_delete_class_and_subject_with_assigned_exams(client, auth, teach):
-    c, m, h = client, auth, teach
+def test_cascade_delete_class_and_subject_with_assigned_exams(client, auth):
+    c, h = client, auth
 
     # 1. Create Class, Subject, Student, Exam
-    cls = c.post("/api/classes", headers=m, json={"name": "10-Cascade"}).json()
-    sub = c.post("/api/subjects", headers=m, json={"name": "Cascade Subject 10"}).json()
-    assign(cls["id"], sub["id"])
-    st = c.post("/api/students", headers=m, json={
+    cls = c.post("/api/classes", headers=h, json={"name": "10-Cascade"}).json()
+    sub = c.post("/api/subjects", headers=h, json={"name": "Cascade Subject 10"}).json()
+    st = c.post("/api/students", headers=h, json={
         "name": "Cascade Student", "roll_number": "999", "class_id": cls["id"]
     }).json()
-    exam = c.post("/api/exams", headers=h, json={
+    exam = c.post("/api/_test/legacy-exams", headers=h, json={
         "name": "Cascade Exam", "academic_year": "2026-27",
         "class_id": cls["id"], "subject_id": sub["id"],
         "exam_type": "Unit", "total_marks": 50
@@ -116,7 +114,7 @@ def test_cascade_delete_class_and_subject_with_assigned_exams(client, auth, teac
     assert c.get(f"/api/exams/{exam['id']}", headers=h).status_code == 200
 
     # 2. Deleting the class should cleanly cascade delete the exam, the student, and the class
-    r_del_cls = c.delete(f"/api/classes/{cls['id']}", headers=m)
+    r_del_cls = c.delete(f"/api/classes/{cls['id']}", headers=h)
     assert r_del_cls.status_code == 200, r_del_cls.text
     assert r_del_cls.json()["deleted"] is True
 
@@ -126,22 +124,21 @@ def test_cascade_delete_class_and_subject_with_assigned_exams(client, auth, teac
     assert c.get(f"/api/students?class_id={cls['id']}", headers=h).status_code == 404
 
     # 3. Create another exam for subject, then delete subject
-    cls2 = c.post("/api/classes", headers=m, json={"name": "12-Cascade"}).json()
-    assign(cls2["id"], sub["id"])
-    exam2 = c.post("/api/exams", headers=h, json={
+    cls2 = c.post("/api/classes", headers=h, json={"name": "12-Cascade"}).json()
+    exam2 = c.post("/api/_test/legacy-exams", headers=h, json={
         "name": "Cascade Exam 2", "academic_year": "2026-27",
         "class_id": cls2["id"], "subject_id": sub["id"],
         "exam_type": "Unit", "total_marks": 50
     }).json()
 
     # Deleting the subject should cascade delete exam2 and subject
-    r_del_sub = c.delete(f"/api/subjects/{sub['id']}", headers=m)
+    r_del_sub = c.delete(f"/api/subjects/{sub['id']}", headers=h)
     assert r_del_sub.status_code == 200, r_del_sub.text
     assert r_del_sub.json()["deleted"] is True
     assert c.get(f"/api/exams/{exam2['id']}", headers=h).status_code == 404
 
     # Clean up cls2
-    c.delete(f"/api/classes/{cls2['id']}", headers=m)
+    c.delete(f"/api/classes/{cls2['id']}", headers=h)
 
 
 

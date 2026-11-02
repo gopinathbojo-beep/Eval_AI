@@ -7,16 +7,8 @@ from pydantic import AliasChoices, Field, model_validator
 from dotenv import dotenv_values
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-AI_UNAVAILABLE_MESSAGE = (
-    "InternVL3.5 4B is not available. Start Ollama and ensure "
-    "blaifa/InternVL3_5:4B is installed."
-)
-AI_BAD_RESPONSE_MESSAGE = "InternVL3.5 4B failed to return a valid structured response."
-INDIC_UNAVAILABLE_MESSAGE = (
-    "IndicOCR is not available. Start the IndicOCR service "
-    "and check INDIC_OCR_URL."
-)
-INDIC_BAD_RESPONSE_MESSAGE = "IndicOCR failed to read this page."
+AI_UNAVAILABLE_MESSAGE = "OpenRouter is unavailable. Check the API key, Gemini model access and credit balance."
+AI_BAD_RESPONSE_MESSAGE = "Gemini did not return a valid structured response. Review the document and retry."
 
 
 def _root_oauth(name: str, legacy: str = "", default: str = "") -> str:
@@ -36,13 +28,17 @@ class Settings(BaseSettings):
     supabase_service_role_key: str = ""
     supabase_storage_bucket: str = "eval-ai-documents"
     storage_timeout: int = 120
-    ai_provider: Literal["ollama", "openrouter", "custom"] = "ollama"
     openrouter_api_key: str = ""
-    openrouter_model: str = ""
-    custom_ai_base_url: str = ""
-    custom_ai_api_key: str = ""
-    custom_ai_model: str = ""
+    openrouter_model: str = "google/gemini-3.5-flash-lite"
     ai_request_logprobs: bool = False
+    # OCR transcribes source evidence; reserve output tokens for the document.
+    # Text-only grading retains the model's own reasoning defaults.
+    ai_ocr_reasoning_effort: Literal["minimal", "low", "medium", "high"] = "minimal"
+    ai_text_reasoning_effort: Literal["low", "high"] = "low"
+    ai_timeout: int = 300
+    ai_max_retries: int = 2
+    ai_max_output_tokens: int = 8192
+    ai_parallel_jobs: int = 1
     durable_jobs: bool = False
     auto_migrate: bool = False
     public_web_url: str = ""
@@ -54,23 +50,26 @@ class Settings(BaseSettings):
             callback = urlsplit(self.google_redirect_uri)
             if not self.public_web_url.startswith("https://") or self.public_web_url.rstrip("/") != f"{callback.scheme}://{callback.netloc}":
                 raise ValueError("PUBLIC_WEB_URL must be the HTTPS origin of GOOGLE_REDIRECT_URI.")
-        if self.ai_provider == "openrouter" and not (self.openrouter_api_key and self.openrouter_model):
+        if not (self.openrouter_api_key and self.openrouter_model):
             raise ValueError("OpenRouter requires OPENROUTER_API_KEY and OPENROUTER_MODEL.")
-        if self.ai_provider == "custom" and not (self.custom_ai_base_url.startswith("https://") and self.custom_ai_model and self.custom_ai_api_key):
-            raise ValueError("Custom AI requires an HTTPS base URL, model and API key.")
         if self.storage_provider == "supabase" and not (self.supabase_url.startswith("https://") and self.supabase_service_role_key and self.supabase_storage_bucket):
             raise ValueError("Supabase storage requires HTTPS SUPABASE_URL, service-role key and bucket.")
         return self
 
     @property
     def ai_model(self) -> str:
-        return self.openrouter_model if self.ai_provider == "openrouter" else self.custom_ai_model if self.ai_provider == "custom" else self.internvl_model
+        return self.openrouter_model
+
+    @property
+    def ai_provider(self) -> str:
+        """Compatibility alias retained in existing API responses."""
+        return "openrouter"
 
     environment: Literal["development", "production"] = "development"
     cookie_secure: bool = False
     allowed_hosts: str = "localhost,127.0.0.1,testserver"
     login_attempts_per_minute: int = 20
-    admin_email: str = ""  # the platform owner (Super Admin); empty = none, create console users with app.create_admin
+    admin_email: str = "seyamesh91@gmail.com"
     google_client_id: str = Field(default_factory=lambda: _root_oauth("GOOGLE_CLIENT_ID", "Client_ID"),
                                   validation_alias=AliasChoices("GOOGLE_CLIENT_ID", "Client_ID"))
     google_client_secret: str = Field(default_factory=lambda: _root_oauth("GOOGLE_CLIENT_SECRET", "Client_secret"),
@@ -93,83 +92,28 @@ class Settings(BaseSettings):
                 raise ValueError("Production ALLOWED_HOSTS must contain explicit hostnames.")
         return self
 
-    internvl_enabled: bool = True
-    internvl_model: str = "blaifa/InternVL3_5:4B"
-    internvl_api_url: str = "http://127.0.0.1:11434"
-    internvl_timeout: int = 300
-    internvl_max_retries: int = 2
-    internvl_num_ctx: int = 8192
-    internvl_num_predict: int = 4096
-
-    # Indian-language subjects are read by IndicOCR instead of InternVL (separate IndicOCR service)
-    indic_ocr_enabled: bool = False
-    indic_ocr_url: str = "http://127.0.0.1:8090"
-    indic_ocr_timeout: int = 300
-    indic_subjects: str = ("tamil,தமிழ்,hindi,हिन्दी,telugu,kannada,malayalam,marathi,bengali,gujarati,"
-                           "odia,punjabi,assamese,urdu,sanskrit")
-    # Optional Ollama model that grades and labels those subjects. Empty = InternVL grades, AI labeler off.
-    indic_text_model: str = ""
-
-    # GPU jobs run on worker threads, up to this many at once per engine. Keep INTERNVL_PARALLEL_JOBS at or below
-    # OLLAMA_NUM_PARALLEL on the Ollama machine, or Ollama just queues the extra requests.
-    internvl_parallel_jobs: int = 1
-    indic_parallel_jobs: int = 1
     # Inline runs every job in the caller's thread (tests)
     job_queue_inline: bool = False
 
-    # Empty = SQLite in the data dir. Postgres: postgresql+psycopg://user:password@host:5432/dbname
-    database_url: str = ""
     secret_key: str = ""
     access_token_minutes: int = 480
-    data_dir: str = "data"
+    data_dir: str = "../data"
     pdf_render_dpi: int = 300
     ocr_max_side: int = 2560
     max_upload_mb: int = 50
-    # Web (school + teacher) :5173, Admin :5174, Parents :5175; :4173 is vite preview
-    cors_origins: str = ("http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174,"
-                         "http://localhost:5175,http://127.0.0.1:5175,http://localhost:4173,http://127.0.0.1:4173")
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173"
     min_label_confidence: float = 0.4
-
-    # Links in emails (invites, resets, signup checks) open these apps
-    web_url: str = "http://localhost:5173"
-    admin_url: str = "http://localhost:5174"
-    parent_url: str = "http://localhost:5175"
-    # Email. Without SMTP_HOST, emails are written to data/outbox/ instead of being sent (development).
-    smtp_host: str = ""
-    smtp_port: int = 587
-    smtp_user: str = ""
-    smtp_password: str = ""
-    smtp_from: str = "ADEM <noreply@localhost>"
-    smtp_starttls: bool = True
-    # Google sign-in (google_client_id / google_client_secret) is defined above: empty = switched off.
-    # Supabase project. The secret key is server-only and must never reach a frontend.
-    supabase_url: str = ""
-    supabase_publishable_key: str = ""
-    supabase_secret_key: str = ""
-    supabase_jwks_url: str = ""
-    # Sign-in protection
-    login_max_failures: int = 5
-    login_lock_minutes: int = 15
-    # Policy versions recorded with each consent
-    privacy_version: str = "2026-10"
-    terms_version: str = "2026-10"
-    # Razorpay. Empty keys = simulation mode: orders and payments are simulated, no money moves.
-    razorpay_key_id: str = ""
-    razorpay_key_secret: str = ""
-    razorpay_webhook_secret: str = ""
-    # GST on credit packs (pack prices include it) and the details printed on invoices
-    gst_percent: float = 18.0
-    invoice_legal_name: str = "ADEM"
-    invoice_gstin: str = ""
-    invoice_address: str = ""
 
     @property
     def data_path(self) -> Path:
-        # a relative DATA_DIR is taken from the backend folder, not from wherever the server was started
-        p = Path(self.data_dir)
-        if not p.is_absolute():
-            p = Path(__file__).resolve().parents[1] / p
-        p = p.resolve()  # "backend/../data" -> "D:/Eval_AI/data": stored file paths are compared against it
+        if self.data_dir and self.data_dir != "../data":
+            p = Path(self.data_dir).resolve()
+            p.mkdir(parents=True, exist_ok=True)
+            return p
+        root_data = Path(__file__).resolve().parent.parent.parent / "data"
+        if root_data.exists():
+            return root_data
+        p = Path(self.data_dir).resolve()
         p.mkdir(parents=True, exist_ok=True)
         return p
 
@@ -189,8 +133,8 @@ def get_settings() -> Settings:
 
 
 def ai_unavailable_message() -> str:
-    return AI_UNAVAILABLE_MESSAGE if get_settings().ai_provider == "ollama" else "The configured AI provider is unavailable. Check its model, credentials and credit balance."
+    return AI_UNAVAILABLE_MESSAGE
 
 
 def ai_bad_response_message() -> str:
-    return AI_BAD_RESPONSE_MESSAGE if get_settings().ai_provider == "ollama" else "The AI provider did not return a valid structured response. Review the document and retry."
+    return AI_BAD_RESPONSE_MESSAGE

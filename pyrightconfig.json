@@ -1,0 +1,7 @@
+{
+  // Same checking level Pylance uses without this file.
+  "typeCheckingMode": "off",
+  "executionEnvironments": [
+    { "root": "." }
+  ]
+}

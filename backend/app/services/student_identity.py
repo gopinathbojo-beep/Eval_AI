@@ -17,7 +17,6 @@ from ..documents.storage import abs_path
 from ..models import AnswerSheetDocument, Evaluation, Exam, Student
 from ..ocr import prompts
 from ..ocr.internvl import AIResponseError, AIUnavailable, chat_structured, check_model
-from ..ocr.indic import IndicResponseError, IndicUnavailable, check_indic, read_identity, uses_indic_ocr
 from ..ocr.schemas import StudentIdentityResult
 from .audit import audit
 from .evaluation_service import auto_evaluate_sheet
@@ -158,17 +157,17 @@ def _identity_pages(doc: AnswerSheetDocument) -> list:
     return [abs_path(p["processed_file"]) for p in doc.pages[:IDENTITY_PAGES]]
 
 
-def _internvl_identity(image) -> dict:
+def _gemini_identity(image) -> dict:
     return chat_structured(prompts.IDENTITY_SYSTEM, prompts.student_identity_prompt(), StudentIdentityResult,
                            image).parsed.model_dump()
 
 
 def _reader(exam: Exam | None):
-    """Indian-language exams read the header with IndicOCR (Tamil labels such as "பதிவு எண்"), others with InternVL."""
-    return read_identity if exam is not None and exam.subject and uses_indic_ocr(exam.subject.name) else _internvl_identity
+    """Gemini reads English, Hindi, Tamil and bilingual identity headers."""
+    return _gemini_identity
 
 
-def _read_page(page, read_fn=_internvl_identity) -> dict:
+def _read_page(page, read_fn=_gemini_identity) -> dict:
     crop = page.parent / f"identity-{page.name}"
     with Image.open(page) as img:
         img.crop((0, 0, img.width, max(1, int(img.height * HEADER_FRACTION)))).save(crop)
@@ -181,7 +180,7 @@ def _read_page(page, read_fn=_internvl_identity) -> dict:
         crop.unlink(missing_ok=True)
 
 
-def _read_header(doc: AnswerSheetDocument, read_fn=_internvl_identity) -> dict:
+def _read_header(doc: AnswerSheetDocument, read_fn=_gemini_identity) -> dict:
     """Read the details from the first IDENTITY_PAGES pages, stopping at the first page that gives an ID."""
     read: dict = {}
     for page in _identity_pages(doc):
@@ -195,7 +194,7 @@ def _read_header(doc: AnswerSheetDocument, read_fn=_internvl_identity) -> dict:
 ROTATIONS = (90, 270, 180)
 
 
-def _read_rotated(page, angle: int, read_fn=_internvl_identity) -> dict:
+def _read_rotated(page, angle: int, read_fn=_gemini_identity) -> dict:
     """Read the details from a whole page turned by `angle` degrees."""
     turned = page.parent / f"identity-r{angle}-{page.name}"
     with Image.open(page) as img:
@@ -215,7 +214,7 @@ def identify_with_rotation(db: Session, exam: Exam, doc: AnswerSheetDocument) ->
     """
     read_fn = _reader(exam)
     read = _read_header(doc, read_fn)
-    legible = read.pop("legible", False)  # IndicOCR only: the page read as upright text, so turning it cannot help
+    legible = read.pop("legible", False)
     result = match_student(db, exam, read)
     # Turning only helps when nothing usable was read; a clear read that conflicts with a record stays held
     if result["match"] == "AUTO" or legible or not result["note"].startswith((NOTE_NO_ID, NOTE_NO_MATCH)):
@@ -224,7 +223,7 @@ def identify_with_rotation(db: Session, exam: Exam, doc: AnswerSheetDocument) ->
         for angle in ROTATIONS:
             try:
                 alt = match_student(db, exam, _read_rotated(page, angle, read_fn))
-            except (AIResponseError, IndicResponseError):
+            except AIResponseError:
                 continue
             if alt["match"] == "AUTO":
                 alt["note"] = f"{alt['note']} (page was photographed rotated)"
@@ -345,14 +344,14 @@ def _identify(doc_id: str, teacher_id: str | None) -> str:
                 return STOPPED
             db.commit()
         try:
-            check_indic() if _reader(exam) is read_identity else check_model()
+            check_model()
             result = identify_with_rotation(db, exam, doc)
-        except (AIUnavailable, IndicUnavailable):
+        except AIUnavailable:
             db.rollback()
             _set_hold(doc_id, "The AI model is not available, so the student details could not be read. "
                               "Pick the student or retry once the model is running.")
             return STOPPED
-        except (AIResponseError, IndicResponseError):
+        except AIResponseError:
             db.rollback()
             _set_hold(doc_id, "The student details on this sheet could not be read. Pick the student or retry.")
             return HELD

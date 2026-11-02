@@ -1,9 +1,8 @@
-"""How sure InternVL was of the text it read, measured from the model itself (Ollama's token log-probabilities).
+"""How sure the hosted model was of transcribed text, measured from token probabilities when available.
 
-InternVL replies in JSON, one token at a time, choosing the most likely token (temperature 0). The probability of the
+Gemini replies in JSON at temperature zero. The probability of the
 chosen token is its certainty at that step. Only the tokens inside the transcribed text count (answer_text,
-question_text): JSON punctuation and field names say nothing about how well the page was read. As in IndicOCR's
-service (indic_ocr_service/confidence.py), Tesseract and Google Vision:
+question_text): JSON punctuation and field names say nothing about how well the page was read:
   word   the probability of the whole word: the product of its tokens' probabilities
   field  the mean of its word confidences
 

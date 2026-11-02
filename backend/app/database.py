@@ -71,10 +71,8 @@ def init_db():
     if get_settings().auto_migrate:
         migrate_database()
     elif engine.dialect.name == "sqlite":
-        _rename_legacy_account_tables()
         Base.metadata.create_all(engine)
         _add_missing_columns()
-        _adopt_legacy_accounts()
     else:
         # Cloud schemas are versioned; never silently mutate them with create_all.
         with engine.connect() as connection:
@@ -97,25 +95,13 @@ def migrate_database():
 
 
 # Columns added after a table first shipped. create_all never alters an existing table, so they are added here.
-_ADDED_COLUMNS = {"teachers": {"role": "VARCHAR(20) NOT NULL DEFAULT 'TEACHER'", "workspace_id": "VARCHAR(36)",
-                              "must_change_password": "BOOLEAN NOT NULL DEFAULT FALSE",
-                              "is_active": "BOOLEAN NOT NULL DEFAULT TRUE", "google_sub": "VARCHAR(255)",
-                              "session_version": "INTEGER NOT NULL DEFAULT 0", "last_login_at": "DATETIME",
-                              "approval_status": "VARCHAR(20) NOT NULL DEFAULT 'APPROVED'",
-                              "registration_source": "VARCHAR(20) NOT NULL DEFAULT 'ADMIN'", "profile": "JSON",
-                              "profile_completed_at": "DATETIME", "rejection_reason": "VARCHAR(500)",
-                              "phone": "VARCHAR(30) NOT NULL DEFAULT ''", "admin_role": "VARCHAR(20)",
-                              "email_verified_at": "DATETIME", "failed_attempts": "INTEGER NOT NULL DEFAULT 0",
-                              "locked_until": "DATETIME", "created_by": "VARCHAR(36)"},
-                 "workspaces": {"kind": "VARCHAR(10) NOT NULL DEFAULT 'SCHOOL'", "owner_id": "VARCHAR(36)",
-                                "is_active": "BOOLEAN NOT NULL DEFAULT TRUE", "status": "VARCHAR(20) NOT NULL DEFAULT 'ACTIVE'", "board": "VARCHAR(20) NOT NULL DEFAULT 'CBSE'",
-                                "address": "TEXT NOT NULL DEFAULT ''", "city": "VARCHAR(100) NOT NULL DEFAULT ''",
-                                "state": "VARCHAR(100) NOT NULL DEFAULT ''", "phone": "VARCHAR(30) NOT NULL DEFAULT ''",
-                                "approved_at": "DATETIME", "approved_by": "VARCHAR(36)"},
+_ADDED_COLUMNS = {"teachers": {"role": "VARCHAR(20) NOT NULL DEFAULT 'TEACHER'", "workspace_id": "VARCHAR(36)", "must_change_password": "BOOLEAN NOT NULL DEFAULT 0", "is_active": "BOOLEAN NOT NULL DEFAULT 1", "google_sub": "VARCHAR(255)",
+                                "session_version": "INTEGER NOT NULL DEFAULT 0", "last_login_at": "DATETIME",
+                                "approval_status": "VARCHAR(20) NOT NULL DEFAULT 'APPROVED'",
+                                "registration_source": "VARCHAR(20) NOT NULL DEFAULT 'ADMIN'", "profile": "JSON",
+                                "profile_completed_at": "DATETIME", "rejection_reason": "VARCHAR(500)"},
                  "exam_questions": {"choice_group": "VARCHAR(50)", "answer_any": "INTEGER",
-                                    "compulsory": "BOOLEAN NOT NULL DEFAULT FALSE"},
-                 "exams": {"origin": "VARCHAR(20) NOT NULL DEFAULT 'TEACHER'"},
-                 "audit_logs": {"ip": "VARCHAR(64) NOT NULL DEFAULT ''"},
+                                     "compulsory": "BOOLEAN NOT NULL DEFAULT 0"},
                  "answer_keys": {"rubric": "JSON", "rubric_status": "VARCHAR(20) NOT NULL DEFAULT 'UNREVIEWED'"}}
 for _table in ("classes", "subjects", "exams", "audit_logs", "verified_reference_examples"):
     _ADDED_COLUMNS.setdefault(_table, {})["workspace_id"] = "VARCHAR(36)"
@@ -139,60 +125,3 @@ def _add_missing_columns() -> None:
                     logging.getLogger("adem").info("Database: added %s.%s", table, name)
         if insp.has_table("teachers"):
             conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_teachers_google_sub ON teachers (google_sub)"))
-
-
-# ---------- local databases from before the account merge (users + schools) ----------
-_ROLE = {"platform_admin": "ADMIN", "school_manager": "MANAGEMENT", "teacher": "TEACHER", "parent": "PARENT"}
-
-
-def _rename_legacy_account_tables() -> None:
-    """A local database made before the account merge keeps its accounts in users and schools. They become teachers
-    and workspaces by renaming, which also points every foreign key at the new names (SQLite 3.26+)."""
-    insp = inspect(engine)
-    with engine.begin() as conn:
-        if insp.has_table("users") and not insp.has_table("teachers"):
-            conn.execute(text("ALTER TABLE users RENAME TO teachers"))
-            logging.getLogger("adem").info("Database: users renamed to teachers")
-        if insp.has_table("schools") and not insp.has_table("workspaces"):
-            conn.execute(text("ALTER TABLE schools RENAME TO workspaces"))
-            logging.getLogger("adem").info("Database: schools renamed to workspaces")
-
-
-def _adopt_legacy_accounts() -> None:
-    """Rows from the old users and schools tables in the merged columns: role names, active and approval status, the
-    session version, the school as workspace (owned by its manager), a family workspace for each parent, and the
-    workspace of every class, subject and exam. Idempotent: only rows still in the old form are touched."""
-    insp = inspect(engine)
-    if not insp.has_table("teachers") or "token_version" not in {c["name"] for c in insp.get_columns("teachers")}:
-        return
-    log = logging.getLogger("adem")
-    with engine.begin() as conn:
-        for old, new in _ROLE.items():
-            conn.execute(text("UPDATE teachers SET role = :new, session_version = COALESCE(token_version, 0), "
-                              "workspace_id = COALESCE(workspace_id, school_id), "
-                              "is_active = CASE WHEN status IN ('suspended', 'removed') THEN FALSE ELSE TRUE END, "
-                              "approval_status = CASE WHEN status = 'invited' THEN 'INVITED' ELSE 'APPROVED' END, "
-                              # a parent's profile also needs the child (a class of their own); without one the web
-                              # app asks for it
-                              "profile_completed_at = COALESCE(profile_completed_at, CASE WHEN :new != 'PARENT' OR EXISTS "
-                              "(SELECT 1 FROM classes c WHERE c.teacher_id = teachers.id) THEN created_at END) "
-                              "WHERE role = :old"), {"old": old, "new": new})
-        conn.execute(text("UPDATE teachers SET admin_role = COALESCE(admin_role, 'viewer') WHERE role = 'ADMIN'"))
-        if "school_id" in {c["name"] for c in insp.get_columns("teachers")}:
-            conn.execute(text("UPDATE workspaces SET kind = 'SCHOOL', owner_id = (SELECT t.id FROM teachers t "
-                              "WHERE t.school_id = workspaces.id AND t.role = 'MANAGEMENT' ORDER BY t.created_at LIMIT 1) "
-                              "WHERE owner_id IS NULL"))
-        import uuid
-        parents = conn.execute(text("SELECT id, name, created_at FROM teachers WHERE role = 'PARENT' AND workspace_id IS NULL")).all()
-        for pid, name, created in parents:
-            wid = str(uuid.uuid4())
-            conn.execute(text("INSERT INTO workspaces (id, kind, name, owner_id, is_active, status, board, address, city, "
-                              "state, phone, created_at) VALUES (:id, 'FAMILY', :name, :owner, TRUE, 'ACTIVE', 'CBSE', '', "
-                              "'', '', '', :created)"), {"id": wid, "name": name, "owner": pid, "created": created})
-            conn.execute(text("UPDATE teachers SET workspace_id = :w WHERE id = :p"), {"w": wid, "p": pid})
-        for table in ("classes", "subjects", "exams"):
-            conn.execute(text(f"UPDATE {table} SET workspace_id = (SELECT t.workspace_id FROM teachers t "
-                              f"WHERE t.id = {table}.teacher_id) WHERE workspace_id IS NULL"))
-        if parents:
-            log.info("Database: %d parent account(s) given a family workspace", len(parents))
-

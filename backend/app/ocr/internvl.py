@@ -1,6 +1,8 @@
-"""InternVL3.5 4B through Ollama's NATIVE /api/chat. No other model, no mock mode, no silent fallback."""
+"""Structured Gemini extraction and grading through OpenRouter.
+
+The module name remains as an internal compatibility shim for existing imports.
+"""
 from __future__ import annotations
-import base64
 import logging
 import re
 import threading
@@ -9,7 +11,7 @@ from pathlib import Path
 from typing import Type, TypeVar
 import httpx
 from pydantic import BaseModel, ValidationError
-from ..config import AI_BAD_RESPONSE_MESSAGE, AI_UNAVAILABLE_MESSAGE, get_settings, ai_unavailable_message, ai_bad_response_message
+from ..config import get_settings, ai_unavailable_message, ai_bad_response_message
 from . import confidence
 from .parser import ParseError, extract_json_object
 
@@ -18,7 +20,7 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class AIUnavailable(Exception):
-    """Ollama unreachable, disabled, or the required model is not installed."""
+    """OpenRouter is unreachable or the configured Gemini model is unavailable."""
     def __init__(self, detail: str = ""):
         super().__init__(ai_unavailable_message())
         self.detail = detail
@@ -38,86 +40,40 @@ class AICall:
     attempts: int
 
 
-def _same_model(a: str, b: str) -> bool:
-    return a.strip().lower() == b.strip().lower()
-
-
 def check_model(model: str | None = None) -> dict:
-    """Raises AIUnavailable unless Ollama is up AND the exact model (default InternVL) is installed."""
-    s = get_settings()
-    if s.ai_provider != "ollama":
-        from .remote import status
-        try:
-            return status()
-        except (httpx.HTTPError, ValueError, RuntimeError):
-            raise AIUnavailable("Remote AI provider is unavailable or its configured vision model cannot be used.") from None
-    model = model or s.internvl_model
-    if not s.internvl_enabled:
-        raise AIUnavailable("INTERNVL_ENABLED is false")
+    """Raise AIUnavailable unless OpenRouter exposes the configured vision model."""
+    from .remote import status
     try:
-        r = httpx.get(f"{s.internvl_api_url}/api/tags", timeout=10)
-        r.raise_for_status()
-    except httpx.HTTPError as e:
-        raise AIUnavailable(f"Cannot reach Ollama at {s.internvl_api_url}: {e}") from e
-    names = [m.get("name", "") for m in r.json().get("models", [])] + \
-            [m.get("model", "") for m in r.json().get("models", [])]
-    if not any(_same_model(n, model) for n in names):
-        raise AIUnavailable(f"Model {model} not found. Installed: {sorted(set(names))}")
-    return {"available": True, "model": model, "url": s.internvl_api_url}
+        result = status()
+        if model and model != result["model"]:
+            raise RuntimeError("Only the configured OpenRouter model may be used")
+        return result
+    except (httpx.HTTPError, ValueError, RuntimeError):
+        raise AIUnavailable("OpenRouter or its configured Gemini vision model is unavailable.") from None
 
 
 def unload_model(model: str) -> None:
-    """Free a model's GPU memory in Ollama now (keep_alive 0) instead of after its idle timeout."""
-    s = get_settings()
-    if s.ai_provider != "ollama":
-        return
-    try:
-        httpx.post(f"{s.internvl_api_url}/api/generate", json={"model": model, "keep_alive": 0}, timeout=30)
-    except httpx.HTTPError as e:
-        log.warning("Could not unload %s from Ollama: %s", model, e)
+    """Compatibility no-op: hosted OpenRouter models do not occupy local GPU memory."""
+    return None
 
 
 def _call_once(system: str, user: str, image_path: Path | None, format: str | None = "json",
                model: str | None = None) -> str:
-    s = get_settings()
-    if s.ai_provider != "ollama":
-        from .remote import call
-        try:
-            raw, probabilities = call(system, user, Path(image_path) if image_path else None, bool(format), model)
-        except (httpx.ConnectError, httpx.ConnectTimeout):
-            raise AIUnavailable("Cannot connect to the remote AI provider.") from None
-        except httpx.HTTPStatusError as error:
-            if error.response.status_code == 429:
-                raise AIUnavailable("The AI provider is rate limited. Retry later; no automatic repeated calls were made.") from None
-            if error.response.status_code in {401, 402, 403}:
-                raise AIUnavailable("The AI provider rejected access. Check the API key, model access and available credits.") from None
-            raise
-        except ValueError as error:
-            raise AIResponseError("FAILED_PARSE", str(error)) from None
-        _last.logprobs = probabilities
-        return raw
-    msg: dict = {"role": "user", "content": user}
-    if image_path is not None:
-        msg["images"] = [base64.b64encode(Path(image_path).read_bytes()).decode()]
-    payload: dict = {
-        "model": model or s.internvl_model,
-        "stream": False,
-        "options": {"temperature": 0, "repeat_penalty": 1.15, "num_ctx": s.internvl_num_ctx, "num_predict": s.internvl_num_predict},
-        "messages": [{"role": "system", "content": system}, msg],
-        "logprobs": True,  # each token's probability: the measured reading confidence (confidence.py)
-    }
-    if format:
-        payload["format"] = format
+    from .remote import call
     try:
-        r = httpx.post(f"{s.internvl_api_url}/api/chat", json=payload, timeout=s.internvl_timeout)
-    except (httpx.ConnectError, httpx.ConnectTimeout) as e:
-        raise AIUnavailable(f"Cannot connect to Ollama: {e}") from e
-    if r.status_code == 404:
-        raise AIUnavailable(f"Ollama 404 (model missing?): {r.text[:300]}")
-    r.raise_for_status()
-    body = r.json()
-    _last.logprobs = body.get("logprobs")
-    return (body.get("message") or {}).get("content", "") or ""
+        raw, probabilities = call(system, user, Path(image_path) if image_path else None, bool(format), model)
+    except (httpx.ConnectError, httpx.ConnectTimeout):
+        raise AIUnavailable("Cannot connect to OpenRouter.") from None
+    except httpx.HTTPStatusError as error:
+        if error.response.status_code == 429:
+            raise AIUnavailable("OpenRouter is rate limited. Retry later; no automatic repeated calls were made.") from None
+        if error.response.status_code in {401, 402, 403}:
+            raise AIUnavailable("OpenRouter rejected access. Check the API key, model access and available credits.") from None
+        raise
+    except ValueError as error:
+        raise AIResponseError("FAILED_PARSE", str(error), getattr(error, "raw", "")) from None
+    _last.logprobs = probabilities
+    return raw
 
 
 _last = threading.local()  # the token log-probabilities of this thread's last reply
@@ -126,7 +82,7 @@ _last = threading.local()  # the token log-probabilities of this thread's last r
 def _measured(parsed: T, raw: str) -> T:
     """The page's items with the confidence measured from the reply just received, not the one the model wrote."""
     confidence.apply(parsed, raw, getattr(_last, "logprobs", None))
-    if get_settings().ai_provider != "ollama" and not getattr(_last, "logprobs", None):
+    if not getattr(_last, "logprobs", None):
         # Do not represent the model's self-reported number as measured OCR confidence.
         # Conservative values require human review when the provider supplies no token probabilities.
         for name in ("questions", "answers"):
@@ -254,11 +210,115 @@ def is_looping(raw: str) -> bool:
     return any(sum(c.isalnum() for c in m.group(1)) >= 3 for m in _LOOP.finditer((raw or "")[-4000:]))
 
 
+def _split_page_call(system: str, user: str, schema: Type[T], image_path: Path,
+                     model: str | None = None, depth: int = 0) -> AICall:
+    """Extract an over-limit page in two overlapping regions and merge its items."""
+    import cv2
+
+    image = cv2.imread(str(image_path))
+    if image is None or image.shape[0] < 400:
+        raise ValueError("The page image could not be split for extraction")
+    height = image.shape[0]
+    overlap = max(40, int(height * 0.04))
+    middle = height // 2
+    regions = [("TOP", 0, min(height, middle + overlap)),
+               ("BOTTOM", max(0, middle - overlap), height)]
+    parsed_regions: list[T] = []
+    raw_regions: list[str] = []
+    paths: list[Path] = []
+    attempts = 0
+    try:
+        for label, start, end in regions:
+            path = image_path.parent / f"{image_path.stem}_{label.lower()}_split{image_path.suffix}"
+            paths.append(path)
+            if not cv2.imwrite(str(path), image[start:end, :]):
+                raise ValueError(f"Could not create the {label.lower()} page region")
+            region_prompt = (
+                re.sub(r"<source_text>.*?</source_text>",
+                       "<source_text>Use only the visible cropped image.</source_text>",
+                       user, flags=re.DOTALL)
+                + f"\n\nTOKEN-LIMIT RECOVERY: This image is only the {label} region of the page. "
+                  "Extract every visible item in this region. Do not invent content outside it. "
+                  "Use coordinates relative to this cropped image. Keep JSON compact; do not repeat "
+                  "full question text in tree context nodes. Preserve all visible wording once."
+            )
+            attempts += 1
+            try:
+                raw = _call_once(system, region_prompt, path, format="json", model=model)
+                parsed = _measured(schema.model_validate(extract_json_object(raw)), raw)
+            except AIResponseError as error:
+                if "token limit" not in error.detail.lower() or depth >= 1:
+                    raise
+                recovered = _split_page_call(system, region_prompt, schema, path, model, depth + 1)
+                parsed, raw = recovered.parsed, recovered.raw
+                attempts += recovered.attempts
+            for collection in ("questions", "answers", "fragments"):
+                for item in getattr(parsed, collection, []) or []:
+                    bbox = getattr(item, "bbox", None)
+                    if isinstance(bbox, dict):
+                        bbox["y"] = float(bbox.get("y", 0)) + start
+                    elif bbox is not None:
+                        bbox.y += start
+                    for visual in getattr(item, "visuals", []) or []:
+                        visual_bbox = getattr(visual, "bbox", None)
+                        if isinstance(visual_bbox, dict):
+                            visual_bbox["y"] = float(visual_bbox.get("y", 0)) + start
+            parsed_regions.append(parsed)
+            raw_regions.append(raw)
+    finally:
+        for path in paths:
+            path.unlink(missing_ok=True)
+
+    merged = parsed_regions[0].model_copy(deep=True)
+    collection = next(
+        (name for name in ("questions", "answers", "fragments") if hasattr(merged, name)),
+        None,
+    )
+    if collection is None:
+        raise ValueError("This extraction result cannot be merged after splitting")
+    items = list(getattr(merged, collection) or [])
+    seen = {
+        (getattr(item, "raw_question_number", None) or getattr(item, "question_number", None)
+         or getattr(item, "root", None),
+         (getattr(item, "question_text", None) or getattr(item, "answer_text", None)
+          or getattr(item, "text", None) or "").strip())
+        for item in items
+    }
+    for item in getattr(parsed_regions[1], collection) or []:
+        signature = (
+            getattr(item, "raw_question_number", None) or getattr(item, "question_number", None)
+            or getattr(item, "root", None),
+            (getattr(item, "question_text", None) or getattr(item, "answer_text", None)
+             or getattr(item, "text", None) or "").strip(),
+        )
+        if signature not in seen:
+            items.append(item)
+            seen.add(signature)
+    setattr(merged, collection, items)
+    if hasattr(merged, "instructions"):
+        merged.instructions = list(dict.fromkeys(
+            list(getattr(parsed_regions[0], "instructions", []) or [])
+            + list(getattr(parsed_regions[1], "instructions", []) or [])
+        ))
+    if hasattr(merged, "issues"):
+        merged.issues = list(dict.fromkeys(
+            list(getattr(parsed_regions[0], "issues", []) or [])
+            + list(getattr(parsed_regions[1], "issues", []) or [])
+        ))
+    if hasattr(merged, "metadata"):
+        metadata = dict(getattr(parsed_regions[0], "metadata", {}) or {})
+        for key, value in (getattr(parsed_regions[1], "metadata", {}) or {}).items():
+            if metadata.get(key) is None and value is not None:
+                metadata[key] = value
+        merged.metadata = metadata
+    return AICall(merged, "\n\n--- SPLIT REGION ---\n\n".join(raw_regions), attempts)
+
+
 def chat_structured(system: str, user: str, schema: Type[T], image_path: Path | None = None,
                     model: str | None = None) -> AICall:
-    """Call the model (default InternVL), parse + validate against `schema`. Retries with CLAHE and 2-stage fallback on parse failures."""
+    """Call Gemini, parse and validate the response, with image split recovery when needed."""
     s = get_settings()
-    attempts = s.internvl_max_retries + 1
+    attempts = s.ai_max_retries + 1
     raw, last_err, kind = "", "", "AI_ERROR"
     for i in range(1, attempts + 1):
         if i > 1 and is_looping(raw) and LOOP_HINT not in user:
@@ -267,9 +327,30 @@ def chat_structured(system: str, user: str, schema: Type[T], image_path: Path | 
             raw = _call_once(system, user, image_path, format="json", model=model)
         except AIUnavailable:
             raise
+        except AIResponseError as e:
+            raw = e.raw
+            if image_path is not None and "token limit" in e.detail.lower():
+                try:
+                    log.info("AI output limit reached; retrying %s as two page regions", image_path)
+                    return _split_page_call(system, user, schema, Path(image_path), model)
+                except AIUnavailable:
+                    raise
+                except AIResponseError as split_error:
+                    raw = split_error.raw or raw
+                    last_err, kind = f"Split-page recovery failed: {split_error.detail}", split_error.kind
+                    log.warning("Split-page recovery failed for %s: %s", image_path, last_err)
+                    break
+                except Exception as split_error:
+                    last_err, kind = f"Split-page recovery failed: {split_error}", "FAILED_PARSE"
+                    log.warning("Split-page recovery failed for %s: %s", image_path, split_error)
+                    continue
+            last_err, kind = e.detail, e.kind
+            if "token limit" in e.detail.lower():
+                break  # An identical text request cannot recover a truncated response.
+            continue
         except (httpx.TimeoutException, httpx.HTTPError) as e:
             last_err, kind = f"HTTP/timeout error: {e}", "AI_ERROR"
-            log.warning("InternVL attempt %d/%d failed: %s", i, attempts, last_err)
+            log.warning("Gemini attempt %d/%d failed: %s", i, attempts, last_err)
             continue
         try:
             obj = extract_json_object(raw)
@@ -312,7 +393,7 @@ def chat_structured(system: str, user: str, schema: Type[T], image_path: Path | 
             last_err, kind = f"JSON parse failed: {e}", "FAILED_PARSE"
         except ValidationError as e:
             last_err, kind = f"Schema validation failed: {e.errors()[:3]}", "FAILED_PARSE"
-        log.warning("InternVL attempt %d/%d invalid output: %s | raw[:300]=%r", i, attempts, last_err, raw[:300])
+        log.warning("Gemini attempt %d/%d invalid output: %s | raw[:300]=%r", i, attempts, last_err, raw[:300])
 
     # 2-Stage Automatic Fallback: CLAHE contrast enhancement & plain text transcription
     if image_path is not None:

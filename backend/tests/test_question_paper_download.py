@@ -2,16 +2,15 @@ import pytest
 from app.database import SessionLocal
 from app.models import Teacher
 from app.security import hash_password
-from .conftest import assign, make_pdf, make_png
+from .conftest import make_pdf, make_png
 
 
-def test_download_question_paper_pdf(client, auth, teach):
-    c, m, h = client, auth, teach
+def test_download_question_paper_pdf(client, auth):
+    c, h = client, auth
     # Setup class, subject, exam
-    cls = c.post("/api/classes", json={"name": "12-Download"}, headers=m).json()
-    sub = c.post("/api/subjects", json={"name": "Chemistry"}, headers=m).json()
-    assign(cls["id"], sub["id"])
-    exam = c.post("/api/exams", headers=h, json={
+    cls = c.post("/api/classes", json={"name": "12-Download"}, headers=h).json()
+    sub = c.post("/api/subjects", json={"name": "Chemistry"}, headers=h).json()
+    exam = c.post("/api/_test/legacy-exams", headers=h, json={
         "name": "Chemistry Midterm", "academic_year": "2026-27",
         "class_id": cls["id"], "subject_id": sub["id"],
         "exam_type": "Midterm", "total_marks": 25
@@ -51,16 +50,15 @@ def test_download_question_paper_pdf(client, auth, teach):
     assert r_doc.content == pdf_bytes
 
 
-def test_download_with_token_query_param(client, auth):
-    c, m = client, auth
-    login = c.post("/api/auth/login", json={"email": "teacher@school.org", "password": "password123"}).json()
+def test_download_with_token_query_param(client):
+    c = client
+    login = c.post("/api/auth/login", json={"email": "rao@school.org", "password": "password123"}).json()
     token = login["access_token"]
     h = {"Authorization": f"Bearer {token}"}
 
-    cls = c.post("/api/classes", json={"name": "12-A"}, headers=m).json()
-    sub = c.post("/api/subjects", json={"name": "Math"}, headers=m).json()
-    assign(cls["id"], sub["id"])
-    exam = c.post("/api/exams", headers=h, json={
+    cls = c.post("/api/classes", json={"name": "12-A"}, headers=h).json()
+    sub = c.post("/api/subjects", json={"name": "Math"}, headers=h).json()
+    exam = c.post("/api/_test/legacy-exams", headers=h, json={
         "name": "Math Final", "academic_year": "2026-27",
         "class_id": cls["id"], "subject_id": sub["id"],
         "exam_type": "Final", "total_marks": 50
@@ -80,12 +78,11 @@ def test_download_with_token_query_param(client, auth):
     assert r.content == pdf_bytes
 
 
-def test_download_security_and_isolation(client, auth, teach):
-    c, m, h = client, auth, teach
-    cls = c.post("/api/classes", json={"name": "12-B"}, headers=m).json()
-    sub = c.post("/api/subjects", json={"name": "History"}, headers=m).json()
-    assign(cls["id"], sub["id"])
-    exam = c.post("/api/exams", headers=h, json={
+def test_download_security_and_isolation(client, auth):
+    c, h = client, auth
+    cls = c.post("/api/classes", json={"name": "12-B"}, headers=h).json()
+    sub = c.post("/api/subjects", json={"name": "History"}, headers=h).json()
+    exam = c.post("/api/_test/legacy-exams", headers=h, json={
         "name": "History Exam", "academic_year": "2026-27",
         "class_id": cls["id"], "subject_id": sub["id"],
         "exam_type": "Unit", "total_marks": 20
@@ -122,12 +119,11 @@ def test_download_security_and_isolation(client, auth, teach):
     assert r_other.status_code == 403  # This legacy fixture has not completed workspace onboarding.
 
 
-def test_download_image_as_pdf(client, auth, teach):
-    c, m, h = client, auth, teach
-    cls = c.post("/api/classes", json={"name": "10-Art"}, headers=m).json()
-    sub = c.post("/api/subjects", json={"name": "Art"}, headers=m).json()
-    assign(cls["id"], sub["id"])
-    exam = c.post("/api/exams", headers=h, json={
+def test_download_image_as_pdf(client, auth):
+    c, h = client, auth
+    cls = c.post("/api/classes", json={"name": "10-Art"}, headers=h).json()
+    sub = c.post("/api/subjects", json={"name": "Art"}, headers=h).json()
+    exam = c.post("/api/_test/legacy-exams", headers=h, json={
         "name": "Art Test", "academic_year": "2026-27",
         "class_id": cls["id"], "subject_id": sub["id"],
         "exam_type": "Unit", "total_marks": 10

@@ -1,4 +1,4 @@
-"""Test harness. The stub below imitates the *Ollama HTTP server* so the real client code runs end-to-end.
+"""Test harness. The stub below imitates OpenRouter so the real client code runs end-to-end.
 It lives only in tests; the application itself has no mock mode."""
 import json, os, re, tempfile, threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -6,15 +6,15 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 _tmp = tempfile.mkdtemp(prefix="adem-test-")
 os.environ["DATA_DIR"] = _tmp
 os.environ["DATABASE_URL"] = ""
-os.environ["AI_PROVIDER"] = "ollama"
+os.environ["OPENROUTER_API_KEY"] = "test-openrouter-key"
+os.environ["OPENROUTER_MODEL"] = "google/gemini-3.5-flash-lite"
+os.environ["AI_PARALLEL_JOBS"] = "1"
 os.environ["STORAGE_PROVIDER"] = "local"
 os.environ["DURABLE_JOBS"] = "false"
 os.environ["AUTO_MIGRATE"] = "false"
-os.environ["INDIC_OCR_ENABLED"] = "false"
 os.environ["SECRET_KEY"] = "test-secret-at-least-32-bytes-long-for-jwt-security"
-os.environ["ADMIN_EMAIL"] = "owner@adem.test"  # the platform owner in tests
 os.environ["PDF_RENDER_DPI"] = "72"
-os.environ["INTERNVL_MAX_RETRIES"] = "1"
+os.environ["AI_MAX_RETRIES"] = "1"
 os.environ["JOB_QUEUE_INLINE"] = "true"  # queued GPU jobs finish before the request returns
 os.environ["GOOGLE_CLIENT_ID"] = ""  # tests must not read real OAuth credentials
 os.environ["GOOGLE_CLIENT_SECRET"] = ""
@@ -23,7 +23,7 @@ import fitz  # noqa: E402  (pymupdf)
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-MODEL = "blaifa/InternVL3_5:4B"
+MODEL = "google/gemini-3.5-flash-lite"
 BEHAVIOUR = {"garbage_pages": set(), "sheet": "main", "identities": []}   # tweakable per test
 
 
@@ -95,41 +95,37 @@ class _H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
 
     def do_GET(self):
-        body = json.dumps({"models": [{"name": MODEL, "model": MODEL}]}).encode()
+        body = json.dumps({"data": [{"id": MODEL, "architecture": {"input_modalities": ["text", "image"]}}]}).encode()
+        if self.path.endswith("/key"):
+            body = json.dumps({"data": {"label": "test"}}).encode()
         self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(body)
 
     def do_POST(self):
         req = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-        assert req["model"] == MODEL and req["stream"] is False and req.get("format") in ("json", None)
+        assert req["model"] == MODEL and req["stream"] is False
         msgs = req["messages"]
-        if "images" in msgs[1]:
-            assert len(msgs[1]["images"][0]) > 100          # real base64 image was sent
-        out = _reply(msgs[0]["content"], msgs[1]["content"])
-        body = json.dumps({"message": {"role": "assistant", "content": out}}).encode()
+        user = msgs[1]["content"]
+        if isinstance(user, list):
+            assert user[1]["image_url"]["url"].startswith("data:image/")
+            user = user[0]["text"]
+        out = _reply(msgs[0]["content"], user)
+        body = json.dumps({"choices": [{"message": {"role": "assistant", "content": out}, "finish_reason": "stop",
+                                        "logprobs": {"content": [{"bytes": list(out.encode("utf-8")), "logprob": 0.0}]}}]}).encode()
         self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(body)
 
 
 @pytest.fixture(scope="session", autouse=True)
-def ollama_stub():
+def openrouter_stub():
     srv = HTTPServer(("127.0.0.1", 0), _H)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
-    from app.config import get_settings
-    get_settings().internvl_api_url = f"http://127.0.0.1:{srv.server_port}"
+    from app.ocr import remote
+    remote.OPENROUTER_BASE_URL = f"http://127.0.0.1:{srv.server_port}"
     yield srv
     srv.shutdown()
 
 
-@pytest.fixture(autouse=True)
-def _fresh_login_limits():
-    """Each test starts with no sign-in attempts counted (both the per-minute and the per-15-minute limits)."""
-    from app.login_limiter import login_limiter
-    from app.services import accounts
-    login_limiter._attempts.clear()
-    accounts._hits.clear()
-
-
 @pytest.fixture(scope="session")
-def client(ollama_stub):
+def client(openrouter_stub):
     from app.main import app
     from app.database import SessionLocal
     from app.models import Teacher, Workspace
@@ -145,15 +141,42 @@ def client(ollama_stub):
             db.add(ws)
             db.flush()
             teacher.workspace_id = ws.id
-            # the school's teacher: runs exams for the classes and subjects management assigns (spec 04)
-            db.add(Teacher(name="Mr Kumar", email="teacher@school.org", role="TEACHER", workspace_id=ws.id,
-                           profile_completed_at=datetime.now(timezone.utc), password_hash=hash_password("password123")))
-            from app.services import credits  # grading costs credits: the test school has plenty
-            credits.post(db, credits.wallet_for(db, "school", ws.id), "ADMIN_GRANT", 100000, "test-school-grant",
-                         note="Test credits")
             db.commit()
         db.close()
         yield c
+
+
+@pytest.fixture(scope="session", autouse=True)
+def legacy_exam_seed_route(openrouter_stub):
+    """Seed pre-standard records for regression tests through a TEST-ONLY authenticated route.
+
+    Production /api/exams always enforces CBSE. Legacy workflow tests deliberately create
+    historical records without weakening or monkeypatching the production creation gate.
+    """
+    from fastapi import Depends
+    from app.main import app
+    from app.database import get_db
+    from app.routes.core import ExamIn, exam_view
+    from app.models import Exam, SchoolClass, Subject
+    from app.security import current_teacher
+    from app.workspaces import owner_id, assigned
+    from app.deps import err
+    from app.services.audit import audit
+    from datetime import datetime
+
+    @app.post("/api/_test/legacy-exams",status_code=201)
+    def seed(body: ExamIn, db=Depends(get_db), user=Depends(current_teacher)):
+        c,s=db.get(SchoolClass,body.class_id),db.get(Subject,body.subject_id)
+        if not c or not s or c.teacher_id!=owner_id(db,user) or s.teacher_id!=owner_id(db,user) or not assigned(db,user,c.id,s.id):
+            raise err(404,"NOT_FOUND","Class or subject not found in your assignments.")
+        data=body.model_dump(exclude={"standard_profile_id","standard_options"})
+        if not data.get("academic_year"):
+            data["academic_year"]=f"{datetime.now().year}-{str(datetime.now().year+1)[-2:]}"
+        row=Exam(teacher_id=user.id,workspace_id=user.workspace_id,status="DRAFT",**data)
+        db.add(row);db.flush()
+        audit(db,exam_id=row.id,teacher_id=user.id,entity_type="exam",entity_id=row.id,action="exam_created")
+        db.commit()
+        return exam_view(row)
 
 
 @pytest.fixture(scope="session")
@@ -161,26 +184,6 @@ def auth(client):
     r = client.post("/api/auth/login", json={"email": "rao@school.org", "password": "password123"})
     assert r.status_code == 200, r.text
     return {"Authorization": f"Bearer {r.json()['access_token']}"}
-
-
-@pytest.fixture(scope="session")
-def teach(client):
-    """The school's teacher (teacher@school.org): exams are created and graded by teachers, not management."""
-    r = client.post("/api/auth/login", json={"email": "teacher@school.org", "password": "password123"})
-    assert r.status_code == 200, r.text
-    return {"Authorization": f"Bearer {r.json()['access_token']}"}
-
-
-def assign(class_id: str, subject_id: str, email: str = "teacher@school.org") -> None:
-    """Management assigns the teacher to a class and subject (done in the database to keep tests short)."""
-    from app.database import SessionLocal
-    from app.models import Teacher, TeacherAssignment
-    db = SessionLocal()
-    t = db.query(Teacher).filter_by(email=email).one()
-    if not db.query(TeacherAssignment).filter_by(teacher_id=t.id, class_id=class_id, subject_id=subject_id).first():
-        db.add(TeacherAssignment(teacher_id=t.id, class_id=class_id, subject_id=subject_id))
-        db.commit()
-    db.close()
 
 
 def make_pdf(pages: int = 1) -> bytes:

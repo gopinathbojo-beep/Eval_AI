@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from ..database import get_db
+from ..config import get_settings
 from ..deps import err
 from ..models import Teacher, VerifiedReferenceExample
 from ..security import current_teacher
@@ -127,13 +128,9 @@ def get_diagnostics(
     metrics = compute_reference_collection_metrics(db, workspace_id=t.workspace_id, teacher_id=t.id)
     return {
         "status": "OK",
-        "model": "blaifa/InternVL3_5:4B (Ollama)",
+        "model": get_settings().openrouter_model,
         "diagnostics": metrics,
-        "hardware_constraint_note": (
-            "Model running via local Ollama. Fine-tuning InternVL3.5 4B requires 16GB-24GB+ VRAM "
-            "with a training framework (e.g. PyTorch/Unsloth/DeepSpeed), which is not technically supported "
-            "on 6GB laptop VRAM or within Ollama inference runtime."
-        ),
+        "hardware_constraint_note": "Gemini is hosted by OpenRouter; no local model or GPU is required.",
     }
 
 
