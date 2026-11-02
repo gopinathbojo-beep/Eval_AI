@@ -162,3 +162,39 @@ def test_native_images_recover_ai_omissions_without_inventing_diagrams(tmp_path,
     assert len(fragments[0].visuals) == 1
     assert fragments[0].visuals[0].kind == "image"
     assert fragments[1].visuals == []
+
+
+@pytest.mark.parametrize("first_root", [7, 37])
+def test_printed_rows_recover_an_omitted_question_and_correct_shifted_visuals(tmp_path, monkeypatch, first_root):
+    """A skipped row must not shift the following question or borrow its image."""
+    path = tmp_path / "case-studies.pdf"
+    pdf = pymupdf.open()
+    page = pdf.new_page(width=600, height=800)
+    page.insert_text((40, 60), f"Q{first_root}. First case study with its own illustration.")
+    page.insert_text((40, 410), f"Q{first_root + 1}. Second case study with a different illustration.")
+    first_image, second_image = BytesIO(), BytesIO()
+    Image.new("RGB", (80, 80), "black").save(first_image, format="PNG")
+    Image.new("RGB", (80, 80), "white").save(second_image, format="PNG")
+    page.insert_image(pymupdf.Rect(160, 100, 360, 220), stream=first_image.getvalue(), keep_proportion=False)
+    page.insert_image(pymupdf.Rect(220, 470, 380, 590), stream=second_image.getvalue(), keep_proportion=False)
+    pdf.save(path)
+    pdf.close()
+    monkeypatch.setattr(layout, "abs_path", lambda _: path)
+
+    # Simulate a model run that skipped the first row, then returned the second
+    # row using the previous number and the first image's approximate box.
+    shifted = Fragment(
+        root=first_root,
+        text=f"Q{first_root + 1}. Second case study with a different illustration.",
+        bbox={"x": 70, "y": 810, "width": 1000, "height": 500},
+        visuals=[visual("diagram", [], {"x": 300, "y": 200, "width": 400, "height": 240})],
+    )
+    result = Page(page_number=1, fragments=[shifted])
+    layout.ground_visuals(SimpleNamespace(original_file="case-studies.pdf"), [(meta(1), result)])
+
+    by_root = {fragment.root: fragment for fragment in result.fragments}
+    assert set(by_root) == {first_root, first_root + 1}
+    assert "recovered from the PDF source" in by_root[first_root].issues[0]
+    assert len(by_root[first_root].visuals) == 1
+    assert len(by_root[first_root + 1].visuals) == 1
+    assert by_root[first_root].visuals[0].bbox["y"] < by_root[first_root + 1].visuals[0].bbox["y"]

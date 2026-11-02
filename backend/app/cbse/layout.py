@@ -8,10 +8,11 @@ import pymupdf
 
 from ..documents.storage import abs_path
 from ..documents.cropping import normalise_bbox
-from .extraction import VisualEvidence
+from .extraction import Fragment, VisualEvidence
 
 log = logging.getLogger("adem.layout")
 _LABEL = re.compile(r"^(?:Q(?:uestion)?\.?\s*)?(\d{1,3})(?:[.)](?:\(?[A-Za-z]\)?)?|\([A-Za-z]\)[.]?)$", re.I)
+_TEXT_ROOT = re.compile(r"^\s*(?:Q(?:uestion)?\.?\s*)?(\d{1,3})(?=[.):\s])", re.I)
 
 
 def _anchors(page):
@@ -21,6 +22,89 @@ def _anchors(page):
         if match and (word[4].lower().startswith("q") or word[0] < page.rect.width * .2):
             found.append((int(match[1]), float(word[1]), float(word[0])))
     return sorted(found, key=lambda item: item[1])
+
+
+def _bands(page, anchors):
+    """Return one vertical source band per printed whole-question root."""
+    unique = []
+    for root, y, x in anchors:
+        if unique and unique[-1][0] == root:
+            continue
+        unique.append((root, y, x))
+    return [
+        (root, y, unique[index + 1][1] if index + 1 < len(unique) else page.rect.height)
+        for index, (root, y, _x) in enumerate(unique)
+    ]
+
+
+def _bbox_rect(fragment, meta, page):
+    bbox = normalise_bbox(
+        fragment.bbox, meta["ocr_width"], meta["ocr_height"], page.rect.width, page.rect.height
+    )
+    if not bbox:
+        return None
+    return pymupdf.Rect(bbox["x"], bbox["y"], bbox["x"] + bbox["width"], bbox["y"] + bbox["height"])
+
+
+def _band_root(rect, bands):
+    if rect is None:
+        return None
+    scored = []
+    for root, top, bottom in bands:
+        overlap = max(0, min(rect.y1, bottom) - max(rect.y0, top))
+        if overlap:
+            scored.append((overlap / max(1, rect.height), root))
+    scored.sort(reverse=True)
+    if not scored or scored[0][0] < .5:
+        return None
+    if len(scored) > 1 and scored[0][0] - scored[1][0] < .15:
+        return None
+    return scored[0][1]
+
+
+def _reconcile_fragments(page, meta, result, anchors):
+    """Ground model roots in printed row labels and recover omitted PDF-text rows.
+
+    This is deliberately layout-driven: it never assumes particular question
+    numbers or that every question owns a visual.
+    """
+    bands = _bands(page, anchors)
+    printed = {root for root, _top, _bottom in bands}
+    for fragment in result.fragments:
+        label = _TEXT_ROOT.match(fragment.text or "")
+        text_root = int(label.group(1)) if label and int(label.group(1)) in printed else None
+        layout_root = _band_root(_bbox_rect(fragment, meta, page), bands)
+        grounded = text_root or layout_root
+        if grounded is not None and grounded != fragment.root:
+            old = fragment.root
+            fragment.root = grounded
+            _rename_root(fragment.tree, old, grounded)
+            fragment.issues.append(
+                f"Model root {old} was corrected to printed question {grounded} from the source row boundary."
+            )
+
+    present = {fragment.root for fragment in result.fragments}
+    sy = meta["ocr_height"] / page.rect.height
+    for root, top, bottom in bands:
+        if root in present:
+            continue
+        text = page.get_textbox(pymupdf.Rect(0, max(0, top - 2), page.rect.width, bottom)).strip()
+        if not text:
+            continue
+        result.fragments.append(Fragment(
+            root=root,
+            text=text,
+            bbox={"x": 0, "y": max(0, top - 2) * sy, "width": meta["ocr_width"],
+                  "height": min(page.rect.height, bottom) * sy - max(0, top - 2) * sy},
+            issues=[
+                "The AI omitted this printed question row; its text and visual boundary were recovered "
+                "from the PDF source. Review its parts and marks."
+            ],
+        ))
+        present.add(root)
+    result.fragments.sort(key=lambda fragment: (next(
+        (top for candidate, top, _bottom in bands if candidate == fragment.root), page.rect.height
+    ), fragment.root))
 
 
 def _tokens(text):
@@ -103,6 +187,7 @@ def ground_visuals(doc, results):
             anchors = _anchors(page)
             if not anchors:
                 continue
+            _reconcile_fragments(page, meta, result, anchors)
             previous = _anchors(pdf[number - 1]) if number else []
             # Repeated printed root at the page start confirms its continuation.
             carry = previous[-1][0] if previous and previous[-1][0] == anchors[0][0] else None
