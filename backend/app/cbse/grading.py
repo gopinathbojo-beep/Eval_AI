@@ -2,6 +2,8 @@
 
 import json
 import math
+import re
+import unicodedata
 from .extraction import leaves, tree_total, deduction_rules
 from ..formatter.common.mark_rules import EvaluationValidationError
 
@@ -16,7 +18,7 @@ Return valid JSON only."""
 
 
 def prompt(q, key, student, options, instructions):
-    tree = key.rubric["cbse_tree"]
+    tree = scoring_tree(q, key, options)
     question_visuals = [
         {k: v for k, v in item.items() if k != "crop_file"}
         for item in (q.structure or {}).get("visuals", [])
@@ -37,6 +39,7 @@ GENERAL EXAMINER INSTRUCTIONS:
 {json.dumps(instructions, ensure_ascii=False)}
 REVIEWED SCORING TREE:
 {json.dumps(tree, ensure_ascii=False)}
+If the only criterion is overall, the extracted step allocations are incomplete. Assess the whole answer against the uploaded scheme text and its instructions, within the question maximum. Explain any partial credit in feedback; do not invent step allocations or require exact scheme wording for equivalent correct working.
 SELECTED VERSION: {json.dumps(options)}
 ACCEPTED ALTERNATIVES: {json.dumps(key.accepted_answers, ensure_ascii=False)}
 GRADE EXACTLY THESE CRITERION IDS: {json.dumps([n["id"] for n in leaves(tree, options)])}
@@ -46,15 +49,49 @@ For each ID report earned marks within its printed allocation, BEFORE separately
 Report explicit capped deductions separately as deductions:[{{"id":"reviewed rule ID","marks":0.5,"reason":"..."}}]. Never invent a rule ID; never apply a deduction twice.
 Only use deduction IDs present in the reviewed scoring tree. For an uncapped descriptive rule, reflect the appropriate criterion judgment rather than inventing a cap.
 For MCQ criteria set multiple_answers=true if the student supplies multiple conflicting options; otherwise false.
-Use fractional marks only as supported by the reviewed scheme. Quote concise visible student evidence for positive awards.
+Use fractional marks only as supported by the reviewed scheme.
+For every positive award, provide evidence_quotes as a list of short EXACT, CONTIGUOUS excerpts copied from STUDENT ANSWER. Copy symbols and wording; do not paraphrase, join separate lines with invented words, or quote the marking scheme. Put explanations only in feedback. For an option-only response quote the literal option letter (e.g. ["B"]), not "Student selected option B". For multiple steps use separate excerpts. For zero awards use evidence_quotes:[].
 Return {{"marks_awarded":0,"max_marks":{q.max_marks},"decision":"PARTIALLY_CORRECT",
-"criterion_awards":[{{"id":"...","marks":0,"evidence":"...","multiple_answers":false}}],
+"criterion_awards":[{{"id":"...","marks":0,"evidence":"","evidence_quotes":[],"multiple_answers":false}}],
 "matched_points":[],"missing_points":[],"feedback":"Explain credited and missing marking points","confidence":0.8}}.
 marks_awarded is your choice-aware total estimate; the backend computes the official total from criterion_awards."""
 
 
+def _quote_text(value):
+    value = unicodedata.normalize("NFKC", value).translate(str.maketrans({"−": "-", "–": "-", "×": "*"}))
+    return re.sub(r"\s+", "", value).casefold()
+
+
+def scoring_tree(q, key, options):
+    tree = (key.rubric or {}).get("cbse_tree")
+    nodes = leaves(tree, options) if tree else []
+    if nodes and all(isinstance(n.get("marks"), (int, float)) and math.isfinite(n["marks"]) and n["marks"] > 0 for n in nodes):
+        total = tree_total(tree, options)
+        if abs(total - q.max_marks) < 1e-7:
+            return tree
+    # The uploaded scheme remains authoritative when its extracted tree lacks
+    # allocations. Use the existing whole-question maximum, never guessed steps.
+    return {"id": "overall", "kind": "point", "marks": q.max_marks,
+            "response_type": "mcq" if getattr(q, "question_type", None) == "mcq" else "open"}
+
+
+def _evidence_quotes(award, student, is_mcq):
+    quotes = award.get("evidence_quotes")
+    if quotes is not None:
+        return quotes if isinstance(quotes, list) and all(isinstance(q, str) for q in quotes) else []
+    evidence = str(award.get("evidence") or "").strip()
+    # Compatibility with earlier model replies for a literal option response.
+    option = re.fullmatch(r"\s*\(?([A-Z])\)?[.)]?\s*", student or "", re.I)
+    if is_mcq and option:
+        mentioned = re.search(r"\boption\s*[:=]?\s*\(?([A-Z])\b", evidence, re.I)
+        if mentioned and mentioned[1].casefold() == option[1].casefold():
+            return [student.strip()]
+    return [evidence] if evidence else []
+
+
 def validate_result(result, q, key, options, student=None):
-    nodes = {n["id"]: n for n in leaves(key.rubric["cbse_tree"], options)}
+    tree = scoring_tree(q, key, options)
+    nodes = {n["id"]: n for n in leaves(tree, options)}
     scores = {}
     for award in result.criterion_awards:
         key_id, value = award.get("id"), award.get("marks")
@@ -72,21 +109,22 @@ def validate_result(result, q, key, options, student=None):
             raise EvaluationValidationError(
                 f"Criterion {key_id} exceeds its printed allocation"
             )
-        if (
+        is_mcq = (
             nodes[key_id].get("response_type") == "mcq"
             or getattr(q, "question_type", None) == "mcq"
             and len(nodes) == 1
-        ) and value not in (0, nodes[key_id]["marks"]):
+        )
+        if is_mcq and value not in (0, nodes[key_id]["marks"]):
             raise EvaluationValidationError("MCQ criteria do not receive partial marks")
-        if value > 0 and not str(award.get("evidence") or "").strip():
+        quotes = _evidence_quotes(award, student, is_mcq)
+        if value > 0 and (not quotes or any(not quote.strip() for quote in quotes)):
             raise EvaluationValidationError(
                 f"Criterion {key_id} has no student evidence"
             )
         if (
             value > 0
             and student is not None
-            and " ".join(str(award["evidence"]).casefold().split())
-            not in " ".join(student.casefold().split())
+            and any(_quote_text(quote) not in _quote_text(student) for quote in quotes)
         ):
             raise EvaluationValidationError(
                 f"Criterion {key_id} quotes evidence absent from the student transcription"
@@ -102,7 +140,7 @@ def validate_result(result, q, key, options, student=None):
         raise EvaluationValidationError(
             "Every reviewed criterion must have an award, including unattempted parts"
         )
-    rules = deduction_rules(key.rubric["cbse_tree"], options)
+    rules = deduction_rules(tree, options)
     used = set()
     for deduction in result.deductions:
         rule_id, value = deduction.get("id"), deduction.get("marks")
@@ -123,7 +161,7 @@ def validate_result(result, q, key, options, student=None):
         used.add(rule_id)
         node_id = "deduction:" + rules[rule_id]["node_id"]
         scores[node_id] = scores.get(node_id, 0) + value
-    total = tree_total(key.rubric["cbse_tree"], options, scores)
+    total = tree_total(tree, options, scores)
     if total > q.max_marks + 1e-7:
         raise EvaluationValidationError("Criterion total exceeds the question maximum")
     result.marks_awarded = round(total, 8)

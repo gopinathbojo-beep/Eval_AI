@@ -1,4 +1,4 @@
-"""OpenAI-compatible vision/text transport for OpenRouter and future private VLMs."""
+"""OpenRouter vision/text transport used by Gemini for every AI task."""
 from __future__ import annotations
 import base64
 import mimetypes
@@ -8,6 +8,7 @@ import httpx
 from ..config import get_settings
 
 log = logging.getLogger("adem.ai")
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 
 class CompletionLimitError(ValueError):
@@ -22,9 +23,7 @@ class CompletionLimitError(ValueError):
 
 def connection():
     s = get_settings()
-    if s.ai_provider == "openrouter":
-        return "https://openrouter.ai/api/v1", s.openrouter_api_key, s.openrouter_model
-    return s.custom_ai_base_url.rstrip("/"), s.custom_ai_api_key, s.custom_ai_model
+    return OPENROUTER_BASE_URL, s.openrouter_api_key, s.openrouter_model
 
 
 def call(system: str, user: str, image: Path | None, structured: bool, model: str | None = None):
@@ -37,18 +36,17 @@ def call(system: str, user: str, image: Path | None, structured: bool, model: st
             "url": f"data:{mime};base64," + base64.b64encode(image.read_bytes()).decode()}}]
     payload = {"model": model or selected, "messages": [{"role": "system", "content": system},
                {"role": "user", "content": content}], "stream": False, "temperature": 0,
-               "max_tokens": s.internvl_num_predict}
+               "max_tokens": s.ai_max_output_tokens}
     if structured:
         payload["response_format"] = {"type": "json_object"}
-    if image and s.ai_provider == "openrouter":
-        payload["reasoning"] = {"effort": s.ai_ocr_reasoning_effort}
+    payload["reasoning"] = {"effort": s.ai_ocr_reasoning_effort if image else s.ai_text_reasoning_effort}
     if s.ai_request_logprobs:
         payload["logprobs"] = True
     headers = {"Authorization": "Bearer " + key}
     if s.public_web_url:
         headers["HTTP-Referer"] = s.public_web_url
         headers["X-Title"] = "Eval AI"
-    response = httpx.post(base + "/chat/completions", json=payload, headers=headers, timeout=s.internvl_timeout)
+    response = httpx.post(base + "/chat/completions", json=payload, headers=headers, timeout=s.ai_timeout)
     # Do not propagate provider response bodies or request headers into application logs.
     if not response.is_success:
         raise httpx.HTTPStatusError(f"AI provider returned HTTP {response.status_code}", request=response.request, response=response)
@@ -75,10 +73,9 @@ def call(system: str, user: str, image: Path | None, structured: bool, model: st
 def status():
     s = get_settings()
     base, key, model = connection()
-    if s.ai_provider == "openrouter":
-        authentication = httpx.get(base + "/key", headers={"Authorization": "Bearer " + key}, timeout=15)
-        if not authentication.is_success:
-            raise RuntimeError("The OpenRouter API key could not be authenticated")
+    authentication = httpx.get(base + "/key", headers={"Authorization": "Bearer " + key}, timeout=15)
+    if not authentication.is_success:
+        raise RuntimeError("The OpenRouter API key could not be authenticated")
     response = httpx.get(base + "/models", headers={"Authorization": "Bearer " + key}, timeout=15)
     if not response.is_success:
         raise RuntimeError(f"AI provider health request failed (HTTP {response.status_code})")
@@ -89,4 +86,4 @@ def status():
     inputs = (found.get("architecture") or {}).get("input_modalities")
     if inputs is not None and "image" not in inputs:
         raise RuntimeError("The selected model does not accept images; choose a vision model")
-    return {"available": True, "model": model, "provider": s.ai_provider, "url": base}
+    return {"available": True, "model": model, "provider": "openrouter", "url": base}

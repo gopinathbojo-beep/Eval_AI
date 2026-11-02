@@ -1,11 +1,11 @@
-"""Background processing: render pages -> InternVL per page -> store raw+parsed -> build app-owned entities."""
+"""Background processing: render pages -> Gemini per page -> store raw+parsed -> build entities."""
 from __future__ import annotations
 import copy
 import json
 import logging
 from pathlib import Path
 from sqlalchemy.orm import Session
-from ..config import AI_BAD_RESPONSE_MESSAGE, AI_UNAVAILABLE_MESSAGE, INDIC_BAD_RESPONSE_MESSAGE, INDIC_UNAVAILABLE_MESSAGE, ai_unavailable_message, ai_bad_response_message
+from ..config import get_settings, ai_unavailable_message, ai_bad_response_message
 from ..database import SessionLocal
 from ..documents import cropping
 from ..documents.renderer import RenderError, page_text as pdf_page_text, render_document
@@ -14,7 +14,6 @@ from ..models import (AnswerKey, AnswerKeyDocument, AnswerSheetDocument, Evaluat
                       QuestionPaperDocument, StudentAnswer)
 from ..ocr import prompts
 from ..ocr.internvl import AIResponseError, AIUnavailable, chat_structured, check_model
-from ..ocr.indic import IndicResponseError, IndicUnavailable, check_indic, read_page, text_model_for, uses_indic_ocr
 from .ai_labeler import label_key_criteria, label_question_types
 from ..ocr.schemas import AnswerKeyPageResult, QuestionPageResult, StudentPageResult
 from ..formatter.common.paper import apply_pdf_question_text, parse_question_paper_structure, StructuredQuestion
@@ -128,13 +127,11 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
         _handle_cancel(db, doc, doc_id)
         return
 
-    # Indian-language subjects are read by IndicOCR; everything else by InternVL
-    indic = uses_indic_ocr(exam.subject.name if exam.subject else None)
-    unavailable_msg = INDIC_UNAVAILABLE_MESSAGE if indic else ai_unavailable_message()
-    bad_response_msg = INDIC_BAD_RESPONSE_MESSAGE if indic else ai_bad_response_message()
+    unavailable_msg = ai_unavailable_message()
+    bad_response_msg = ai_bad_response_message()
     try:
-        check_indic() if indic else check_model()
-    except (AIUnavailable, IndicUnavailable) as e:
+        check_model()
+    except AIUnavailable as e:
         log.error("AI unavailable: %s", e.detail)
         doc.status, doc.error_message, doc.stage = "AI_ERROR", unavailable_msg, "AI service unavailable"
         db.commit()
@@ -179,21 +176,17 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
             prompt_str = cbse_prompt(kind,get_profile(exam.standard_profile_id),p["page_number"],total,previous,p.get("page_text", ""),exam.standard_options)
             system = SYSTEM
         try:
-            if indic:
-                call = read_page(img, schema, p["page_number"])
-            else:
-                call = chat_structured(system, prompt_str,
-                                       schema, img)
+            call = chat_structured(system, prompt_str, schema, img)
             out.write_text(json.dumps({"status": "OK", "raw": call.raw, "parsed": call.parsed.model_dump(),
-                                       "attempts": call.attempts, "engine": "indic-ocr" if indic else "internvl"},
+                                       "attempts": call.attempts, "engine": "openrouter-gemini"},
                                       ensure_ascii=False, indent=1), encoding="utf-8")
             _set_pages(db, doc, i, ocr_status="OK", ocr_error=None, ocr_file=rel(out))
-        except (AIUnavailable, IndicUnavailable) as e:
+        except AIUnavailable as e:
             log.error("AI became unavailable mid-run: %s", e.detail)
             doc.status, doc.error_message = "AI_ERROR", unavailable_msg
             db.commit()
             return
-        except (AIResponseError, IndicResponseError) as e:
+        except AIResponseError as e:
             log.error("Page %s: %s | raw=%r", p["page_number"], e.detail, e.raw[:500])
             out.write_text(json.dumps({"status": e.kind, "raw": e.raw, "parsed": None, "error": e.detail},
                                       ensure_ascii=False, indent=1), encoding="utf-8")
@@ -296,7 +289,7 @@ def _build_questions(db: Session, doc, exam: Exam, wd: Path, results) -> None:
         db.query(ExamQuestion).filter_by(exam_id=exam.id).delete()
     struct = parse_question_paper_structure(results)
     apply_pdf_question_text(struct.questions, [p.get("page_text") or "" for p, _ in results])
-    labeler_model = text_model_for(exam.subject.name if exam.subject else None)
+    labeler_model = get_settings().openrouter_model
     if labeler_model:
         label_question_types(struct.questions, labeler_model)
 
@@ -426,7 +419,7 @@ def _build_answer_key(db: Session, doc, exam: Exam, wd: Path, results) -> None:
     pages_by_num = {p["page_number"]: p for p, _ in results}
     canonical_qs = db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all()
     keys = segment_answer_keys(results, canonical_questions=canonical_qs)
-    labeler_model = text_model_for(exam.subject.name if exam.subject else None)
+    labeler_model = get_settings().openrouter_model
     if labeler_model:
         label_key_criteria(keys, canonical_qs, labeler_model)
     n = 0

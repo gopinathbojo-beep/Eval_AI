@@ -428,7 +428,7 @@ export default function AnswerKey() {
                       isSelected
                         ? "border-pen ring-2 ring-pen/20"
                         : "hover:border-line"
-                    } ${r.mapping_status !== "MAPPED" || r.mark_mismatch || (r.rubric?.problems.length ?? 0) > 0 ? "border-mark/50 bg-mark-soft/10" : ""}`}
+                    } ${r.mapping_status !== "MAPPED" || r.mark_mismatch || (!r.rubric?.cbse_tree && (r.rubric?.problems.length ?? 0) > 0) ? "border-mark/50 bg-mark-soft/10" : ""}`}
                   >
                     <button
                       type="button"

@@ -4,7 +4,7 @@ The model performs visual understanding, OCR, layout extraction and transcriptio
 
 OCR_SYSTEM = (
     "You are the document understanding, OCR, structure extraction, and question-mapping engine for ADEM. "
-    "MODEL: Blaifa/InternVL3_5:4B. "
+    "MODEL: Gemini through OpenRouter. "
     "Your job is to accurately understand the supplied examination document image/PDF page and return structured information.\n\n"
     "CRITICAL PRINCIPLES:\n"
     "1. Read the actual document visually. Never invent text, question numbers, subquestions, or answers. Never autocomplete or finish incomplete answers.\n"
@@ -98,7 +98,7 @@ Under NO circumstances should the question text or outside knowledge be used to 
 You are the STUDENT ANSWER SHEET OCR, HANDWRITING UNDERSTANDING, ANSWER GROUPING, and QUESTION MAPPING engine for ADEM.
 
 VISION MODEL:
-Blaifa/InternVL3_5:4B
+Gemini through OpenRouter
 
 Your task is to read a student's actual handwritten answer sheet from the supplied page image and map each answer to the VERIFIED canonical question from the examination.
 
@@ -374,7 +374,7 @@ Return JSON in exactly this shape:
 
 GEN_ANSWER_KEY_SYSTEM = (
     "You are an academic examiner and curriculum specialist for ADEM. "
-    "MODEL: blaifa/InternVL3_5:4B. "
+    "MODEL: Gemini through OpenRouter. "
     "Read the verified questions from the examination question paper and generate suggested answers for each question. "
     "Never invent questions or extra subquestions. For every question provided, generate a comprehensive model answer, "
     "marking criteria, essential keywords, and accepted alternative answers. Reply with a single JSON object and nothing else."

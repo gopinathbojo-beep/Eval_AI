@@ -151,7 +151,11 @@ def make_board(client, auth, with_key=True):
 
 @pytest.mark.parametrize("p", PROFILES, ids=lambda p: p["id"])
 def test_catalog_is_complete_and_internally_consistent(p):
-    assert len(PROFILES) == 17
+    assert len(PROFILES) == 20
+    if p["upload_driven"]:
+        assert p["question_count"] == 0 and p["sections"] == [] and p["parent_marks"] == []
+        assert p["duration_minutes"] == 180 and p["total_marks"] == 80
+        return
     assert sum(s["marks"] for s in p["sections"]) == p["total_marks"]
     assert [n for s in p["sections"] for n in range(s["start"], s["end"] + 1)] == list(
         range(1, p["question_count"] + 1)
@@ -170,7 +174,7 @@ def test_all_supplied_source_pairs_are_fingerprinted():
     )
     assert len(manifest) == 34 and sum(s["page_count"] for s in manifest) == 341
     root = Path(__file__).resolve().parents[2]
-    for p in PROFILES:
+    for p in (p for p in PROFILES if not p["upload_driven"]):
         pair = [s for s in manifest if s["profile_id"] == p["id"]]
         assert {s["kind"] for s in pair} == {"question-paper", "answer-key"}
         for source in pair:

@@ -49,7 +49,7 @@ def test_full_workflow(client, auth):
     assert [p["ocr_status"] for p in qp["pages"]] == ["OK", "FAILED_PARSE"]
     diag = j(c.get(f"/api/documents/question-paper/{qp['id']}/pages/2/ocr", headers=h), 200)
     assert diag["status"] == "FAILED_PARSE" and "cannot read" in diag["raw"]
-    assert "InternVL3.5 4B failed to return a valid structured response" in qp["error_message"]
+    assert "Gemini did not return a valid structured response" in qp["error_message"]
     # verification is blocked while a page failed
     r = c.post(f"/api/exams/{eid}/questions/verify", headers=h)
     assert r.status_code == 400 and r.json()["code"] == "QUESTIONS_NOT_READY"
@@ -233,20 +233,20 @@ def test_duplicate_mapping_and_ai_unavailable(client, auth):
     sub = j(c.post("/api/subjects", json={"name": "Botany"}, headers=h), 201)
     eid = j(c.post("/api/_test/legacy-exams", headers=h, json={"name": "T2", "academic_year": "26", "class_id": cls["id"],
             "subject_id": sub["id"], "exam_type": "Unit", "total_marks": 15}), 201)["id"]
-    # Ollama down -> clear AI_ERROR, nothing invented
-    from app.config import get_settings
-    s = get_settings(); good = s.internvl_api_url
-    s.internvl_api_url = "http://127.0.0.1:1"
+    # OpenRouter down -> clear AI_ERROR, nothing invented
+    from app.ocr import remote
+    good = remote.OPENROUTER_BASE_URL
+    remote.OPENROUTER_BASE_URL = "http://127.0.0.1:1"
     try:
         j(c.post(f"/api/exams/{eid}/question-paper", headers=h, files={"file": ("p.pdf", make_pdf(2), "application/pdf")}), 202)
         qp = j(c.get(f"/api/exams/{eid}/question-paper", headers=h))
         assert qp["status"] == "AI_ERROR"
-        assert qp["error_message"] == "InternVL3.5 4B is not available. Start Ollama and ensure blaifa/InternVL3_5:4B is installed."
+        assert qp["error_message"] == "OpenRouter is unavailable. Check the API key, Gemini model access and credit balance."
         assert j(c.get(f"/api/exams/{eid}/questions", headers=h))["questions"] == []
         st = j(c.get("/api/system/ai-status", headers=h))
         assert st["available"] is False
     finally:
-        s.internvl_api_url = good
+        remote.OPENROUTER_BASE_URL = good
     j(c.post(f"/api/documents/question-paper/{qp['id']}/reprocess", headers=h), 202)
     assert j(c.get(f"/api/exams/{eid}/question-paper", headers=h))["status"] == "READY"
     j(c.post(f"/api/exams/{eid}/questions/accept-valid", headers=h), 200)

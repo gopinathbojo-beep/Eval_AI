@@ -3,8 +3,8 @@
 - Question types: questions whose type is only a marks guess (type_source "default") are classified by the model.
 - Marking points: answer-key entries without criteria are split into points whose marks add up to the question's marks.
 
-Runs only when a labeling model is configured (INDIC_TEXT_MODEL for Indian-language subjects). Everything the model
-returns is checked; anything unusable is dropped and the rule result stays, so a model outage never blocks an upload.
+Runs only for questions the deterministic rules cannot settle. Everything Gemini returns is checked; anything
+unusable is dropped and the rule result stays, so a model outage never blocks an upload.
 """
 from __future__ import annotations
 import logging

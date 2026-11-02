@@ -116,9 +116,8 @@ def test_signed_upload_completion_is_authorized_validated_and_idempotent(client,
 
 def test_remote_ai_transport_and_unmeasured_confidence(monkeypatch, tmp_path):
     settings = get_settings()
-    monkeypatch.setattr(settings,"ai_provider","openrouter")
     monkeypatch.setattr(settings,"openrouter_api_key","private-ai-key")
-    monkeypatch.setattr(settings,"openrouter_model","qwen/qwen3-vl-8b-instruct")
+    monkeypatch.setattr(settings,"openrouter_model","google/gemini-3.5-flash-lite")
     image=tmp_path/"page.png";image.write_bytes(b"test image")
     captured={}
     raw='{"questions":[{"raw_question_number":"1","question_text":"A question","marks":2,"confidence":0.99}]}'
@@ -129,22 +128,13 @@ def test_remote_ai_transport_and_unmeasured_confidence(monkeypatch, tmp_path):
     result=internvl.chat_structured("system","read",QuestionPageResult,image)
     assert captured["headers"]["Authorization"] == "Bearer private-ai-key"
     assert captured["json"]["model"] == settings.openrouter_model
-    assert captured["json"]["reasoning"] == {"effort": "none"}
+    assert captured["json"]["reasoning"] == {"effort": "minimal"}
     assert captured["json"]["messages"][1]["content"][1]["image_url"]["url"].startswith("data:image/png;base64,")
     assert result.parsed.questions[0].confidence <= 0.5
-    monkeypatch.setattr(settings,"ai_provider","custom")
-    monkeypatch.setattr(settings,"custom_ai_base_url","https://private-model.example/v1")
-    monkeypatch.setattr(settings,"custom_ai_api_key","endpoint-key")
-    monkeypatch.setattr(settings,"custom_ai_model","private-vlm")
-    internvl.chat_structured("system","read",QuestionPageResult)
-    assert captured["json"]["model"] == "private-vlm"
-    assert captured["headers"]["Authorization"] == "Bearer endpoint-key"
-    assert "reasoning" not in captured["json"]
 
 
-def test_openrouter_grading_keeps_default_reasoning_and_limit_reports_usage(monkeypatch):
+def test_openrouter_grading_limits_reasoning_and_reports_token_usage(monkeypatch):
     settings = get_settings()
-    monkeypatch.setattr(settings, "ai_provider", "openrouter")
     monkeypatch.setattr(settings, "openrouter_api_key", "test-key")
     monkeypatch.setattr(settings, "openrouter_model", "test-model")
     captured = {}
@@ -159,7 +149,7 @@ def test_openrouter_grading_keeps_default_reasoning_and_limit_reports_usage(monk
     monkeypatch.setattr(remote.httpx, "post", post)
     with pytest.raises(remote.CompletionLimitError) as error:
         remote.call("Grade", "Use the marking scheme", None, True)
-    assert "reasoning" not in captured
+    assert captured["reasoning"] == {"effort": "low"}
     assert "reasoning_tokens=8188" in str(error.value)
     assert error.value.raw == '{"partial":'
 

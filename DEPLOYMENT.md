@@ -2,7 +2,7 @@
 
 For **Render backend + Vercel frontend + Supabase PostgreSQL/storage + OpenRouter**, follow [CLOUD_DEPLOYMENT.md](CLOUD_DEPLOYMENT.md). The instructions below describe the separate Docker/SQLite deployment option.
 
-The supported topology is **one Linux server, one API process, SQLite on a persistent Docker volume**, and an existing private Ollama/IndicOCR host. Caddy terminates HTTPS, Nginx serves the compiled web app and proxies `/api`. Only ports 80 and 443 are published. No mobile build is involved.
+The supported topology is **one Linux server, one API process and SQLite on a persistent Docker volume**. Caddy terminates HTTPS, Nginx serves the compiled web app and proxies `/api`. Gemini is accessed through OpenRouter; no local model service or GPU is required.
 
 Do not add API workers or replicas: the GPU queue and locks are in-process, and startup recovery/purge scheduling must run once. For multiple servers, migrate to a shared database, object storage and a durable external job queue first. Restarting the current API interrupts queued AI jobs; startup recovery makes interrupted work available for teacher review/retry.
 
@@ -10,7 +10,7 @@ Do not add API workers or replicas: the GPU queue and locks are in-process, and 
 
 1. Install Docker Engine with Compose v2 on the Linux server. Point a domain's DNS A record (and AAAA only if IPv6 is configured) at it. Open 80/tcp, 443/tcp and optionally 443/udp. Restrict SSH to administrators.
 2. Copy this project to the server. Copy `.env.example` to `.env` in the project root. Set `DOMAIN` to the bare hostname, `ACME_EMAIL` to your email, and `SECRET_KEY` to at least 32 random characters. Generate it with `python -c "import secrets; print(secrets.token_urlsafe(48))"`. Restrict `.env` permissions to its owner (`chmod 600 .env`). The older root file named `env` is ignored and is **not** loaded by Compose or the backend.
-3. Set `INTERNVL_API_URL` to the private Ollama endpoint and enable/configure IndicOCR if needed. The defaults address a service on the Docker host. Such host services must listen on an address reachable from the container, with firewall rules allowing only the private API host/network. Do not expose Ollama or IndicOCR publicly. Pull `blaifa/InternVL3_5:4B` on that GPU host and verify its model licence and hardware requirements for your use.
+3. Set `OPENROUTER_API_KEY`. Optionally override `OPENROUTER_MODEL`; the supported default is `google/gemini-3.5-flash-lite`.
 4. Run from the project root:
 
    ```sh
@@ -74,7 +74,7 @@ python -m pip install --require-hashes -r requirements.lock
 python -m pytest -q
 ```
 
-GitHub Actions runs these checks, API dependency auditing, browser tests and container builds. It does not publish anything automatically. In staging, run `node deploy/smoke.mjs https://YOUR_DOMAIN` to check HTTPS, headers, deep links, assets and API routing. This does not replace the real-model trial above: automated API tests use an Ollama stand-in.
+GitHub Actions runs these checks, API dependency auditing, browser tests and container builds. It does not publish anything automatically. In staging, run `node deploy/smoke.mjs https://YOUR_DOMAIN` to check HTTPS, headers, deep links, assets and API routing. Automated tests use an OpenRouter-compatible local stand-in; complete a real Gemini trial before release.
 
 ## Backups, restore and updates
 

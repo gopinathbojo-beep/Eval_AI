@@ -32,7 +32,7 @@ The uploaded scheme supplies the answer content and marking rules. Sample answer
 
 ## Grading and compatibility
 
-The model judges each reviewed criterion using visible student evidence. The backend checks allocations and computes choice-aware totals. Explicit capped deductions are applied only under their reviewed source rule and within its cap. Positive criterion evidence must occur in the student transcription. There is no universal half-mark increment or generic deduction cap for standards-based exams. Ambiguous extraction and missing allocations require correction; teacher approval remains necessary before finalization.
+The model judges each reviewed criterion using visible student evidence. The backend checks allocations and computes choice-aware totals. Explicit capped deductions are applied only under their reviewed source rule and within its cap. Positive awards use exact student excerpts; whitespace and equivalent Unicode typography do not invalidate a quote. When the extracted scoring tree has missing or inconsistent allocations, grading uses the uploaded scheme text for a whole-question assessment within the existing maximum instead of guessing step marks. Teacher approval remains necessary before finalization. An explicit question heading conflicting with its mapped question requires mapping review rather than being graded under the wrong question.
 
 Existing exams with no standard profile continue under their historical workflow. No existing users, exams, files, grades, pass thresholds or reports are reset. School cohort grades, parent reports without relative grades/ranks, and omission of K levels remain unchanged.
 

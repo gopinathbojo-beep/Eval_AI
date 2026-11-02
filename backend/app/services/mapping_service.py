@@ -1,6 +1,7 @@
 """DB-aware wrappers around the pure mapping rules."""
 from __future__ import annotations
 from typing import Any
+import re
 from sqlalchemy.orm import Session
 from .. import formatter
 from ..config import get_settings
@@ -10,6 +11,20 @@ from ..formatter.common.numbering import part_labels
 
 DUP_NOTE = "DUPLICATE_MAPPING: another answer also maps to this question"
 _RECOMPUTABLE = {"UNMAPPED", "NEEDS_REVIEW", "MAPPED"}
+
+
+def conflicting_answer_heading(text: str, number: str | None) -> str | None:
+    """An explicit Qn / n> header is evidence; numbered working steps are not."""
+    expected = re.match(r"\d+", number or "")
+    if not expected:
+        return None
+    for line in [line.strip() for line in text.splitlines() if line.strip()][:4]:
+        if re.match(r"^section\b", line, re.I):
+            continue
+        heading = re.match(r"^(?:Q(?:uestion)?\s*\.?\s*(\d+)(?=\W|$)|(\d+)\s*>)", line, re.I)
+        root = (heading[1] or heading[2]) if heading else None
+        return root if root and root != expected[0] else None
+    return None
 
 
 def exam_questions(db: Session, exam_id: str) -> list[ExamQuestion]:
@@ -26,6 +41,13 @@ def apply_student_mapping(db: Session, ev: Evaluation) -> None:
     prev_qid = None
     suggested: list[tuple[StudentAnswer, list[dict]]] = []  # unlabelled answers placed by content alone
     for a in answers:
+        conflict = conflicting_answer_heading(a.answer_text or "", a.normalized_number or a.raw_question_number)
+        if conflict and a.status in _RECOMPUTABLE:
+            candidate = next((q for q in qs if q.normalized_number == conflict), None)
+            a.status = "NEEDS_REVIEW"
+            a.mapping_note = f"The answer text starts with question {conflict}, conflicting with its extracted label. Review the mapping."
+            a.mapping_candidates = [candidate.id] if candidate else []
+            continue
         if a.status == "IGNORED" or a.status not in _RECOMPUTABLE:
             if a.exam_question_id:
                 prev_qid = a.exam_question_id

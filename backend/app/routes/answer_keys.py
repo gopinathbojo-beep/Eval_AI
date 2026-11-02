@@ -11,7 +11,6 @@ from ..models import (AnswerKey, AnswerKeyDocument, Evaluation, EvaluationItem, 
                       QuestionPaperDocument, Teacher)
 from ..ocr import prompts
 from ..ocr.internvl import chat_structured, check_model
-from ..ocr.indic import text_model_for
 from ..ocr.schemas import GeneratedAnswerKeyResult
 from ..security import current_teacher
 from ..serializers import key_view
@@ -281,7 +280,7 @@ def generate_answer_keys_ai(exam_id: str, db: Session = Depends(get_db), t: Teac
     if not qs:
         raise err(400, "NO_QUESTIONS", "There are no verified questions in this exam to generate answers for.")
 
-    model = text_model_for(exam.subject.name if exam.subject else None)
+    model = None
     check_model(model)
 
     q_dicts = [
@@ -297,7 +296,7 @@ def generate_answer_keys_ai(exam_id: str, db: Session = Depends(get_db), t: Teac
     ]
 
     img_path = None
-    # Only supply heavy image to Ollama if some questions have empty or very short text (e.g. diagrams/figures)
+    # Only send the image when text alone is insufficient (e.g. diagrams/figures).
     if any(len((q.question_text or "").strip()) < 10 for q in qs):
         qp = db.query(QuestionPaperDocument).filter_by(exam_id=exam.id, is_active=True).first()
         if qp and qp.pages and qp.pages[0].get("processed_file"):

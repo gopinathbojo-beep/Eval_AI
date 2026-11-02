@@ -32,6 +32,8 @@ def candidates(subject, grade):
         "mathematics": "Mathematics",
         "english": "English",
         "hindi": "Hindi",
+        "tamil": "Tamil",
+        "தமிழ்": "Tamil",
     }.get(name)
     return [
         p

@@ -8,9 +8,10 @@ from datetime import datetime, timezone
 from ..config import AI_UNAVAILABLE_MESSAGE, get_settings
 from ..database import get_db
 from ..deps import err, get_exam
-from ..models import (AnswerKey, AnswerKeyDocument, AnswerSheetDocument, AuditLog, Evaluation,
-                      EvaluationItem, Exam, ExamQuestion, QuestionPaperDocument, SchoolClass,
-                      Student, StudentAnswer, Subject, Teacher, TeacherAssignment)
+from ..models import (AnswerKey, AnswerKeyDocument, AnswerSheetDocument, AuditLog, BackgroundJob,
+                      Evaluation, EvaluationItem, Exam, ExamQuestion, PendingUpload,
+                      QuestionPaperDocument, SchoolClass, Student, StudentAnswer, Subject, Teacher,
+                      TeacherAssignment, VerifiedReferenceExample)
 from ..ocr.internvl import AIUnavailable, check_model
 from ..security import SESSION_COOKIE, create_token, current_account, current_teacher, is_admin, require_browser_request, set_session_cookie, verify_password
 from ..login_limiter import login_limiter
@@ -126,6 +127,9 @@ def cascade_delete_exam_records(db: Session, exam_id: str):
     db.query(QuestionPaperDocument).filter_by(exam_id=exam_id).delete(synchronize_session=False)
     db.query(ExamQuestion).filter_by(exam_id=exam_id).delete(synchronize_session=False)
     db.query(AuditLog).filter_by(exam_id=exam_id).delete(synchronize_session=False)
+    db.query(VerifiedReferenceExample).filter_by(exam_id=exam_id).delete(synchronize_session=False)
+    db.query(PendingUpload).filter_by(exam_id=exam_id).delete(synchronize_session=False)
+    db.query(BackgroundJob).filter_by(exam_id=exam_id).delete(synchronize_session=False)
     db.query(Exam).filter_by(id=exam_id).delete(synchronize_session=False)
 
     try:

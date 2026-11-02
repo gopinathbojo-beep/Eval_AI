@@ -137,6 +137,24 @@ def test_tiled_illustrations_and_wrong_ai_boxes_use_printed_ownership(tmp_path, 
     assert fragments[1].visuals[0].bbox == {"x": 400, "y": 920, "width": 200, "height": 160}
 
 
+def test_scheme_branch_labels_with_trailing_period_define_image_ownership(tmp_path, monkeypatch):
+    path = tmp_path / "scheme.pdf"
+    pdf = pymupdf.open()
+    page = pdf.new_page(width=600, height=800)
+    page.insert_text((40, 100), "18. First solution.")
+    page.insert_text((40, 400), "19(A). Alternative solution with a figure.")
+    image = BytesIO()
+    Image.new("RGB", (80, 80), "black").save(image, format="PNG")
+    page.insert_image(pymupdf.Rect(250, 410, 350, 500), stream=image.getvalue(), keep_proportion=False)
+    pdf.save(path)
+    pdf.close()
+    monkeypatch.setattr(layout, "abs_path", lambda _: path)
+    fragments = [Fragment(root=18, text="No figure"), Fragment(root=19, text="Refer to figure")]
+    layout.ground_visuals(SimpleNamespace(original_file="scheme.pdf"), [(meta(1), Page(page_number=1, fragments=fragments))])
+    assert not fragments[0].visuals
+    assert len(fragments[1].visuals) == 1
+
+
 def test_native_images_recover_ai_omissions_without_inventing_diagrams(tmp_path, monkeypatch):
     doc = source_pdf(tmp_path, monkeypatch)
     fragments = [Fragment(root=27, text="Source figure", continues=True), Fragment(root=28, text="No image")]

@@ -7,13 +7,13 @@ from dataclasses import dataclass, field
 from ..models import AnswerKey, AnswerSheetDocument, Evaluation, Exam, ExamQuestion, EvaluationItem, StudentAnswer
 from ..ocr import prompts
 from ..ocr.internvl import AIResponseError, AIUnavailable, chat_structured, check_model
-from ..ocr.indic import text_model_for
+from ..config import ai_bad_response_message
 from ..ocr.schemas import EvaluationResult
 from .. import formatter
 from ..formatter.common import choices
 from ..formatter.common.mark_rules import EvaluationValidationError, validate_evaluation
 from .job_queue import keyed_lock, submit
-from .mapping_service import exam_questions
+from .mapping_service import exam_questions, conflicting_answer_heading
 from ..formatter.common.numbering import parent_number
 from .state import set_state
 from .audit import audit
@@ -134,6 +134,15 @@ def resolve_student_answer(db: Session, ev: Evaluation, q: ExamQuestion, snap: E
         combined_text = ""
 
     if constituent:
+        for answer in constituent:
+            conflict = conflicting_answer_heading(answer.answer_text or "", q.normalized_number)
+            if conflict:
+                return ResolvedAnswer(
+                    status=STUDENT_ANSWER_MAPPING_REVIEW,
+                    primary_answer=answer,
+                    constituent_answers=constituent,
+                    reason=f"Answer text starts with question {conflict}, but is mapped to {q.display_number}. Review the mapping before grading.",
+                )
         if combined_text.strip():
             return ResolvedAnswer(
                 status=STUDENT_ANSWER_FOUND,
@@ -306,7 +315,7 @@ def evaluate_item(db: Session, ev: Evaluation, q: ExamQuestion, item: Evaluation
                 a.status = "MAPPED"
         except AIResponseError as e:
             item.raw_response = e.raw
-            item.status, item.error = "EVALUATION_ERROR", "InternVL3.5 4B failed to return a valid structured response."
+            item.status, item.error = "EVALUATION_ERROR", f"{ai_bad_response_message()} {e.detail}"
             for a in resolved.constituent_answers:
                 a.status = "MAPPED"
             log.error("Eval AI error q=%s: %s", q.display_number, e.detail)
@@ -356,8 +365,8 @@ def _run_evaluation(ev_id: str, only_question_ids: list[str] | None) -> None:
             set_state(exam, "EVALUATING")
         db.commit()
         try:
-            model = text_model_for(exam.subject.name if exam.subject else None)  # Tamil etc. graded by a model that reads it
-            check_model(model)
+            model = None  # the single configured OpenRouter Gemini model grades every language
+            check_model()
             qs = [q for q in exam_questions(db, ev.exam_id) if not only_question_ids or q.id in only_question_ids]
             ev.run_total, ev.run_progress = len(qs), 0
             db.commit()
@@ -524,7 +533,7 @@ def auto_evaluate_sheet(doc_id: str) -> None:
     """Grade a freshly read sheet straight away when nothing needs the teacher first (pages read, answers mapped).
 
     Sheets with unread pages or unmapped answers are left for the teacher; review_reasons() lists why. Grading is
-    queued as its own job on the grading model's engine, so a Tamil sheet is graded once InternVL is back on the GPU.
+    queued as its own OpenRouter job, using the same Gemini model for every language.
     """
     db = SessionLocal()
     try:

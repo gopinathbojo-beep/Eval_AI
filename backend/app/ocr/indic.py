@@ -1,32 +1,23 @@
-"""IndicOCR (Bodhan AI) for Indian-language subjects, via indic_ocr_service. No silent fallback to InternVL.
+"""Legacy block-to-schema adapter retained for deterministic Tamil parser fixtures.
 
-IndicOCR returns reading-ordered text blocks, not questions. Each block becomes one page-result item with the
-question label taken from its text prefix; the segmentation services then merge continuation blocks as they do for InternVL.
+The production application no longer calls an IndicOCR service; Gemini reads every language through OpenRouter.
 """
 from __future__ import annotations
-import json
-import logging
 import re
-from pathlib import Path
 from typing import Type, TypeVar
-import httpx
 from pydantic import BaseModel
-from ..config import INDIC_BAD_RESPONSE_MESSAGE, INDIC_UNAVAILABLE_MESSAGE, get_settings
 from ..formatter.common import choices
 from ..formatter.tamil import blocks as tamil_blocks
 from ..formatter.tamil import format as tamil_format
 from ..formatter.common.paper import extract_section_marks_rule, is_document_header, is_section_heading_line
 from ..formatter.common.numbering import extract_label_from_text_prefix
-from .internvl import AICall
 from .schemas import AnswerKeyPageResult, QuestionPageResult, StudentPageResult
 
-log = logging.getLogger("adem.indic")
 T = TypeVar("T", bound=BaseModel)
 
-# Recognition confidence is measured by the service (indic_ocr_service/confidence.py): a block's `text_conf` is the mean
-# probability of its words as the recognizer read them; `conf` is only the layout model's certainty about the box.
-# A service from before that measurement sends no text_conf: printed text then counts as read reliably, handwriting
-# (still "work in progress" upstream) stays below LOW_CONF so a teacher checks every answer.
+# Legacy parser fixtures may contain `text_conf` (recognition certainty) and `conf`
+# (layout-box certainty). Missing recognition confidence remains conservative for
+# handwriting so a teacher reviews uncertain answers.
 _PRINTED_CONFIDENCE = 0.8
 _HANDWRITING_CONFIDENCE = 0.5
 
@@ -35,7 +26,7 @@ def _confidence(block: dict, fallback: float) -> float:
     measured = block.get("text_conf")
     return float(measured) if isinstance(measured, (int, float)) else fallback
 # Not student or question content
-# Block type/label (lower case, letters only): IndicOCR says "PageHeader", "Website-link", "Page-number", ...
+# Block type/label (lower case, letters only) used by the legacy fixture adapter.
 _SKIP_KINDS = {"pageheader", "pagefooter", "header", "footer", "footnote", "websitelink", "dateline",
                "picture", "figure", "image", "chart", "seal", "advertisement"}
 # Page numbers and paper codes; IndicOCR also files exam header lines ("[ மொத்த மதிப்பெண்கள் : 100") and mark rules
@@ -66,69 +57,6 @@ def _is_furniture(block: dict, text: str) -> bool:
     if kinds & _FOLIO_KINDS and len(text.split()) >= _CONTENT_WORDS:
         return False  # a boxed model letter or passage the layout model calls an "Infobox": content, not a folio
     return bool(kinds & _FOLIO_KINDS) and not (is_document_header(text) or extract_section_marks_rule(text) is not None)
-
-
-class IndicUnavailable(Exception):
-    def __init__(self, detail: str = ""):
-        super().__init__(INDIC_UNAVAILABLE_MESSAGE)
-        self.detail = detail
-
-
-class IndicResponseError(Exception):
-    def __init__(self, kind: str, detail: str, raw: str = ""):
-        super().__init__(INDIC_BAD_RESPONSE_MESSAGE)
-        self.kind, self.detail, self.raw = kind, detail, raw
-
-
-def uses_indic_ocr(subject_name: str | None) -> bool:
-    """True when IndicOCR is enabled and the subject name matches INDIC_SUBJECTS (e.g. 'Tamil', 'Tamil II', 'தமிழ்')."""
-    s = get_settings()
-    if not s.indic_ocr_enabled or not subject_name:
-        return False
-    name = subject_name.casefold()
-    return any(k.strip().casefold() in name for k in s.indic_subjects.split(",") if k.strip())
-
-
-def text_model_for(subject_name: str | None) -> str | None:
-    """Ollama model that grades this subject: INDIC_TEXT_MODEL for Indian-language subjects, else None (InternVL)."""
-    model = get_settings().indic_text_model.strip()
-    return model if model and uses_indic_ocr(subject_name) else None
-
-
-def check_indic() -> dict:
-    s = get_settings()
-    try:
-        r = httpx.get(f"{s.indic_ocr_url}/health", timeout=10)
-        r.raise_for_status()
-    except httpx.HTTPError as e:
-        raise IndicUnavailable(f"Cannot reach IndicOCR at {s.indic_ocr_url}: {e}") from e
-    return {"available": True, "model": r.json().get("model"), "url": s.indic_ocr_url}
-
-
-def release_indic() -> None:
-    """Ask the IndicOCR service to free its GPU memory; it reloads on the next page."""
-    s = get_settings()
-    if not s.indic_ocr_enabled:
-        return
-    try:
-        httpx.post(f"{s.indic_ocr_url}/release", timeout=30)
-    except httpx.HTTPError as e:
-        log.warning("Could not release IndicOCR GPU memory: %s", e)
-
-
-def _parse_page(image_path: Path) -> dict:
-    s = get_settings()
-    try:
-        with open(image_path, "rb") as f:
-            r = httpx.post(f"{s.indic_ocr_url}/parse", files={"image": (Path(image_path).name, f)},
-                           timeout=s.indic_ocr_timeout)
-    except (httpx.ConnectError, httpx.ConnectTimeout) as e:
-        raise IndicUnavailable(f"Cannot connect to IndicOCR: {e}") from e
-    except httpx.TimeoutException as e:
-        raise IndicResponseError("AI_ERROR", f"IndicOCR timed out: {e}") from e
-    if r.status_code != 200:
-        raise IndicResponseError("AI_ERROR", f"IndicOCR HTTP {r.status_code}: {r.text[:300]}", r.text)
-    return r.json()
 
 
 def _bbox(xyxy) -> dict | None:
@@ -265,26 +193,3 @@ def _is_identity_block(text: str) -> bool:
     """A short block giving the student's name and a roll/registration number."""
     read = parse_identity(text)
     return len(text.splitlines()) <= 6 and bool(read["name"]) and bool(read["roll_number"] or read["registration_number"])
-
-
-LEGIBLE_LINES = 3  # this many lines of text read upright: the page is not photographed sideways
-
-
-def read_identity(image_path: Path) -> dict:
-    """parse_identity() of the page, plus "legible": whether it read as ordinary upright text."""
-    page = _parse_page(Path(image_path))
-    blocks = sorted(page.get("blocks") or [], key=lambda b: b.get("order", 0))
-    text = "\n".join(_clean(b.get("text")) for b in blocks)
-    return {**parse_identity(text), "legible": sum(1 for line in text.splitlines() if len(line) >= 10) >= LEGIBLE_LINES}
-
-
-def read_page(image_path: Path, schema: Type[T], page_number: int) -> AICall:
-    page = _parse_page(Path(image_path))
-    raw = json.dumps(page, ensure_ascii=False)
-    try:
-        parsed = blocks_to_result(page, schema, page_number)
-    except Exception as e:
-        raise IndicResponseError("FAILED_PARSE", f"Unusable IndicOCR output: {e}", raw) from e
-    if not any(getattr(parsed, k, None) for k in ("questions", "answers")):
-        raise IndicResponseError("FAILED_PARSE", "IndicOCR found no text on this page", raw)
-    return AICall(parsed, raw, 1)

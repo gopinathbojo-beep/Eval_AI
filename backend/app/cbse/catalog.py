@@ -22,7 +22,8 @@ def section(key, start, end, marks, each=None, choices=None):
 
 
 def profile(
-    grade, code, name, source, total, sections, aliases=(), duration=180, notes=()
+    grade, code, name, source, total, sections, aliases=(), duration=180, notes=(),
+    upload_driven=False,
 ):
     return {
         "id": f"cbse-{grade}-{code}",
@@ -34,8 +35,9 @@ def profile(
         "source_stem": source,
         "duration_minutes": duration,
         "total_marks": total,
-        "question_count": max(s["end"] for s in sections),
+        "question_count": max((s["end"] for s in sections), default=0),
         "sections": sections,
+        "upload_driven": upload_driven,
         "aliases": list(aliases),
         "notes": list(notes),
     }
@@ -166,6 +168,11 @@ PROFILES = [
         ("SocialScience",),
     ),
     profile(
+        10, "006", "Tamil", "Tamil", 80, [], ("தமிழ்",),
+        notes=("Question structure, choices and allocations come from the uploaded paper and scheme.",),
+        upload_driven=True,
+    ),
+    profile(
         12,
         "055",
         "Accountancy",
@@ -224,6 +231,16 @@ PROFILES = [
             section("E", 27, 30, 24, 6, 4),
         ],
         ("PoliticalScience",),
+    ),
+    profile(
+        12, "302", "Hindi", "Hindi", 80, [], ("Hindi Core", "हिन्दी"),
+        notes=("Question structure, choices and allocations come from the uploaded paper and scheme.",),
+        upload_driven=True,
+    ),
+    profile(
+        12, "106", "Tamil", "Tamil", 80, [], ("தமிழ்",),
+        notes=("Question structure, choices and allocations come from the uploaded paper and scheme.",),
+        upload_driven=True,
     ),
 ]
 

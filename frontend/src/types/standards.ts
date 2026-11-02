@@ -7,6 +7,7 @@ export interface StandardProfile {
   duration_minutes: number;
   total_marks: number;
   question_count: number;
+  upload_driven: boolean;
   subject_ids: string[];
   sections: { key: string; start: number; end: number; marks: number }[];
 }

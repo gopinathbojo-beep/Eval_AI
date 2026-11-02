@@ -28,6 +28,17 @@ def test_cut_off_page_reply_is_not_an_empty_page():
     assert not internvl.is_looping('{"question_text": "He is worried ...................... examination. ________"}')
 
 
+def test_text_token_limit_does_not_repeat_the_identical_paid_request(monkeypatch):
+    calls = []
+    def model(*args, **kwargs):
+        calls.append(1)
+        raise internvl.AIResponseError("FAILED_PARSE", "AI response exceeded its token limit", "partial")
+    monkeypatch.setattr(internvl, "_call_once", model)
+    with pytest.raises(internvl.AIResponseError):
+        internvl.chat_structured("system", "Grade answer", QuestionPageResult)
+    assert len(calls) == 1
+
+
 def test_retry_after_a_loop_asks_to_skip_the_unreadable_passage(monkeypatch):
     prompts = []
 

@@ -11,7 +11,7 @@ from ..documents.cropping import normalise_bbox
 from .extraction import VisualEvidence
 
 log = logging.getLogger("adem.layout")
-_LABEL = re.compile(r"^(?:Q(?:uestion)?\.?\s*)?(\d{1,3})(?:[.)]|\([A-Za-z]\))(?:\(?[A-Za-z]\)?)?$", re.I)
+_LABEL = re.compile(r"^(?:Q(?:uestion)?\.?\s*)?(\d{1,3})(?:[.)](?:\(?[A-Za-z]\)?)?|\([A-Za-z]\)[.]?)$", re.I)
 
 
 def _anchors(page):

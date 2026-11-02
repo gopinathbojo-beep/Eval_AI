@@ -1081,7 +1081,7 @@ function MarksTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<vo
           <div>
             <p className="font-semibold">AI Perception Engine Offline</p>
             <p className="mt-0.5 text-xs text-mark/90">
-              The AI model is not running. Start Ollama, then try again.
+              OpenRouter is unavailable. Check the API key, Gemini model access and credits, then try again.
             </p>
           </div>
         </div>

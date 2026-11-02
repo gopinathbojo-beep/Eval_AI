@@ -103,6 +103,10 @@ def validate(db, exam, phase="evaluation"):
                 f"Reprocess the {kind} with the CBSE extractor.",
                 document=doc,
             )
+        if p.get("upload_driven"):
+            # These language profiles define only class, duration and maximum marks.
+            # Their uploaded paper and scheme are authoritative for sections and choices.
+            continue
         for field, required in (
             ("class_level", p["class_level"]),
             ("subject_code", p["code"]),
@@ -164,6 +168,10 @@ def validate(db, exam, phase="evaluation"):
             )
         for item in extraction.get("issues", []):
             add("EXTRACTION_REVIEW", str(item), document=doc)
+    if p.get("upload_driven"):
+        result = {"valid": not issues, "issues": issues, "profile": p, "detected": {}}
+        exam.standard_validation = result
+        return result
     qs = (
         db.query(ExamQuestion)
         .filter_by(exam_id=exam.id)

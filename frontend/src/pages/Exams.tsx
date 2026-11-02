@@ -533,7 +533,9 @@ export function ExamNew() {
                     setF(prev=>({...prev,subject_id:subjectId,duration_minutes:String(p.duration_minutes),total_marks:String(p.total_marks),exam_type:"Board pattern"}));
                   } catch (error) { setError(error); setProfileId(""); }
                 }}
-                options={(standards.data||[]).map(p=>({value:p.id,label:p.name,sublabel:`${p.code} · ${p.total_marks} marks · ${p.question_count} questions`}))}
+                options={(standards.data||[]).map(p=>({value:p.id,label:p.name,sublabel:p.upload_driven
+                  ? `${p.code} · ${p.total_marks} marks · structure read from upload`
+                  : `${p.code} · ${p.total_marks} marks · ${p.question_count} questions`}))}
                 placeholder={f.class_id ? "Choose CBSE subject..." : "Choose a class first"}
                 disabled={!f.class_id || standards.loading}
                 itemNoun="subject"
