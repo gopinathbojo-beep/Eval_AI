@@ -9,7 +9,7 @@ mark_rules.py (checks on the grader's marks).
 from __future__ import annotations
 from typing import Any
 
-__all__ = ["parse_paper", "segment_keys", "segment_answers", "repair_answers", "grading_attempts", "grade_points",
+__all__ = ["parse_paper", "segment_keys", "segment_answers", "check_reading", "repair_answers", "grading_attempts", "grade_objective", "grade_points",
            "check_deductions", "uses_pdf_text", "build_rubric"]
 
 
@@ -30,6 +30,15 @@ def segment_answers(page_results: list[tuple[dict, Any]], canonical_questions: l
     return None
 
 
+def check_reading(page_results: list[tuple[dict, Any]], canonical_questions: list[Any] | None,
+                  keys: dict[str, str] | None, confirm: Any | None) -> list[str]:
+    """Each page's blocks with what the reading model wrote and the student did not taken out, before they are grouped
+    (see faithful.py); confirm(page_number, lines) asks the model whether each line is on the page, or is None.
+    Returns what was removed."""
+    from .faithful import check_reading as check
+    return check(page_results, canonical_questions, keys, confirm)
+
+
 def repair_answers(answers: list[Any], page_results: list[tuple[dict, Any]], canonical_questions: list[Any] | None,
                    keys: dict[str, str] | None, reread: Any | None) -> list[Any]:
     """The answers after the subject's own repairs, before anything is flagged for review. reread(page_number, bbox)
@@ -40,6 +49,14 @@ def repair_answers(answers: list[Any], page_results: list[tuple[dict, Any]], can
 def grading_attempts(question_text: str | None, answer_text: str) -> list[tuple[str, str]]:
     """Several attempts in one answer, each graded and the best counted: [(title, text)]; [] grades it as one."""
     return []
+
+
+def grade_objective(question_type: str | None, question_text: str | None, key_text: str | None, answer_text: str,
+                    max_marks: float) -> Any | None:
+    """An MCQ or assertion-reason question marked against the key's option without the grading model
+    (EvaluationResult, see objective.py), or None to grade it with the model."""
+    from .objective import grade
+    return grade(question_type, question_text, key_text, answer_text, max_marks)
 
 
 def grade_points(rubric: dict | None, answer_text: str, max_marks: float, ask: Any) -> Any | None:

@@ -70,7 +70,8 @@ def test_step_marks_quote_whole_steps(mapped):
 
 def test_each_key_crops_its_own_figure(mapped):
     _, keys = mapped
-    assert sorted(n for n, k in keys.items() if k.figure) == ["10", "17", "22", "27(b)", "29", "34", "35(a)", "35(b)"]
-    assert keys["24"].figure is None  # the concentric circles belong to the visually impaired solution, not to Q24
-    b = keys["35(b)"].figure
-    assert keys["35(b)"].page_number == 9 and 0 < b["x"] < 1 and 0 < b["width"] < 0.5 and b["y"] < 0.3
+    assert sorted(n for n, k in keys.items() if k.figures) == ["10", "17", "22", "27(b)", "29", "34", "35(a)", "35(b)"]
+    assert keys["24"].figures == []  # the concentric circles belong to the visually impaired solution, not to Q24
+    assert len(keys["35(b)"].figures) == 1
+    page, b = keys["35(b)"].figures[0]
+    assert page == 9 and 0 < b["x"] < 1 and 0 < b["width"] < 0.5 and b["y"] < 0.3

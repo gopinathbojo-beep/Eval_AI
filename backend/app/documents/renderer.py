@@ -172,11 +172,50 @@ def _tables(page):
     except Exception:
         return [], [], []
     tables = [t for t in found if not any(_inside(t.bbox, other.bbox) for other in found if other is not t)]
-    nested = [t for t in found if not any(t is k for k in tables)]
     spans = [_Span(_plain(s["text"]), s["bbox"][0], s["bbox"][2], (s["bbox"][1] + s["bbox"][3]) / 2, s["size"])
              for b in blocks if b.get("type") == 0
              for line in b.get("lines", []) for s in line.get("spans", []) if s.get("text")]
-    return tables, nested, spans
+    # a data table fills its cells; justified prose taken for a table leaves most of them empty
+    nested = [t for t in found if not any(t is k for k in tables) and _filled(t, spans) >= 0.6]
+    return [_Merged(t, spans) for t in tables], nested, spans
+
+
+def _filled(t, spans: list[_Span]) -> float:
+    cells = [box for row in t.rows for box in row.cells]
+    return sum(1 for box in cells if box and any(s.text.strip() for s in _in_box(spans, box))) / max(1, len(cells))
+
+
+@dataclass
+class _Row:
+    cells: list
+    bbox: tuple | None
+
+
+class _Merged:
+    """A ruled table whose rows are mended: a row holding only a question number, under a row with the question's
+    text and marks but no number (the table's ruling split one row in two), becomes one row."""
+
+    def __init__(self, t, spans: list[_Span]):
+        self.bbox = t.bbox
+        rows = [_Row(list(r.cells), tuple(r.bbox) if r.bbox else None) for r in t.rows]
+        text = lambda box: "".join(s.text for s in _in_box(spans, box)).strip()  # noqa: E731
+        out: list[_Row] = []
+        for r in rows:
+            prev = out[-1] if out else None
+            if (prev and len(r.cells) == len(prev.cells) >= 3 and r.cells[0] and text(r.cells[0])
+                    and not any(text(b) for b in r.cells[1:] if b)
+                    and not (prev.cells[0] and text(prev.cells[0])) and prev.cells[-1] and text(prev.cells[-1])):
+                prev.cells = [_union(a, b) for a, b in zip(prev.cells, r.cells)]
+                prev.bbox = _union(prev.bbox, r.bbox)
+                continue
+            out.append(r)
+        self.rows = out
+
+
+def _union(a, b):
+    if not a or not b:
+        return a or b
+    return (min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3]))
 
 
 def _inside(a, b, tol: float = 2) -> bool:
@@ -276,7 +315,7 @@ def table_figures(page) -> list[list[dict]]:
             box = row.bbox
             mine = [p for p in parts if box and box[0] - 1 <= (p[0] + p[2]) / 2 <= box[2] + 1
                     and box[1] - 1 <= (p[1] + p[3]) / 2 <= box[3] + 1]
-            rows.append([{"x": c[0] / w, "y": c[1] / h, "width": (c[2] - c[0]) / w, "height": (c[3] - c[1]) / h}
+            rows.append([{"x": c[0] / w, "y": c[1] / h, "width": (c[2] - c[0]) / w, "height": (c[3] - c[1]) / h, "top": c[1]}
                          for c in _clusters(mine)
                          if c[2] - c[0] >= _FIGURE_MIN and c[3] - c[1] >= _FIGURE_MIN])
     return rows

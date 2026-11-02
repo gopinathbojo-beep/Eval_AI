@@ -11,3 +11,9 @@ The layout of the 2026-27 sample paper, all of it handled in common/ because eve
 A rule only Class 10 Science needs is defined here and overrides the shared one.
 """
 from ....common import *  # noqa: F401,F403
+
+
+def grade_points(rubric, answer_text, max_marks, ask):
+    """Step by step against the confirmed marking scheme, its OR choices counted once (common/steps.py)."""
+    from ....common.steps import grade
+    return grade(rubric, answer_text, max_marks, ask)

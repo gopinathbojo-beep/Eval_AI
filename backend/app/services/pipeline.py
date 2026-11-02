@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 from PIL import Image
 from sqlalchemy.orm import Session
+from pydantic import BaseModel
 from ..config import AI_BAD_RESPONSE_MESSAGE, AI_UNAVAILABLE_MESSAGE, INDIC_BAD_RESPONSE_MESSAGE, INDIC_UNAVAILABLE_MESSAGE, ai_unavailable_message, ai_bad_response_message
 from ..database import SessionLocal
 from ..documents import cropping
@@ -22,7 +23,7 @@ from ..cbse.common.paper import apply_pdf_question_text, parse_question_paper_st
 from ..cbse.common.keys import segment_answer_keys
 from .job_queue import keyed_lock
 from ..cbse.common.answers import segment_student_answers
-from .mapping_service import apply_key_mapping, apply_student_mapping
+from .mapping_service import apply_key_mapping, apply_student_mapping, key_texts
 from .state import set_state
 from ..cbse import formatter
 from ..cbse.common import standards
@@ -154,14 +155,17 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
         out = wd / "ocr" / f"page-{p['page_number']:03d}.json"
         prompt_kwargs = {}
         if kind == "answer-sheet":
+            # each question's number, marks and opening words: enough to tell "21)" or "35> (A)" apart, and short
+            # enough that a full paper (44 rows) and the page image stay inside the model's context. Numbers alone
+            # read worse (page 1 came back all "[unclear]", list rows copied as labels "21(a) (2 m)"); an opening the
+            # model copies into an answer is caught afterwards (faithful.py)
             canonical_qs = []
             for q in db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all():
-                q_text = (q.question_text or "").strip()
-                clean_lines = [line.strip() for line in q_text.splitlines() if line.strip()]
-                compact_text = " | ".join(clean_lines[:3])
-                if len(compact_text) > 160:
-                    compact_text = compact_text[:157] + "..."
-                canonical_qs.append(f"Q{q.display_number}: {compact_text}")
+                compact_text = " ".join((q.question_text or "").split())
+                if len(compact_text) > 60:
+                    compact_text = compact_text[:57] + "..."
+                marks = f" ({q.max_marks:g} m)" if q.max_marks else ""
+                canonical_qs.append(f"Q{q.display_number}{marks}: {compact_text}")
             if canonical_qs:
                 prompt_kwargs["canonical_questions"] = canonical_qs
         prompt_str = prompt_fn(p["page_number"], p["ocr_width"], p["ocr_height"], **prompt_kwargs)
@@ -452,8 +456,8 @@ def _build_answer_key(db: Session, doc, exam: Exam, wd: Path, results) -> None:
         n += 1
         p = pages_by_num.get(k.page_number) or results[0][0]
         nb, crop = _bbox_and_crop(p, k.bbox, wd, f"k{n:03d}")
-        if not crop and k.figure:  # a typed scheme's answer: its figure, not a crop
-            crop = _figure_crop([(k.page_number, k.figure)], pages_by_num, wd, f"k{n:03d}-figure")
+        if not crop and k.figures:  # a typed scheme's answer: its figures, not a crop
+            crop = _figure_crop(k.figures, pages_by_num, wd, f"k{n:03d}-figure")
         db.add(AnswerKey(
             exam_id=exam.id,
             document_id=doc.id,
@@ -472,16 +476,6 @@ def _build_answer_key(db: Session, doc, exam: Exam, wd: Path, results) -> None:
     db.flush()
     apply_key_mapping(db, exam.id, doc.id)
     db.commit()
-
-
-def _key_texts(db: Session, exam_id: str, questions: list[ExamQuestion]) -> dict[str, str]:
-    """The exam's active key text per question number ("7" -> ...), for the segmenter to compare answers with."""
-    numbers = {q.id: q.normalized_number for q in questions if q.normalized_number}
-    out: dict[str, str] = {}
-    for k in db.query(AnswerKey).filter_by(exam_id=exam_id, is_active=True):
-        if (n := numbers.get(k.exam_question_id)) and k.answer_text:
-            out[n] = f"{out[n]}\n{k.answer_text}" if n in out else k.answer_text
-    return out
 
 
 def _rereader(pages_by_num: dict[int, dict], wd: Path):
@@ -511,15 +505,45 @@ def _rereader(pages_by_num: dict[int, dict], wd: Path):
     return reread
 
 
+class _Written(BaseModel):
+    written: list[bool | None] = []
+
+
+_CONFIRM_SYSTEM = ("You check a transcription of a student's handwritten answer sheet against the page image. "
+                   "You answer only from the ink on the page.")
+
+
+def _confirmer(pages_by_num: dict[int, dict]):
+    """confirm(page_number, lines): for each line, whether the student wrote it on that page (InternVL)."""
+    def confirm(page_number: int, lines: list[str]) -> list[bool | None]:
+        p = pages_by_num.get(page_number)
+        if not p or not p.get("processed_file") or not lines:
+            return [None] * len(lines)
+        listed = "\n".join(f"{i + 1}. {line}" for i, line in enumerate(lines))
+        prompt = (f"Below are {len(lines)} lines a reader transcribed from this handwritten page. For each line, answer "
+                  "true if the student wrote that line on this page (the same words and numbers, allowing small "
+                  "differences in symbols or spacing), false if the line, or a phrase in it, is not written on the "
+                  "page.\n\n"
+                  f"{listed}\n\nReturn JSON: {{\"written\": [true, false, ...]}} with exactly {len(lines)} answers in order.")
+        out = chat_structured(_CONFIRM_SYSTEM, prompt, _Written, abs_path(p["processed_file"])).parsed.written
+        return (list(out) + [None] * len(lines))[:len(lines)] if len(out) == len(lines) else [None] * len(lines)
+    return confirm
+
+
 def _build_student_answers(db: Session, doc, exam: Exam, wd: Path, results) -> None:
     ev = db.query(Evaluation).filter_by(answer_sheet_id=doc.id).one()
     db.query(StudentAnswer).filter_by(evaluation_id=ev.id).delete()
     pages_by_num = {p["page_number"]: p for p, _ in results}
     canonical_qs = db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all()
-    keys = _key_texts(db, exam.id, canonical_qs)
+    keys = key_texts(db, exam.id, canonical_qs)
+    indic = uses_indic_ocr(exam.subject.name if exam.subject else None)
+    # only the student's own ink: what the reading model added is checked against the question, the key and the page
+    # (InternVL confirms; for an IndicOCR sheet only the text checks run)
+    for note in formatter.current().check_reading(results, canonical_qs, keys,
+                                                  None if indic else _confirmer(pages_by_num)):
+        log.info("Answer sheet %s: %s", doc.id, note)
     answers = segment_student_answers(results, canonical_questions=canonical_qs, keys=keys)
     # the subject's self-repair before anything is flagged; re-reading regions only where this sheet was read by IndicOCR
-    indic = uses_indic_ocr(exam.subject.name if exam.subject else None)
     reread = _rereader(pages_by_num, wd) if indic else None
     answers = formatter.current().repair_answers(answers, results, canonical_qs, keys, reread)
     n = 0

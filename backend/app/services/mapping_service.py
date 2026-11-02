@@ -16,8 +16,19 @@ def exam_questions(db: Session, exam_id: str) -> list[ExamQuestion]:
     return db.query(ExamQuestion).filter_by(exam_id=exam_id).order_by(ExamQuestion.position).all()
 
 
+def key_texts(db: Session, exam_id: str, questions: list[ExamQuestion]) -> dict[str, str]:
+    """The exam's active key text per question number ("7" -> ...), to compare answers with."""
+    numbers = {q.id: q.normalized_number for q in questions if q.normalized_number}
+    out: dict[str, str] = {}
+    for k in db.query(AnswerKey).filter_by(exam_id=exam_id, is_active=True):
+        if (n := numbers.get(k.exam_question_id)) and k.answer_text:
+            out[n] = f"{out[n]}\n{k.answer_text}" if n in out else k.answer_text
+    return out
+
+
 def apply_student_mapping(db: Session, ev: Evaluation) -> None:
     qs = exam_questions(db, ev.exam_id)
+    keys = key_texts(db, ev.exam_id, qs)
     minc = get_settings().min_label_confidence
     answers = db.query(StudentAnswer).filter_by(evaluation_id=ev.id).order_by(StudentAnswer.position).all()
     total_ans = len(answers)
@@ -42,6 +53,7 @@ def apply_student_mapping(db: Session, ev: Evaluation) -> None:
             answer_position=a.position,
             total_answers=total_ans,
             prev_question_id=prev_qid,
+            keys=keys,
         )
         a.normalized_number = res.normalized_number
         a.exam_question_id = res.question_id

@@ -29,7 +29,8 @@ class SegmentedKey:
     page_number: int = 1
     bbox: dict | None = None
     ocr_confidence: float | None = None
-    figure: dict | None = None  # a typed scheme's diagram beside the answer (fractions of the page), cut as its crop
+    # a typed scheme's diagrams beside the answer: (page, box in fractions of the page), cut and stacked as its crop
+    figures: list = field(default_factory=list)
 
 
 # One marking point: "1 Mark: ...", "1 mark per ...", "(... marks ...)"
@@ -242,15 +243,6 @@ def _step_texts(text_lines: list[str], visual: list[tuple[float, str]]) -> list[
     return out
 
 
-def _union(boxes: list[dict]) -> dict | None:
-    """Figures as one box (fractions of the page), cut from the page image as the key's crop; None without any."""
-    if not boxes:
-        return None
-    x0, y0 = min(b["x"] for b in boxes), min(b["y"] for b in boxes)
-    x1, y1 = max(b["x"] + b["width"] for b in boxes), max(b["y"] + b["height"] for b in boxes)
-    return {"x": x0, "y": y0, "width": x1 - x0, "height": y1 - y0}
-
-
 def _total(values: list[tuple[float, str]]) -> float:
     """The step marks added up, an (A)/(B) alternative counted once (the larger)."""
     plain = sum(v for v, p in values if not p)
@@ -292,7 +284,7 @@ def keys_from_pdf_tables(page_results: list[tuple[dict, Any]],
             if m := _KEY_LABEL.match(label) if label else None:
                 number = f"{m.group(1)}({m.group(2)})" if m.group(2) else m.group(1)
                 current = normalize_question_number(number)
-                keys[current] = {"label": label.rstrip("."), "texts": [], "criteria": [], "values": [], "page": page, "figures": [],
+                keys[current] = {"label": label.rstrip("."), "texts": [], "criteria": [], "values": [], "page": page, "figures": [], "breaks": [],
                                  "answer": None}
                 if len(middle) >= 2 and re.fullmatch(r"[A-D]", (middle[0] or "").strip()):  # the ANS column
                     keys[current]["answer"] = middle[0].strip()
@@ -303,14 +295,34 @@ def keys_from_pdf_tables(page_results: list[tuple[dict, Any]],
                 # the solution for visually impaired candidates, and its continuation, is no key; a question
                 # number cell spanning both rows makes its figure look like the key's too
                 if current is not None:
-                    keys[current]["figures"] = [f for f in keys[current]["figures"] if f not in row_figures]
+                    keys[current]["figures"] = [f for f in keys[current]["figures"] if f[1] not in row_figures]
                 current = None
                 continue
             elif current is None or label:
                 continue
+            # "For visually impaired students" inside the cell (Science keys): its solution, and the rows after it
+            # until the next question, are no part of the key
+            vi_line = next((ln for ln in text.splitlines() if _KEY_VI.match(ln.strip())), None)
+            if vi_line is not None:
+                kept = text[:text.index(vi_line)].splitlines()
+                while kept and (_SEPARATOR.fullmatch(kept[-1]) or not kept[-1].strip()
+                                or re.match(r"^\s*(?:Students?\s+to\s+)?attempt\s+", kept[-1], re.I)):
+                    kept.pop()  # the "- - -" rule and the alternative's own "Students to attempt ..." line
+                text = "\n".join(kept).strip()
+                vi_y = next((y for cell in lines for y, ln in cell if _KEY_VI.match(ln)), None)
+                if vi_y is not None:
+                    lines = [[ln for ln in cell if ln[0] < vi_y] for cell in lines]
+                    row_figures = [f for f in row_figures if f.get("top", 0) < vi_y]  # its pictures too
             key = keys[current]
-            if key["page"] == page:  # its figures, cut from the page image as the key's crop
-                key.setdefault("figures", []).extend(f for f in row_figures if f not in key["figures"])
+            # its figures (cut from the page image as its crop), and where its alternatives start: "OR" lines and
+            # option heads "A." / "B." on their own, so a split either/or answer keeps only its own figures
+            key["figures"] += [(page, f) for f in row_figures if (page, f) not in key["figures"]]
+            for cell in lines[1:-1]:
+                for y, ln in cell:
+                    if ln.strip().upper() == "OR":
+                        key["breaks"].append((page, y, "or"))
+                    elif re.fullmatch(r"\s*[A-D]\s*\.\s*", ln):
+                        key["breaks"].append((page, y, "head"))
             if text:
                 key["texts"].append("\n".join(ln.rstrip() for ln in text.splitlines() if ln.strip()))
             # each step mark with the solution step level with it
@@ -347,20 +359,121 @@ def keys_from_pdf_tables(page_results: list[tuple[dict, Any]],
                         prefix = f"Or ({next((l for sy, l in starts if sy == b_start), 'B')}): "
                 key["criteria"].append(f"{_marks_label(value)}: {prefix}{detail or 'as in the scheme'}")
                 key["values"].append((value, prefix))
+            if vi_line is not None:
+                current = None
     if len(keys) < 5:
         return None
+    choice_groups: dict[str, list[str]] = {}
+    for q in canonical_questions or []:
+        if getattr(q, "choice_group", None):
+            choice_groups.setdefault(q.choice_group, []).append(q.normalized_number)
     out = []
     for norm, key in keys.items():
         body = "\n".join(key["texts"]).strip()
+        q_marks = max_marks.get(norm) or max_marks.get(parent_number(norm))
+        # an MCQ written as its option ("C. Secondary Consumer"), with no ANS column (Science keys)
+        if not key["answer"] and (q_marks or _total(key["values"])) == 1 and (m := re.match(r"^([A-D])\.\s+\S", body)):
+            key["answer"] = m.group(1)
         if key["answer"]:  # an MCQ: the marks for the right option, no part marks
             body = f"Answer: ({key['answer']})\n{body}".strip()
             key["criteria"] = [f"{_marks_label(_total(key['values']) or 1)}: Correct option ({key['answer']})"]
         stated = _total(key["values"]) or None
-        marks = max_marks.get(norm) or max_marks.get(parent_number(norm)) or stated
+        marks = q_marks or stated
+        # a one-row either/or answer ("A. ... OR B. ..."): a key per option of the paper
+        alts = choice_groups.get(norm, [])
+        parts = _split_on_or(body) if len(alts) >= 2 and not key["answer"] else []
+        if len(parts) == len(alts) >= 2:
+            for number, part in zip(alts, parts):
+                out.append(SegmentedKey(raw_question_number=key["label"], normalized_number=number, answer_text=part,
+                                        marks=max_marks.get(number) or marks, criteria=_inline_criteria(part)[0],
+                                        page_number=key["page"],
+                                        figures=[f for f in key["figures"] if _alternative_of(f, key["breaks"]) == alts.index(number)]))
+            continue
+        criteria = key["criteria"]
+        if not key["answer"]:
+            inline, inline_total = _inline_criteria(body)
+            # step marks written at the end of the lines ("... (1)", "(0.5+0.5)") when the marks column has only
+            # the question's total (Science keys)
+            if inline and len(key["values"]) <= 1:
+                criteria = inline
         out.append(SegmentedKey(raw_question_number=key["label"], normalized_number=norm, answer_text=body, marks=marks,
-                                criteria=key["criteria"], accepted_answers=[key["answer"]] if key["answer"] else [],
-                                page_number=key["page"], figure=_union(key["figures"])))
+                                criteria=criteria, accepted_answers=[key["answer"]] if key["answer"] else [],
+                                page_number=key["page"], figures=key["figures"]))
     return out
+
+
+def _alternative_of(figure: tuple[int, dict], breaks: list[tuple[int, float, str]]) -> int:
+    """Which alternative of a one-row either/or answer a figure is drawn in: the "OR" lines above it, or the option
+    heads above it less the first."""
+    at = (figure[0], figure[1].get("top", figure[1]["y"]))
+    ors = [b for b in breaks if b[2] == "or"]
+    if ors:
+        return sum(1 for b in ors if (b[0], b[1]) < at)
+    return max(0, sum(1 for b in breaks if b[2] == "head" and (b[0], b[1]) < at) - 1)
+
+
+_SEPARATOR = re.compile(r"(?:\s*-\s*){6,}\s*$")  # "- - - - - - -" before the visually impaired alternative
+# a step's marks at the end of its line: "(1)", "(0.5+0.5)", "(any two points) (2)"
+_INLINE_MARK = re.compile(r"\(\s*(\d+(?:\.\d+)?|[½¼¾])((?:\s*\+\s*(?:\d+(?:\.\d+)?|[½¼¾]))*)\s*\)\s*$")
+_OPTION_START = re.compile(r"^\s*(?:\(\s*[ivx]{1,4}\s*\)\s*)?\(?\s*([A-D])\s*[.)]\s+")  # "C. ...", "(iii) (A) ..."
+
+
+def _split_on_or(text: str) -> list[str]:
+    """The alternatives of a one-row either/or answer, split at its lines that are only "OR", or, with no such line,
+    at the lines that open option "A." and "B." on their own; a lead line ("Student to attempt either option A or
+    B.") is no part of an alternative."""
+    lines = [ln for ln in text.splitlines() if not re.match(r"^\s*(?:Students?\s+to\s+)?attempt\s+", ln, re.I)]
+    if not any(ln.strip().upper() == "OR" for ln in lines):
+        heads = [i for i, ln in enumerate(lines) if re.fullmatch(r"\s*[A-D]\s*\.\s*", ln)]
+        if len(heads) >= 2 and not "\n".join(lines[:heads[0]]).strip():
+            return ["\n".join(lines[a:b]).strip() for a, b in zip(heads, heads[1:] + [len(lines)])]
+        return []
+    parts, cur = [], []
+    for ln in lines:
+        if ln.strip().upper() == "OR":
+            parts.append(cur)
+            cur = []
+        else:
+            cur.append(ln)
+    parts.append(cur)
+    return [p for p in ("\n".join(x).strip() for x in parts) if p]
+
+
+def _inline_criteria(text: str) -> tuple[list[str], float]:
+    """Criteria from step marks at the ends of lines: the lines since the previous mark are the step. "C ... OR D"
+    sub-part choices are alternatives, counted once. ([], 0) when the text carries no such marks."""
+    out: list[tuple[float, str, str]] = []  # (marks, step, alternative prefix)
+    step: list[str] = []
+    alt_letter, after_or, last_option = None, False, None
+    for ln in text.splitlines():
+        # a ruled box the PDF reader took for a table: its text without the bars
+        s = re.sub(r"\s*\|[\s|]*$", "", re.sub(r"^\s*\|[\s|]*", "", ln)).strip()
+        if not s or re.fullmatch(r"[|\-\s]+", s):
+            continue
+        if s.upper() == "OR":
+            after_or, alt_letter = True, None
+            # the option just before OR (its criteria) is the first alternative
+            if last_option:
+                out = [(v, st, f"Either ({last_option[0]}): " if i >= last_option[1] else p) for i, (v, st, p) in enumerate(out)]
+            step = []
+            continue
+        if re.match(r"^\s*(?:Students?\s+to\s+)?attempt\s+", s, re.I):
+            continue
+        if m := _OPTION_START.match(s):
+            last_option = (m.group(1), len(out))
+            if after_or:
+                alt_letter = m.group(1)
+        if m := _INLINE_MARK.search(s):
+            value = sum(_FRACTION.get(v.strip()) or float(v) for v in [m.group(1)] + re.findall(r"[\d.½¼¾]+", m.group(2)))
+            step.append(s[:m.start()].strip())
+            words = " ".join(x for x in step if x)
+            words = words if len(words) <= 220 else words[:217].rstrip() + "..."
+            out.append((value, words, f"Or ({alt_letter}): " if after_or and alt_letter else ""))
+            step = []
+        else:
+            step.append(s)
+    total = _total([(v, p) for v, _, p in out])
+    return [f"{_marks_label(v)}: {p}{st or 'as in the scheme'}" for v, st, p in out], total
 
 
 def segment_answer_keys(
