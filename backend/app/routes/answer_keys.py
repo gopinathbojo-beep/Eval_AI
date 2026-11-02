@@ -1,7 +1,8 @@
 from __future__ import annotations
 import logging
+import re
 from typing import Literal
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from ..database import get_db
@@ -65,6 +66,24 @@ def list_keys(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depends(
                            "question_text": q.question_text} for q in qs],
             "missing_question_ids": [q.id for q in qs if q.id not in covered],
             "locked": is_locked}
+
+
+@router.get("/exams/{exam_id}/answer-keys/export.pdf")
+def export_answer_keys_pdf(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    from ..services.extracted_pdf import answer_keys_pdf
+
+    exam = get_exam(db, t, exam_id)
+    questions = exam_questions(db, exam.id)
+    qmap = {q.id: q for q in questions}
+    rows = db.query(AnswerKey).filter_by(exam_id=exam.id, is_active=True).all()
+    rows.sort(key=lambda key: (qmap[key.exam_question_id].position if key.exam_question_id in qmap else 10**9,
+                               key.created_at))
+    if not rows:
+        raise err(409, "NO_EXTRACTED_ANSWER_KEY", "There is no extracted answer key to download.")
+    filename = re.sub(r"[^A-Za-z0-9_-]+", "_", exam.name).strip("_") or "Exam"
+    return Response(answer_keys_pdf(exam, rows, qmap), media_type="application/pdf", headers={
+        "Content-Disposition": f'attachment; filename="{filename}_Extracted_Answer_Key.pdf"',
+    })
 
 
 class KeyPatch(BaseModel):

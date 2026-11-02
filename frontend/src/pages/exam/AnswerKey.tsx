@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api } from "../../api/client";
+import { api, downloadFile } from "../../api/client";
 import { useApi } from "../../hooks/useApi";
 import type {
   AnswerKeyRow,
@@ -57,6 +57,7 @@ export default function AnswerKey() {
   } | null>(null);
   const [err, setErr] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [referenceTarget, setReferenceTarget] = useState<AnswerKeyRow | null>(
     null,
   );
@@ -93,6 +94,21 @@ export default function AnswerKey() {
       setErr(e);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const exportExtracted = async () => {
+    setExporting(true);
+    setErr(null);
+    try {
+      await downloadFile(
+        `/exams/${exam.id}/answer-keys/export.pdf`,
+        `${exam.name.replace(/[^a-zA-Z0-9_-]/g, "_")}_Extracted_Answer_Key.pdf`,
+      );
+    } catch (e) {
+      setErr(e);
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -338,6 +354,17 @@ export default function AnswerKey() {
                   Answers
                 </button>
               </div>
+
+              <Button
+                small
+                variant="soft"
+                busy={exporting}
+                disabled={!hasKeys}
+                onClick={exportExtracted}
+                title="Download the reviewed extracted answer key as a PDF"
+              >
+                Download Extracted PDF
+              </Button>
 
               {!isLocked && (
                 <Button

@@ -76,6 +76,7 @@ export default function Questions() {
   const [actionErr, setActionErr] = useState<unknown>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [referenceTarget, setReferenceTarget] = useState<Question | null>(null);
   const [activeTab, setActiveTab] = useState<"both" | "scan" | "questions">(
     "both",
@@ -137,6 +138,21 @@ export default function Questions() {
       setActionErr(e);
     } finally {
       setDownloading(false);
+    }
+  };
+
+  const exportExtracted = async () => {
+    setExporting(true);
+    setActionErr(null);
+    try {
+      await downloadFile(
+        `/exams/${exam.id}/questions/export.pdf`,
+        `${exam.name.replace(/[^a-zA-Z0-9_-]/g, "_")}_Extracted_Questions.pdf`,
+      );
+    } catch (e) {
+      setActionErr(e);
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -261,6 +277,17 @@ export default function Questions() {
               Questions
             </button>
           </div>
+
+          <Button
+            small
+            variant="soft"
+            busy={exporting}
+            disabled={!qs.length || isExtracting}
+            onClick={exportExtracted}
+            title="Download the reviewed extracted questions as a PDF"
+          >
+            Download Extracted PDF
+          </Button>
 
           {exam.status !== "FINALIZED" &&
             qs.some((q) => q.k_level_source === "SUGGESTED") && (

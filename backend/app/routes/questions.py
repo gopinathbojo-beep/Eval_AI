@@ -1,5 +1,6 @@
 from __future__ import annotations
-from fastapi import APIRouter, BackgroundTasks, Depends
+import re
+from fastapi import APIRouter, BackgroundTasks, Depends, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from ..database import get_db
@@ -114,6 +115,20 @@ def list_questions(exam_id: str, db: Session = Depends(get_db), t: Teacher = Dep
         "sections_summary": list(sections_summary.values()),
         "unclassified_blocks": struct_info.get("unclassified_blocks", []),
     }
+
+
+@router.get("/exams/{exam_id}/questions/export.pdf")
+def export_questions_pdf(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    from ..services.extracted_pdf import questions_pdf
+
+    exam = get_exam(db, t, exam_id)
+    rows = db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all()
+    if not rows:
+        raise err(409, "NO_EXTRACTED_QUESTIONS", "There are no extracted questions to download.")
+    filename = re.sub(r"[^A-Za-z0-9_-]+", "_", exam.name).strip("_") or "Exam"
+    return Response(questions_pdf(exam, rows), media_type="application/pdf", headers={
+        "Content-Disposition": f'attachment; filename="{filename}_Extracted_Questions.pdf"',
+    })
 
 
 class QuestionPatch(BaseModel):

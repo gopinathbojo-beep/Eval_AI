@@ -65,6 +65,13 @@ def test_full_workflow(client, auth):
     assert [q["max_marks"] for q in qs["questions"]] == [2, 5, 3, 5]
     assert qs["questions"][0]["has_crop"]
     assert j(c.get(f"/api/exams/{eid}", headers=h))["status"] == "QUESTIONS_EXTRACTED"
+    exported_questions = c.get(f"/api/exams/{eid}/questions/export.pdf", headers=h)
+    assert exported_questions.status_code == 200
+    assert exported_questions.headers["content-type"] == "application/pdf"
+    assert "Extracted_Questions.pdf" in exported_questions.headers["content-disposition"]
+    with pytest.importorskip("fitz").open(stream=exported_questions.content, filetype="pdf") as exported:
+        text = "\n".join(page.get_text() for page in exported)
+        assert "Extracted Question Paper" in text and "Define osmosis" in text
 
     # verify requires explicit acceptance
     r = c.post(f"/api/exams/{eid}/questions/verify", headers=h)
@@ -92,6 +99,13 @@ def test_full_workflow(client, auth):
     assert by_label["3 (a)"]["exam_question_id"] == qid["3(a)"]
     assert by_label["3b"]["exam_question_id"] == qid["3(b)"]
     assert by_label["2"]["mark_mismatch"] is True
+    exported_key = c.get(f"/api/exams/{eid}/answer-keys/export.pdf", headers=h)
+    assert exported_key.status_code == 200
+    assert exported_key.headers["content-type"] == "application/pdf"
+    assert "Extracted_Answer_Key.pdf" in exported_key.headers["content-disposition"]
+    with pytest.importorskip("fitz").open(stream=exported_key.content, filetype="pdf") as exported:
+        text = "\n".join(page.get_text() for page in exported)
+        assert "Extracted Answer Key" in text and "Movement of water" in text
     r = c.post(f"/api/exams/{eid}/answer-keys/verify", headers=h)
     assert r.status_code == 400 and any("MARK MISMATCH" in i["reason"] for i in r.json()["issues"])
     j(c.patch(f"/api/answer-keys/{by_label['2']['id']}", json={"mismatch_resolution": "keep_question_marks"}, headers=h), 200)
