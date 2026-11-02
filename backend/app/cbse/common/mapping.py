@@ -14,7 +14,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Protocol
 from .numbering import normalize_question_number, parent_number
-from .recovery import find_recovery_candidates, _tokenize, _extract_distinct_numbers
+from .recovery import find_recovery_candidates, _tokenize, _extract_distinct_numbers, content_evidence
 
 MAPPED = "MAPPED"
 SUGGESTED = "SUGGESTED"
@@ -59,10 +59,12 @@ def map_label(
     section: str | None = None,
     prev_question_id: str | None = None,
     check_content: bool = True,
+    keys: dict[str, str] | None = None,
 ) -> MappingResult:
     """Map a question or answer label to an authoritative exam question using the 7-tier evidence hierarchy.
 
-    check_content=False trusts an exact label over content similarity (printed answer keys).
+    check_content=False trusts an exact label over content similarity (printed answer keys). keys: the key's text per
+    question number, so content is judged against each question's working too, not its wording alone.
     """
     q_list = list(questions)
     qs = [q for q in q_list if getattr(q, "normalized_number", None)]
@@ -186,6 +188,12 @@ def map_label(
                     should_suggest_alt = True
                 elif not exact_has_content and top.score >= 0.95 and not exact_dist_nums:
                     should_suggest_alt = True
+
+                # the written question's own text and key fit at least as well: a few shared words ("cm", "10") with
+                # another question do not overrule the label ("36" over Q36's 60/360 x 22/7 working is not Q11)
+                if should_suggest_alt and (content_evidence(answer_text, matched_q.normalized_number, q_list, keys)
+                                           >= content_evidence(answer_text, top.normalized_number, q_list, keys)):
+                    should_suggest_alt = False
 
                 if should_suggest_alt:
                     return MappingResult(

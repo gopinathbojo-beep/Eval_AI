@@ -1180,6 +1180,11 @@ def _lines(cell: str) -> list[str]:
     return [ln.strip() for ln in cell.splitlines() if ln.strip()]
 
 
+# "The following two questions consist of ...": an instruction for the next questions; how many
+_FOLLOWING = re.compile(r"^The\s+following\s+(?:(one|two|three|four|five|\d+)\s+)?questions?\b", re.I)
+_COUNT_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, **{str(n): n for n in range(1, 10)}}
+
+
 def rows_from_pdf_tables(page_results: list[tuple[dict, Any]],
                          figures: dict[str, list[tuple[int, dict]]] | None = None) -> list[tuple[dict, Any]] | None:
     """A typed paper whose questions sit in a ruled table, rebuilt from the table's cells: one row per question with
@@ -1266,10 +1271,28 @@ def rows_from_pdf_tables(page_results: list[tuple[dict, Any]],
     cut = next((i for i, ln in enumerate(header) if is_section_heading_line(ln)), len(header))
     if any(header[:cut]):
         blocks[0].append(QuestionItem(question_text=_join_wrapped([ln for ln in header[:cut] if ln])))
-    for page, item, sec in sequence:
+    # an instruction for the questions after it ("The following two questions consist of ... Assertion (A) and
+    # Reason (R) ... A. Both A and R are true ..."), even when it runs onto the next page, opens each of them
+    intro: list[str] = []
+    intro_left = 0
+    pending: list[tuple[int, str, str | None]] = []
+    for page, item, sec in sequence + [(len(page_results) - 1, None, None)]:
         if isinstance(item, str):
+            if _FOLLOWING.match(item.strip()) or (pending and not intro_left):
+                pending.append((page, item, sec))
+                continue
             blocks[page].append(QuestionItem(question_text=_join_wrapped(_lines(item)), section=sec))
             continue
+        if pending:
+            text = "\n".join(t for _, t, _ in pending)
+            if (m := _FOLLOWING.match(text.strip())) and item is not None:
+                intro, intro_left = _lines(text), _COUNT_WORDS.get(m.group(1).lower(), 1) if m.group(1) else 1
+            else:
+                for p_, t_, s_ in pending:
+                    blocks[p_].append(QuestionItem(question_text=_join_wrapped(_lines(t_)), section=s_))
+            pending = []
+        if item is None:
+            break
         q = questions[item]
         if len(q["alts"]) > 1:
             body = "\nOR\n".join(f"{(letter or 'ABCD'[i]).upper()}. {_join_wrapped(_lines(t))}"
@@ -1277,6 +1300,9 @@ def rows_from_pdf_tables(page_results: list[tuple[dict, Any]],
         else:
             body = _join_wrapped(_lines(q["alts"][0][1]))
         body += "".join(f"\n{_VI_MARK}{_join_wrapped(_lines(v))}" for v in q["vi"] if v)
+        if intro_left:
+            body = _join_wrapped(intro) + "\n" + body
+            intro_left -= 1
         blocks[page].append(QuestionItem(raw_question_number=str(item), question_text=body, marks=marks(q["marks"]),
                                          section=sec))
     return [(page_info, res.model_copy(update={"questions": blocks[p]}))

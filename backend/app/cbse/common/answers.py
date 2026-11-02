@@ -14,7 +14,8 @@ from dataclasses import dataclass
 from typing import Any
 from .. import formatter
 from .numbering import normalize_question_number, is_sub_question, parent_number, extract_label_from_text_prefix, subquestion_value
-from .recovery import find_recovery_candidates, _tokenize, _extract_distinct_numbers
+from .recovery import find_recovery_candidates, _tokenize, _extract_distinct_numbers, content_evidence as _evidence
+from .objective import names_option, option_of, options as _options
 
 
 @dataclass
@@ -100,9 +101,10 @@ def _is_content_bullet(
         # "(b)" after 5(a) is the next part, not a bullet, when the exam scores 5(b) on its own
         if exam_norms and f"{curr_p}({num.lower()})" in exam_norms:
             return False
-        # If current question is e.g. 7, and bullet is 1 or 2
+        # If current question is e.g. 7, and bullet is 1 or 2; a step list runs 1) to 9), so "24)" on the next page after
+        # Q28 is a question number (36 misread), not a 24th step of Q28
         if curr_p.isdigit() and num.isdigit():
-            if int(curr_p) > int(num):
+            if int(curr_p) > int(num) and int(num) <= 9:
                 return True
         elif is_sub_question(current_q):
             # Inside sub-questions like 7(a), any 1), 2), 3) or (i), (ii) is a content bullet
@@ -352,6 +354,52 @@ def _content_question(text: str, canonical_questions: list[Any]) -> str | None:
     return top if runner is None or rec[0].score - runner.score >= _CONTENT_MARGIN else None
 
 
+def _content_choice(text: str, numbers: set[str], canonical_questions: list[Any],
+                    keys: dict[str, str] | None, least: int = 3, strict: bool = True) -> str | None:
+    """The one question among numbers the text clearly answers (its own text and key), or None when none stands out:
+    at least `least`, and twice the runner-up (strict) or simply ahead of it. Where the written label is already known
+    to be wrong any lead beats keeping it, so those callers pass strict=False, and `least` 2 for a theorem, whose key is
+    a rubric ("Correct figure, Given, To prove ...") leaving its proof only "prove", "parallel"."""
+    scored = sorted(((_evidence(text, n, canonical_questions, keys), n) for n in numbers), reverse=True)
+    if not scored:
+        return None
+    best, n = scored[0]
+    runner = scored[1][0] if len(scored) > 1 else 0
+    return n if best >= least and best > runner and (best >= 2 * runner or not strict) else None
+
+
+def _is_choice_question(q: Any) -> bool:
+    """A one-mark MCQ: typed so, or printed with options (A)-(D)."""
+    if (getattr(q, "max_marks", None) or 0) > 1:
+        return False
+    kind = (getattr(q, "question_type", None) or "").lower()
+    return kind in ("mcq", "assertion_reason", "objective") or (not kind and bool(_options(getattr(q, "question_text", ""))))
+
+
+def _marks_of(number: str, canonical_questions: list[Any]) -> float | None:
+    return max((getattr(q, "max_marks", None) or 0 for q in canonical_questions
+                if parent_number(getattr(q, "normalized_number", "") or "") == number), default=None)
+
+
+def _continuation_home(text: str, curr_norm: str | None, grouped: list[SegmentedAnswer],
+                       canonical_questions: list[Any], keys: dict[str, str] | None) -> SegmentedAnswer | None:
+    """The earlier answer an unnumbered top-of-page block clearly continues, judged against each question's text and
+    key; None keeps it with the answer in progress."""
+    def evidence(parent: str) -> int:
+        return _evidence(text, parent, canonical_questions, keys)
+
+    curr = parent_number(curr_norm) if curr_norm else None
+    # only an answer that ran to the foot of its page can continue later: the last one written on each earlier page
+    last_on_page = {g.page_number: g for g in grouped}
+    homes = {parent_number(g.normalized_number): g for g in last_on_page.values() if g.normalized_number}
+    homes.pop(curr, None)
+    if not homes:
+        return None
+    here = evidence(curr) if curr else 0
+    best, score = max(((g, evidence(p)) for p, g in homes.items()), key=lambda t: t[1])
+    return best if score >= 4 and score >= 2 * here + 2 else None
+
+
 def _segment_invented_labels(
     page_results: list[tuple[dict, Any]], canonical_questions: list[Any]
 ) -> list[SegmentedAnswer] | None:
@@ -537,7 +585,14 @@ def segment_student_answers(
 
             # Case: Label is null/empty or 'none'/'unclear'
             if raw_lbl is None or raw_lbl.lower() in ("null", "none", "?", "unknown", "[unclear]"):
-                # Top-of-page continuation across pages
+                # Top-of-page continuation across pages: usually the answer the page before ended with, but a
+                # student who turned back ("22" ends on page 4 after page 3's "26", "27") continues an earlier one
+                home = (_continuation_home(text, curr_norm_num, grouped, canonical_questions, keys)
+                        if page_num > curr_page and curr_text_parts and canonical_questions else None)
+                if home is not None:
+                    home.answer_text = f"{home.answer_text}\n{text}".strip()
+                    home.raw_ocr_text = f"{home.raw_ocr_text}\n{text}".strip()
+                    continue
                 if page_num > curr_page and curr_text_parts:
                     curr_text_parts.append(text)
                     if bb and curr_page == page_num:
@@ -568,11 +623,67 @@ def segment_student_answers(
             # Check if content strongly matches a different canonical question (redirecting misread labels)
             is_redirected = False
             norm = normalize_question_number(raw_lbl)
-            if norm and canonical_questions and text and len(_tokenize(text)) >= 2:
-                exact_match = [q for q in canonical_questions if q.normalized_number in (norm, parent_number(norm))]
+            bare_sub = bool(norm) and norm.startswith("(")
+            misread = False
+            if norm and not bare_sub and canonical_questions and text:
+                written_p = parent_number(norm)
+                answered = {parent_number(g.normalized_number) for g in grouped if g.normalized_number}
+                curr_p = parent_number(curr_norm_num) if curr_norm_num else None
+                in_paper = any(parent_number(q.normalized_number or "") == written_p for q in canonical_questions)
+                # A number the paper does not have ("85>" for 25), or a one-mark question answered earlier ("16> B" on
+                # page 1) taking a long answer ("Q16" over a page-long proof): the label was misread. The content then
+                # decides among the questions not answered yet, by their text and key; with no clear winner the answer
+                # keeps its label for the teacher (flagged as a duplicate), never a guess.
+                long_block = text.count("\n") >= 2 or len(text) >= 80
+                answered_again = written_p in answered and written_p != curr_p and long_block
+                misread = not in_paper or (answered_again and (_marks_of(written_p, canonical_questions) or 0) <= 1)
+                open_numbers = ({parent_number(q.normalized_number) for q in canonical_questions if q.normalized_number}
+                                - answered - {curr_p, written_p})
+                if misread:
+                    if choice := _content_choice(text, open_numbers, canonical_questions, keys, least=2, strict=False):
+                        norm, raw_lbl, is_redirected = choice, f"Q{choice}", True
+                elif answered_again:
+                    # A longer question answered earlier ("21(a)" on page 2) labelling another long answer: kept when the
+                    # student is continuing it, moved when the content clearly answers an open question instead
+                    # ("21(a)" over A(3,1), B(5,1), C(a,b), D(4,3) is 25(a))
+                    choice = _content_choice(text, open_numbers | {written_p}, canonical_questions, keys)
+                    if choice and choice != written_p:
+                        norm, raw_lbl, is_redirected, misread = choice, f"Q{choice}", True, True
+                own_q = next((q for q in canonical_questions if parent_number(q.normalized_number or "") == written_p
+                              and _is_choice_question(q)), None)
+                if not misread and own_q is not None and names_option(text, own_q.question_text) is False:
+                    # An MCQ number over something that is none of its options. "17> D. 1650": 1650 is (D) of Q1, the
+                    # only unanswered MCQ with that option. "4>" over "= 4/5 + (3/5)² - 1 ... = 4/25": working, not a
+                    # choice, placed by content, which may be the answer it finishes (Q22, last on an earlier page).
+                    homes = {parent_number(g.normalized_number): g for g in {g.page_number: g for g in grouped}.values()
+                             if g.normalized_number}
+                    by_option = [n for n in open_numbers for q in canonical_questions
+                                 if parent_number(q.normalized_number or "") == n and _is_choice_question(q)
+                                 and option_of(text, q.question_text)]
+                    if len(set(by_option)) == 1:
+                        norm = by_option[0]
+                        raw_lbl, is_redirected, misread = f"Q{norm}", True, True
+                    elif text.count("\n") >= 1 or len(text) >= 40:
+                        candidates = open_numbers | set(homes) | ({curr_p} if curr_p else set())
+                        choice = _content_choice(text, candidates, canonical_questions, keys, strict=False)
+                        if choice and choice == curr_p:  # finishing the answer in progress
+                            curr_text_parts.append(text)
+                            if conf is not None:
+                                curr_confs.append(conf)
+                            continue
+                        if choice in homes:
+                            home = homes[choice]
+                            home.answer_text = f"{home.answer_text}\n{text}".strip()
+                            home.raw_ocr_text = f"{home.raw_ocr_text}\n{text}".strip()
+                            continue
+                        if choice:
+                            norm, raw_lbl, is_redirected, misread = choice, f"Q{choice}", True, True
+            if norm and not misread and canonical_questions and text and len(_tokenize(text)) >= 2:
+                # "21" is a real question when the paper prints it as 21(a) / 21(b)
+                exact_match = [q for q in canonical_questions if q.normalized_number in (norm, parent_number(norm))
+                               or (not bare_sub and parent_number(q.normalized_number or "") == parent_number(norm))]
                 rec = find_recovery_candidates(raw_lbl, text, canonical_questions)
                 top_p = parent_number(rec[0].normalized_number or "") if rec else ""
-                bare_sub = norm.startswith("(")
                 # Content pointing anywhere inside the written question (5 / 5(a) / 5(b) share a topic)
                 # confirms the label rather than exposing a misread; for a bare "(b)", the question
                 # currently being answered.
@@ -606,7 +717,15 @@ def segment_student_answers(
                                and not any(g.normalized_number and parent_number(g.normalized_number) == top_p
                                            for g in grouped))
                     should_redirect = False
-                    if not exact_match and top.score >= 0.70:
+                    ev_written = _evidence(text, parent_number(norm), canonical_questions, keys) if not bare_sub else 0
+                    ev_top = _evidence(text, top_p, canonical_questions, keys) if not bare_sub else 0
+                    if not bare_sub and not shifted and ev_written >= ev_top:
+                        pass  # the written question's own text and key fit at least as well: the label stands
+                    elif not bare_sub and ev_top >= 6 and ev_top >= 3 * ev_written + 3:
+                        # the answer follows the other question's key step by step ("24)" over 60/360 x 22/7 x 10²,
+                        # Q36's working) while the written one shares next to nothing: the label was misread
+                        should_redirect = True
+                    elif not exact_match and top.score >= 0.70:
                         should_redirect = True
                     elif shifted and top.score >= 0.65:
                         should_redirect = True
@@ -620,11 +739,29 @@ def segment_student_answers(
                     if should_redirect:
                         written = norm
                         norm = top.normalized_number
+                        if not bare_sub:
+                            # The label is wrong; the destination is the question whose own text and key the answer
+                            # follows best, among those not answered yet, not merely the scorer's top ("24" over Q36's
+                            # 60/360 x 22/7 x 10² went to Q11 on "10", "cm", "6")
+                            open_numbers = ({parent_number(q.normalized_number) for q in canonical_questions
+                                             if q.normalized_number} - (answered - {curr_p}) - {written_p}) | {top_p}
+                            best = _content_choice(text, open_numbers, canonical_questions, keys, strict=False)
+                            if best and best != top_p:
+                                norm = best
                         # A bare "(a)" keeps its written part under the question the content points to
                         if bare_sub and f"{top_p}{written}" in exam_norms:
                             norm = f"{top_p}{written}"
                         raw_lbl = f"Q{norm}"
                         is_redirected = True
+
+            if norm and not bare_sub and not is_redirected and not misread and canonical_questions and text:
+                # Working with hardly a word in it ("60/360 × π × 10² ... = 44 cm²") gives the word scorer nothing to go
+                # on; the key's working still names the question. A label it contradicts overwhelmingly was misread.
+                best = _content_choice(text, open_numbers | {written_p}, canonical_questions, keys, strict=False)
+                if best and best != written_p:
+                    ev_best = _evidence(text, best, canonical_questions, keys)
+                    if ev_best >= 6 and ev_best >= 3 * _evidence(text, written_p, canonical_questions, keys) + 3:
+                        norm, raw_lbl, is_redirected = best, f"Q{best}", True
 
             p = parent_number(norm) if norm else None
             exam_has_subq = any(
@@ -640,6 +777,13 @@ def segment_student_answers(
                     norm = f"{p}({m_part.group(1).lower()})"
                     raw_lbl = f"Q{norm}"
                     text = text[m_part.end():]
+                elif text and (part := _content_choice(
+                        text, {q.normalized_number for q in canonical_questions
+                               if getattr(q, "choice_group", None) and is_sub_question(q.normalized_number or "")
+                               and parent_number(q.normalized_number) == p}, canonical_questions, keys)):
+                    # "35>" with its "(A)" lost by the reader, when 35(a) OR 35(b) is the student's choice: the
+                    # alternative whose question and key the answer follows (parts both answered keep "Q5 ... b)")
+                    norm, raw_lbl = part, f"Q{part}"
 
             # Case: Sub-part transition or sub-question where exam defines only the parent question
             sub_part = _is_subpart_transition(raw_lbl, parent_number(curr_norm_num) if curr_norm_num else None)

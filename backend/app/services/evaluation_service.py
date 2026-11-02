@@ -275,12 +275,20 @@ def evaluate_item(db: Session, ev: Evaluation, q: ExamQuestion, item: Evaluation
         try:
             graded = []
             for title, text in attempts:
+                # an MCQ is marked against the key's option, not by the model (which asked MCQs for working)
+                res = fmt.grade_objective(getattr(q, "question_type", None), q.question_text, key.answer_text, text,
+                                          q.max_marks)
+                if res is not None:
+                    graded.append((title, validate_evaluation(res, q.max_marks), None))
+                    continue
                 exam_owner = db.get(Exam, ev.exam_id).teacher_id
                 audit(db, exam_id=ev.exam_id, teacher_id=exam_owner, entity_type="evaluation", entity_id=ev.id,
                       action="ai_grading_request")
                 db.commit()
                 raws: list[str] = []
-                res = fmt.grade_points(rubric, text, q.max_marks, _point_asker(model, raws))
+                # the question's text rides along: its own numbers ("Twelve minutes") prove no step (common/steps.py)
+                res = fmt.grade_points({**rubric, "question_text": q.question_text} if rubric else rubric, text,
+                                       q.max_marks, _point_asker(model, raws))
                 if res is not None:  # the backend added up the points; the model only answered per point
                     raw = "\n".join(raws) or None
                     item.raw_response = raw

@@ -11,7 +11,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 from .subjects.tamil import format as tamil_format
-from .numbering import normalize_question_number
+from .numbering import normalize_question_number, is_sub_question, parent_number
 
 
 @dataclass
@@ -223,3 +223,28 @@ def find_recovery_candidates(
     candidates.sort(key=lambda c: c.score, reverse=True)
     return candidates
 
+
+_GENERIC_NUMS = {"100", "0", "1", "2", "3"}
+_PAIR = re.compile(r"\(\s*(-?\w{1,3})\s*,\s*(-?\w{1,3})\s*\)")
+
+
+def _pairs(text: str | None) -> set[str]:
+    """Coordinates and pairs as written, "(3,1)", "(-6,y)", "(a,b)": a student copies them from their own question."""
+    t = re.sub(r"-\s+", "-", (text or "").replace("–", "-").replace("−", "-"))
+    return {f"({a.lower()},{b.lower()})" for a, b in _PAIR.findall(t)}
+
+
+def content_evidence(text: str, number: str, canonical_questions: list[Any], keys: dict[str, str] | None) -> int:
+    """How much of the text is found in that question's (or part's: "25(a)") own text and key: shared words, numbers
+    and pairs. The key carries the working ("midpoint of AC = midpoint of BD") the question text never prints."""
+    def same(n: str) -> bool:
+        return n == number or (not is_sub_question(number) and parent_number(n) == number)
+    ref = " ".join([getattr(q, "question_text", "") or "" for q in canonical_questions
+                    if same(getattr(q, "normalized_number", "") or "")]
+                   + [v or "" for k, v in (keys or {}).items() if same(k or "")])
+    # two-letter words are mostly vertex names (AB, BC, AC) every geometry question shares: they named the Q32 proof
+    # "Q29" (right triangle ACB with AB, BC); words of three letters or more say which question it is
+    words = {w for w in _tokenize(text) & _tokenize(ref) if len(w) >= 3}
+    return (len(words)
+            + 2 * len((_extract_distinct_numbers(text) & _extract_distinct_numbers(ref)) - _GENERIC_NUMS)
+            + 3 * len(_pairs(text) & _pairs(ref)))
