@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { api, downloadFile } from "../../api/client";
 import { useApi } from "../../hooks/useApi";
 import type { Question, QuestionsResponse } from "../../types";
-import { BUSY_DOC, K_LEVELS, fmt, pct } from "../../utils/format";
+import { BUSY_DOC, fmt, pct } from "../../utils/format";
 import {
   Badge,
   Button,
@@ -207,20 +207,25 @@ export default function Questions() {
     const isFailed =
       doc?.status === "FAILED" || data?.document_status === "FAILED";
     return (
-      <Empty
-        title={
-          isFailed ? "Question extraction failed" : "No questions extracted yet"
-        }
-        hint={
-          doc?.error_message ||
-          "Upload the question paper first, or add questions manually."
-        }
-        action={
-          <Button variant="primary" onClick={() => setDlg({ kind: "add" })}>
-            Add Question
-          </Button>
-        }
-      />
+      <>
+        <Empty
+          title={
+            isFailed ? "Question extraction failed" : "No questions extracted yet"
+          }
+          hint={
+            doc?.error_message ||
+            "Upload the question paper first, or add questions manually."
+          }
+          action={
+            <Button variant="primary" onClick={() => setDlg({ kind: "add" })}>
+              Add Question
+            </Button>
+          }
+        />
+        {dlg?.kind === "add" && (
+          <EditDlg onClose={() => setDlg(null)} onDone={after} examId={exam.id} />
+        )}
+      </>
     );
   }
 
@@ -289,24 +294,6 @@ export default function Questions() {
             Download Extracted PDF
           </Button>
 
-          {exam.status !== "FINALIZED" &&
-            qs.some((q) => q.k_level_source === "SUGGESTED") && (
-              <Button
-                small
-                variant="soft"
-                busy={busy === "k-levels"}
-                title="Accept every suggested K level as correct"
-                onClick={() =>
-                  run("k-levels", () =>
-                    api(`/exams/${exam.id}/questions/confirm-k-levels`, {
-                      method: "POST",
-                    }),
-                  )
-                }
-              >
-                Confirm Suggested K Levels
-              </Button>
-            )}
 
           {!data.locked && (
             <>
@@ -787,12 +774,6 @@ export default function Questions() {
                               </span>
                             </button>
 
-                            <OutcomeTags
-                              q={q}
-                              disabled={exam.status === "FINALIZED"}
-                              onSaved={reload}
-                              onError={setActionErr}
-                            />
 
                             {/* Show OCR image crop if selected and available */}
                             {isSelected &&
@@ -1428,46 +1409,3 @@ function ReviewDlg({
   );
 }
 
-/** Bloom's K level for one question. Suggested levels stay marked until the teacher confirms them. */
-function OutcomeTags({
-  q,
-  disabled,
-  onSaved,
-  onError,
-}: {
-  q: Question;
-  disabled: boolean;
-  onSaved: () => Promise<void>;
-  onError: (e: unknown) => void;
-}) {
-  const save = async (json: { k_level?: string | null }) => {
-    try {
-      await api(`/exam-questions/${q.id}/outcome`, { method: "PATCH", json });
-      await onSaved();
-    } catch (e) {
-      onError(e);
-    }
-  };
-  const suggested = q.k_level_source === "SUGGESTED";
-  return (
-    <div className="mt-2.5 flex flex-wrap items-center gap-2 text-xs">
-      <label className="flex items-center gap-1.5">
-        <span className="font-semibold text-mute">K level</span>
-        <select
-          aria-label={`K level for question ${q.display_number}`}
-          className={`rounded-md border bg-surface px-1.5 py-0.5 text-xs ${suggested ? "border-warn/60" : "border-line"}`}
-          value={q.k_level || ""}
-          disabled={disabled}
-          onChange={(e) => save({ k_level: e.target.value || null })}
-        >
-          <option value="">–</option>
-          {K_LEVELS.map((k) => (
-            <option key={k.key} value={k.key}>
-              {k.key} · {k.label}
-            </option>
-          ))}
-        </select>
-      </label>
-    </div>
-  );
-}

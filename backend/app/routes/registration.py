@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -20,6 +20,7 @@ from ..security import (
 )
 from ..services.audit import audit
 from ..actor import actor_id
+from .. import validation as valid
 from .core import teacher_view
 
 router = APIRouter(prefix="/api/auth")
@@ -29,21 +30,33 @@ register_limiter = LoginLimiter()
 class RegisterIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     email: EmailStr
-    password: str = Field(min_length=10, max_length=72)
-    role: Literal["MANAGEMENT", "PARENT"]
+    password: str = Field(max_length=72)
+    role: Literal["MANAGEMENT", "PARENT"]  # teachers never self-register
 
     @field_validator("name")
     @classmethod
     def clean_name(cls, value):
-        if not value.strip():
-            raise ValueError("Name cannot be blank")
-        return value.strip()
+        return valid.person_name(value)
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def email_format(cls, value):
+        return valid.email(str(value))
 
     @field_validator("password")
     @classmethod
     def password_bytes(cls, value):
         if len(value.encode()) > 72:
             raise ValueError("Password cannot exceed 72 UTF-8 bytes")
+        # Same rule as frontend/src/utils/validation.ts passwordRules
+        if len(value) < 8:
+            raise ValueError("Use at least 8 characters for your password.")
+        if not value[0].isupper():
+            raise ValueError("Start your password with a capital letter.")
+        if not any(c.isdigit() for c in value):
+            raise ValueError("Add at least one number to your password.")
+        if all(c.isalnum() for c in value):
+            raise ValueError("Add at least one special character (like @, # or !) to your password.")
         return value
 
 
@@ -93,18 +106,78 @@ class ProfileIn(BaseModel):
     phone: str = Field(min_length=1, max_length=30)
     school_name: str = Field("", max_length=200)
     address: str = Field("", max_length=600)
+    # structured school address (registration chat); address is then the formatted whole
+    building: str = Field("", max_length=200)
+    locality: str = Field("", max_length=200)
     city: str = Field("", max_length=100)
     state: str = Field("", max_length=100)
     postcode: str = Field("", max_length=20)
     principal_name: str = Field("", max_length=200)
     affiliation_number: str = Field("", max_length=50)
+    total_students: int | None = Field(None, ge=1, le=100000)
     child_name: str = Field("", max_length=200)
     child_class: Literal["10", "12"] | None = None
 
-    @field_validator("name", "phone")
+    @field_validator("name")
     @classmethod
     def required(cls, value):
-        return RegisterIn.clean_name(value)
+        return valid.person_name(value)
+
+    @field_validator("phone")
+    @classmethod
+    def phone_format(cls, value):
+        return valid.phone(value)
+
+    @field_validator("principal_name", "child_name")
+    @classmethod
+    def optional_person(cls, value, info):
+        what = {"principal_name": "Principal's name", "child_name": "Child's name"}[info.field_name]
+        return valid.person_name(value, what) if value.strip() else ""
+
+    @field_validator("school_name")
+    @classmethod
+    def school(cls, value):
+        return valid.place_name(value, "School name") if value.strip() else ""
+
+    @field_validator("city", "state")
+    @classmethod
+    def place(cls, value, info):
+        return valid.place_name(value, info.field_name.capitalize()) if value.strip() else ""
+
+    @field_validator("postcode")
+    @classmethod
+    def pin(cls, value):
+        return valid.pin_code(value) if value.strip() else ""
+
+
+def format_address(body: "ProfileIn") -> str:
+    """Building, Locality, City, State - PIN: the one-line address shown on reports and in the review."""
+    place = ", ".join(x.strip() for x in (body.building, body.locality, body.city, body.state) if x.strip())
+    return f"{place} - {body.postcode.strip()}" if body.postcode.strip() else place
+
+
+@router.get("/affiliation/{number}")
+def affiliation_lookup(number: str, user: Teacher = Depends(current_account)):
+    """School details CBSE publishes for an affiliation number, to pre-fill the profile chat for review."""
+    from ..services import cbse_affiliation
+
+    if not cbse_affiliation.NUMBER.fullmatch(number.strip()):
+        raise err(400, "INVALID_AFFILIATION_NUMBER", "A CBSE affiliation number has only digits, like 1930001.")
+    try:
+        school = cbse_affiliation.lookup(number)
+    except cbse_affiliation.LookupFailed:
+        raise err(502, "CBSE_LOOKUP_UNAVAILABLE", "CBSE records could not be reached. Please enter the details yourself.")
+    if not school:
+        raise err(404, "AFFILIATION_NOT_FOUND", "No school with this affiliation number was found in CBSE records.")
+    return school
+
+
+@router.get("/school-search")
+def school_search(q: str = Query(..., min_length=2), user: Teacher = Depends(current_account)):
+    """Search CBSE SARAS directory by school name/keyword to pre-fill the profile chat."""
+    from ..services import cbse_affiliation
+
+    return cbse_affiliation.search_by_name(q)
 
 
 @router.put("/profile")
@@ -119,8 +192,12 @@ def complete_profile(
             403, "MANAGED_ACCOUNT", "This profile is managed by your administrator."
         )
     role = body.role or user.role
+    if body.building.strip() or body.locality.strip():
+        body.address = format_address(body)
     if user.role not in {"UNASSIGNED", role}:
         raise err(409, "ROLE_FIXED", "Account role cannot be changed.")
+    if role == "MANAGEMENT" and not body.principal_name.strip():
+        raise err(400, "PRINCIPAL_REQUIRED", "Enter the name of your school's Principal or Head.")
     if role == "MANAGEMENT" and not all(
         (
             body.school_name.strip(),
@@ -212,7 +289,7 @@ def complete_profile(
 
 class PasswordIn(BaseModel):
     current_password: str = Field("", max_length=1024)
-    password: str = Field(min_length=10, max_length=72)
+    password: str = Field(min_length=8, max_length=72)
 
     @field_validator("password")
     @classmethod

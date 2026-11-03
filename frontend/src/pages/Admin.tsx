@@ -12,9 +12,13 @@ import {
   Input,
   Loading,
   Modal,
+  PageCanvas,
   PageHeader,
+  PasswordInput,
+  PasswordChecklist,
   Select,
 } from "../components/ui";
+import { passwordProblem } from "../utils/validation";
 import type { Teacher } from "../types";
 
 type Metrics = {
@@ -91,6 +95,13 @@ function UserEditor({
         : ["phone"];
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    if (password) {
+      const problem = passwordProblem(password);
+      if (problem) {
+        setError(new Error(problem));
+        return;
+      }
+    }
     setBusy(true);
     setError(null);
     try {
@@ -178,15 +189,17 @@ function UserEditor({
         ))}
         <Field label="New password (optional)">
           {(id) => (
-            <Input
-              id={id}
-              type="password"
-              autoComplete="new-password"
-              minLength={10}
-              maxLength={72}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
+            <>
+              <PasswordInput
+                id={id}
+                autoComplete="new-password"
+                minLength={8}
+                maxLength={72}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+              {password && <PasswordChecklist value={password} />}
+            </>
           )}
         </Field>
         <label className="flex gap-2 text-sm">
@@ -228,7 +241,6 @@ export default function Admin() {
     Metrics & {
       schools: number;
       parents: number;
-      teachers: number;
       users: number;
     }
   >(teacher?.is_admin ? `/admin/summary?${dates}` : null);
@@ -256,7 +268,7 @@ export default function Admin() {
   };
   if (!teacher?.is_admin) return <Navigate to="/dashboard" replace />;
   return (
-    <div className="space-y-6">
+    <PageCanvas>
       <PageHeader
         title="Platform administration"
         sub="Manage schools, families and user access. Track evaluation activity across Eval AI."
@@ -302,12 +314,12 @@ export default function Admin() {
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         {[
           ["Schools", summary?.schools],
-          ["Parents", summary?.parents],
-          ["Teachers", summary?.teachers],
+          ["Exams", summary?.exams],
+          ["Uploads", summary?.uploads],
           ["AI evaluations", summary?.ai_runs],
         ].map(([label, n]) => (
           <Card key={label} className="p-5">
-            <p className="text-xs uppercase tracking-wide text-mute">{label}</p>
+            <p className="text-sm font-medium text-mute">{label}</p>
             <p className="mt-2 text-3xl font-semibold">{n ?? 0}</p>
           </Card>
         ))}
@@ -572,6 +584,6 @@ export default function Admin() {
           }}
         />
       )}
-    </div>
+    </PageCanvas>
   );
 }

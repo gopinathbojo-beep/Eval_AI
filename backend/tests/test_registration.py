@@ -15,6 +15,7 @@ PROFILE = {
     "city": "Chennai",
     "state": "Tamil Nadu",
     "postcode": "600001",
+    "principal_name": "Dr. Lakshmi",
 }
 
 
@@ -26,7 +27,7 @@ def signup(browser, role="MANAGEMENT"):
         json={
             "name": "Owner",
             "email": email,
-            "password": "initial-password-123",
+            "password": "Initial-password-123",
             "role": role,
         },
     )
@@ -109,7 +110,7 @@ def test_registration_roles_csrf_and_google_link_protection(client):
         body = {
             "name": "Account",
             "email": f"{uuid4().hex}@example.com",
-            "password": "initial-password-123",
+            "password": "Initial-password-123",
             "role": "ADMIN",
         }
         assert (
@@ -146,3 +147,61 @@ def test_registration_roles_csrf_and_google_link_protection(client):
                 is None
             )
             assert user.password_hash == original and user.google_sub is None
+
+
+# trimmed from the real SARAS page for affiliation 1930001
+SARAS_PAGE = """<html><body><table>
+<tr><td width="433"><b>Name of Institution</b></td><td width="494">
+    THE LAWRENCE SCHOOL </td></tr>
+<tr><td><b>Affiliation Number</b></td><td> 1930001 </td></tr>
+<tr><td><b>State</b></td><td> TAMILNADU </td></tr>
+<tr><td><b>District</b></td><td> NILGIRIS </td></tr>
+<tr><td><b>Postal Address</b></td><td> LOVEDALE OOTACAMUND THE NILGIRIS TAMIL NADU 643003 </td></tr>
+<tr><td><b>Pin Code</b></td><td> 643003 </td></tr>
+<tr><td><b>Website</b></td><td> www.thelawrenceschool.org </td></tr>
+<tr><td><b>Name of Principal/ Head of Institution</b></td><td> Dhavala Venkata Someswara Rao </td></tr>
+<tr><td><b>Status of The School</b></td><td> Senior Secondary Level </td></tr>
+<tr><td><b>School Type</b></td><td> INDEPENDENT </td></tr>
+<tr><td><b>Affiliation Period </b></td><td><p><b>From :</b>&nbsp;01/04/2024&nbsp;<b> To :</b>&nbsp;31/03/2029&nbsp;</p></td></tr>
+<tr><td><b>Name of Trust/ Society/ Managing Committee</b></td><td> MINISTRY OF HUMAN RESOURCE DEV DEPT </td></tr>
+</table></body></html>"""
+
+
+def test_saras_page_parsed():
+    from app.services.cbse_affiliation import parse
+
+    school = parse(SARAS_PAGE)
+    assert school["school_name"] == "The Lawrence School"
+    assert school["affiliation_number"] == "1930001"
+    assert school["address"] == "Lovedale Ootacamund The Nilgiris Tamil Nadu"  # the PIN has its own field
+    assert (school["district"], school["state"], school["postcode"]) == ("Nilgiris", "Tamilnadu", "643003")
+    assert school["principal_name"] == "Dhavala Venkata Someswara Rao"
+    assert school["school_level"] == "Senior Secondary Level"
+    assert school["affiliation_to"] == "31/03/2029"
+    # capitals tidied without "Mary'S"
+    assert parse(SARAS_PAGE.replace("THE LAWRENCE SCHOOL", "ST. MARY'S SR. SEC. SCHOOL"))["school_name"] == "St. Mary's Sr. Sec. School"
+    # an unknown number gets the page frame with no school rows
+    assert parse("<html><body><h1>Details OF SCHOOL AFFILIATED TO</h1></body></html>") is None
+
+
+def test_affiliation_lookup_endpoint(client, monkeypatch):
+    from app.services import cbse_affiliation
+
+    pages = {"1930001": SARAS_PAGE}
+
+    def fake_lookup(number):
+        if number == "1111111":
+            raise cbse_affiliation.LookupFailed("timed out")
+        page = pages.get(number)
+        return cbse_affiliation.parse(page) if page else None
+
+    monkeypatch.setattr(cbse_affiliation, "lookup", fake_lookup)
+    with TestClient(app) as browser:
+        assert browser.get("/api/auth/affiliation/1930001").status_code == 401  # signed-in accounts only
+        signup(browser)
+        found = browser.get("/api/auth/affiliation/1930001")
+        assert found.status_code == 200, found.text
+        assert found.json()["principal_name"] == "Dhavala Venkata Someswara Rao"
+        assert browser.get("/api/auth/affiliation/2222222").json()["code"] == "AFFILIATION_NOT_FOUND"
+        assert browser.get("/api/auth/affiliation/1111111").status_code == 502
+        assert browser.get("/api/auth/affiliation/12ab").status_code == 400

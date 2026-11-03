@@ -18,6 +18,9 @@ export function UploadZone({
   onFile,
   onFiles,
   hint,
+  compact,
+  title,
+  chosen,
 }: {
   accept: string;
   disabled?: boolean;
@@ -25,6 +28,10 @@ export function UploadZone({
   /** when given, the zone accepts many files at once and hands them over together */
   onFiles?: (fs: File[]) => Promise<void>;
   hint?: ReactNode;
+  /** small box (two fit side by side), with its own title and the chosen file's name */
+  compact?: boolean;
+  title?: string;
+  chosen?: string | null;
 }) {
   const [drag, setDrag] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -61,11 +68,11 @@ export function UploadZone({
             send(e.dataTransfer.files);
           }
         }}
-        className={`group relative flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-8 text-center transition-ui ${
+        className={`group relative flex flex-col items-center justify-center rounded-xl border-2 border-dashed ${compact ? "p-5" : "p-8"} text-center transition-ui ${
           disabled
             ? "cursor-not-allowed bg-sunken/40 opacity-60 border-line"
             : drag
-            ? "border-pen bg-pen-soft/40 shadow-inner scale-[1.005]"
+            ? "border-pen bg-pen-soft/40"
             : "border-line bg-surface hover:border-pen/60 hover:bg-hover cursor-pointer"
         }`}
         onClick={() => {
@@ -86,21 +93,21 @@ export function UploadZone({
         />
 
         <div
-          className={`mb-3 flex h-14 w-14 items-center justify-center rounded-xl transition-ui ${
-            drag ? "bg-pen text-white shadow-md" : "bg-pen-soft text-pen group-hover:scale-105"
+          className={`mb-3 flex ${compact ? "h-10 w-10" : "h-12 w-12"} items-center justify-center rounded-xl transition-ui ${
+            drag ? "bg-pen text-on-pen" : chosen ? "bg-ok-soft text-ok" : "bg-pen-soft text-pen"
           }`}
         >
-          <IconUpload size={26} />
+          <IconUpload size={compact ? 20 : 24} />
         </div>
 
-        <p className="text-base font-semibold text-ink">
-          {busy ? "Uploading and submitting..." : onFiles ? "Drag and drop documents here" : "Drag and drop document here"}
+        <p className={`${compact ? "text-sm" : "text-base"} font-semibold text-ink`}>
+          {busy ? "Uploading..." : title ?? (onFiles ? "Drag and drop documents here" : "Drag and drop document here")}
         </p>
-        <p className="mt-1 text-xs text-mute max-w-sm">
-          {hint || "Supported formats: PDF, PNG, or JPG"}
+        <p className="mt-1 max-w-sm truncate text-xs text-mute">
+          {chosen || hint || "Supported formats: PDF, PNG, or JPG"}
         </p>
 
-        {!busy && !disabled && (
+        {!busy && !disabled && !compact && (
           <div className="mt-4">
             <span className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-semibold text-ink shadow-xs transition-ui group-hover:border-pen/40">
               Browse Files

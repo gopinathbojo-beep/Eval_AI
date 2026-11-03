@@ -113,7 +113,7 @@ export function ReportTemplatesCard() {
   );
 }
 
-/** Pick a term (academic year + exam type) and download report cards for one student or a whole class. */
+/** Pick a term (exam name, e.g. "Term 1") and download CBSE report cards for one student or a whole class. */
 export function ReportCardDialog({
   classId, studentId, title, onClose,
 }: {
@@ -128,7 +128,7 @@ export function ReportCardDialog({
     if (!term) return;
     setBusy(true);
     setError(null);
-    const q = `academic_year=${encodeURIComponent(term.academic_year)}&exam_type=${encodeURIComponent(term.exam_type)}`;
+    const q = `term=${encodeURIComponent(term.term)}`;
     try {
       await downloadFile(studentId ? `/students/${studentId}/report-card?${q}` : `/classes/${classId}/report-cards?${q}`, "report-card.pdf");
       onClose();
@@ -150,7 +150,7 @@ export function ReportCardDialog({
             {(id) => (
               <Select id={id} value={sel} onChange={(e) => setSel(e.target.value)}>
                 {terms.data!.map((t, i) => (
-                  <option key={`${t.academic_year}-${t.exam_type}`} value={i}>{t.exam_type} · {t.academic_year}</option>
+                  <option key={t.term} value={i}>{t.term} · {t.academic_year}</option>
                 ))}
               </Select>
             )}

@@ -14,18 +14,18 @@ test.beforeEach(async ({ page }) => {
 });
 
 test("deep routes, cookie sign-in, reload and logout", async ({ page, context }) => {
-  await page.goto("/students");
+  await page.goto("/qp-generation");
   await expect(page).toHaveURL(/\/login$/);
   await page.getByLabel("Email").fill("browser@example.test");
-  await page.getByLabel("Password", { exact: true }).fill("test-password-123");
+  await page.getByLabel("Password", { exact: true }).fill("Test-password-123");
   await page.getByRole("button", { name: /sign in/i }).click();
-  await expect(page).toHaveURL(/\/students$/);
+  await expect(page).toHaveURL(/\/qp-generation$/);
   await expect(page.getByRole("main")).toBeVisible();
   expect(await page.evaluate(() => localStorage.getItem("adem_token"))).toBeNull();
   const session = (await context.cookies()).find((cookie) => cookie.name === "eval_session");
   expect(session?.httpOnly).toBe(true);
   await page.reload();
-  await expect(page).toHaveURL(/\/students$/);
+  await expect(page).toHaveURL(/\/qp-generation$/);
   await expect(page.getByRole("main")).toBeVisible();
   const blocked = await page.request.post("/api/classes", { data: { name: "Forged" } });
   expect(blocked.status()).toBe(403);

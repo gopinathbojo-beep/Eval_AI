@@ -7,18 +7,7 @@ import Dashboard from "./pages/Dashboard";
 import { Loading } from "./components/ui";
 
 // Dynamic lazy-loaded routes for optimal initial bundle size
-const Classes = lazy(() =>
-  import("./pages/Lists").then((m) => ({ default: m.Classes })),
-);
-const Subjects = lazy(() =>
-  import("./pages/Lists").then((m) => ({ default: m.Subjects })),
-);
-const Students = lazy(() =>
-  import("./pages/Lists").then((m) => ({ default: m.Students })),
-);
-const SettingsPage = lazy(() =>
-  import("./pages/Lists").then((m) => ({ default: m.SettingsPage })),
-);
+const SettingsPage = lazy(() => import("./pages/Settings"));
 const ExamsList = lazy(() =>
   import("./pages/Exams").then((m) => ({ default: m.ExamsList })),
 );
@@ -46,10 +35,11 @@ const EvaluationsList = lazy(() =>
 );
 const Admin = lazy(() => import("./pages/Admin"));
 const Register = lazy(() => import("./pages/Register"));
-const Onboarding = lazy(() => import("./pages/Onboarding"));
-const Account = lazy(() => import("./pages/Account"));
-const Management = lazy(() => import("./pages/Management"));
+const RegisterChoice = lazy(() => import("./pages/Register").then((m) => ({ default: m.RegisterChoice })));
 const Family = lazy(() => import("./pages/Family"));
+const Onboarding = lazy(() => import("./pages/Onboarding"));
+const QpGeneration = lazy(() => import("./pages/QpGeneration"));
+const Uploader = lazy(() => import("./pages/Uploader"));
 
 const Suspended = ({ children }: { children: React.ReactNode }) => (
   <Suspense fallback={<Loading text="Loading workspace..." />}>
@@ -63,10 +53,34 @@ export default function App() {
       <Route path="/" element={<Landing />} />
       <Route path="/login" element={<Login />} />
       <Route
+        path="/upload"
+        element={
+          <Suspended>
+            <Uploader />
+          </Suspended>
+        }
+      />
+      <Route
         path="/register"
         element={
           <Suspended>
-            <Register />
+            <RegisterChoice />
+          </Suspended>
+        }
+      />
+      <Route
+        path="/register/school"
+        element={
+          <Suspended>
+            <Register kind="school" />
+          </Suspended>
+        }
+      />
+      <Route
+        path="/register/parent"
+        element={
+          <Suspended>
+            <Register kind="parent" />
           </Suspended>
         }
       />
@@ -78,14 +92,7 @@ export default function App() {
           </Suspended>
         }
       />
-      <Route
-        path="/account"
-        element={
-          <Suspended>
-            <Account />
-          </Suspended>
-        }
-      />
+      <Route path="/account" element={<Navigate to="/dashboard" replace />} />
       <Route element={<AppLayout />}>
         <Route
           path="/teacher/*"
@@ -100,14 +107,7 @@ export default function App() {
             </Suspended>
           }
         />
-        <Route
-          path="/management"
-          element={
-            <Suspended>
-              <Management />
-            </Suspended>
-          }
-        />
+        <Route path="/management" element={<Navigate to="/dashboard" replace />} />
         <Route
           path="/family"
           element={
@@ -116,27 +116,15 @@ export default function App() {
             </Suspended>
           }
         />
+        <Route path="/classes" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/subjects" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/students" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/student-report" element={<Navigate to="/dashboard" replace />} />
         <Route
-          path="/classes"
+          path="/qp-generation"
           element={
             <Suspended>
-              <Classes />
-            </Suspended>
-          }
-        />
-        <Route
-          path="/subjects"
-          element={
-            <Suspended>
-              <Subjects />
-            </Suspended>
-          }
-        />
-        <Route
-          path="/students"
-          element={
-            <Suspended>
-              <Students />
+              <QpGeneration />
             </Suspended>
           }
         />
@@ -176,9 +164,13 @@ export default function App() {
             index
             element={
               <Suspended>
-                <ContentAndKey defaultSubTab="overview" />
+                <ContentAndKey defaultSubTab="questions" />
               </Suspended>
             }
+          />
+          <Route
+            path="codes"
+            element={<Navigate to="../submissions" replace />}
           />
           <Route
             path="content"

@@ -138,7 +138,7 @@ export default function QuestionPaper({ onReviewQuestions, onOpenAnswerKey }: Qu
         )}
       </div>
 
-      {/* Answer key: may be dropped together with the paper; it is read once the questions are verified */}
+      {/* Answer key: read in parallel with the paper, built once its questions are extracted */}
       <div className="space-y-5 min-w-0">
         {keyLocked ? (
           <LockedCard title="Answer Key Verified &amp; Locked" text="The official answer key is verified and locked for student evaluation." />
@@ -147,7 +147,7 @@ export default function QuestionPaper({ onReviewQuestions, onOpenAnswerKey }: Qu
             <div>
               <h2 className="text-lg font-semibold text-ink">Answer Key</h2>
               <p className="text-xs text-mute">
-                Upload now or later. It is read once the questions are verified.
+                Read at the same time as the question paper. Upload again here to replace it.
               </p>
             </div>
             <UploadZone

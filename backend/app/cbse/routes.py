@@ -70,7 +70,7 @@ def standards(
     return [
         {**p, "subject_ids": list(dict.fromkeys(allowed.get(p["id"], [])))}
         for p in PROFILES
-        if p["class_level"] in grades and (user.role != "TEACHER" or p["id"] in allowed)
+        if p["class_level"] in grades
     ]
 
 

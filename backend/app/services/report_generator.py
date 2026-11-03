@@ -1,4 +1,4 @@
-"""Shared PDF helpers for ADEM documents: fonts, page decorations and math text formatting.
+"""Shared PDF helpers for Eval AI documents: fonts, page decorations and math text formatting.
 The report and report card themselves are built in school_reports.py.
 """
 from __future__ import annotations

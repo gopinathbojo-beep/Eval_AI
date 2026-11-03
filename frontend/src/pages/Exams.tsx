@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { useAuth } from "../context/Auth";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import {
@@ -17,18 +16,15 @@ import {
   Field,
   Input,
   Loading,
+  PageCanvas,
   PageHeader,
-  SearchableCombobox,
+  Select,
   StatusBadge,
-  Textarea,
-  type ComboboxOption,
 } from "../components/ui";
-import { IconClasses, IconExam, IconSubjects } from "../components/Icons";
 import { useApi } from "../hooks/useApi";
 import { useTableState } from "../hooks/useTableState";
-import type { ClassRow, Exam, Subject } from "../types";
-import type { StandardProfile } from "../types/standards";
-import { EXAM_STEPS } from "../utils/format";
+import type { CatalogSubject, Exam } from "../types";
+import { UploadZone } from "../components/DocPanel";
 
 export function ExamsList() {
   const { data, error, loading, reload } = useApi<Exam[]>("/exams");
@@ -56,9 +52,6 @@ export function ExamsList() {
       .sort((a, b) => a.label.localeCompare(b.label));
   }, [data]);
 
-  const statusOptions = useMemo(() => {
-    return EXAM_STEPS.map((s) => ({ value: s.key, label: s.label }));
-  }, []);
 
   const table = useTableState<Exam>({
     data,
@@ -66,21 +59,24 @@ export function ExamsList() {
     filters: {
       class: (e, val) => (e.class_name || "") === val,
       subject: (e, val) => (e.subject_name || "") === val,
-      status: (e, val) => e.status === val,
     },
     sortFns: {
+      recent: (a, b) =>
+        new Date(b.created_at || b.exam_date || 0).getTime() -
+        new Date(a.created_at || a.exam_date || 0).getTime(),
       name: (a, b) => a.name.localeCompare(b.name),
       date: (a, b) =>
-        new Date(a.exam_date || 0).getTime() -
-        new Date(b.exam_date || 0).getTime(),
+        new Date(b.exam_date || b.created_at || 0).getTime() -
+        new Date(a.exam_date || a.created_at || 0).getTime(),
       marks: (a, b) => (a.total_marks ?? 0) - (b.total_marks ?? 0),
     },
-    defaultSort: "name",
+    defaultSort: "recent",
     defaultOrder: "asc",
     initialPageSize: 10,
   });
 
   const sortOptions = [
+    { value: "recent", label: "Most Recent First" },
     { value: "name", label: "Exam name" },
     { value: "date", label: "Exam date" },
     { value: "marks", label: "Total marks" },
@@ -101,168 +97,178 @@ export function ExamsList() {
       value: table.activeFilters.subject || "",
       onChange: (val: string) => table.setFilter("subject", val),
     },
-    {
-      key: "status",
-      label: "All Statuses",
-      options: statusOptions,
-      value: table.activeFilters.status || "",
-      onChange: (val: string) => table.setFilter("status", val),
-    },
   ];
 
   return (
-    <div className="space-y-4">
-      <PageHeader
-        title="Exams Management"
-        sub="Create exams and track their progress."
-        actions={
-          <LinkButton to="/exams/new" variant="primary" className="shadow-xs">
-            <span>Create New Exam</span>
-          </LinkButton>
-        }
-      />
-      <ErrorPanel error={error} />
-      {loading ? (
-        <Loading />
-      ) : !data?.length ? (
-        <Empty
-          title="No exams created yet"
-          hint="Create an exam to get started."
-          action={
-            <LinkButton to="/exams/new" variant="primary">
-              Create Exam
-            </LinkButton>
-          }
-        />
-      ) : (
-        <>
-          <TableToolbar
-            searchPlaceholder="Search by exam name..."
-            searchValue={table.search}
-            onSearchChange={table.setSearch}
-            filters={filterConfigs}
-            sortOptions={sortOptions}
-            sortValue={table.sortBy}
-            onSortChange={table.setSortBy}
-            sortOrder={table.sortOrder}
-            onSortOrderToggle={table.toggleSortOrder}
-            isFiltered={table.isFiltered}
-            onClearFilters={table.clearFilters}
-            totalCount={table.totalCount}
-            filteredCount={table.filteredCount}
-            itemLabel="exams"
+    <div className="w-full">
+      <div className="glass-canvas p-5 sm:p-7 lg:p-8 space-y-6 stagger">
+        
+        {/* Header & Create Exam Button */}
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h1 className="aurora-text text-2xl sm:text-[2rem] font-bold tracking-tight">
+              Exams Management
+            </h1>
+            <p className="mt-1.5 text-sm sm:text-base font-medium text-blue-800/80">
+              Create exams and track their progress.
+            </p>
+          </div>
+          <div>
+            <Link
+              to="/exams/new"
+              className="inline-flex items-center gap-2 rounded-xl aurora-fill hover:-translate-y-0.5 hover:shadow-lg active:translate-y-0 active:scale-[0.98] px-6 py-3 text-sm font-semibold text-white shadow-md shadow-indigo-500/25 transition-all cursor-pointer"
+            >
+              <span>Create New Exam</span>
+            </Link>
+          </div>
+        </div>
+
+        <ErrorPanel error={error} />
+
+        {loading ? (
+          <Loading />
+        ) : !data?.length ? (
+          <Empty
+            title="No exams created yet"
+            hint="Create an exam to get started."
+            action={
+              <LinkButton to="/exams/new" variant="primary">
+                Create Exam
+              </LinkButton>
+            }
           />
-
-          {table.filteredCount === 0 ? (
-            <FilteredEmptyState
-              title="No matching exams found"
-              message="No exams match your search and filter criteria."
+        ) : (
+          <>
+            <TableToolbar
+              searchPlaceholder="Search by exam name..."
+              searchValue={table.search}
+              onSearchChange={table.setSearch}
+              filters={filterConfigs}
+              sortOptions={sortOptions}
+              sortValue={table.sortBy}
+              onSortChange={table.setSortBy}
+              sortOrder={table.sortOrder}
+              onSortOrderToggle={table.toggleSortOrder}
+              isFiltered={table.isFiltered}
               onClearFilters={table.clearFilters}
+              totalCount={table.totalCount}
+              filteredCount={table.filteredCount}
+              itemLabel="exams"
             />
-          ) : (
-            <Card className="overflow-x-auto shadow-soft">
-              <table className="w-full text-left text-sm">
-                <thead className="border-b border-line bg-surface text-xs font-semibold uppercase tracking-wider text-mute">
-                  <tr>
-                    <th className="px-4 py-3">Exam Details</th>
-                    <th className="px-4 py-3">Class</th>
-                    <th className="px-4 py-3">Subject</th>
-                    <th className="px-4 py-3">Total Marks</th>
-                    <th className="px-4 py-3">Status</th>
-                    <th className="px-4 py-3 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-line text-sm">
-                  {table.paginatedData.map((e) => (
-                    <tr key={e.id} className="hover:bg-hover">
-                      <td className="px-4 py-3">
-                        <Link
-                          className="font-semibold text-pen hover:underline text-base block"
-                          to={`/exams/${e.id}`}
-                        >
-                          {e.name}
-                        </Link>
-                        <div className="font-mono text-xs text-mute mt-0.5">
-                          {e.academic_year ? `${e.academic_year} · ` : ""}
-                          {e.exam_type}
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 font-medium text-ink">
-                        {e.class_name}
-                      </td>
-                      <td className="px-4 py-3 font-medium text-ink">
-                        {e.subject_name}
-                      </td>
-                      <td className="px-4 py-3 font-mono font-medium text-ink">
-                        {e.total_marks}
-                      </td>
-                      <td className="px-4 py-3">
-                        <StatusBadge status={e.status} />
-                      </td>
-                      <td className="px-4 py-3 text-right whitespace-nowrap">
-                        <div className="flex items-center justify-end gap-1.5">
-                          <LinkButton
-                            to={`/exams/${e.id}`}
-                            small
-                            variant="soft"
-                          >
-                            <span>Open</span>
-                            <svg
-                              className="h-3 w-3"
-                              fill="none"
-                              stroke="currentColor"
-                              viewBox="0 0 24 24"
-                            >
-                              <path
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                strokeWidth={2}
-                                d="M9 5l7 7-7 7"
-                              />
-                            </svg>
-                          </LinkButton>
-                          <Button
-                            small
-                            variant="ghost"
-                            className="text-mark hover:bg-mark-soft hover:text-mark"
-                            onClick={() => setDeletingExam(e)}
-                            title={`Delete exam ${e.name}`}
-                          >
-                            <svg
-                              className="h-3.5 w-3.5"
-                              fill="none"
-                              stroke="currentColor"
-                              viewBox="0 0 24 24"
-                            >
-                              <path
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                strokeWidth={2}
-                                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                              />
-                            </svg>
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <TablePagination
-                currentPage={table.page}
-                totalPages={table.totalPages}
-                pageSize={table.pageSize}
-                totalFilteredCount={table.filteredCount}
-                itemLabel="exams"
-                onPageChange={table.setPage}
-                onPageSizeChange={table.setPageSize}
-              />
-            </Card>
-          )}
 
-          {deletingExam && (
-            <Confirm
-              title={`Delete exam “${deletingExam.name}”?`}
+            {table.filteredCount === 0 ? (
+              <FilteredEmptyState
+                title="No matching exams found"
+                message="No exams match your search and filter criteria."
+                onClearFilters={table.clearFilters}
+              />
+            ) : (
+              <div className="overflow-hidden rounded-2xl border border-white bg-white/90 shadow-[0_10px_30px_-20px_rgba(30,64,175,0.35)]">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-sm">
+                    <thead className="border-b border-blue-100/70 bg-blue-50/40 text-xs font-extrabold uppercase tracking-wider text-blue-800">
+                      <tr>
+                        <th className="px-6 py-4">Exam Details</th>
+                        <th className="px-6 py-4">Class</th>
+                        <th className="px-6 py-4">Subject</th>
+                        <th className="px-6 py-4">Total Marks</th>
+                        <th className="px-6 py-4">Status</th>
+                        <th className="px-6 py-4 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="stagger divide-y divide-blue-50">
+                      {table.paginatedData.map((e) => (
+                        <tr key={e.id} className="transition-colors duration-150 hover:bg-blue-50/50">
+                          <td className="px-6 py-4">
+                            <Link
+                              className="block text-base font-bold text-emerald-700 transition-colors hover:text-emerald-600 hover:underline underline-offset-2"
+                              to={`/exams/${e.id}`}
+                            >
+                              {e.name}
+                            </Link>
+                            <div className="mt-0.5 text-xs font-medium text-slate-500">
+                              {e.academic_year ? `${e.academic_year} · ` : ""}
+                              {e.exam_type || "School exam"}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 font-medium text-slate-700">
+                            {e.class_name}
+                          </td>
+                          <td className="px-6 py-4 font-medium text-slate-700">
+                            {e.subject_name}
+                          </td>
+                          <td className="px-6 py-4 font-semibold text-slate-800 tabular-nums">
+                            {e.total_marks ?? "–"}
+                          </td>
+                          <td className="px-6 py-4">
+                            <StatusBadge status={e.status} withDot />
+                          </td>
+                          <td className="px-6 py-4 text-right whitespace-nowrap">
+                            <div className="flex items-center justify-end gap-2">
+                              <Link
+                                to={`/exams/${e.id}`}
+                                className="group inline-flex items-center gap-1 rounded-full border border-blue-100 bg-blue-50 px-4 py-1.5 text-sm font-semibold text-blue-700 shadow-xs transition-all hover:bg-blue-100 hover:shadow"
+                              >
+                                <span>Open</span>
+                                <svg
+                                  className="h-3 w-3 group-hover:translate-x-0.5 transition-transform"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  viewBox="0 0 24 24"
+                                >
+                                  <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    strokeWidth={2.5}
+                                    d="M9 5l7 7-7 7"
+                                  />
+                                </svg>
+                              </Link>
+                              <button
+                                type="button"
+                                className="rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600 transition-colors cursor-pointer"
+                                onClick={() => setDeletingExam(e)}
+                                title={`Delete exam ${e.name}`}
+                              >
+                                <svg
+                                  className="h-4 w-4"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  viewBox="0 0 24 24"
+                                >
+                                  <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    strokeWidth={2}
+                                    d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                                  />
+                                </svg>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <TablePagination
+                  currentPage={table.page}
+                  totalPages={table.totalPages}
+                  pageSize={table.pageSize}
+                  totalFilteredCount={table.filteredCount}
+                  itemLabel="exams"
+                  onPageChange={table.setPage}
+                  onPageSizeChange={table.setPageSize}
+                />
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {deletingExam && (
+        <Confirm
+          title={`Delete exam “${deletingExam.name}”?`}
               danger
               confirmLabel="Delete Exam"
               body={
@@ -286,367 +292,98 @@ export function ExamsList() {
               onClose={() => setDeletingExam(null)}
             />
           )}
-        </>
-      )}
     </div>
   );
 }
 
-const EXAM_TYPE_PRESETS: ComboboxOption[] = [
-  {
-    value: "Unit test",
-    label: "Unit test",
-    sublabel: "Periodic chapter or unit check",
-  },
-  {
-    value: "Midterm Assessment",
-    label: "Midterm Assessment",
-    sublabel: "Mid-semester evaluation",
-  },
-  {
-    value: "Quarterly Exam",
-    label: "Quarterly Exam",
-    sublabel: "End of term 1 evaluation",
-  },
-  {
-    value: "Half-Yearly Exam",
-    label: "Half-Yearly Exam",
-    sublabel: "Mid-year formal examination",
-  },
-  {
-    value: "Semester Exam",
-    label: "Semester Exam",
-    sublabel: "Full semester assessment",
-  },
-  {
-    value: "Final Examination",
-    label: "Final Examination",
-    sublabel: "Year-end comprehensive exam",
-  },
-  {
-    value: "Weekly Quiz",
-    label: "Weekly Quiz",
-    sublabel: "Short form diagnostic",
-  },
-  {
-    value: "Mock Exam",
-    label: "Mock Exam",
-    sublabel: "Practice test for board/term",
-  },
-];
-
+/** One form: name, class, section and subject, plus the question paper and answer key side by side. Both files are
+ * read in parallel as soon as the exam is created; the school then reviews them and finalizes. */
 export function ExamNew() {
-  const { teacher } = useAuth();
   const nav = useNavigate();
-  const classes = useApi<ClassRow[]>("/classes");
-  const subjects = useApi<Subject[]>("/subjects");
-  const [f, setF] = useState({
-    name: "",
-    class_id: "",
-    subject_id: "",
-    exam_type: "Board pattern",
-    exam_date: "",
-    duration_minutes: "",
-    total_marks: "",
-    instructions: "",
-  });
-  const [error, setError] = useState<unknown>(null);
-  useEffect(() => {
-    if (teacher?.role === "PARENT" && classes.data?.[0])
-      setF((prev) => ({ ...prev, class_id: classes.data![0].id }));
-  }, [classes.data, teacher?.role]);
-  const [classError, setClassError] = useState<string | null>(null);
-  const [subjectError, setSubjectError] = useState<string | null>(null);
-  const standards = useApi<StandardProfile[]>(`/standards${f.class_id ? `?class_id=${encodeURIComponent(f.class_id)}` : ""}`);
-  const [profileId, setProfileId] = useState("");
-  const [audience,setAudience] = useState("standard");
-  const [branch,setBranch] = useState("");
-  const profile = standards.data?.find(p=>p.id===profileId);
+  const [grade, setGrade] = useState<"10" | "12">("10");
+  const catalog = useApi<Record<string, CatalogSubject[]>>(`/subjects/catalog?grade=${grade}`);
+  const subjects = catalog.data?.[grade] ?? [];
+  const [name, setName] = useState("");
+  const [section, setSection] = useState("");
+  const [subjectKey, setSubjectKey] = useState("");
+  const [paper, setPaper] = useState<File | null>(null);
+  const [key, setKey] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
-  const set = (k: keyof typeof f) => (e: { target: { value: string } }) =>
-    setF((prev) => ({ ...prev, [k]: e.target.value }));
+  const [error, setError] = useState<unknown>(null);
 
-  const classOptions: ComboboxOption[] = useMemo(() => {
-    if (!classes.data) return [];
-    return classes.data.map((c) => ({
-      value: c.id,
-      label: c.name,
-      sublabel:
-        c.student_count !== undefined
-          ? `${c.student_count} student${c.student_count === 1 ? "" : "s"}`
-          : undefined,
-    }));
-  }, [classes.data]);
-
-  const handleAddClass = async (className: string) => {
-    const created = await api<ClassRow>("/classes", {
-      method: "POST",
-      json: { name: className.trim() },
-    });
-    await classes.reload();
-    setF((prev) => ({ ...prev, class_id: created.id }));
-    setClassError(null);
-    return created.id;
-  };
+  useEffect(() => setSubjectKey(""), [grade]);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    let hasErr = false;
-
-    if (!f.class_id) {
-      setClassError(
-        "Please select a class or click '+ Add' to confirm creating a new one.",
-      );
-      hasErr = true;
-    }
-    if (!f.subject_id) {
-      setSubjectError(
-        "Please select a subject or click '+ Add' to confirm creating a new one.",
-      );
-      hasErr = true;
-    }
-    if (hasErr) return;
-
+    if (!paper || !key) return setError(new Error("Add both the question paper and the answer key."));
     setBusy(true);
     setError(null);
     try {
-      if (!profile) throw new Error("Choose an exact CBSE subject variant.");
-      const ex = await api<Exam>("/exams", {
+      const exam = await api<Exam>("/exams/simple", {
         method: "POST",
-        json: {
-          ...f,
-          standard_profile_id: profile.id,
-          standard_options: {accessibility: audience, accountancy_option: branch || null},
-          exam_date: f.exam_date || null,
-          instructions: f.instructions || null,
-          duration_minutes: profile.duration_minutes,
-          total_marks: profile.total_marks,
-        },
+        json: { name: name.trim(), grade, section: section.trim(), subject_key: subjectKey },
       });
-      nav(`/exams/${ex.id}`);
-    } catch (x) {
-      setError(x);
+      const upload = (path: string, file: File) => {
+        const form = new FormData();
+        form.append("file", file);
+        return api(`/exams/${exam.id}/${path}`, { method: "POST", form });
+      };
+      await upload("question-paper", paper);  // the paper first: the key is read alongside it, then built on it
+      await upload("answer-key", key);
+      nav(`/exams/${exam.id}`, { replace: true });
+    } catch (err) {
+      setError(err);
       setBusy(false);
     }
   };
 
-  const hasNoClassesOrSubjects =
-    classes.data &&
-    subjects.data &&
-    (!classes.data.length || !subjects.data.length);
-
   return (
-    <div className="max-w-3xl space-y-5">
-      <PageHeader
-        title="Create New Examination"
-        sub="Full CBSE board-paper pattern • 2026–27. Upload your own paper and marking scheme."
-        actions={
-          <LinkButton to="/exams" variant="ghost">
-            Cancel &amp; Return
-          </LinkButton>
-        }
-      />
-
-      {hasNoClassesOrSubjects && (
-        <div className="rounded-lg border border-line bg-sunken/50 p-3 text-sm text-ink">
-          <div>
-            <p className="text-xs text-mute">
-              Select a class and a supported CBSE subject. School management maintains classes and teacher assignments.
-            </p>
-          </div>
-        </div>
-      )}
-
-      <form onSubmit={submit} className="space-y-4">
-        <Card className="grid gap-4 p-6 shadow-soft sm:grid-cols-2">
-          <div className="sm:col-span-2">
-            <Field
-              label="Exam Name"
-              hint="e.g. Class 12 Physics Board Practice"
-            >
+    <PageCanvas className="max-w-3xl mx-auto">
+      <PageHeader title="Create exam" sub="The question paper and answer key are read as soon as you create the exam." />
+      <form onSubmit={submit}>
+        <Card className="space-y-5 p-6">
+          <Field label="Exam name" required>
+            {(id) => <Input id={id} required maxLength={200} placeholder="Term 1 examination" value={name}
+                            onChange={(e) => setName(e.target.value)} />}
+          </Field>
+          <div className="grid gap-5 sm:grid-cols-2">
+            <Field label="Class" required>
               {(id) => (
-                <Input
-                  id={id}
-                  required
-                  placeholder="Board Practice Examination"
-                  value={f.name}
-                  onChange={set("name")}
-                />
+                <Select id={id} value={grade} onChange={(e) => setGrade(e.target.value as "10" | "12")}>
+                  <option value="10">Class 10</option>
+                  <option value="12">Class 12</option>
+                </Select>
               )}
             </Field>
-          </div>
-
-          <Field
-            label="Class"
-            required
-            hint={
-              teacher?.role === "TEACHER"
-                ? "Choose an assigned class"
-                : "CBSE Class 10 or 12"
-            }
-            error={classError || undefined}
-          >
-            {(id) => (
-              <SearchableCombobox
-                id={id}
-                value={f.class_id}
-                onChange={(val) => {
-                  setF((prev) => prev.class_id === val ? prev : ({ ...prev, class_id: val, subject_id: "" }));
-                  if (val !== f.class_id) setProfileId("");
-                  if (val) setClassError(null);
-                }}
-                options={classOptions}
-                placeholder="Choose class (10-A or 12-A)..."
-                itemNoun="class"
-                allowCustom={teacher?.role === "MANAGEMENT"}
-                emptyMessage="No matching classes found"
-                onAddCustom={handleAddClass}
-                icon={<IconClasses size={16} />}
-                required
-              />
-            )}
-          </Field>
-
-          <Field
-            label="Subject"
-            required
-            hint="Choose the exact CBSE subject variant"
-            error={subjectError || undefined}
-          >
-            {(id) => (
-              <SearchableCombobox
-                id={id}
-                value={profileId}
-                onChange={async (val) => {
-                  setProfileId(val);
-                  setSubjectError(null);
-                  const p = standards.data?.find(x=>x.id===val);
-                  if (!p) { setF(prev=>({...prev,subject_id:""})); return; }
-                  let subjectId = p.subject_ids[0];
-                  try {
-                    if (!subjectId) {
-                      const created = await api<Subject>("/subjects",{method:"POST",json:{name:p.name,code:p.code}});
-                      subjectId=created.id;
-                      await subjects.reload();
-                      await standards.reload();
-                    }
-                    setF(prev=>({...prev,subject_id:subjectId,duration_minutes:String(p.duration_minutes),total_marks:String(p.total_marks),exam_type:"Board pattern"}));
-                  } catch (error) { setError(error); setProfileId(""); }
-                }}
-                options={(standards.data||[]).map(p=>({value:p.id,label:p.name,sublabel:p.upload_driven
-                  ? `${p.code} · ${p.total_marks} marks · structure read from upload`
-                  : `${p.code} · ${p.total_marks} marks · ${p.question_count} questions`}))}
-                placeholder={f.class_id ? "Choose CBSE subject..." : "Choose a class first"}
-                disabled={!f.class_id || standards.loading}
-                itemNoun="subject"
-                allowCustom={false}
-                emptyMessage="No matching subjects found"
-                icon={<IconSubjects size={16} />}
-                required
-              />
-            )}
-          </Field>
-
-          <Field
-            label="Exam Type"
-            required
-            hint="Select preset or type custom format"
-          >
-            {(id) => (
-              <SearchableCombobox
-                id={id}
-                value="Board pattern"
-                onChange={(val) =>
-                  setF((prev) => ({ ...prev, exam_type: val }))
-                }
-                options={EXAM_TYPE_PRESETS}
-                placeholder="Select or enter exam type (e.g. Unit test)..."
-                itemNoun="exam type"
-                disabled
-                emptyMessage="No preset exam types found"
-                icon={<IconExam size={16} />}
-                required
-              />
-            )}
-          </Field>
-
-          <Field label="Exam Date">
-            {(id) => (
-              <Input
-                id={id}
-                type="date"
-                value={f.exam_date}
-                onChange={set("exam_date")}
-              />
-            )}
-          </Field>
-
-          <Field label="Duration (minutes)">
-            {(id) => (
-              <Input
-                id={id}
-                type="number"
-                min={1}
-                placeholder="e.g. 90"
-                value={f.duration_minutes}
-                readOnly
-                onChange={set("duration_minutes")}
-              />
-            )}
-          </Field>
-
-          <Field label="Total Maximum Marks">
-            {(id) => (
-              <Input
-                id={id}
-                type="number"
-                min={1}
-                step="0.5"
-                required
-                placeholder="e.g. 50"
-                value={f.total_marks}
-                readOnly
-                onChange={set("total_marks")}
-              />
-            )}
-          </Field>
-
-          <div className="sm:col-span-2">
-            <Field
-              label="Instructions (optional)"
-              hint="Any general exam guidance or section instructions"
-            >
-              {(id) => (
-                <Textarea
-                  id={id}
-                  rows={3}
-                  placeholder="Answer all questions in Section A..."
-                  value={f.instructions}
-                  onChange={set("instructions")}
-                />
-              )}
+            <Field label="Section" hint="e.g. A">
+              {(id) => <Input id={id} maxLength={20} placeholder="A" value={section}
+                              onChange={(e) => setSection(e.target.value.toUpperCase())} />}
             </Field>
           </div>
-          <Field label="Paper version">{id=><select id={id} className="input" value={audience} onChange={e=>setAudience(e.target.value)}><option value="standard">Standard paper</option><option value="accessible">Visually impaired alternative questions</option></select>}</Field>
-          {profile?.code === "055" && <Field label="Accountancy Part B" required>{id=><select id={id} className="input" required value={branch} onChange={e=>setBranch(e.target.value)}><option value="">Choose option...</option><option value="financial">Analysis of Financial Statements</option><option value="computerised">Computerised Accounting</option></select>}</Field>}
+          <Field label="Subject" required>
+            {(id) => (
+              <Select id={id} required value={subjectKey} onChange={(e) => setSubjectKey(e.target.value)}
+                      disabled={catalog.loading}>
+                <option value="">{catalog.loading ? "Loading subjects..." : "Choose a subject"}</option>
+                {subjects.map((s) => <option key={s.key} value={s.key}>{s.name}</option>)}
+              </Select>
+            )}
+          </Field>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <UploadZone compact title="Question paper" accept=".pdf,.png,.jpg,.jpeg,.docx" chosen={paper?.name}
+                        hint="PDF, image or Word" disabled={busy} onFile={async (f) => setPaper(f)} />
+            <UploadZone compact title="Answer key" accept=".pdf,.png,.jpg,.jpeg,.docx" chosen={key?.name}
+                        hint="PDF, image or Word" disabled={busy} onFile={async (f) => setKey(f)} />
+          </div>
+          <ErrorPanel error={error} />
         </Card>
-
-        <ErrorPanel error={error} />
-
-        <div className="flex items-center justify-end gap-3">
-          <LinkButton to="/exams" variant="ghost">
-            Cancel
-          </LinkButton>
-          <Button
-            type="submit"
-            variant="primary"
-            busy={busy}
-            className="shadow-xs"
-          >
-            Create Exam &amp; Continue
+        <div className="mt-5 flex justify-end gap-2">
+          <LinkButton to="/exams" variant="secondary">Cancel</LinkButton>
+          <Button type="submit" variant="primary" busy={busy} disabled={!name.trim() || !subjectKey || !paper || !key}>
+            Create exam
           </Button>
         </div>
       </form>
-    </div>
+    </PageCanvas>
   );
 }

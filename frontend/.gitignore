@@ -1,0 +1,2 @@
+# local HTTPS certificate for phones on the LAN (scripts/make-cert.sh)
+certs/

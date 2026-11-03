@@ -45,7 +45,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             <div
               key={t.id}
               role={t.tone === "mark" ? "alert" : "status"}
-              className={`pointer-events-auto flex w-full max-w-sm animate-rise items-start gap-2.5 rounded-md border border-line border-l-4 bg-surface px-3.5 py-3 text-sm shadow-pop ${toneCls[t.tone]}`}
+              className={`pointer-events-auto flex w-full max-w-sm animate-rise items-start gap-2.5 rounded-xl border border-line border-l-4 bg-surface px-3.5 py-3 text-sm shadow-pop ${toneCls[t.tone]}`}
             >
               <Icon size={17} className="mt-0.5 shrink-0" />
               <p className="flex-1 text-ink">{t.text}</p>
@@ -53,7 +53,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                 type="button"
                 onClick={() => dismiss(t.id)}
                 aria-label="Dismiss notification"
-                className="-m-1 rounded p-1 text-mute transition-ui hover:bg-hover hover:text-brown"
+                className="-m-1 rounded p-1 text-mute transition-ui hover:bg-hover hover:text-pen"
               >
                 <IconX size={14} />
               </button>

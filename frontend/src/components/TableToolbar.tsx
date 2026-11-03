@@ -55,12 +55,12 @@ export function TableToolbar({
   extraActions,
 }: TableToolbarProps) {
   return (
-    <div className="mb-4 space-y-2.5">
-      <div className="flex flex-wrap items-center justify-between gap-2.5">
+    <div className="mb-4 space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         {/* Left: Search input */}
-        <div className="relative min-w-[200px] flex-1 sm:max-w-xs">
+        <div className="relative min-w-[220px] flex-1 sm:max-w-sm">
           <svg
-            className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-mute"
+            className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
             fill="none"
             stroke="currentColor"
             viewBox="0 0 24 24"
@@ -79,14 +79,14 @@ export function TableToolbar({
             onChange={(e) => onSearchChange(e.target.value)}
             placeholder={searchPlaceholder}
             aria-label={searchPlaceholder}
-            className="w-full rounded-md border border-line bg-surface py-1.5 pl-9 pr-8 text-sm text-ink placeholder:text-mute focus:border-pen focus:outline-none focus:ring-1 focus:ring-pen"
+            className="h-10 w-full rounded-xl border border-slate-200 bg-white py-2 pl-10 pr-9 text-xs sm:text-sm text-slate-800 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 shadow-xs transition-all"
           />
           {searchValue && (
             <button
               type="button"
               onClick={() => onSearchChange("")}
               aria-label="Clear search"
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-mute hover:text-brown"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
             >
               <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -96,7 +96,7 @@ export function TableToolbar({
         </div>
 
         {/* Right / Middle: Filters, Sort, Clear */}
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2.5">
           {filters.map((f) => {
             const hasVal = Boolean(f.value);
             return (
@@ -105,10 +105,10 @@ export function TableToolbar({
                   value={f.value}
                   onChange={(e) => f.onChange(e.target.value)}
                   aria-label={f.label}
-                  className={`h-9 rounded-md border text-sm py-1.5 pl-2.5 pr-8 focus:border-pen focus:outline-none focus:ring-1 focus:ring-pen ${
+                  className={`select-pro h-10 rounded-xl border text-xs font-semibold py-1.5 pl-3.5 pr-9 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 shadow-xs cursor-pointer transition-all ${
                     hasVal
-                      ? "border-pen bg-pen-soft/20 font-medium text-pen"
-                      : "border-line bg-surface text-ink"
+                      ? "border-blue-500 bg-blue-50 text-blue-700"
+                      : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
                   }`}
                 >
                   <option value="">{f.label}</option>
@@ -123,12 +123,12 @@ export function TableToolbar({
           })}
 
           {/* Sort By Dropdown */}
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1.5">
             <select
               value={sortValue}
               onChange={(e) => onSortChange(e.target.value)}
               aria-label="Sort by"
-              className="h-9 rounded-md border border-line bg-surface py-1.5 pl-2.5 pr-8 text-sm text-ink focus:border-pen focus:outline-none focus:ring-1 focus:ring-pen"
+              className="select-pro h-10 rounded-xl border border-slate-200 bg-white py-1.5 pl-3.5 pr-9 text-xs font-semibold text-slate-700 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-100 shadow-xs cursor-pointer transition-all hover:bg-slate-50"
             >
               {sortOptions.map((opt) => (
                 <option key={opt.value} value={opt.value}>
@@ -143,15 +143,15 @@ export function TableToolbar({
               onClick={onSortOrderToggle}
               title={`Sorting ${sortOrder === "asc" ? "Ascending" : "Descending"}. Click to toggle.`}
               aria-label={`Sorting ${sortOrder === "asc" ? "Ascending" : "Descending"}. Click to toggle.`}
-              className="inline-flex h-9 items-center gap-1 rounded-md border border-line bg-surface px-2.5 text-xs font-medium text-ink hover:bg-hover focus:border-pen focus:outline-none"
+              className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 focus:border-blue-500 focus:outline-none shadow-xs transition-all cursor-pointer"
             >
               <svg
-                className={`h-4 w-4 transition-transform ${sortOrder === "desc" ? "rotate-180" : ""}`}
+                className={`h-3.5 w-3.5 text-slate-500 transition-transform ${sortOrder === "desc" ? "rotate-180" : ""}`}
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
               >
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12" />
               </svg>
               <span>{sortOrder === "asc" ? "Asc" : "Desc"}</span>
             </button>
@@ -163,7 +163,7 @@ export function TableToolbar({
               type="button"
               onClick={onClearFilters}
               aria-label="Clear all active filters and search"
-              className="inline-flex h-9 items-center gap-1.5 rounded-md border border-line bg-sunken px-2.5 text-xs font-medium text-mute hover:bg-hover hover:text-brown focus:border-pen focus:outline-none transition-colors"
+              className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-600 hover:bg-slate-100 hover:text-slate-900 focus:outline-none shadow-xs transition-all cursor-pointer"
             >
               <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -177,16 +177,16 @@ export function TableToolbar({
       </div>
 
       {/* Result Count and Active Filters Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-xs text-mute">
+      <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-xs text-slate-500 font-medium">
         <div>
           {Boolean(isFiltered !== undefined ? isFiltered : (Boolean(searchValue?.trim()) || filters.some((f) => Boolean(f.value?.trim())))) ? (
             <span>
-              Showing <strong className="text-ink">{filteredCount}</strong> of{" "}
-              <strong className="text-ink">{totalCount}</strong> {itemLabel}
+              Showing <strong className="text-slate-800 font-bold">{filteredCount}</strong> of{" "}
+              <strong className="text-slate-800 font-bold">{totalCount}</strong> {itemLabel}
             </span>
           ) : (
             <span>
-              <strong className="text-ink">{totalCount}</strong> {itemLabel} total
+              <strong className="text-slate-800 font-bold">{totalCount}</strong> {itemLabel} total
             </span>
           )}
         </div>
@@ -195,12 +195,12 @@ export function TableToolbar({
         {Boolean(isFiltered !== undefined ? isFiltered : (Boolean(searchValue?.trim()) || filters.some((f) => Boolean(f.value?.trim())))) && (
           <div className="flex flex-wrap items-center gap-1.5">
             {searchValue.trim() && (
-              <span className="inline-flex items-center gap-1 rounded bg-sunken px-2 py-0.5 text-ink">
+              <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 border border-slate-200 px-2.5 py-0.5 text-slate-700 font-medium">
                 Search: &ldquo;{searchValue}&rdquo;
                 <button
                   type="button"
                   onClick={() => onSearchChange("")}
-                  className="hover:text-mark ml-0.5"
+                  className="hover:text-red-500 ml-0.5 cursor-pointer"
                   aria-label="Remove search filter"
                 >
                   ✕
@@ -214,13 +214,13 @@ export function TableToolbar({
                 return (
                   <span
                     key={f.key}
-                    className="inline-flex items-center gap-1 rounded bg-pen-soft px-2 py-0.5 text-pen font-medium"
+                    className="inline-flex items-center gap-1 rounded-full bg-blue-50 border border-blue-200 px-2.5 py-0.5 text-blue-700 font-medium"
                   >
                     {f.label}: {optLabel}
                     <button
                       type="button"
                       onClick={() => f.onChange("")}
-                      className="hover:text-mark ml-0.5"
+                      className="hover:text-red-500 ml-0.5 cursor-pointer"
                       aria-label={`Remove ${f.label} filter`}
                     >
                       ✕
@@ -262,11 +262,11 @@ export function TablePagination({
   const endRecord = Math.min(currentPage * pageSize, totalFilteredCount);
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-4 py-3 text-xs text-mute">
+    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 bg-white px-6 py-4 text-xs font-medium text-slate-500">
       <div>
-        Showing <span className="font-medium text-ink">{startRecord}</span> to{" "}
-        <span className="font-medium text-ink">{endRecord}</span> of{" "}
-        <span className="font-medium text-ink">{totalFilteredCount}</span> {itemLabel}
+        Showing <span className="font-semibold text-slate-800">{startRecord}</span> to{" "}
+        <span className="font-semibold text-slate-800">{endRecord}</span> of{" "}
+        <span className="font-semibold text-slate-800">{totalFilteredCount}</span> {itemLabel}
       </div>
 
       <div className="flex flex-wrap items-center gap-4">
@@ -277,7 +277,7 @@ export function TablePagination({
             value={pageSize}
             onChange={(e) => onPageSizeChange(Number(e.target.value))}
             aria-label="Rows per page"
-            className="rounded border border-line bg-surface py-1 pl-2 pr-6 text-xs text-ink focus:border-pen focus:outline-none"
+            className="select-pro h-8 rounded-lg border border-slate-200 bg-white py-1 pl-2.5 pr-7 text-xs font-semibold text-slate-700 focus:border-blue-500 focus:outline-none shadow-xs cursor-pointer"
           >
             {pageSizeOptions.map((opt) => (
               <option key={opt} value={opt}>
@@ -288,20 +288,20 @@ export function TablePagination({
         </div>
 
         {/* Page Navigation */}
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1.5">
           <button
             type="button"
             disabled={currentPage <= 1}
             onClick={() => onPageChange(currentPage - 1)}
             aria-label="Previous page"
-            className="rounded border border-line bg-surface p-1 text-ink hover:bg-hover disabled:opacity-40 disabled:hover:bg-surface"
+            className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-30 disabled:hover:bg-white shadow-xs transition-all cursor-pointer"
           >
-            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7" />
             </svg>
           </button>
 
-          <span className="px-2 font-medium text-ink">
+          <span className="px-2 font-semibold text-slate-800">
             Page {currentPage} of {totalPages}
           </span>
 
@@ -310,10 +310,10 @@ export function TablePagination({
             disabled={currentPage >= totalPages}
             onClick={() => onPageChange(currentPage + 1)}
             aria-label="Next page"
-            className="rounded border border-line bg-surface p-1 text-ink hover:bg-hover disabled:opacity-40 disabled:hover:bg-surface"
+            className="flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-30 disabled:hover:bg-white shadow-xs transition-all cursor-pointer"
           >
-            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
             </svg>
           </button>
         </div>
@@ -332,8 +332,8 @@ export function FilteredEmptyState({
   onClearFilters: () => void;
 }) {
   return (
-    <div className="rounded-lg border border-dashed border-line p-8 text-center bg-surface">
-      <div className="mx-auto mb-2 flex h-10 w-10 items-center justify-center rounded-full bg-sunken text-mute">
+    <div className="rounded-2xl border border-dashed border-slate-200 p-8 text-center bg-slate-50/50">
+      <div className="mx-auto mb-2 flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-400">
         <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path
             strokeLinecap="round"
@@ -343,13 +343,13 @@ export function FilteredEmptyState({
           />
         </svg>
       </div>
-      <p className="font-semibold text-ink">{title}</p>
-      <p className="mt-1 text-xs text-mute max-w-sm mx-auto">{message}</p>
+      <p className="font-semibold text-slate-800">{title}</p>
+      <p className="mt-1 text-xs text-slate-500 max-w-sm mx-auto">{message}</p>
       <div className="mt-4">
         <button
           type="button"
           onClick={onClearFilters}
-          className="rounded-md bg-pen px-3.5 py-1.5 text-xs font-medium text-white hover:opacity-90 transition-opacity"
+          className="rounded-full bg-blue-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 shadow-sm transition-all cursor-pointer"
         >
           Clear Filters
         </button>

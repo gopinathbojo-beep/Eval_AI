@@ -36,11 +36,6 @@ def exam_dir(exam_id: str) -> Path:
     return safe_join(data_root(), "exams", exam_id)
 
 
-def stored_report(ev: Evaluation) -> Path | None:
-    d = exam_dir(ev.exam_id) / REPORTS
-    return next(iter(sorted(d.glob(f"{ev.id}__*.pdf"))), None) if d.is_dir() else None
-
-
 def save_reports_and_schedule(db: Session, teacher: Teacher, exam: Exam) -> int:
     """Called right after the exam is finalized: keep every student's PDF report, then start the 24-hour clock."""
     from .school_reports import build_evaluation_pdf_report

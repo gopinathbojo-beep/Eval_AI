@@ -30,6 +30,8 @@ export function WorkspaceProfile({ editing = false }: { editing?: boolean }) {
     affiliation_number: "",
     child_name: "",
     child_class: "10",
+    building: "",
+    locality: "",
     ...Object.fromEntries(
       Object.entries(teacher?.profile ?? {}).map(([k, v]) => [
         k,
@@ -37,6 +39,8 @@ export function WorkspaceProfile({ editing = false }: { editing?: boolean }) {
       ]),
     ),
   });
+  // records from before the structured address: start the building line from the old one-line address
+  if (!form.building && form.address && !form.locality) form.building = form.address;
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<unknown>(null);
@@ -77,7 +81,7 @@ export function WorkspaceProfile({ editing = false }: { editing?: boolean }) {
   );
   return (
     <Card className="p-6">
-      <h1 className="font-display text-2xl font-semibold">
+      <h1 className="aurora-text text-2xl font-bold tracking-tight">
         {editing ? "Workspace profile" : "Complete your profile"}
       </h1>
       <p className="mt-2 text-sm text-mute">
@@ -109,12 +113,13 @@ export function WorkspaceProfile({ editing = false }: { editing?: boolean }) {
         {role === "MANAGEMENT" ? (
           <>
             {field("school_name", "School name")}
-            {field("address", "School address")}
+            {field("principal_name", "Principal / Head name")}
+            {field("building", "Building / Institution Name")}
+            {field("locality", "Locality / Area")}
             <div className="grid gap-4 sm:grid-cols-2">
               {field("city", "City")}
               {field("state", "State")}
-              {field("postcode", "Postcode")}
-              {field("principal_name", "Principal name (optional)", false)}
+              {field("postcode", "PIN Code")}
               {field(
                 "affiliation_number",
                 "CBSE affiliation number (optional)",
@@ -139,7 +144,14 @@ export function WorkspaceProfile({ editing = false }: { editing?: boolean }) {
                 </Select>
               )}
             </Field>
-            {field("school_name", "Child's school (optional)", false)}
+            {field("school_name", "Child's school")}
+            {field("building", "Building / House Name")}
+            {field("locality", "Locality / Area")}
+            <div className="grid gap-4 sm:grid-cols-3">
+              {field("city", "City")}
+              {field("state", "State")}
+              {field("postcode", "PIN Code")}
+            </div>
             <p className="text-xs text-mute">
               One child per parent account. Their evaluations stay private to
               your family.
@@ -170,9 +182,7 @@ export default function Onboarding() {
         to={
           teacher.is_admin
             ? "/admin"
-            : teacher.must_change_password
-              ? "/account"
-              : "/dashboard"
+            : "/dashboard"
         }
         replace
       />

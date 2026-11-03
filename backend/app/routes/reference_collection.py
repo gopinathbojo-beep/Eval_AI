@@ -15,7 +15,6 @@ from ..services.reference_learning import (
     compute_cer,
     compute_wer,
     get_few_shot_prompt_hints,
-    seed_verified_reference_collection,
 )
 
 log = logging.getLogger("adem.routes.reference_collection")
@@ -128,9 +127,9 @@ def get_diagnostics(
     metrics = compute_reference_collection_metrics(db, workspace_id=t.workspace_id, teacher_id=t.id)
     return {
         "status": "OK",
-        "model": get_settings().openrouter_model,
+        "model": get_settings().ai_model,
         "diagnostics": metrics,
-        "hardware_constraint_note": "Gemini is hosted by OpenRouter; no local model or GPU is required.",
+        "hardware_constraint_note": "InternVL runs in Ollama on the remote model server; nothing runs on this PC.",
     }
 
 

@@ -11,7 +11,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const logout = useCallback(() => {
     void api("/auth/logout", { method: "POST" }).then(() => {
-      window.location.replace("/login");
+      // Put home behind login so Back from the login page goes home, not to a protected page.
+      window.history.replaceState(null, "", "/");
+      window.location.assign("/login");
     }).catch(() => window.alert("Could not sign out. Check your connection and try again."));
   }, []);
   useEffect(() => {

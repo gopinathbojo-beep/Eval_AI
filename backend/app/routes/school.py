@@ -11,7 +11,7 @@ from ..models import ReportTemplate, SchoolProfile, Student, Teacher
 from ..security import current_teacher
 from ..services.audit import audit
 from ..services.report_templates import KINDS, active_template_id, list_presets, normalize, resolve, family_config
-from ..services.school_reports import build_report_cards, render_preview, report_card_terms
+from ..services.school_reports import render_preview
 from ..workspaces import owner_id
 
 router = APIRouter(prefix="/api")
@@ -228,21 +228,51 @@ def preview_saved(tid: str, kind: str = Query(...), db: Session = Depends(get_db
 # ---------- report cards
 @router.get("/classes/{class_id}/report-card-terms")
 def card_terms(class_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
-    return report_card_terms(db, t, class_id)
+    from ..services.cbse_report_card import class_terms
+    from ..workspaces import classes_query
+    if not classes_query(db, t).filter_by(id=class_id).first():
+        raise err(404, "NOT_FOUND", "Class not found.")
+    return class_terms(db, t, class_id)
 
 
 @router.get("/classes/{class_id}/report-cards")
-def class_report_cards(class_id: str, academic_year: str = Query(...), exam_type: str = Query(...),
+def class_report_cards(class_id: str, term: str = Query(..., min_length=1, max_length=200),
                        db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
-    pdf, filename = build_report_cards(db, t, class_id, academic_year, exam_type)
+    """CBSE report cards for the whole class, one page per student (term = exam name, e.g. "Term 1")."""
+    from ..services.cbse_report_card import build_class
+    from ..workspaces import classes_query
+    if not classes_query(db, t).filter_by(id=class_id).first():
+        raise err(404, "NOT_FOUND", "Class not found.")
+    pdf, filename = build_class(db, t, class_id, term)
     return _pdf(pdf, filename)
 
 
 @router.get("/students/{student_id}/report-card")
-def student_report_card(student_id: str, academic_year: str = Query(...), exam_type: str = Query(...),
+def student_report_card(student_id: str, term: str = Query(..., min_length=1, max_length=200),
                         db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    from ..services.cbse_report_card import build
+    pdf, filename = build(db, t, _own_student(db, t, student_id).id, term)
+    return _pdf(pdf, filename)
+
+
+# ---------- CBSE term report card (Student Report tab)
+def _own_student(db: Session, t: Teacher, student_id: str) -> Student:
+    from ..workspaces import classes_query
     st = db.get(Student, student_id)
-    if st is None:
+    if st is None or not classes_query(db, t).filter_by(id=st.class_id).first():
         raise err(404, "NOT_FOUND", "Student not found.")
-    pdf, filename = build_report_cards(db, t, st.class_id, academic_year, exam_type, student_id=st.id)
+    return st
+
+
+@router.get("/students/{student_id}/terms")
+def student_terms(student_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    from ..services.cbse_report_card import student_terms as terms
+    return terms(db, t, _own_student(db, t, student_id))
+
+
+@router.get("/students/{student_id}/term-card")
+def student_term_card(student_id: str, term: str = Query(..., min_length=1, max_length=200),
+                      db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    from ..services.cbse_report_card import build
+    pdf, filename = build(db, t, _own_student(db, t, student_id).id, term)
     return _pdf(pdf, filename)

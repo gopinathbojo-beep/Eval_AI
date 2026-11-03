@@ -121,6 +121,10 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
             db.commit()
             return
         doc.progress_total = len(doc.pages)
+        if kind == "question-paper":
+            from ..cbse.variant import pick_variant
+            if pick_variant(exam, doc.pages):
+                log.info("Exam %s: question paper names variant %s", exam.id, exam.standard_profile_id)
         db.commit()
 
     if is_cancelled(doc_id, db, doc):
@@ -178,7 +182,7 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
         try:
             call = chat_structured(system, prompt_str, schema, img)
             out.write_text(json.dumps({"status": "OK", "raw": call.raw, "parsed": call.parsed.model_dump(),
-                                       "attempts": call.attempts, "engine": "openrouter-gemini"},
+                                       "attempts": call.attempts, "engine": "internvl"},
                                       ensure_ascii=False, indent=1), encoding="utf-8")
             _set_pages(db, doc, i, ocr_status="OK", ocr_error=None, ocr_file=rel(out))
         except AIUnavailable as e:
@@ -205,6 +209,12 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
     if kind == "answer-sheet" and doc.student_id is None:
         # held for the teacher to pick the student: the pages are read now, the answers are built once assigned
         doc.status, doc.stage = "NEEDS_STUDENT", "Pick the student (answers already read)"
+        db.commit()
+        return
+
+    if kind == "answer-key" and not db.query(ExamQuestion.id).filter_by(exam_id=exam.id).first():
+        # read in parallel with the question paper; built when its questions exist (see _build_questions)
+        doc.status, doc.stage = "WAITING", "Read; waiting for the questions"
         db.commit()
         return
 
@@ -289,7 +299,7 @@ def _build_questions(db: Session, doc, exam: Exam, wd: Path, results) -> None:
         db.query(ExamQuestion).filter_by(exam_id=exam.id).delete()
     struct = parse_question_paper_structure(results)
     apply_pdf_question_text(struct.questions, [p.get("page_text") or "" for p, _ in results])
-    labeler_model = get_settings().openrouter_model
+    labeler_model = get_settings().ai_model
     if labeler_model:
         label_question_types(struct.questions, labeler_model)
 
@@ -402,12 +412,20 @@ def _build_questions(db: Session, doc, exam: Exam, wd: Path, results) -> None:
     db.commit()
 
     # Reconcile dependent answer keys and student answers when question paper is processed or reprocessed
+    waiting = []
     for key_doc in db.query(AnswerKeyDocument).filter_by(exam_id=exam.id, is_active=True).all():
+        if key_doc.status == "WAITING" and rows:
+            key_doc.status, key_doc.stage = "UPLOADED", "Queued"
+            waiting.append(key_doc.id)
+            continue
         apply_key_mapping(db, exam.id, key_doc.id)
     for ev in db.query(Evaluation).filter_by(exam_id=exam.id).all():
         if ev.status != "FINALIZED":
             apply_student_mapping(db, ev)
     db.commit()
+    from .job_queue import submit
+    for key_id in waiting:  # the key waited for the questions: read it now (pages already read are skipped)
+        submit(exam.id, process_document, "answer-key", key_id, True)
 
 
 def _build_answer_key(db: Session, doc, exam: Exam, wd: Path, results) -> None:
@@ -419,7 +437,7 @@ def _build_answer_key(db: Session, doc, exam: Exam, wd: Path, results) -> None:
     pages_by_num = {p["page_number"]: p for p, _ in results}
     canonical_qs = db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all()
     keys = segment_answer_keys(results, canonical_questions=canonical_qs)
-    labeler_model = get_settings().openrouter_model
+    labeler_model = get_settings().ai_model
     if labeler_model:
         label_key_criteria(keys, canonical_qs, labeler_model)
     n = 0

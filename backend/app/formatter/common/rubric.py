@@ -124,15 +124,6 @@ def _numbers(text: str) -> list[str]:
     return [n.replace(",", "").replace("Rs.", "").replace("Rs", "").strip() for n in _NUMBER.findall(text)]
 
 
-def _final_answers(key_text: str) -> list[str]:
-    """Values the key states as the answer: "Answer: 1030301", "= 20 days", "x = 20"."""
-    found = []
-    for line in (key_text or "").splitlines():
-        if m := re.search(r"\banswer\s*[:=]\s*(.+)$", line, re.I):
-            found += _numbers(m.group(1))[:1]
-    return found
-
-
 def _kind_and_expected(text: str, part_answer: str | None, key_text: str) -> tuple[str, list[str]]:
     if _UNIT_WORDS.search(text):
         units = re.findall(r"\(([^)]{1,15})\)", text)

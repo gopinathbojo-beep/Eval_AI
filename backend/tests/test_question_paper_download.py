@@ -52,7 +52,7 @@ def test_download_question_paper_pdf(client, auth):
 
 def test_download_with_token_query_param(client):
     c = client
-    login = c.post("/api/auth/login", json={"email": "rao@school.org", "password": "password123"}).json()
+    login = c.post("/api/auth/login", json={"email": "rao@school.org", "password": "Password@123"}).json()
     token = login["access_token"]
     h = {"Authorization": f"Bearer {token}"}
 

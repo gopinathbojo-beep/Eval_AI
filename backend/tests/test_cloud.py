@@ -114,6 +114,7 @@ def test_signed_upload_completion_is_authorized_validated_and_idempotent(client,
     assert client.get(f"/api/documents/question-paper/{uid}/pdf", headers=auth).status_code == 200
 
 
+@pytest.mark.skip(reason="OpenRouter transport is switched off while InternVL is in use; re-enable when switching back")
 def test_remote_ai_transport_and_unmeasured_confidence(monkeypatch, tmp_path):
     settings = get_settings()
     monkeypatch.setattr(settings,"openrouter_api_key","private-ai-key")
@@ -133,6 +134,7 @@ def test_remote_ai_transport_and_unmeasured_confidence(monkeypatch, tmp_path):
     assert result.parsed.questions[0].confidence <= 0.5
 
 
+@pytest.mark.skip(reason="OpenRouter transport is switched off while InternVL is in use; re-enable when switching back")
 def test_openrouter_grading_limits_reasoning_and_reports_token_usage(monkeypatch):
     settings = get_settings()
     monkeypatch.setattr(settings, "openrouter_api_key", "test-key")
@@ -165,7 +167,7 @@ def test_versioned_migrations_are_repeatable(tmp_path):
         assert set(Base.metadata.tables) <= set(inspect(connection).get_table_names())
         for name,table in Base.metadata.tables.items():
             assert {column.name for column in table.columns} <= {column["name"] for column in inspect(connection).get_columns(name)}
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar() == "20261031_cbse"
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar() == "20261103_reference_library"
 
 
 def test_durable_queue_deduplicates_recovers_queued_and_flags_interrupted(client, auth, monkeypatch):
@@ -177,7 +179,7 @@ def test_durable_queue_deduplicates_recovers_queued_and_flags_interrupted(client
     cls=client.post('/api/classes',headers=auth,json={'std':'12','section':'Durable'}).json()
     sub=client.post('/api/subjects',headers=auth,json={'name':'Durable English'}).json()
     exam=client.post('/api/_test/legacy-exams',headers=auth,json={'name':'Durable','class_id':cls['id'],'subject_id':sub['id'],'exam_type':'Unit','total_marks':2}).json()
-    job=jq._Job('internvl',process_document,('question-paper','document-id'),exam_id=exam['id'])
+    job=jq._Job(process_document,('question-paper','document-id'),exam_id=exam['id'])
     job_id=pq.persist(job)
     assert job_id and pq.persist(job) is None
     pq.restore_queued();pq.restore_queued()

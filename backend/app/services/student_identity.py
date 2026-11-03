@@ -218,7 +218,7 @@ def identify_with_rotation(db: Session, exam: Exam, doc: AnswerSheetDocument) ->
     result = match_student(db, exam, read)
     # Turning only helps when nothing usable was read; a clear read that conflicts with a record stays held
     if result["match"] == "AUTO" or legible or not result["note"].startswith((NOTE_NO_ID, NOTE_NO_MATCH)):
-        return result
+        return _new_by_roll(db, exam, result)
     for page in _identity_pages(doc):
         for angle in ROTATIONS:
             try:
@@ -228,7 +228,32 @@ def identify_with_rotation(db: Session, exam: Exam, doc: AnswerSheetDocument) ->
             if alt["match"] == "AUTO":
                 alt["note"] = f"{alt['note']} (page was photographed rotated)"
                 return alt
-    return result
+    return _new_by_roll(db, exam, result)
+
+
+def _new_by_roll(db: Session, exam: Exam, result: dict) -> dict:
+    """Schools keep no roster: a roll number that matches nobody in the class becomes a new student."""
+    read = result.get("read") or {}
+    roll = (read.get("roll_number") or "").strip()
+    if result["match"] == "AUTO" or not roll or not result["note"].startswith(NOTE_NO_MATCH):
+        return result
+    from sqlalchemy.exc import IntegrityError
+    from .student_io import split_class_name
+    _, section = split_class_name(exam.school_class.name) if exam.school_class else (None, None)
+    try:
+        with db.begin_nested():  # two sheets with the same new roll number can race; the second one finds the first
+            st = Student(class_id=exam.class_id, roll_number=roll, section=section,
+                         name=(read.get("name") or "").strip()[:200] or f"Roll {roll}")
+            db.add(st)
+    except IntegrityError:
+        st = db.query(Student).filter_by(class_id=exam.class_id, roll_number=roll).first()
+        if st is None:
+            return result
+        if db.query(Evaluation.id).filter_by(exam_id=exam.id, student_id=st.id).first():
+            return _hold(f"Roll number {roll} already has an answer sheet in this exam.", read, [st])
+    db.flush()
+    return {"match": "AUTO", "student_id": st.id, "note": f"New student added by roll number {roll}.",
+            "read": read, "candidates": []}
 
 
 def assign_student(db: Session, doc: AnswerSheetDocument, student: Student, teacher_id: str | None, how: str) -> Evaluation:

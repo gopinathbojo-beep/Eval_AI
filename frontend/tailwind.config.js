@@ -11,38 +11,32 @@ export default {
         ink: v("ink"), mute: v("mute"), pen: v("pen"), "pen-soft": v("pen-soft"),
         mark: v("mark"), "mark-soft": v("mark-soft"), ok: v("ok"), "ok-soft": v("ok-soft"),
         warn: v("warn"), "warn-soft": v("warn-soft"),
-        // Notebook-cover sidebar and highlighter accent
+        // Modern sidebar and accent
         cover: v("cover"), "cover-ink": v("cover-ink"), "cover-line": v("cover-line"), "cover-brown": v("cover-brown"), hl: v("hl"),
         hover: v("hover"), brown: v("brown"), "on-pen": v("on-pen"),
       },
       // Solid teal behind text uses its own fill token: #0f766e in dark (white text) while
-      // text-pen / border-pen / ring-pen stay the bright #5eead4 highlight.
+      // text-pen / border-pen / ring-pen stay the bright #2dd4bf / #0d9488 highlight.
       backgroundColor: { pen: v("pen-fill") },
       fontFamily: {
-        sans: ['"IBM Plex Sans"', '"Noto Sans Tamil"', '"Nirmala UI"', "Latha", "system-ui", "sans-serif"],
-        doc: ['"Source Serif 4"', '"Noto Serif Tamil"', '"Nirmala UI"', "Latha", "Georgia", "serif"],
-        display: ['"Source Serif 4"', '"Noto Serif Tamil"', "Georgia", "serif"],
-        brand: ['"Fraunces"', '"Source Serif 4"', "Georgia", "serif"],
+        sans: ['"Plus Jakarta Sans"', '"Noto Sans Tamil"', '"Nirmala UI"', "system-ui", "-apple-system", "BlinkMacSystemFont", '"Segoe UI"', "Roboto", "sans-serif"],
+        doc: ['"Plus Jakarta Sans"', '"Noto Sans Tamil"', '"Nirmala UI"', "system-ui", "sans-serif"],
+        display: ['"Plus Jakarta Sans"', '"Noto Sans Tamil"', "system-ui", "sans-serif"],
+        brand: ['"Plus Jakarta Sans"', "system-ui", "sans-serif"],
       },
       boxShadow: {
-        xs: "0 1px 0 0 rgb(var(--line))",
-        // Index card: hairline plus a hard offset "sheet underneath"
-        card: "0 1px 0 0 rgb(var(--line)), 3px 3px 0 0 rgb(var(--line) / 0.7)",
-        pop: "0 18px 40px -12px rgb(var(--ink) / 0.28), 0 2px 6px -2px rgb(var(--ink) / 0.12)",
+        xs: "0 1px 2px 0 rgb(0 0 0 / 0.05)",
+        card: "0 1px 3px 0 rgb(0 0 0 / 0.05), 0 1px 2px -1px rgb(0 0 0 / 0.05)",
+        pop: "0 10px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1)",
       },
       keyframes: {
         fadeIn: { from: { opacity: "0" }, to: { opacity: "1" } },
-        rise: { from: { opacity: "0", transform: "translateY(6px)" }, to: { opacity: "1", transform: "none" } },
-        stamp: {
-          "0%": { opacity: "0", transform: "scale(1.25) rotate(-6deg)" },
-          "60%": { opacity: "1", transform: "scale(0.96) rotate(-2deg)" },
-          "100%": { transform: "scale(1) rotate(-2deg)" },
-        },
+        slideIn: { from: { transform: "translateX(100%)" }, to: { transform: "none" } },
+        rise: { from: { opacity: "0", transform: "translateY(4px)" }, to: { opacity: "1", transform: "none" } },
       },
       animation: {
-        fadeIn: "fadeIn .2s ease-out",
-        rise: "rise .35s cubic-bezier(.2,.7,.2,1) both",
-        stamp: "stamp .45s cubic-bezier(.2,.7,.2,1) both",
+        fadeIn: "fadeIn .15s ease-out",
+        rise: "rise .2s cubic-bezier(.2,.7,.2,1) both",
       },
     },
   },

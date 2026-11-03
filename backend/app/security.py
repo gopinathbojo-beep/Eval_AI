@@ -43,10 +43,11 @@ def set_session_cookie(response: Response, teacher: Teacher) -> None:
                         httponly=True, secure=s.cookie_secure, samesite="strict", path="/api")
 
 
-def create_token(teacher_id: str, version: int = 0) -> str:
+def create_token(teacher_id: str, version: int = 0, scope: str | None = None) -> str:
     s = get_settings()
     exp = datetime.now(timezone.utc) + timedelta(minutes=s.access_token_minutes)
-    return jwt.encode({"sub": teacher_id, "exp": exp, "ver": version}, s.jwt_secret, algorithm=ALGO)
+    payload = {"sub": teacher_id, "exp": exp, "ver": version, **({"scope": scope} if scope else {})}
+    return jwt.encode(payload, s.jwt_secret, algorithm=ALGO)
 
 
 def current_account(request: Request, cred: HTTPAuthorizationCredentials | None = Depends(_bearer),
@@ -68,10 +69,12 @@ def current_account(request: Request, cred: HTTPAuthorizationCredentials | None 
                             headers={"WWW-Authenticate": "Bearer"})
     except jwt.PyJWTError:
         raise unauth
+    if payload.get("scope"):  # uploader-code tokens only reach the uploader routes (routes/uploader.py)
+        raise unauth
     t = db.get(Teacher, payload.get("sub"))
     if t is None:
         raise unauth
-    if not t.is_active:
+    if not t.is_active or t.role == "TEACHER":  # teacher accounts were retired
         raise HTTPException(401, detail={"code": "ACCOUNT_DISABLED", "message": "Your account has been disabled. Contact the administrator."})
     if payload.get("ver", 0) != t.session_version:
         raise unauth
@@ -89,12 +92,8 @@ def current_teacher(request: Request, teacher: Teacher = Depends(current_account
         raise HTTPException(403, detail={"code": "PASSWORD_CHANGE_REQUIRED", "message": "Change your temporary password to continue."})
     path = request.url.path
     write = request.method not in {"GET", "HEAD", "OPTIONS"}
-    roster = path.startswith(("/api/classes", "/api/students", "/api/subjects")) and "report-card" not in path
-    branding = path.startswith(("/api/school-profile", "/api/report-templates"))
     if is_admin(teacher) and write and not path.startswith("/api/admin"):
         raise HTTPException(403, detail={"code": "WORKSPACE_REQUIRED", "message": "Use a school or family account for academic work."})
-    if write and teacher.role == "TEACHER" and (roster or branding):
-        raise HTTPException(403, detail={"code": "MANAGEMENT_REQUIRED", "message": "School management maintains these records."})
     if teacher.role == "PARENT":
         if path.startswith("/api/students/import") or (write and (path.startswith("/api/classes") or path.startswith("/api/students"))):
             raise HTTPException(403, detail={"code": "ONE_CHILD_ONLY", "message": "Manage your child in the family profile."})

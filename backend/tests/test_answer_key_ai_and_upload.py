@@ -52,9 +52,13 @@ def test_ai_generate_and_save_answer_key(client, auth):
         assert item["question_number"] == matching_q["display_number"]
         assert item["question_text"] == matching_q["question_text"]
         assert item["marks"] == matching_q["max_marks"]
-        assert len(item["answer_text"]) > 0
+        # keys come only from the reference library, never from the AI; Class 10 Physics is not in it
+        assert item["answer_text"] == "" and item["origin"] == "NONE" and item["note"]
+    assert gen_data["source"] == "REFERENCE_LIBRARY" and gen_data["reference_subject"] is None
 
-    # 4. Teacher reviews and edits AI answers before saving
+    # 4. Teacher writes the answers before saving
+    for item in answers:
+        item["answer_text"] = f"Teacher answer for {item['question_number']}."
     answers[0]["answer_text"] = "Teacher edited model answer for Q1."
     answers[0]["criteria"] = ["1 mark for edited point A", "1 mark for edited point B"]
     answers[0]["keywords"] = ["edited_keyword"]

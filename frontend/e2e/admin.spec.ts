@@ -7,7 +7,7 @@ test("admin can filter accounts and inspect activity without approval actions", 
   await page.getByLabel("Email address").fill("seyamesh91@gmail.com");
   await page
     .getByLabel("Password", { exact: true })
-    .fill("owner-test-password-123");
+    .fill("Owner-test-password-123");
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page).toHaveURL(/\/admin$/);
   await expect(

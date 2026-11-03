@@ -78,9 +78,6 @@ def question_view(q: ExamQuestion) -> dict:
         for item in (q.structure or {}).get("visuals", [])
     ]
     return {
-        "k_level": q.k_level,
-        "k_level_source": q.k_level_source,
-        "course_outcome": q.course_outcome,
         "id": q.id,
         "exam_id": q.exam_id,
         "display_number": q.display_number,

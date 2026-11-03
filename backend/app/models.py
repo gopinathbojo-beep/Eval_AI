@@ -1,7 +1,7 @@
 from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Index, Integer, LargeBinary, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .database import Base
 
@@ -30,7 +30,7 @@ class Teacher(Base):
     profile_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     rejection_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
-    role: Mapped[str] = mapped_column(String(20), default="TEACHER", server_default="TEACHER")
+    role: Mapped[str] = mapped_column(String(20), default="MANAGEMENT", server_default="MANAGEMENT")
     workspace_id: Mapped[str | None] = mapped_column(ForeignKey("workspaces.id"), nullable=True, index=True)
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
 
@@ -152,6 +152,20 @@ class Exam(Base):
     subject: Mapped[Subject] = relationship()
 
 
+class UploaderCode(Base):
+    """A 6-character login that may only upload answer sheets to one exam; dies when the exam closes."""
+    __tablename__ = "uploader_codes"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+    exam_id: Mapped[str] = mapped_column(ForeignKey("exams.id", ondelete="CASCADE"), index=True)
+    workspace_id: Mapped[str] = mapped_column(String(36), index=True)
+    code: Mapped[str] = mapped_column(String(6), unique=True, index=True)
+    label: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    uploader_name: Mapped[str | None] = mapped_column(String(100), nullable=True)  # given by the uploader on sign-in
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class ExamQuestion(Base):
     """Canonical question. Its UUID is the only identity used downstream."""
     __tablename__ = "exam_questions"
@@ -179,9 +193,6 @@ class ExamQuestion(Base):
     ocr_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     verification_status: Mapped[str] = mapped_column(String(20), default="UNVERIFIED")
     review_reason: Mapped[str | None] = mapped_column(String(300), nullable=True)
-    k_level: Mapped[str | None] = mapped_column(String(2), nullable=True)            # Bloom's K1..K6
-    k_level_source: Mapped[str | None] = mapped_column(String(10), nullable=True)    # SUGGESTED | TEACHER
-    course_outcome: Mapped[str | None] = mapped_column(String(20), nullable=True)    # CO1, CO2, ...
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
 
@@ -221,6 +232,8 @@ class AnswerSheetDocument(_DocMixin, Base):
     student_id: Mapped[str | None] = mapped_column(ForeignKey("students.id"), index=True, nullable=True)
     # what was read from the sheet header and how it was matched: {read, match, note, candidates}
     identity: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # the uploader code that sent this sheet (null when the school account uploaded it)
+    uploaded_by_code: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
 
 
 class AnswerKey(Base):
@@ -383,3 +396,40 @@ class ReportTemplate(Base):
     config: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class ReferenceSource(Base):
+    """One file of the shared reference library (NCERT chapter or CBSE marking scheme), loaded by
+    scripts/ingest_reference.py. Shared by every school; never edited through the app."""
+    __tablename__ = "reference_sources"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+    kind: Mapped[str] = mapped_column(String(30))  # TEXTBOOK, TEXTBOOK_ANSWERS, MARKING_SCHEME
+    standard: Mapped[int] = mapped_column(Integer, index=True)
+    subject: Mapped[str] = mapped_column(String(60), index=True)  # textbook_subjects.json key, e.g. 10-science
+    book: Mapped[str | None] = mapped_column(String(200), nullable=True)  # book folder or paper variant (MathsBasic)
+    title: Mapped[str] = mapped_column(String(300))
+    path: Mapped[str] = mapped_column(String(500), unique=True)  # relative to the library root; zip::member
+    sha256: Mapped[str] = mapped_column(String(64))
+    pages: Mapped[int] = mapped_column(Integer, default=0)
+    issues: Mapped[list] = mapped_column(JSON, default=list)
+    ingested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
+class ReferenceChunk(Base):
+    """A searchable passage of a reference source. Embedding columns stay empty until an embedding API is set."""
+    __tablename__ = "reference_chunks"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_id: Mapped[str] = mapped_column(ForeignKey("reference_sources.id", ondelete="CASCADE"), index=True)
+    standard: Mapped[int] = mapped_column(Integer)
+    subject: Mapped[str] = mapped_column(String(60))
+    kind: Mapped[str] = mapped_column(String(30))
+    chapter: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    page_start: Mapped[int] = mapped_column(Integer)
+    page_end: Mapped[int] = mapped_column(Integer)
+    question_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    marks: Mapped[float | None] = mapped_column(Float, nullable=True)
+    criteria: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    text: Mapped[str] = mapped_column(Text)
+    embedding: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    embedding_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    __table_args__ = (Index("ix_reference_chunks_scope", "standard", "subject", "kind"),)

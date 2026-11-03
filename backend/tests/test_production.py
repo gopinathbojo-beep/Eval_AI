@@ -15,7 +15,7 @@ from scripts.backup_data import backup, restore
 def test_browser_session_and_csrf(client):
     # A separate client prevents cookies leaking into the bearer API regression tests.
     with TestClient(app) as browser:
-        credentials = {"email": "rao@school.org", "password": "password123", "browser_session": True}
+        credentials = {"email": "rao@school.org", "password": "Password@123", "browser_session": True}
         headers = {"X-Requested-With": "EvalAI", "Origin": "http://localhost:5173"}
         assert browser.post("/api/auth/login", json=credentials).status_code == 403
         evil = {**headers, "Origin": "https://attacker.example"}
@@ -35,7 +35,7 @@ def test_browser_session_and_csrf(client):
 def test_cookie_secure_flag(client, monkeypatch):
     monkeypatch.setattr(get_settings(), "cookie_secure", True)
     with TestClient(app, base_url="https://testserver") as browser:
-        response = browser.post("/api/auth/login", json={"email": "rao@school.org", "password": "password123", "browser_session": True},
+        response = browser.post("/api/auth/login", json={"email": "rao@school.org", "password": "Password@123", "browser_session": True},
                                 headers={"X-Requested-With": "EvalAI"})
         assert "; Secure" in response.headers["set-cookie"]
         assert browser.get("/api/auth/me").status_code == 200

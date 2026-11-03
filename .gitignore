@@ -66,3 +66,5 @@ yarn-error.*
 
 gpu_server/ollama.log*
 .bat
+# Shared reference library source files (NCERT, CBSE); loaded by backend/scripts/ingest_reference.py
+CBSE - Website/

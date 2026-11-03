@@ -36,6 +36,10 @@ async function cloudUpload(path: string, form: FormData, signal?: AbortSignal): 
 async function toError(res: Response): Promise<ApiError> {
   let body: { code?: string; message?: string; issues?: Issue[] } = {};
   try { body = await res.json(); } catch { /* proxy error may not be JSON */ }
+  // 502/503/504 come from the proxy in front of the API: the server is down or restarting, nothing was saved
+  if (!body.message && [502, 503, 504].includes(res.status))
+    return new ApiError(res.status, "SERVER_UNREACHABLE",
+      "The Eval AI server could not be reached. It may be starting or restarting. Your answers are kept; please try again in a moment.");
   return new ApiError(res.status, body.code ?? "ERROR", body.message ?? `Request failed (HTTP ${res.status}).`, body.issues ?? []);
 }
 
@@ -54,7 +58,8 @@ async function request(path: string, init: RequestInit = {}): Promise<Response> 
       headers: { "X-Requested-With": "EvalAI", ...init.headers },
       signal: controller.signal,
     });
-    if (res.status === 401 && path !== "/auth/login") onUnauthorized();
+    // the uploader-code session is separate from the school sign-in; its 401s never sign the school out
+    if (res.status === 401 && path !== "/auth/login" && !path.startsWith("/uploader") && path !== "/auth/code-login") onUnauthorized();
     if (!res.ok) throw await toError(res);
     return res;
   } catch (error) {

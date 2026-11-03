@@ -13,14 +13,15 @@ import {
 import { Link, type LinkProps } from "react-router-dom";
 import { ApiError } from "../api/client";
 import { label, toneOf, type Tone } from "../utils/format";
-import { IconAlertCircle, IconAlertTriangle, IconX } from "./Icons";
+import { IconAlertCircle, IconAlertTriangle, IconX, IconHome, IconEye, IconEyeOff, IconCheck } from "./Icons";
+import { passwordRules } from "../utils/validation";
 
 const toneCls: Record<Tone, { badge: string; dot: string }> = {
-  ok: { badge: "bg-ok-soft/70 text-ok border-ok/45", dot: "bg-ok" },
-  warn: { badge: "bg-warn-soft/70 text-warn border-warn/45", dot: "bg-warn" },
-  mark: { badge: "bg-mark-soft/70 text-mark border-mark/45", dot: "bg-mark" },
-  pen: { badge: "bg-pen-soft/70 text-pen border-pen/40", dot: "bg-pen" },
-  mute: { badge: "bg-sunken/60 text-mute border-mute/30", dot: "bg-mute" },
+  ok: { badge: "bg-emerald-50 text-emerald-700 border-emerald-200/60 shadow-xs", dot: "bg-emerald-500" },
+  warn: { badge: "bg-amber-50 text-amber-700 border-amber-200/60 shadow-xs", dot: "bg-amber-500" },
+  mark: { badge: "bg-rose-50 text-rose-700 border-rose-200/60 shadow-xs", dot: "bg-rose-500" },
+  pen: { badge: "bg-blue-50 text-blue-700 border-blue-200/60 shadow-xs", dot: "bg-blue-500" },
+  mute: { badge: "bg-slate-100 text-slate-700 border-slate-200 shadow-xs", dot: "bg-slate-400" },
 };
 
 export const Badge = ({
@@ -37,7 +38,7 @@ export const Badge = ({
   const t = toneCls[tone] || toneCls.mute;
   return (
     <span
-      className={`stamp inline-flex items-center gap-1.5 px-2 py-0.5 ${t.badge} ${className}`}
+      className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold border ${t.badge} ${className}`}
     >
       {withDot && <span className={`h-1.5 w-1.5 rounded-full ${t.dot}`} />}
       {children}
@@ -59,6 +60,22 @@ export const StatusBadge = ({
   </Badge>
 );
 
+export function PageCanvas({
+  children,
+  className = "",
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className="w-full">
+      <div className={`glass-canvas p-5 sm:p-7 lg:p-8 space-y-6 ${className}`}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 type BtnVariant = "primary" | "secondary" | "soft" | "ghost" | "danger" | "outline";
 type BtnProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: BtnVariant;
@@ -69,20 +86,20 @@ type BtnProps = ButtonHTMLAttributes<HTMLButtonElement> & {
 
 const btnVariant: Record<BtnVariant, string> = {
   primary:
-    "bg-pen text-on-pen border border-transparent shadow-[inset_0_-2px_0_rgb(0_0_0/0.22)] hover:bg-pen/90 active:translate-y-px active:shadow-none",
+    "aurora-fill text-white border border-transparent shadow-md shadow-indigo-500/25 active:scale-[0.98] font-semibold focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2",
   secondary:
-    "bg-surface text-ink border border-line shadow-[inset_0_-2px_0_rgb(var(--line))] hover:border-ink/30 hover:bg-hover active:translate-y-px active:shadow-none",
-  soft: "bg-sunken text-ink border border-transparent hover:bg-hover active:translate-y-px",
-  ghost: "text-pen border border-transparent hover:bg-hover active:translate-y-px",
+    "bg-white text-slate-700 border border-slate-200/90 shadow-xs hover:bg-slate-50 hover:border-slate-300 active:scale-[0.98] font-semibold focus-visible:ring-2 focus-visible:ring-blue-500/40",
+  soft: "bg-slate-50 text-slate-700 border border-slate-200/70 hover:bg-slate-100 hover:border-slate-300 active:scale-[0.98] font-medium focus-visible:ring-2 focus-visible:ring-blue-500/40",
+  ghost: "text-blue-600 border border-transparent hover:bg-blue-50/70 active:scale-[0.98] font-semibold focus-visible:ring-2 focus-visible:ring-blue-500/40",
   danger:
-    "bg-mark text-white border border-mark shadow-[inset_0_-2px_0_rgb(0_0_0/0.22)] hover:bg-mark/90 active:translate-y-px active:shadow-none",
-  outline: "border border-pen/70 text-pen hover:bg-hover hover:border-pen active:translate-y-px",
+    "bg-rose-600 text-white border border-transparent shadow-md shadow-rose-600/20 hover:bg-rose-700 active:scale-[0.98] font-semibold focus-visible:ring-2 focus-visible:ring-rose-500 focus-visible:ring-offset-2",
+  outline: "border-2 border-blue-600 text-blue-600 hover:bg-blue-50 active:scale-[0.98] font-semibold focus-visible:ring-2 focus-visible:ring-blue-500",
 };
 
 /** Class string shared by <Button> and <LinkButton> so links that act as buttons look identical. */
 export const buttonCls = (variant: BtnVariant = "soft", small?: boolean, className = "") =>
-  `inline-flex items-center justify-center gap-1.5 rounded-md font-medium whitespace-nowrap transition-ui select-none disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none ${
-    small ? "px-2.5 py-1 text-xs" : "px-3.5 py-2 text-sm"
+  `inline-flex items-center justify-center gap-2 rounded-full font-medium whitespace-nowrap transition-all duration-150 select-none disabled:opacity-50 disabled:cursor-not-allowed disabled:pointer-events-none cursor-pointer ${
+    small ? "px-4 py-1.5 text-xs min-h-[32px]" : "px-5 py-2.5 text-sm min-h-[38px]"
   } ${btnVariant[variant]} ${className}`;
 
 export function Button({
@@ -180,7 +197,7 @@ export function MoreMenu({
           ref={menu}
           role="menu"
           onKeyDown={onMenuKey}
-          className="absolute right-0 z-20 mt-1 min-w-40 animate-rise overflow-hidden rounded-md border border-line bg-surface py-1 shadow-pop"
+          className="absolute right-0 z-20 mt-1.5 min-w-44 animate-rise overflow-hidden rounded-xl border border-line bg-surface py-1.5 shadow-pop"
         >
           {shown.map((i) => (
             <button
@@ -191,7 +208,7 @@ export function MoreMenu({
                 setOpen(false);
                 i.onClick();
               }}
-              className={`block w-full px-3 py-1.5 text-left text-xs font-medium outline-none hover:bg-hover focus-visible:bg-hover ${i.danger ? "text-mark" : "text-ink hover:text-brown focus-visible:text-brown"}`}
+              className={`block w-full px-3.5 py-2 text-left text-xs font-medium outline-none transition-colors hover:bg-hover focus-visible:bg-hover ${i.danger ? "text-mark" : "text-ink hover:text-pen"}`}
             >
               {i.label}
             </button>
@@ -214,7 +231,7 @@ export const Loading = ({ text = "Loading data..." }: { text?: string }) => (
     <div className="flex h-11 w-11 items-center justify-center rounded-full border-2 border-dashed border-pen/40 text-pen">
       <Spinner size={20} />
     </div>
-    <p className="font-doc text-sm italic">{text}</p>
+    <p className="text-sm font-medium">{text}</p>
   </div>
 );
 
@@ -228,8 +245,8 @@ export const Card = ({
   hover?: boolean;
 }) => (
   <div
-    className={`rounded-lg border border-line bg-surface shadow-card ${
-      hover ? "transition-ui hover:-translate-y-0.5 hover:border-pen/40 hover:shadow-[0_1px_0_0_rgb(var(--line)),5px_5px_0_0_rgb(var(--pen)/0.18)]" : ""
+    className={`rounded-2xl border border-blue-100/70 bg-white shadow-xs ${
+      hover ? "transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md hover:border-blue-200" : ""
     } ${className}`}
   >
     {children}
@@ -247,7 +264,7 @@ export function ProgressBar({ value, max }: { value: number; max: number }) {
       aria-valuemax={100}
     >
       <div
-        className="h-full rounded-full bg-[repeating-linear-gradient(115deg,rgb(var(--pen))_0_8px,rgb(var(--pen)/0.82)_8px_12px)] transition-all duration-500 ease-out"
+        className="h-full rounded-full bg-pen transition-all duration-500 ease-out"
         style={{ width: `${p}%` }}
       />
     </div>
@@ -268,31 +285,46 @@ export function PageHeader({
   breadcrumbs?: { label: string; to?: string }[];
 }) {
   return (
-    <div className="mb-7 flex flex-col gap-3 border-b border-dashed border-line pb-5 sm:flex-row sm:items-end sm:justify-between">
+    <div className="mb-6 flex flex-col gap-4 border-b border-slate-100 pb-6 sm:flex-row sm:items-end sm:justify-between">
       <div className="min-w-0 flex-1">
-        {breadcrumbs && breadcrumbs.length > 0 && (
-          <nav aria-label="Breadcrumbs" className="mb-2 flex items-center gap-1.5 pl-3.5 text-[11px] font-medium uppercase tracking-[0.12em] text-mute">
+        {breadcrumbs && breadcrumbs.length > 0 ? (
+          <nav aria-label="Breadcrumbs" className="mb-3 flex items-center gap-2 text-xs font-semibold text-slate-600">
+            <div className="aurora-fill flex h-7 w-7 items-center justify-center rounded-lg text-white shadow-sm shadow-indigo-500/30">
+              <IconHome size={14} />
+            </div>
+            <Link to="/dashboard" className="text-slate-800 hover:text-blue-600 transition-colors">Eval AI</Link>
             {breadcrumbs.map((b, i) => (
-              <span key={i} className="flex items-center gap-1.5">
-                {i > 0 && <span className="text-mark/60">/</span>}
+              <span key={i} className="flex items-center gap-2">
+                <span className="text-slate-400 font-bold">&gt;</span>
                 {b.to ? (
-                  <Link to={b.to} className="hover:text-brown transition-colors">
+                  <Link to={b.to} className="text-slate-700 hover:text-blue-600 transition-colors">
                     {b.label}
                   </Link>
                 ) : (
-                  <span aria-current="page" className="font-medium text-ink">{b.label}</span>
+                  <span aria-current="page" className="aurora-text font-bold">{b.label}</span>
                 )}
               </span>
             ))}
           </nav>
+        ) : (
+          <div className="mb-3 flex items-center gap-2 text-xs font-semibold text-slate-600">
+            <div className="aurora-fill flex h-7 w-7 items-center justify-center rounded-lg text-white shadow-sm shadow-indigo-500/30">
+              <IconHome size={14} />
+            </div>
+            <Link to="/dashboard" className="text-slate-800 hover:text-blue-600 transition-colors">Eval AI</Link>
+            <span className="text-slate-400 font-bold">&gt;</span>
+            <span className="font-bold text-blue-600 truncate max-w-[240px]">
+              {typeof title === "string" ? title : "Workspace"}
+            </span>
+          </div>
         )}
-        <div className="flex flex-wrap items-center gap-3 pl-3.5">
-          <h1 className="margin-rule font-display text-2xl font-semibold text-ink sm:text-[2rem] sm:leading-tight">{title}</h1>
+        <div className="flex flex-wrap items-center gap-3">
+          <h1 className="aurora-text text-2xl sm:text-3xl font-extrabold tracking-tight">{title}</h1>
           {badge}
         </div>
-        {sub && <div className="mt-1.5 pl-3.5 text-sm text-mute leading-relaxed">{sub}</div>}
+        {sub && <div className="mt-1.5 text-sm font-medium text-slate-500 leading-relaxed">{sub}</div>}
       </div>
-      {actions && <div className="flex flex-wrap items-center gap-2 pt-1 sm:pt-0 shrink-0">{actions}</div>}
+      {actions && <div className="flex flex-wrap items-center gap-2.5 pt-1 sm:pt-0 shrink-0">{actions}</div>}
     </div>
   );
 }
@@ -308,8 +340,8 @@ export const Empty = ({
   action?: ReactNode;
   icon?: ReactNode;
 }) => (
-  <div className="ruled flex flex-col items-center justify-center rounded-lg border border-dashed border-line bg-surface/70 px-10 py-12 text-center">
-    <div className="mb-3 flex h-12 w-12 -rotate-3 items-center justify-center rounded-md border border-line bg-surface text-pen shadow-card">
+  <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-line bg-surface/70 px-10 py-12 text-center">
+    <div className="mb-3.5 flex h-12 w-12 items-center justify-center rounded-xl border border-line bg-surface text-pen shadow-sm">
       {icon ?? (
         <svg className="h-6 w-6 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path
@@ -321,9 +353,9 @@ export const Empty = ({
         </svg>
       )}
     </div>
-    <h3 className="font-display text-lg font-semibold text-ink">{title}</h3>
-    {hint && <p className="mt-1 max-w-sm text-sm text-mute">{hint}</p>}
-    {action && <div className="mt-4">{action}</div>}
+    <h3 className="text-lg font-bold text-ink">{title}</h3>
+    {hint && <p className="mt-1.5 max-w-sm text-sm text-mute">{hint}</p>}
+    {action && <div className="mt-5">{action}</div>}
   </div>
 );
 
@@ -336,7 +368,7 @@ export function ErrorPanel({ error, action }: { error: unknown; action?: ReactNo
   return (
     <div
       role="alert"
-      className="rounded-md border border-mark/30 border-l-4 border-l-mark bg-mark-soft/60 p-4 text-sm transition-ui"
+      className="rounded-xl border border-mark/25 border-l-4 border-l-mark bg-mark-soft/60 p-4 text-sm transition-all"
     >
       <div className="flex items-start gap-3">
         <IconAlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-mark" />
@@ -344,7 +376,7 @@ export function ErrorPanel({ error, action }: { error: unknown; action?: ReactNo
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="font-semibold text-mark">{e.message}</p>
             {e.status > 0 && (
-              <span className="rounded bg-mark/10 px-1.5 py-0.5 text-xs font-mono font-medium text-mark">
+              <span className="rounded-md bg-mark/10 px-2 py-0.5 text-xs font-mono font-medium text-mark">
                 HTTP {e.status} · {e.code}
               </span>
             )}
@@ -353,13 +385,13 @@ export function ErrorPanel({ error, action }: { error: unknown; action?: ReactNo
             <ul className="mt-2.5 space-y-1.5 border-t border-mark/20 pt-2">
               {e.issues.map((i, k) => (
                 <li key={k} className="flex items-baseline gap-2 text-xs">
-                  {i.question && <span className="rounded bg-mark/10 px-1 py-0.5 font-semibold text-mark">Q{i.question}</span>}
+                  {i.question && <span className="rounded bg-mark/10 px-1.5 py-0.5 font-semibold text-mark">Q{i.question}</span>}
                   <span className="text-ink">{i.reason || i.message || i.code || "Review this validation issue."}{i.page ? ` (page ${i.page})` : ""}</span>
                 </li>
               ))}
             </ul>
           )}
-          {action && <div className="mt-3">{action}</div>}
+          {action && <div className="mt-3.5">{action}</div>}
         </div>
       </div>
     </div>
@@ -388,8 +420,6 @@ export function Modal({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const titleId = useId();
-  // Callers usually pass an inline onClose; keep the latest in a ref so the mount effect runs
-  // once and focus is not pulled back to the dialog (away from its inputs) on every re-render.
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
 
@@ -431,7 +461,7 @@ export function Modal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex animate-fadeIn items-end justify-center bg-cover/55 backdrop-blur-[3px] sm:items-center sm:p-4"
+      className="fixed inset-0 z-50 flex animate-fadeIn items-end justify-center bg-slate-900/60 backdrop-blur-sm sm:items-center sm:p-4"
       onMouseDown={(e) => e.target === e.currentTarget && onClose()}
     >
       <div
@@ -440,14 +470,14 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className={`flex max-h-[92dvh] w-full animate-rise flex-col overflow-hidden rounded-t-xl border border-line border-t-4 border-t-pen bg-surface shadow-pop outline-none sm:rounded-lg ${
+        className={`flex max-h-[92dvh] w-full animate-rise flex-col overflow-hidden rounded-t-2xl border border-line bg-surface shadow-pop outline-none sm:rounded-2xl ${
           wide === "xl" ? "max-w-7xl" : wide ? "max-w-4xl" : "max-w-lg"
         }`}
       >
-        <div className="flex items-center justify-between gap-3 border-b border-line px-5 py-4 sm:px-6">
+        <div className="flex items-center justify-between gap-3 border-b border-line px-6 py-4.5">
           <div className="flex min-w-0 items-center gap-2.5">
             {icon && <span className="shrink-0 text-pen">{icon}</span>}
-            <h2 id={titleId} className="truncate font-display text-xl font-semibold text-ink">
+            <h2 id={titleId} className="truncate text-lg font-bold text-ink">
               {title}
             </h2>
           </div>
@@ -455,14 +485,14 @@ export function Modal({
             type="button"
             onClick={onClose}
             aria-label="Close dialog"
-            className="shrink-0 rounded-lg p-1.5 text-mute transition-colors hover:bg-hover hover:text-brown"
+            className="shrink-0 rounded-lg p-1.5 text-mute transition-colors hover:bg-hover hover:text-ink"
           >
             <IconX size={18} />
           </button>
         </div>
-        <div className="overflow-y-auto overscroll-contain p-5 sm:p-6">{children}</div>
+        <div className="overflow-y-auto overscroll-contain p-6">{children}</div>
         {footer && (
-          <div className="flex flex-wrap justify-end gap-2.5 border-t border-dashed border-line bg-paper/60 px-5 py-4 sm:px-6">
+          <div className="flex flex-wrap justify-end gap-3 border-t border-line bg-sunken/40 px-6 py-4">
             {footer}
           </div>
         )}
@@ -523,7 +553,7 @@ export function Confirm({
 }
 
 const inputCls =
-  "w-full rounded-md border border-line bg-surface px-3.5 py-2 text-sm text-ink placeholder:text-mute/70 shadow-[inset_0_1px_2px_rgb(var(--ink)/0.04)] transition-ui hover:border-ink/25 focus:border-pen focus:ring-[3px] focus:ring-pen/15 focus:outline-none";
+  "w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-800 placeholder:text-slate-400 shadow-xs transition-all duration-150 hover:border-slate-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-100 focus:outline-none";
 
 export function Field({
   label: l,
@@ -549,8 +579,8 @@ export function Field({
       </div>
       {children(id)}
       {error && (
-        <p role="alert" className="flex items-center gap-1 text-xs font-medium text-mark">
-          <IconAlertCircle size={13} className="shrink-0" />
+        <p role="alert" className="flex items-center gap-1.5 text-xs font-medium text-mark">
+          <IconAlertCircle size={14} className="shrink-0" />
           {error}
         </p>
       )}
@@ -561,6 +591,50 @@ export function Field({
 export const Input = (p: InputHTMLAttributes<HTMLInputElement>) => (
   <input {...p} className={`${inputCls} ${p.className ?? ""}`} />
 );
+
+/** Password field with an eye button to show or hide what is typed. */
+export function PasswordInput(p: Omit<InputHTMLAttributes<HTMLInputElement>, "type">) {
+  const [show, setShow] = useState(false);
+  return (
+    <div className="relative">
+      <input {...p} type={show ? "text" : "password"} className={`${inputCls} pr-11 ${p.className ?? ""}`} />
+      <button
+        type="button"
+        onClick={() => setShow((s) => !s)}
+        aria-label={show ? "Hide password" : "Show password"}
+        aria-pressed={show}
+        className="absolute right-2 top-1/2 -translate-y-1/2 rounded-lg p-1.5 text-slate-400 transition-colors hover:text-slate-600 cursor-pointer"
+      >
+        {show ? <IconEyeOff size={18} /> : <IconEye size={18} />}
+      </button>
+    </div>
+  );
+}
+
+/** Live checklist of the new-password rules; each line turns green once it is met. */
+export function PasswordChecklist({ value }: { value: string }) {
+  return (
+    <ul className="mt-2 grid gap-1 text-xs sm:grid-cols-2" aria-label="Password requirements">
+      {passwordRules.map((r) => {
+        const ok = r.ok(value);
+        return (
+          <li key={r.label} className={`flex items-center gap-1.5 transition-colors ${ok ? "text-emerald-700" : "text-slate-500"}`}>
+            <span
+              className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border transition-colors ${
+                ok ? "border-emerald-500 bg-emerald-500 text-white" : "border-slate-300"
+              }`}
+              aria-hidden
+            >
+              {ok && <IconCheck size={10} />}
+            </span>
+            {r.label}
+            <span className="sr-only">{ok ? " (met)" : " (not met)"}</span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
 
 export const Select = (p: SelectHTMLAttributes<HTMLSelectElement>) => (
   <select {...p} className={`${inputCls} cursor-pointer pr-8 ${p.className ?? ""}`} />
@@ -573,7 +647,7 @@ export const Textarea = (p: TextareaHTMLAttributes<HTMLTextAreaElement>) => (
 export function PenScore({ got, max }: { got: number | null; max: number | null }) {
   const f = (n: number | null) => (n === null ? "–" : Number.isInteger(n) ? n : n.toFixed(1));
   return (
-    <span className="pen-score text-lg" title={`Total score: ${f(got)} out of ${f(max)}`}>
+    <span className="pen-score" title={`Total score: ${f(got)} out of ${f(max)}`}>
       {f(got)}
       <small>/{f(max)}</small>
     </span>
@@ -596,19 +670,16 @@ export function Stat({
   className?: string;
 }) {
   const t = tone || "mute";
-  const tab = { ok: "bg-ok", warn: "bg-warn", mark: "bg-mark", pen: "bg-pen", mute: "bg-line" }[t];
   const num = { ok: "text-ok", warn: "text-warn", mark: "text-mark", pen: "text-pen", mute: "text-ink" }[t];
 
   return (
-    <Card className={`relative overflow-hidden p-4 pt-5 ${className}`}>
-      {/* Index-card tab colour */}
-      <span aria-hidden className={`absolute inset-x-0 top-0 h-1 ${tab}`} />
+    <Card className={`relative overflow-hidden p-5 ${className}`}>
       <div className="flex items-center justify-between gap-2">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-mute">{l}</p>
-        {icon && <span className="text-mute/70">{icon}</span>}
+        <p className="text-xs font-semibold uppercase tracking-wider text-mute">{l}</p>
+        {icon && <span className="text-mute/80">{icon}</span>}
       </div>
-      <p className={`mt-2 font-display text-[2rem] font-semibold leading-none ${num}`}>{value}</p>
-      {hint && <p className="mt-2 border-t border-dashed border-line pt-2 text-xs text-mute">{hint}</p>}
+      <p className={`mt-3 text-3xl font-bold tracking-tight ${num}`}>{value}</p>
+      {hint && <p className="mt-2.5 border-t border-line/60 pt-2 text-xs text-mute">{hint}</p>}
     </Card>
   );
 }
@@ -617,3 +688,33 @@ export { MathView } from "./MathView";
 export { MathTextarea } from "./MathTextarea";
 export { SearchableCombobox, type ComboboxOption } from "./SearchableCombobox";
 
+/** A plain data table: header labels, then rows of cells. Rows with onClick are clickable. */
+export function Table({
+  head,
+  rows,
+  empty,
+}: {
+  head: ReactNode[];
+  rows: { key: string; cells: ReactNode[]; onClick?: () => void }[];
+  empty?: ReactNode;
+}) {
+  if (!rows.length && empty) return <>{empty}</>;
+  return (
+    <div className="overflow-hidden rounded-2xl border border-blue-100/60 bg-white shadow-xs">
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead className="border-b border-blue-100/60 bg-blue-50/20 text-xs font-extrabold uppercase tracking-wider text-blue-950">
+            <tr>{head.map((h, i) => <th key={i} className="px-6 py-4">{h}</th>)}</tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {rows.map((r) => (
+              <tr key={r.key} onClick={r.onClick} className={r.onClick ? "cursor-pointer hover:bg-blue-50/30 transition-colors duration-150" : "hover:bg-blue-50/30 transition-colors duration-150"}>
+                {r.cells.map((c, i) => <td key={i} className="px-6 py-4 align-middle text-slate-700 font-medium">{c}</td>)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}

@@ -82,8 +82,8 @@ def test_school_profile_templates_and_report_cards(client, auth):
         sub = Subject(teacher_id=t.id, name=f"RC {subj}")
         db.add(sub)
         db.flush()
-        ex = Exam(teacher_id=t.id, name=f"{subj} T1", academic_year="2026-27", class_id=cls.id, subject_id=sub.id,
-                  exam_type="Term 1", total_marks=80, status="FINALIZED")
+        ex = Exam(teacher_id=t.id, name="Term 1", academic_year="2026-27", class_id=cls.id, subject_id=sub.id,
+                  exam_type="Board pattern", total_marks=80, status="FINALIZED")
         db.add(ex)
         db.flush()
         for st, got in marks.items():
@@ -99,24 +99,20 @@ def test_school_profile_templates_and_report_cards(client, auth):
     db.close()
 
     terms = j(c.get(f"/api/classes/{cls_id}/report-card-terms", headers=h), 200)
-    assert terms == [{"academic_year": "2026-27", "exam_type": "Term 1", "subjects": ["RC English", "RC Hindi"]}]
-    r = c.get(f"/api/students/{asha_id}/report-card?academic_year=2026-27&exam_type=Term 1", headers=h)
+    assert terms == [{"term": "Term 1", "academic_year": "2026-27", "exam_type": "Term 1",
+                      "subjects": ["RC English", "RC Hindi"]}]
+    # CBSE card: English 72/80 = 90% (A2), Hindi 50/80 = 62.5% (B2), overall 122/160 = 76.25% (B1)
+    r = c.get(f"/api/students/{asha_id}/report-card?term=Term 1", headers=h)
     assert r.status_code == 200 and "Asha" in r.headers["content-disposition"]
     text, pages = _text(r.content)
-    assert pages == 1 and "Green Valley School" in text and "Progress Report · Term 1 · 2026-27" in text
-    assert "122 / 160" in text and "76.25%" in text and "A-1" in text and "Dr. R. Iyer" in text
+    assert pages == 1 and "Green Valley School" in text and "REPORT CARD" in text and "Term 1" in text
+    assert "Scholastic Areas" in text and "122" in text and "76.25%" in text and "Dr. R. Iyer" in text
+    assert "A2" in text and "B2" in text and "B1" in text and "PASS" in text and "1 of 1" in text
     assert "K Level" not in text and "Knowledge Level" not in text
-    assert "Class Rank" not in text                                             # hidden by the template
-    whole = c.get(f"/api/classes/{cls_id}/report-cards?academic_year=2026-27&exam_type=Term 1", headers=h)
+    whole = c.get(f"/api/classes/{cls_id}/report-cards?term=Term 1", headers=h)
     text, pages = _text(whole.content)
-    assert pages == 2 and "Not evaluated" in text                               # Ravi's missing Hindi result
-
-    # deleting the active template falls back to Classic, which shows the rank
-    j(c.delete(f"/api/report-templates/{tpl['id']}", headers=h), 200)
-    assert j(c.get("/api/report-templates?kind=report_card", headers=h))["active_id"] == "preset:classic"
-    text, _ = _text(c.get(f"/api/students/{asha_id}/report-card?academic_year=2026-27&exam_type=Term 1", headers=h).content)
-    assert "Report Card · Term 1" in text and "1 of 1" in text
-    assert c.get(f"/api/classes/{cls_id}/report-cards?academic_year=2026-27&exam_type=Final", headers=h).status_code == 404
+    assert pages == 2 and "Awaited" in text and "RESULT AWAITED" in text      # Ravi's missing Hindi result
+    assert c.get(f"/api/classes/{cls_id}/report-cards?term=Final", headers=h).status_code == 404
 
 
 def test_exam_wise_report(client, auth):
@@ -133,8 +129,8 @@ def test_exam_wise_report(client, auth):
               exam_type="Unit Test", total_marks=20, status="FINALIZED")
     db.add(ex)
     db.flush()
-    q1 = ExamQuestion(exam_id=ex.id, display_number="1", max_marks=10, position=0, k_level="K1")
-    q2 = ExamQuestion(exam_id=ex.id, display_number="2", max_marks=10, position=1, k_level="K3")
+    q1 = ExamQuestion(exam_id=ex.id, display_number="1", max_marks=10, position=0)
+    q2 = ExamQuestion(exam_id=ex.id, display_number="2", max_marks=10, position=1)
     db.add_all([q1, q2])
     db.commit()
     empty = c.get(f"/api/exams/{ex.id}/report.pdf", headers=h)

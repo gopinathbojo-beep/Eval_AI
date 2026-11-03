@@ -9,6 +9,8 @@ os.environ["DATABASE_URL"] = ""
 os.environ["OPENROUTER_API_KEY"] = "test-openrouter-key"
 os.environ["OPENROUTER_MODEL"] = "google/gemini-3.5-flash-lite"
 os.environ["AI_PARALLEL_JOBS"] = "1"
+os.environ["INTERNVL_MODEL"] = "google/gemini-3.5-flash-lite"  # the stub answers for one model name
+os.environ["INTERNVL_PARALLEL_JOBS"] = "1"
 os.environ["STORAGE_PROVIDER"] = "local"
 os.environ["DURABLE_JOBS"] = "false"
 os.environ["AUTO_MIGRATE"] = "false"
@@ -95,6 +97,10 @@ class _H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
 
     def do_GET(self):
+        if self.path == "/api/tags":  # InternVL (Ollama)
+            body = json.dumps({"models": [{"name": MODEL, "model": MODEL}]}).encode()
+            self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(body)
+            return
         body = json.dumps({"data": [{"id": MODEL, "architecture": {"input_modalities": ["text", "image"]}}]}).encode()
         if self.path.endswith("/key"):
             body = json.dumps({"data": {"label": "test"}}).encode()
@@ -105,6 +111,13 @@ class _H(BaseHTTPRequestHandler):
         assert req["model"] == MODEL and req["stream"] is False
         msgs = req["messages"]
         user = msgs[1]["content"]
+        if self.path == "/api/chat":  # InternVL (Ollama)
+            assert all(isinstance(i, str) for i in msgs[1].get("images", []))
+            out = _reply(msgs[0]["content"], user)
+            body = json.dumps({"message": {"role": "assistant", "content": out}, "done": True, "done_reason": "stop",
+                               "logprobs": [{"token": out, "bytes": list(out.encode("utf-8")), "logprob": 0.0}]}).encode()
+            self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(body)
+            return
         if isinstance(user, list):
             assert user[1]["image_url"]["url"].startswith("data:image/")
             user = user[0]["text"]
@@ -120,6 +133,8 @@ def openrouter_stub():
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     from app.ocr import remote
     remote.OPENROUTER_BASE_URL = f"http://127.0.0.1:{srv.server_port}"
+    from app.config import get_settings
+    get_settings().internvl_api_url = f"http://127.0.0.1:{srv.server_port}"
     yield srv
     srv.shutdown()
 
@@ -134,7 +149,7 @@ def client(openrouter_stub):
     with TestClient(app) as c:
         db = SessionLocal()
         if not db.query(Teacher).filter_by(email="rao@school.org").first():
-            teacher = Teacher(name="Ms Rao", email="rao@school.org", role="MANAGEMENT", profile_completed_at=datetime.now(timezone.utc), password_hash=hash_password("password123"))
+            teacher = Teacher(name="Ms Rao", email="rao@school.org", role="MANAGEMENT", profile_completed_at=datetime.now(timezone.utc), password_hash=hash_password("Password@123"))
             db.add(teacher)
             db.flush()
             ws = Workspace(name="Test school", kind="SCHOOL", owner_id=teacher.id)
@@ -181,7 +196,7 @@ def legacy_exam_seed_route(openrouter_stub):
 
 @pytest.fixture(scope="session")
 def auth(client):
-    r = client.post("/api/auth/login", json={"email": "rao@school.org", "password": "password123"})
+    r = client.post("/api/auth/login", json={"email": "rao@school.org", "password": "Password@123"})
     assert r.status_code == 200, r.text
     return {"Authorization": f"Bearer {r.json()['access_token']}"}
 

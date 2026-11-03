@@ -1338,12 +1338,3 @@ def test_pdf_text_layer_recovers_question_merged_into_previous():
     assert qs[1].verification_status == "NEEDS_REVIEW" and "SECTION C" not in qs[1].question_text
 
 
-@pytest.mark.parametrize("text,level", [
-    ("Write balanced word equations for the following chemical reactions:", "K3"),
-    ("Expand and simplify the combined expression using suitable algebraic identities (a + b)²", "K3"),
-    ("Expand the abbreviation CNG.", "K1"),
-    ("Calorific value of a fuel and its SI unit?", "K1"),
-])
-def test_k_level_suggested_for_every_question(text, level):
-    from app.formatter.common.k_level import suggest_k_level
-    assert suggest_k_level(text) == level

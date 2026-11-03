@@ -59,7 +59,7 @@ def exercise(role):
                 json={
                     "name": "Live test",
                     "email": f"live-{role.lower()}@example.com",
-                    "password": "live-test-password-123",
+                    "password": "Live-test-password-123",
                     "role": role,
                 },
             ),

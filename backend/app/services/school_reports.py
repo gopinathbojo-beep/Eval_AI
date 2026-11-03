@@ -10,7 +10,6 @@ from __future__ import annotations
 import html
 import io
 import re
-from types import SimpleNamespace
 from typing import Any
 
 from reportlab.lib import colors
@@ -24,7 +23,6 @@ from sqlalchemy.orm import Session
 from ..deps import err, get_evaluation, get_exam
 from ..documents.storage import abs_path
 from ..models import AuditLog, Evaluation, EvaluationItem, Exam, ExamQuestion, SchoolClass, SchoolProfile, Student, Teacher
-from ..formatter.common.k_level import summarize as summarize_outcomes
 from .report_generator import BASE_FONT, BOLD_FONT
 from .report_templates import active_config
 from ..workspaces import owner_id, exams_query, classes_query
@@ -259,7 +257,7 @@ class _Doc:
                 super().save()
 
         doc = SimpleDocTemplate(buf, pagesize=page, leftMargin=margin, rightMargin=margin, topMargin=34, bottomMargin=44,
-                                title=title, author=self.school["name"] or "ADEM")
+                                title=title, author=self.school["name"] or "Eval AI")
         doc.build(story, canvasmaker=FooterCanvas)
         return buf.getvalue()
 
@@ -273,13 +271,13 @@ SAMPLE_REPORT = {
              "date": "2026-09-18", "finalized": "21 Sep 2026"},
     "obtained": 33.5, "maximum": 40.0,
     "questions": [
-        {"no": "1", "k": "K1", "co": "CO1", "max": 2, "obtained": 2, "feedback": "Correct definition.", "adjusted": None},
-        {"no": "2", "k": "K2", "co": "CO1", "max": 5, "obtained": 3.5, "feedback": "Explains diffusion but misses an example.",
+        {"no": "1", "max": 2, "obtained": 2, "feedback": "Correct definition.", "adjusted": None},
+        {"no": "2", "max": 5, "obtained": 3.5, "feedback": "Explains diffusion but misses an example.",
          "adjusted": "Half mark for the labelled diagram"},
-        {"no": "3(a)", "k": "K3", "co": "CO2", "max": 3, "obtained": 3, "feedback": "Accurate calculation.", "adjusted": None},
-        {"no": "3(b)", "k": "K4", "co": "CO2", "max": 5, "obtained": 4, "feedback": "Good comparison; one point missing.", "adjusted": None},
-        {"no": "4", "k": "K2", "co": "CO3", "max": 10, "obtained": 9, "feedback": "Well structured answer.", "adjusted": None},
-        {"no": "5", "k": "K6", "co": "CO3", "max": 15, "obtained": 12, "feedback": "Creative design; safety step omitted.", "adjusted": None},
+        {"no": "3(a)", "max": 3, "obtained": 3, "feedback": "Accurate calculation.", "adjusted": None},
+        {"no": "3(b)", "max": 5, "obtained": 4, "feedback": "Good comparison; one point missing.", "adjusted": None},
+        {"no": "4", "max": 10, "obtained": 9, "feedback": "Well structured answer.", "adjusted": None},
+        {"no": "5", "max": 15, "obtained": 12, "feedback": "Creative design; safety step omitted.", "adjusted": None},
     ],
 }
 
@@ -301,7 +299,7 @@ def report_data(db: Session, teacher: Teacher, ev: Evaluation) -> dict:
     for q in questions:
         it = items.get(q.id)
         fb = ((it.teacher_feedback or it.ai_feedback or "").strip() if it else "")
-        rows.append({"no": q.display_number, "k": q.k_level, "co": q.course_outcome, "max": q.max_marks,
+        rows.append({"no": q.display_number, "max": q.max_marks,
                      "obtained": it.final_marks if it else None, "feedback": fb,
                      "adjusted": (reasons.get(it.id) or "") if it and it.teacher_overridden else None,
                      "not_attempted": bool(it and it.status == "MISSING" and it.not_attempted_confirmed)})
@@ -405,6 +403,21 @@ def _rank(values: dict[str, float]) -> dict[str, int]:
     return {k: ordered.index(v) + 1 for k, v in values.items()}
 
 
+def question_rows(questions: list[ExamQuestion], marks: list[dict[str, float | None]]) -> list[dict]:
+    """Question-wise class analysis: average marks, average %, how many got full marks and how many zero / NA.
+    marks: one {question_id: final marks} per finalized evaluation."""
+    rows = []
+    for q in questions:
+        got = [m.get(q.id) for m in marks]
+        scored = [g for g in got if g is not None]
+        avg = sum(scored) / len(marks) if marks else 0.0
+        rows.append({"no": q.display_number, "max": q.max_marks, "average": round(avg, 2),
+                     "percentage": _pct(avg, q.max_marks),
+                     "full": sum(1 for g in scored if q.max_marks and g >= q.max_marks),
+                     "zero": sum(1 for g in got if not g)})
+    return rows
+
+
 def exam_report_data(db: Session, exam: Exam) -> dict:
     questions = (db.query(ExamQuestion).filter_by(exam_id=exam.id)
                  .order_by(ExamQuestion.position, ExamQuestion.display_number).all())
@@ -423,25 +436,12 @@ def exam_report_data(db: Session, exam: Exam) -> dict:
         {"roll": s.roll_number, "name": s.name} for s in db.query(Student).filter_by(class_id=exam.class_id)
         if s.id not in done]
     roll_key = lambda s: s["roll"].zfill(12)  # noqa: E731
-    q_rows = []
-    for q in questions:
-        got = [m.get(q.id) for m in marks.values()]
-        scored = [g for g in got if g is not None]
-        avg = sum(scored) / len(evs) if evs else 0.0
-        q_rows.append({"no": q.display_number, "k": q.k_level, "co": q.course_outcome, "max": q.max_marks,
-                       "average": round(avg, 2), "percentage": _pct(avg, q.max_marks),
-                       "full": sum(1 for g in scored if q.max_marks and g >= q.max_marks),
-                       "zero": sum(1 for g in got if not g)})
-    # class-wide K-level totals: every student's marks summed per question
-    totals = {q.id: sum(m.get(q.id) or 0.0 for m in marks.values()) for q in questions}
-    scaled = [SimpleNamespace(id=q.id, k_level=q.k_level, course_outcome=q.course_outcome,
-                              max_marks=(q.max_marks or 0.0) * len(evs)) for q in questions]
     return {
         "exam": {"name": exam.name, "subject": exam.subject.name if exam.subject else "",
                  "class": exam.school_class.name if exam.school_class else "", "type": exam.exam_type,
                  "year": exam.academic_year, "date": exam.exam_date or "", "maximum": exam.total_marks},
         "students": sorted(students, key=roll_key), "pending": sorted(pending, key=roll_key),
-        "questions": q_rows, "outcomes": summarize_outcomes(scaled, totals),
+        "questions": question_rows(questions, list(marks.values())),
     }
 
 
@@ -521,20 +521,6 @@ SAMPLE_CARD = {
                  {"subject": "Hindi", "maximum": 80, "obtained": None}],
     "rank": None, "ranked": 38, "overall_grade": "–",
 }
-
-
-def report_card_terms(db: Session, teacher: Teacher, class_id: str) -> list[dict]:
-    """Academic year + exam type combinations of this class that have finalized results."""
-    if not classes_query(db, teacher).filter_by(id=class_id).first():
-        raise err(404, "NOT_FOUND", "Class not found.")
-    terms: dict[tuple[str, str], dict] = {}
-    for e in exams_query(db, teacher).filter_by(class_id=class_id):
-        if not db.query(Evaluation).filter_by(exam_id=e.id, status="FINALIZED").first():
-            continue
-        t = terms.setdefault((e.academic_year, e.exam_type),
-                             {"academic_year": e.academic_year, "exam_type": e.exam_type, "subjects": []})
-        t["subjects"].append(e.subject.name if e.subject else e.name)
-    return sorted(terms.values(), key=lambda t: (t["academic_year"], t["exam_type"]), reverse=True)
 
 
 def _subject_rows(db: Session, exams: list[Exam], student_id: str) -> list[dict]:

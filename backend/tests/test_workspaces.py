@@ -1,3 +1,4 @@
+import pytest
 from datetime import datetime, timezone
 from io import BytesIO
 from uuid import uuid4
@@ -47,99 +48,6 @@ def exam(browser, cls, subject):
     )
     assert r.status_code == 201, r.text
     return r.json()
-
-
-def test_teacher_assignment_management_and_workspace_isolation(client):
-    with (
-        TestClient(app) as school,
-        TestClient(app) as other,
-        TestClient(app) as teacher,
-    ):
-        cls, subject = setup_school(school)
-        c2, s2 = setup_school(other)
-        e2 = exam(other, c2, s2)
-        email = f"teacher-{uuid4().hex}@example.com"
-        created = school.post(
-            "/api/management/teachers",
-            headers=HEADERS,
-            json={
-                "name": "Teacher",
-                "email": email,
-                "password": "temporary-password-123",
-                "assignments": [{"class_id": cls["id"], "subject_id": subject["id"]}],
-            },
-        )
-        assert created.status_code == 201, created.text
-        tid = created.json()["id"]
-        assert (
-            teacher.post(
-                "/api/auth/login",
-                headers=HEADERS,
-                json={
-                    "email": email,
-                    "password": "temporary-password-123",
-                    "browser_session": True,
-                },
-            ).status_code
-            == 200
-        )
-        assert teacher.get("/api/exams").status_code == 403
-        assert (
-            teacher.post(
-                "/api/auth/password",
-                headers=HEADERS,
-                json={
-                    "current_password": "temporary-password-123",
-                    "password": "changed-password-123",
-                },
-            ).status_code
-            == 200
-        )
-        assert [c["id"] for c in teacher.get("/api/classes").json()] == [cls["id"]]
-        assert (
-            teacher.post(
-                "/api/students",
-                headers=HEADERS,
-                json={"name": "No", "roll_number": "3", "class_id": cls["id"]},
-            ).status_code
-            == 403
-        )
-        own = exam(teacher, cls, subject)
-        management_exam = exam(school, cls, subject)
-        assert teacher.get(f"/api/exams/{management_exam['id']}").status_code == 404
-        assert school.get(f"/api/exams/{own['id']}").status_code == 200
-        assert teacher.get(f"/api/exams/{e2['id']}").status_code == 404
-        assert school.get(f"/api/exams/{e2['id']}").status_code == 404
-        assert (
-            school.patch(
-                f"/api/management/teachers/{tid}",
-                headers=HEADERS,
-                json={"assignments": []},
-            ).status_code
-            == 200
-        )
-        assert (
-            teacher.get("/api/exams").status_code == 401
-        )  # assignment change revokes existing sessions
-        teacher.post(
-            "/api/auth/login",
-            headers=HEADERS,
-            json={
-                "email": email,
-                "password": "changed-password-123",
-                "browser_session": True,
-            },
-        )
-        assert teacher.get(f"/api/exams/{own['id']}").status_code == 404
-        assert teacher.get("/api/exams").json() == []
-        assert (
-            school.patch(
-                f"/api/management/teachers/{tid}",
-                headers=HEADERS,
-                json={"assignments": [{"class_id": c2["id"], "subject_id": s2["id"]}]},
-            ).status_code
-            == 404
-        )
 
 
 def test_school_disable_revokes_members_and_admin_protected(client):

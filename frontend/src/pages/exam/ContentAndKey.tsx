@@ -16,9 +16,8 @@ export default function ContentAndKey({ defaultSubTab }: ContentAndKeyProps) {
   const getInitialTab = (): "overview" | "paper" | "questions" | "key" => {
     if (defaultSubTab) return defaultSubTab;
     if (exam.status === "DRAFT") return "paper";
-    if (exam.status === "QUESTION_PAPER_UPLOADED" || exam.status === "QUESTIONS_EXTRACTED") return "questions";
     if (exam.status === "QUESTIONS_VERIFIED" || exam.status === "ANSWER_KEY_UPLOADED") return "key";
-    return "overview";
+    return "questions";
   };
 
   const [activeSubTab, setActiveSubTab] = useState<"overview" | "paper" | "questions" | "key">(getInitialTab);
@@ -29,36 +28,32 @@ export default function ContentAndKey({ defaultSubTab }: ContentAndKeyProps) {
     }
   }, [defaultSubTab]);
 
+  // review both side by side in time: questions and key are read in parallel and finalized together
   const subTabs = [
-    {
-      id: "overview" as const,
-      label: "Overview",
-      badge: null,
-    },
-    {
-      id: "paper" as const,
-      label: "Paper & Key",
-      badge: exam.question_paper && exam.answer_key_document ? "Uploaded" : exam.question_paper || exam.answer_key_document ? "1 of 2" : "Missing",
-      badgeTone: exam.question_paper && exam.answer_key_document ? "ok" : "warn",
-    },
     {
       id: "questions" as const,
       label: "Questions",
-      badge: exam.question_count > 0 ? `${exam.verified_question_count}/${exam.question_count}` : null,
-      badgeTone: exam.verified_question_count === exam.question_count && exam.question_count > 0 ? "ok" : "pen",
+      badge: exam.question_count > 0 ? `${exam.question_count}` : null,
+      badgeTone: "ok",
     },
     {
       id: "key" as const,
-      label: "Answer Key",
-      badge: exam.status !== "DRAFT" && exam.status !== "QUESTION_PAPER_UPLOADED" && exam.status !== "QUESTIONS_EXTRACTED" ? "Configured" : null,
+      label: "Answer key",
+      badge: null,
       badgeTone: "ok",
+    },
+    {
+      id: "paper" as const,
+      label: "Files",
+      badge: exam.question_paper && exam.answer_key_document ? null : "Missing",
+      badgeTone: "warn",
     },
   ];
 
   return (
     <div className="space-y-5">
       {/* Sub-Navigation Pill Bar */}
-      <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-line bg-surface p-1.5 shadow-xs">
+      <div className="inline-flex flex-wrap items-center gap-1 rounded-lg bg-sunken p-1">
         {subTabs.map((t) => {
           const isActive = activeSubTab === t.id;
           return (
@@ -69,8 +64,8 @@ export default function ContentAndKey({ defaultSubTab }: ContentAndKeyProps) {
               onClick={() => setActiveSubTab(t.id)}
               className={`flex items-center gap-2 rounded-lg px-3.5 py-2 text-xs font-semibold transition-all ${
                 isActive
-                  ? "bg-pen text-white shadow-xs"
-                  : "text-ink/80 hover:bg-hover hover:text-brown"
+                  ? "bg-surface text-ink shadow-sm"
+                  : "text-mute hover:text-ink"
               }`}
             >
               <span>{t.label}</span>
@@ -78,7 +73,7 @@ export default function ContentAndKey({ defaultSubTab }: ContentAndKeyProps) {
                 <span
                   className={`rounded-full px-1.5 py-px text-[10px] font-bold ${
                     isActive
-                      ? "bg-white/20 text-white"
+                      ? "bg-pen-soft text-pen"
                       : t.badgeTone === "ok"
                       ? "bg-ok-soft text-ok border border-ok/30"
                       : "bg-warn-soft text-warn border border-warn/30"

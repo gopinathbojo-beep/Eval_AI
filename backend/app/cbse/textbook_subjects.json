@@ -1,0 +1,155 @@
+{
+ "10": [
+  {
+   "key": "10-english",
+   "name": "English",
+   "profiles": [
+    "cbse-10-184",
+    "cbse-10-101"
+   ]
+  },
+  {
+   "key": "10-hindi",
+   "name": "Hindi",
+   "profiles": [
+    "cbse-10-002",
+    "cbse-10-085"
+   ]
+  },
+  {
+   "key": "10-mathematics",
+   "name": "Mathematics",
+   "profiles": [
+    "cbse-10-041",
+    "cbse-10-241"
+   ]
+  },
+  {
+   "key": "10-science",
+   "name": "Science",
+   "profiles": [
+    "cbse-10-086"
+   ]
+  },
+  {
+   "key": "10-social-science",
+   "name": "Social Science",
+   "profiles": [
+    "cbse-10-087"
+   ]
+  },
+  {
+   "key": "10-tamil",
+   "name": "Tamil",
+   "profiles": [
+    "cbse-10-006"
+   ]
+  }
+ ],
+ "12": [
+  {
+   "key": "12-accountancy",
+   "name": "Accountancy",
+   "profiles": [
+    "cbse-12-055"
+   ]
+  },
+  {
+   "key": "12-biology",
+   "name": "Biology",
+   "profiles": [
+    "cbse-12-044"
+   ]
+  },
+  {
+   "key": "12-biotechnology",
+   "name": "Biotechnology",
+   "profiles": []
+  },
+  {
+   "key": "12-business-studies",
+   "name": "Business Studies",
+   "profiles": []
+  },
+  {
+   "key": "12-chemistry",
+   "name": "Chemistry",
+   "profiles": [
+    "cbse-12-043"
+   ]
+  },
+  {
+   "key": "12-computer-science",
+   "name": "Computer Science",
+   "profiles": [
+    "cbse-12-083"
+   ]
+  },
+  {
+   "key": "12-economics",
+   "name": "Economics",
+   "profiles": []
+  },
+  {
+   "key": "12-fine-arts",
+   "name": "Fine Arts",
+   "profiles": []
+  },
+  {
+   "key": "12-geography",
+   "name": "Geography",
+   "profiles": []
+  },
+  {
+   "key": "12-history",
+   "name": "History",
+   "profiles": []
+  },
+  {
+   "key": "12-home-science",
+   "name": "Home Science",
+   "profiles": []
+  },
+  {
+   "key": "12-informatics-practices",
+   "name": "Informatics Practices",
+   "profiles": []
+  },
+  {
+   "key": "12-mathematics",
+   "name": "Mathematics",
+   "profiles": []
+  },
+  {
+   "key": "12-physics",
+   "name": "Physics",
+   "profiles": [
+    "cbse-12-042"
+   ]
+  },
+  {
+   "key": "12-political-science",
+   "name": "Political Science",
+   "profiles": [
+    "cbse-12-028"
+   ]
+  },
+  {
+   "key": "12-psychology",
+   "name": "Psychology",
+   "profiles": []
+  },
+  {
+   "key": "12-sociology",
+   "name": "Sociology",
+   "profiles": []
+  },
+  {
+   "key": "12-tamil",
+   "name": "Tamil",
+   "profiles": [
+    "cbse-12-106"
+   ]
+  }
+ ]
+}

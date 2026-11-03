@@ -15,7 +15,6 @@ from ..services.job_queue import submit
 from ..services.exam_files import purge_exam_files, save_reports_and_schedule
 from ..services.evaluation_service import (ExamSnapshot, approve_clean_items, finalize, finalize_issues,
                                            refresh_evaluation_status, review_reasons, run_evaluation)
-from ..formatter.common.k_level import summarize as summarize_outcomes
 from ..formatter.common.mapping import map_label
 from ..services.mapping_service import apply_student_mapping, exam_questions, mapping_summary
 from ..formatter.common.numbering import normalize_question_number
@@ -62,8 +61,6 @@ def evaluation_detail(ev_id: str, db: Session = Depends(get_db), t: Teacher = De
         "items": [item_view(i) for i in items],
         "summary": mapping_summary(db, ev),
         "issues": [] if ev.status == "FINALIZED" else finalize_issues(db, ev),
-        "outcomes": summarize_outcomes(choices.counted(qs, marks := {i.exam_question_id: i.final_marks for i in items}),
-                                       marks),
     }
 
 
@@ -469,7 +466,6 @@ def result(ev_id: str, db: Session = Depends(get_db), t: Teacher = Depends(curre
         rows.append({"question_id": q.id, "question": q.display_number, "question_text": q.question_text,
                      "choice_group": q.choice_group, "counted": q.id in counts,
                      "max_marks": q.max_marks, "final_marks": fm, "ai_marks": it.ai_marks if it else None,
-                     "k_level": q.k_level, "course_outcome": q.course_outcome,
                      "teacher_overridden": bool(it and it.teacher_overridden),
                      "student_answer": a.answer_text if a else None,
                      "official_answer": keys[q.id].answer_text if q.id in keys else None,
@@ -480,8 +476,7 @@ def result(ev_id: str, db: Session = Depends(get_db), t: Teacher = Depends(curre
             "total_marks": ev.total_marks if ev.status == "FINALIZED" else total,
             "maximum_marks": ev.maximum_marks if ev.status == "FINALIZED" else maxm,
             "percentage": ev.percentage if ev.status == "FINALIZED" else (round(100 * total / maxm, 2) if maxm else 0),
-            "questions": rows,
-            "outcomes": summarize_outcomes(choices.counted(qs, marks), marks)}
+            "questions": rows}
 
 
 @router.get("/evaluations/{ev_id}/report.pdf")
@@ -522,41 +517,34 @@ def list_results(db: Session = Depends(get_db), t: Teacher = Depends(current_tea
     return [evaluation_view(e) for e in evs]
 
 
+@router.get("/students/{student_id}/evaluations")
+def student_evaluations(student_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    """Student Report tab: every exam this student sat in the workspace, newest first."""
+    exam_ids = [e.id for e in exams_query(db, t)]
+    evs = (db.query(Evaluation).options(*EVALUATION_VIEW_LOAD)
+           .filter(Evaluation.student_id == student_id, Evaluation.exam_id.in_(exam_ids or [""]))
+           .order_by(Evaluation.created_at.desc()).all())
+    if not evs and not db.query(Student).filter(Student.id == student_id).first():
+        raise err(404, "NOT_FOUND", "Student not found.")
+    return [evaluation_view(e) for e in evs]
+
+
+@router.get("/exams/{exam_id}/question-summary")
+def exam_question_summary(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    """Question-wise class performance over finalized evaluations (the same rows as the exam report PDF)."""
+    from ..services.school_reports import question_rows
+    exam = get_exam(db, t, exam_id)
+    evs = db.query(Evaluation).filter_by(exam_id=exam.id, status="FINALIZED").all()
+    marks = [{i.exam_question_id: i.final_marks for i in db.query(EvaluationItem).filter_by(evaluation_id=ev.id)}
+             for ev in evs]
+    qs = db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position, ExamQuestion.display_number).all()
+    return {"finalized_students": len(evs), "questions": question_rows(qs, marks)}
+
+
 @router.get("/exams/{exam_id}/results")
 def exam_results(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     exam = get_exam(db, t, exam_id)
     return [evaluation_view(e) for e in db.query(Evaluation).filter_by(exam_id=exam.id).order_by(Evaluation.created_at)]
-
-
-@router.get("/exams/{exam_id}/outcome-summary")
-def exam_outcome_summary(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
-    """Class performance per Bloom's K level and course outcome, over evaluations with finalized marks."""
-    exam = get_exam(db, t, exam_id)
-    qs = exam_questions(db, exam.id)
-    evs = db.query(Evaluation).filter_by(exam_id=exam.id, status="FINALIZED").all()
-    students = []
-    for ev in evs:
-        marks = {i.exam_question_id: i.final_marks for i in db.query(EvaluationItem).filter_by(evaluation_id=ev.id)}
-        students.append({"evaluation_id": ev.id, "student_id": ev.student_id, "name": ev.student.name,
-                         "roll_number": ev.student.roll_number, **summarize_outcomes(choices.counted(qs, marks), marks)})
-
-    def overall(key: str) -> list[dict]:
-        if not students:
-            return summarize_outcomes(qs, {})[key]
-        rows = {}
-        for s in students:
-            for r in s[key]:
-                a = rows.setdefault(r["key"], {**r, "scored": 0.0, "max_marks": 0.0})
-                a["scored"] += r["scored"]
-                a["max_marks"] += r["max_marks"]
-        for a in rows.values():
-            a["average_scored"] = round(a["scored"] / len(students), 2)
-            a["max_marks"] = a["max_marks"] / len(students)
-            a["percentage"] = round(100.0 * a["average_scored"] / a["max_marks"], 1) if a["max_marks"] else None
-            del a["scored"]
-        return list(rows.values())
-    return {"finalized_students": len(students), "k_levels": overall("k_levels"),
-            "course_outcomes": overall("course_outcomes"), "students": students}
 
 
 _BUSY_DOC = ("UPLOADED", "RENDERING", "OCR_PROCESSING", "EXTRACTING", "IDENTIFYING")
@@ -629,6 +617,10 @@ def finalize_exam(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depe
     exam = get_exam(db, t, exam_id)
     evs = db.query(Evaluation).filter_by(exam_id=exam.id).all()
     pending = [{"question": e.student.name, "reason": f"Evaluation is {e.status.replace('_', ' ').lower()}"} for e in evs if e.status != "FINALIZED"]
+    # a sheet with no student yet (held, still being identified or scanned) could never be graded after finalizing
+    pending += [{"question": f"Roll {roll}" if (roll := (d.identity or {}).get("typed_roll")) else d.original_filename,
+                 "reason": "Answer sheet is not linked to a student yet"}
+                for d in db.query(AnswerSheetDocument).filter_by(exam_id=exam.id, is_active=True, student_id=None)]
     if not evs or pending:
         raise err(400, "EXAM_NOT_READY", "Every student's evaluation must be finalized first.",
                   pending or [{"question": "Exam", "reason": "No answer sheets uploaded"}])

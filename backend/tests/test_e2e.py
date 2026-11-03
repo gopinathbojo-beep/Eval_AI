@@ -1,3 +1,4 @@
+from app.config import get_settings
 import pytest
 from .conftest import BEHAVIOUR, MODEL, make_pdf, make_png
 
@@ -49,7 +50,7 @@ def test_full_workflow(client, auth):
     assert [p["ocr_status"] for p in qp["pages"]] == ["OK", "FAILED_PARSE"]
     diag = j(c.get(f"/api/documents/question-paper/{qp['id']}/pages/2/ocr", headers=h), 200)
     assert diag["status"] == "FAILED_PARSE" and "cannot read" in diag["raw"]
-    assert "Gemini did not return a valid structured response" in qp["error_message"]
+    assert "InternVL did not return a valid structured response" in qp["error_message"]
     # verification is blocked while a page failed
     r = c.post(f"/api/exams/{eid}/questions/verify", headers=h)
     assert r.status_code == 400 and r.json()["code"] == "QUESTIONS_NOT_READY"
@@ -192,16 +193,7 @@ def test_full_workflow(client, auth):
     assert res["finalized"] and [(q["question"], q["final_marks"], q["max_marks"]) for q in res["questions"]] == \
         [("1", 2, 2), ("2", 1, 5), ("3(a)", 3, 3), ("3(b)", 5, 5)]
     assert res["questions"][1]["ai_marks"] == 0 and res["questions"][1]["official_answer"]
-    # K levels suggested from the question wording: Define->K1, Explain/Describe->K2, Draw->K3
-    assert [q["k_level"] for q in res["questions"]] == ["K1", "K2", "K2", "K3"]
-    k = {r["key"]: (r["scored"], r["max_marks"]) for r in res["outcomes"]["k_levels"]}
-    assert k == {"K1": (2, 2), "K2": (1 + 3, 5 + 3), "K3": (5, 5)}
-    j(c.patch(f"/api/exam-questions/{qid['2']}/outcome", json={"k_level": "k4", "course_outcome": "2"}, headers=h), 200)
-    assert c.patch(f"/api/exam-questions/{qid['2']}/outcome", json={"k_level": "K9"}, headers=h).status_code == 400
-    summ = j(c.get(f"/api/exams/{eid}/outcome-summary", headers=h), 200)
-    assert summ["finalized_students"] == 1
-    assert {r["key"]: r["percentage"] for r in summ["k_levels"]} == {"K1": 100.0, "K2": 100.0, "K3": 100.0, "K4": 20.0}
-    assert [r["key"] for r in summ["course_outcomes"]] == ["CO2", "Untagged"]
+    assert "outcomes" not in res and "k_level" not in res["questions"][0]  # K levels were removed
     rep_pdf = c.get(f"/api/evaluations/{evid}/report.pdf", headers=h)
     assert rep_pdf.status_code == 200 and rep_pdf.content.startswith(b"%PDF")
     from io import BytesIO
@@ -249,18 +241,19 @@ def test_duplicate_mapping_and_ai_unavailable(client, auth):
             "subject_id": sub["id"], "exam_type": "Unit", "total_marks": 15}), 201)["id"]
     # OpenRouter down -> clear AI_ERROR, nothing invented
     from app.ocr import remote
-    good = remote.OPENROUTER_BASE_URL
-    remote.OPENROUTER_BASE_URL = "http://127.0.0.1:1"
+    settings = get_settings()
+    good = settings.internvl_api_url
+    settings.internvl_api_url = "http://127.0.0.1:1"
     try:
         j(c.post(f"/api/exams/{eid}/question-paper", headers=h, files={"file": ("p.pdf", make_pdf(2), "application/pdf")}), 202)
         qp = j(c.get(f"/api/exams/{eid}/question-paper", headers=h))
         assert qp["status"] == "AI_ERROR"
-        assert qp["error_message"] == "OpenRouter is unavailable. Check the API key, Gemini model access and credit balance."
+        assert qp["error_message"] == "InternVL is unavailable. Check that Ollama is running on the model server and the model is pulled."
         assert j(c.get(f"/api/exams/{eid}/questions", headers=h))["questions"] == []
         st = j(c.get("/api/system/ai-status", headers=h))
         assert st["available"] is False
     finally:
-        remote.OPENROUTER_BASE_URL = good
+        settings.internvl_api_url = good
     j(c.post(f"/api/documents/question-paper/{qp['id']}/reprocess", headers=h), 202)
     assert j(c.get(f"/api/exams/{eid}/question-paper", headers=h))["status"] == "READY"
     j(c.post(f"/api/exams/{eid}/questions/accept-valid", headers=h), 200)

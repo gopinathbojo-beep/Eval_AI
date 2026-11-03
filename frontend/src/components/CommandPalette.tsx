@@ -113,7 +113,7 @@ export function CommandPalette({ open, onClose, pages }: { open: boolean; onClos
             ref={inputRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search exams, students, pages…"
+            placeholder="Search exams, pages…"
             role="combobox"
             aria-expanded="true"
             aria-controls={listId}

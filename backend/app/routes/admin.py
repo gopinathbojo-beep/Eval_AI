@@ -96,7 +96,6 @@ def summary(
         "users": db.query(Teacher).count(),
         "schools": db.query(Workspace).filter_by(kind="SCHOOL").count(),
         "parents": db.query(Teacher).filter_by(role="PARENT").count(),
-        "teachers": db.query(Teacher).filter_by(role="TEACHER").count(),
         **metrics(db, start=start, end=end),
     }
 
@@ -159,12 +158,6 @@ def patch_user(
             "OWNER_PROTECTED",
             "The owner cannot be disabled or assigned another email.",
         )
-    if body.assignments is not None:
-        raise err(
-            400,
-            "USE_SCHOOL_ASSIGNMENTS",
-            "Manage assignments from the school management account.",
-        )
     if body.name is not None:
         if not body.name.strip():
             raise err(400, "NAME_REQUIRED", "Name cannot be blank.")
@@ -185,7 +178,7 @@ def patch_user(
                     member.session_version += 1
     if body.password:
         user.password_hash = hash_password(body.password)
-        user.must_change_password = user.role == "TEACHER"
+        user.must_change_password = False
     user.session_version += 1
     audit(
         db,

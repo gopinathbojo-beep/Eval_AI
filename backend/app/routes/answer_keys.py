@@ -1,5 +1,4 @@
 from __future__ import annotations
-import logging
 import re
 from typing import Literal
 from fastapi import APIRouter, Depends, Response
@@ -7,12 +6,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from ..database import get_db
 from ..deps import err, get_exam
-from ..documents.storage import abs_path
 from ..models import (AnswerKey, AnswerKeyDocument, Evaluation, EvaluationItem, Exam, ExamQuestion,
-                      QuestionPaperDocument, Teacher)
-from ..ocr import prompts
-from ..ocr.internvl import chat_structured, check_model
-from ..ocr.schemas import GeneratedAnswerKeyResult
+                      Teacher)
 from ..security import current_teacher
 from ..serializers import key_view
 from ..services.audit import audit
@@ -20,6 +15,8 @@ from ..formatter.common.mapping import map_label
 from ..services.mapping_service import exam_questions, refresh_key_state, refresh_rubric
 from ..formatter.common.numbering import normalize_question_number
 from ..services.state import set_state
+from ..reference.search import subject_of
+from ..reference.verify import find_board_answer, find_references, label_sources, verify_answers
 
 router = APIRouter(prefix="/api")
 
@@ -33,7 +30,8 @@ def _verification_rubric_problems(key: AnswerKey):
 
 
 def _editable(exam: Exam):
-    if exam.status not in ("QUESTIONS_VERIFIED", "ANSWER_KEY_UPLOADED"):
+    # open while questions are still being reviewed too: the key is read in parallel with the question paper
+    if exam.status not in ("QUESTION_PAPER_UPLOADED", "QUESTIONS_EXTRACTED", "QUESTIONS_VERIFIED", "ANSWER_KEY_UPLOADED"):
         raise err(409, "ANSWER_KEY_LOCKED", "The answer key is not open for editing.")
 
 
@@ -299,95 +297,61 @@ def generate_answer_keys_ai(exam_id: str, db: Session = Depends(get_db), t: Teac
     if not qs:
         raise err(400, "NO_QUESTIONS", "There are no verified questions in this exam to generate answers for.")
 
-    model = None
-    check_model(model)
-
-    q_dicts = [
-        {
-            "id": q.id,
-            "display_number": q.display_number,
-            "normalized_number": q.normalized_number,
-            "question_text": q.question_text,
-            "max_marks": q.max_marks or 0.0,
-            "question_type": q.question_type or "descriptive",
-        }
-        for q in qs
-    ]
-
-    img_path = None
-    # Only send the image when text alone is insufficient (e.g. diagrams/figures).
-    if any(len((q.question_text or "").strip()) < 10 for q in qs):
-        qp = db.query(QuestionPaperDocument).filter_by(exam_id=exam.id, is_active=True).first()
-        if qp and qp.pages and qp.pages[0].get("processed_file"):
-            try:
-                cand = abs_path(qp.pages[0]["processed_file"])
-                if cand.is_file():
-                    img_path = cand
-            except Exception:
-                pass
-
-    by_id = {q.id: q for q in qs}
-    by_norm = {q.normalized_number: q for q in qs}
-    by_disp = {q.display_number: q for q in qs}
-
-    matched_answers: list[dict] = []
-    accounted_qids = set()
-
-    # Batch questions in chunks of up to 3 to prevent token exhaustion and JSON truncation
-    batch_size = 3
-    for i in range(0, len(q_dicts), batch_size):
-        chunk = q_dicts[i:i + batch_size]
-        prompt = prompts.generate_answer_key_prompt(exam.name, chunk)
-        try:
-            call = chat_structured(prompts.GEN_ANSWER_KEY_SYSTEM, prompt, GeneratedAnswerKeyResult, image_path=img_path,
-                                   model=model)
-            for ans in call.parsed.answers:
-                target_q = None
-                if ans.exam_question_id and ans.exam_question_id in by_id:
-                    target_q = by_id[ans.exam_question_id]
-                elif ans.question_number:
-                    target_q = by_disp.get(ans.question_number) or by_norm.get(normalize_question_number(ans.question_number))
-                    if not target_q:
-                        res = map_label(ans.question_number, qs)
-                        if res.question_id and res.question_id in by_id:
-                            target_q = by_id[res.question_id]
-
-                if target_q and target_q.id not in accounted_qids:
-                    accounted_qids.add(target_q.id)
-                    matched_answers.append({
-                        "exam_question_id": target_q.id,
-                        "question_number": target_q.display_number,
-                        "question_text": target_q.question_text,
-                        "max_marks": target_q.max_marks,
-                        "answer_text": ans.answer_text,
-                        "marks": ans.marks if ans.marks is not None else target_q.max_marks,
-                        "criteria": ans.criteria,
-                        "keywords": ans.keywords,
-                        "accepted_answers": ans.accepted_answers,
-                    })
-        except Exception:
-            # If a chunk fails, log and continue so subsequent chunks can succeed
-            logging.getLogger("adem").exception("AI answer-key generation failed for a chunk")
-
+    # Keys come only from the shared reference library; the AI is not used here (it reads sheets and grades).
+    # A question that is a CBSE sample-paper question gets its marking-scheme answer exactly as printed.
+    # Any other question is left for the teacher, with the NCERT passages for it shown as printed.
+    scope = subject_of(exam)
+    answers = []
     for q in qs:
-        if q.id not in accounted_qids:
-            accounted_qids.add(q.id)
-            matched_answers.append({
-                "exam_question_id": q.id,
-                "question_number": q.display_number,
-                "question_text": q.question_text,
-                "max_marks": q.max_marks,
-                "answer_text": "",
-                "marks": q.max_marks,
-                "criteria": [],
-                "keywords": [],
-                "accepted_answers": [],
-            })
+        refs = find_references(db, *scope, q.question_text or "") if scope else []
+        board = find_board_answer(db, *scope, q.question_text or "") if scope else None
+        if board:
+            note = (f"From {board['source']}, question {board['question_number']} (p.{board['pages']}), "
+                    "exactly as printed.")
+        elif refs:
+            note = "Not a board question: write the answer from the textbook passages shown."
+        else:
+            note = "No source found in the reference library: write the answer yourself."
+        answers.append({
+            "exam_question_id": q.id,
+            "question_number": q.display_number,
+            "question_text": q.question_text,
+            "max_marks": q.max_marks,
+            "answer_text": board["answer"] if board else "",
+            "marks": q.max_marks,
+            "criteria": [],
+            "keywords": [],
+            "accepted_answers": [],
+            "origin": "BOARD_MARKING_SCHEME" if board else "NONE",
+            "board": {k: board[k] for k in ("source", "question_number", "marks", "pages", "question")} if board else None,
+            "sources": label_sources(refs),
+            "note": note,
+        })
+    return {"answers": answers, "source": "REFERENCE_LIBRARY", "can_save_as_scheme": not bool(exam.standard_profile_id),
+            "reference_subject": scope[1] if scope else None}
 
-    q_order = {q.id: idx for idx, q in enumerate(qs)}
-    matched_answers.sort(key=lambda x: q_order.get(x["exam_question_id"], 999))
 
-    return {"answers": matched_answers,"source":"AI_DRAFT","can_save_as_scheme":not bool(exam.standard_profile_id)}
+@router.post("/exams/{exam_id}/answer-keys/check-references")
+def check_answer_key_references(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    """Checks the exam's saved answer key against the NCERT / CBSE reference library. Advice only: nothing is changed."""
+    exam = get_exam(db, t, exam_id)
+    scope = subject_of(exam)
+    by_q = {q.id: q for q in exam_questions(db, exam.id)}
+    keys = db.query(AnswerKey).filter_by(exam_id=exam.id, is_active=True).all()
+    out, todo = [], []
+    for k in keys:
+        q = by_q.get(k.exam_question_id)
+        row = {"answer_key_id": k.id, "exam_question_id": k.exam_question_id,
+               "question_number": q.display_number if q else k.raw_question_number, "verification": None}
+        out.append(row)
+        if scope and (k.answer_text or "").strip():
+            todo.append((row, {"question": (q.question_text if q else "") or "", "answer": k.answer_text}))
+    if todo:
+        for (row, _), v in zip(todo, verify_answers(db, *scope, [item for _, item in todo])):
+            row["verification"] = v.as_dict()
+    order = {qid: i for i, qid in enumerate(by_q)}
+    out.sort(key=lambda x: order.get(x["exam_question_id"], 999))
+    return {"reference_subject": scope[1] if scope else None, "answers": out}
 
 
 class SaveGeneratedItem(BaseModel):

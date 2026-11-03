@@ -1,5 +1,6 @@
 """Student list import (Excel) and export (Excel / PDF)."""
 from __future__ import annotations
+import html
 import re
 from io import BytesIO
 from openpyxl import Workbook, load_workbook
@@ -200,5 +201,5 @@ def export_pdf(students: list[Student], title: str) -> bytes:
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F1F5F9")]),
         ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#CBD5E1")), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
     ]))
-    doc.build([Paragraph(title, styles["Title"]), Paragraph(f"{len(students)} students", styles["Normal"]), Spacer(1, 6 * mm), t])
+    doc.build([Paragraph(html.escape(title), styles["Title"]), Paragraph(f"{len(students)} students", styles["Normal"]), Spacer(1, 6 * mm), t])
     return buf.getvalue()

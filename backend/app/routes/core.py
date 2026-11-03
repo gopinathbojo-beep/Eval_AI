@@ -1,17 +1,19 @@
 from __future__ import annotations
+from typing import Literal
 from fastapi import APIRouter, Depends, File, Form, Query, Request, Response, UploadFile
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 import shutil
 from datetime import datetime, timezone
-from ..config import AI_UNAVAILABLE_MESSAGE, get_settings
+from ..config import get_settings
 from ..database import get_db
 from ..deps import err, get_exam
 from ..models import (AnswerKey, AnswerKeyDocument, AnswerSheetDocument, AuditLog, BackgroundJob,
                       Evaluation, EvaluationItem, Exam, ExamQuestion, PendingUpload,
                       QuestionPaperDocument, SchoolClass, Student, StudentAnswer, Subject, Teacher,
-                      TeacherAssignment, VerifiedReferenceExample)
+                      VerifiedReferenceExample)
 from ..ocr.internvl import AIUnavailable, check_model
 from ..security import SESSION_COOKIE, create_token, current_account, current_teacher, is_admin, require_browser_request, set_session_cookie, verify_password
 from ..login_limiter import login_limiter
@@ -44,11 +46,22 @@ def login(body: LoginIn, request: Request, response: Response, db: Session = Dep
         require_browser_request(request)
     s = get_settings()
     login_limiter.check(request.client.host if request.client else "unknown", s.login_attempts_per_minute)
-    t = db.query(Teacher).filter_by(email=body.email.strip().lower()).first()
+    from .. import validation as valid
+    try:
+        email = valid.email(body.email)
+    except ValueError as e:
+        raise err(400, "INVALID_EMAIL", str(e))
+    if not body.password:
+        raise err(400, "PASSWORD_REQUIRED", "Enter your password.")
+    t = db.query(Teacher).filter_by(email=email).first()
     if not t or not verify_password(body.password, t.password_hash):
+        login_limiter.check(f"failed:{email}", s.login_attempts_per_minute)  # per account: the IP can be faked
         raise err(401, "INVALID_CREDENTIALS", "Email or password is incorrect.")
     if not t.is_active:
         raise err(403, "ACCOUNT_DISABLED", "Your account has been disabled. Contact the administrator.")
+    if t.role == "TEACHER":
+        raise err(403, "TEACHER_RETIRED", "Teacher accounts are no longer used. Sign in with your school's management "
+                                          "account, or ask your school for an uploader code.")
     if t.workspace_id:
         from ..models import Workspace
         ws = db.get(Workspace, t.workspace_id)
@@ -104,6 +117,12 @@ def dashboard(db: Session = Depends(get_db), t: Teacher = Depends(current_teache
         "total_students": db.query(Student).filter(Student.class_id.in_(class_ids)).count() if class_ids else 0,
         "pending_evaluations": sum(e.status != "FINALIZED" for e in evs),
         "completed_evaluations": sum(e.status == "FINALIZED" for e in evs),
+        # School dashboard cards. Credits are unlimited until a payment gateway exists (credits = None).
+        "credits": None,
+        "pending_review": sum(e.status in ("MAPPING_REVIEW", "AI_EVALUATED", "TEACHER_REVIEW") for e in evs)
+        + (db.query(AnswerSheetDocument).filter(AnswerSheetDocument.exam_id.in_(exam_ids), AnswerSheetDocument.is_active.is_(True),
+                                                AnswerSheetDocument.status == "NEEDS_STUDENT").count() if exam_ids else 0),
+        "evaluated_sheets": sum(e.status in ("AI_EVALUATED", "TEACHER_REVIEW", "FINALIZABLE", "FINALIZED") for e in evs),
         "recent_exams": [exam_view(e) for e in recent_exams],
         "recent_evaluations": [evaluation_view(e) for e in recent_evs],
     }
@@ -189,8 +208,7 @@ def _class_view(db: Session, c: SchoolClass) -> dict:
 
 @router.get("/classes")
 def list_classes(db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
-    return [{**_class_view(db, c), "assigned_subject_ids": [a.subject_id for a in db.query(TeacherAssignment).filter_by(teacher_id=t.id, class_id=c.id)] if t.role == "TEACHER" else None}
-            for c in classes_query(db, t).order_by(SchoolClass.name)]
+    return [{**_class_view(db, c), "assigned_subject_ids": None} for c in classes_query(db, t).order_by(SchoolClass.name)]
 
 
 @router.post("/classes", status_code=201)
@@ -500,6 +518,66 @@ def create_exam(body: ExamIn, db: Session = Depends(get_db), t: Teacher = Depend
         from datetime import datetime
         now = datetime.now()
         data["academic_year"] = f"{now.year}-{str(now.year + 1)[-2:]}"
+    e = Exam(teacher_id=t.id, workspace_id=t.workspace_id, status="DRAFT", **data)
+    db.add(e)
+    db.flush()
+    audit(db, exam_id=e.id, teacher_id=t.id, entity_type="exam", entity_id=e.id, action="exam_created")
+    db.commit()
+    db.refresh(e)
+    return exam_view(e)
+
+
+def textbook_subjects() -> dict:
+    import json
+    from pathlib import Path
+    return json.loads((Path(__file__).resolve().parents[1] / "cbse" / "textbook_subjects.json").read_text(encoding="utf-8"))
+
+
+@router.get("/subjects/catalog")
+def subject_catalog(grade: Literal["10", "12"] | None = None, t: Teacher = Depends(current_teacher)):
+    """Create Exam's subject list (scripts/build_textbook_subjects.py): {grade: [{key, name, profiles}]}."""
+    data = textbook_subjects()
+    return {grade: data.get(grade, [])} if grade else data
+
+
+class SimpleExamIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    grade: Literal["10", "12"]
+    section: str = Field("", max_length=20)
+    subject_key: str = Field(min_length=1, max_length=80)
+    exam_date: str | None = None
+
+
+@router.post("/exams/simple", status_code=201)
+def create_simple_exam(body: SimpleExamIn, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    """One-form exam creation: the class and subject are found or created; the paper pattern is the subject's usual
+    CBSE variant until the question paper names another (cbse/variant.py)."""
+    entry = next((x for x in textbook_subjects().get(body.grade, []) if x["key"] == body.subject_key), None)
+    if entry is None:
+        raise err(400, "SUBJECT_REQUIRED", "Choose a subject from the list.")
+    owner = owner_id(db, t)
+    class_name = ClassIn(std=body.grade, section=body.section.strip().upper() or None).full_name()
+    c = db.query(SchoolClass).filter_by(teacher_id=owner, name=class_name).first()
+    if c is None:
+        c = SchoolClass(teacher_id=owner, workspace_id=t.workspace_id, name=class_name)
+        db.add(c)
+    s = db.query(Subject).filter_by(teacher_id=owner).filter(func.lower(Subject.name) == entry["name"].lower()).first()
+    if s is None:
+        s = Subject(teacher_id=owner, workspace_id=t.workspace_id, name=entry["name"])
+        db.add(s)
+    db.flush()
+    from datetime import datetime
+    now = datetime.now()
+    year = f"{now.year}-{str(now.year + 1)[-2:]}"
+    if entry["profiles"]:
+        from ..cbse.catalog import creation_data
+        data = creation_data(ExamIn(name=body.name, class_id=c.id, subject_id=s.id, exam_date=body.exam_date,
+                                    standard_profile_id=entry["profiles"][0]), c, s)
+    else:  # no CBSE pattern on file: read the paper as it is (generic formatter)
+        data = {**ExamIn(name=body.name, class_id=c.id, subject_id=s.id, exam_date=body.exam_date,
+                         exam_type="School exam").model_dump(exclude={"standard_profile_id", "standard_options"}),
+                "total_marks": 80, "duration_minutes": 180}
+    data["academic_year"] = data.get("academic_year") or year
     e = Exam(teacher_id=t.id, workspace_id=t.workspace_id, status="DRAFT", **data)
     db.add(e)
     db.flush()

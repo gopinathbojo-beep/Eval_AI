@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from .config import get_settings
 from .database import init_db
-from .routes import admin, answer_keys, core, documents, evaluations, google_auth, questions, reference_collection, registration, school, management, uploads
+from .routes import admin, answer_keys, core, documents, evaluations, google_auth, questions, reference_collection, registration, school, uploader, uploads, exam_setup, notifications
 from .services.admin_accounts import ensure_owner
 from .services.exam_files import start_purge_scheduler
 from .services.recovery import recover_interrupted_jobs
@@ -54,7 +54,7 @@ async def lifespan(_: FastAPI):
 def create_app() -> FastAPI:
     s = get_settings()
     production = s.environment == "production"
-    app = FastAPI(title="ADEM API", version="1.0.0", lifespan=lifespan,
+    app = FastAPI(title="Eval AI API", version="1.0.0", lifespan=lifespan,
                   docs_url=None if production else "/docs", redoc_url=None if production else "/redoc",
                   openapi_url=None if production else "/openapi.json")
     from .cbse.routes import router as standards_router
@@ -97,9 +97,11 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(RequestValidationError)
     async def val_exc(_: Request, exc: RequestValidationError):
-        issues = [{"question": ".".join(str(x) for x in e["loc"][1:]) or "request", "reason": e["msg"]} for e in exc.errors()]
-        return JSONResponse({"code": "VALIDATION_ERROR", "message": "Some fields are missing or invalid.", "issues": issues},
-                            status_code=422)
+        issues = [{"question": ".".join(str(x) for x in e["loc"][1:]) or "request",
+                   "reason": e["msg"].removeprefix("Value error, ")} for e in exc.errors()]
+        # one problem: say it plainly ("Enter a valid 10-digit phone number."), not a generic heading
+        message = issues[0]["reason"] if len(issues) == 1 else "Some fields are missing or invalid."
+        return JSONResponse({"code": "VALIDATION_ERROR", "message": message, "issues": issues}, status_code=422)
 
     @app.exception_handler(Exception)
     async def unhandled(_: Request, exc: Exception):
@@ -113,7 +115,7 @@ def create_app() -> FastAPI:
         return JSONResponse({"code": "STORAGE_UNAVAILABLE", "message": str(exc)}, status_code=503)
 
     for r in (core.router, documents.router, questions.router, answer_keys.router, evaluations.router, reference_collection.router,
-              school.router, admin.router, google_auth.router, registration.router, management.router, uploads.router):
+              school.router, admin.router, google_auth.router, registration.router, uploader.router, uploads.router, exam_setup.router, notifications.router):
         app.include_router(r)
 
     @app.get("/api/health")

@@ -18,7 +18,7 @@ WORKER = str(uuid.uuid4())
 STALE_SECONDS = 120
 HANDLERS = {"app.services.pipeline:process_document", "app.services.student_identity:identify_sheets",
             "app.services.student_identity:run_sheet", "app.services.student_identity:_read_sheet",
-            "app.services.evaluation_service:run_evaluation"}
+            "app.services.evaluation_service:run_evaluation", "app.services.sheet_capture:complete_sheet"}
 
 
 def now():
@@ -34,8 +34,7 @@ def persist(job):
         exam = db.get(Exam, job.exam_id) if job.exam_id else None
         row = BackgroundJob(exam_id=job.exam_id, workspace_id=exam.workspace_id if exam else None,
             actor_id=job.actor_id, session_version=job.session_version, handler=handler, active_key=active_key,
-            payload={"args": list(job.args), "engine": job.engine, "paper_format": job.paper_format,
-                     "subject": job.subject, "tamil_grading": job.tamil_grading}, status="QUEUED")
+            payload={"args": list(job.args), "paper_format": job.paper_format, "subject": job.subject}, status="QUEUED")
         db.add(row)
         try:
             db.commit()
@@ -111,9 +110,8 @@ def restore_queued():
                 continue
             module, function = row.handler.split(":", 1)
             payload = row.payload
-            job = job_queue._Job(payload["engine"], getattr(importlib.import_module(module), function), tuple(payload["args"]),
-                paper_format=payload.get("paper_format"), subject=payload.get("subject"),
-                tamil_grading=bool(payload.get("tamil_grading")), exam_id=row.exam_id,
+            job = job_queue._Job(getattr(importlib.import_module(module), function), tuple(payload["args"]),
+                paper_format=payload.get("paper_format"), subject=payload.get("subject"), exam_id=row.exam_id,
                 actor_id=row.actor_id, session_version=row.session_version, job_id=row.id)
             with job_queue._cond:
                 if row.id not in job_queue._scheduled:

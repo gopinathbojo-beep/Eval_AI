@@ -23,5 +23,5 @@ pushd backend
 .venv\Scripts\python.exe -c "from app.database import SessionLocal, init_db; from app.services.admin_accounts import ensure_owner; init_db(); db=SessionLocal(); ensure_owner(db); db.close()"
 popd
 
-echo Setup complete. Add OPENROUTER_API_KEY to .env or backend\.env, then run start.bat.
+echo Setup complete. Set INTERNVL_API_URL and INTERNVL_MODEL in backend\.env ^(Ollama on the model server^), then run start.bat.
 pause

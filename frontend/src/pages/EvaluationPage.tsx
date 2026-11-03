@@ -71,7 +71,7 @@ export default function EvaluationPage() {
         title={
           <div className="flex flex-wrap items-center gap-2.5">
             <span>{ev.student.name}</span>
-            <span className="stamp rotate-[-2deg] border-pen/40 px-2 py-0.5 font-mono text-[11px] text-pen">
+            <span className="inline-flex items-center rounded-lg bg-pen-soft px-2.5 py-1 text-xs font-bold text-pen border border-pen/30">
               Roll {ev.student.roll_number}
             </span>
           </div>
@@ -109,35 +109,35 @@ export default function EvaluationPage() {
       {!reading && (
         <div className="space-y-4">
           {/* stays at the top of the page while scrolling */}
-          <div className="sticky top-0 z-30 -mx-1 flex h-12 items-end gap-1.5 border-b border-line bg-paper/95 px-2 backdrop-blur">
+          <div className="sticky top-0 z-30 -mx-1 flex h-12 items-center gap-2 border-b border-line bg-paper/95 px-2 backdrop-blur">
             <button
               onClick={() => setTab("mapping")}
-              className={`-mb-px flex items-center gap-2 rounded-t-md border px-4 py-2.5 text-sm font-semibold transition-ui ${
+              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold transition-all ${
                 tab === "mapping"
-                  ? "border-line border-b-surface border-t-2 border-t-pen bg-surface text-ink"
-                  : "border-transparent text-mute hover:bg-hover hover:text-brown"
+                  ? "bg-pen text-on-pen shadow-sm"
+                  : "text-mute hover:bg-hover hover:text-ink"
               }`}
             >
               <IconFileText size={16} />
               <span>1. Mapping Review</span>
               {data.summary.needs_review > 0 && (
-                <span className="rounded-full bg-warn-soft px-1.5 py-px text-[11px] font-bold text-warn">
+                <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${tab === "mapping" ? "bg-white text-pen" : "bg-warn-soft text-warn"}`}>
                   {data.summary.needs_review}
                 </span>
               )}
             </button>
             <button
               onClick={() => setTab("marks")}
-              className={`-mb-px flex items-center gap-2 rounded-t-md border px-4 py-2.5 text-sm font-semibold transition-ui ${
+              className={`flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold transition-all ${
                 tab === "marks"
-                  ? "border-line border-b-surface border-t-2 border-t-pen bg-surface text-ink"
-                  : "border-transparent text-mute hover:bg-hover hover:text-brown"
+                  ? "bg-pen text-on-pen shadow-sm"
+                  : "text-mute hover:bg-hover hover:text-ink"
               }`}
             >
               <IconCheckCircle size={16} />
               <span>2. Marks & Finalize</span>
               {data.items.length > 0 && (
-                <span className="rounded-full bg-pen-soft px-1.5 py-px text-[11px] font-bold text-pen">
+                <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${tab === "marks" ? "bg-white text-pen" : "bg-pen-soft text-pen"}`}>
                   {data.items.filter((i) => i.status === "APPROVED").length}/{data.questions.length}
                 </span>
               )}
@@ -1013,7 +1013,7 @@ function MarksTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<vo
         <div className="flex items-center gap-3">
           <PenScore got={total} max={max} />
           <div>
-            <p className="font-display text-base font-semibold text-ink">
+            <p className="text-base font-bold text-ink">
               {ev.status === "FINALIZED" ? "Final Examination Score" : "Current Assessment Marks"}
             </p>
             <p className="text-xs text-mute">
@@ -1162,12 +1162,12 @@ function MarksTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<vo
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <span
-                        className="flex h-8 min-w-8 items-center justify-center rounded-full border-2 border-pen/60 px-1.5 font-display text-sm font-semibold text-pen"
+                        className="flex h-8 min-w-8 items-center justify-center rounded-full border-2 border-pen/60 px-1.5 font-bold text-xs text-pen"
                         title={`Question ${q.display_number}`}
                       >
                         {q.display_number}
                       </span>
-                      <span className="font-doc text-xs italic text-mute">
+                      <span className="text-xs font-semibold text-mute">
                         [{fmt(q.max_marks)} marks]
                       </span>
                       {q.section && (
@@ -1200,7 +1200,7 @@ function MarksTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<vo
                     </div>
                   </div>
 
-                  <div className="ruled rounded-md border border-line bg-surface p-3.5 pl-14 space-y-1">
+                  <div className="rounded-lg border border-line bg-surface p-3.5 space-y-1">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-mute">
                       Student's Answer (Transcribed)
                     </p>

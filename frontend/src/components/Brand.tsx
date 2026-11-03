@@ -27,3 +27,18 @@ export function BrandLabel({ size = "md", onDark = true }: { size?: "md" | "lg";
     </span>
   );
 }
+
+/** Sidebar brand: the logo badge centred above "Eval AI" and the tagline. */
+export function SidebarBrand() {
+  return (
+    <div className="flex flex-col items-center justify-center text-center py-2 select-none">
+      <BrandMark className="mb-3 h-14 w-14 drop-shadow-[0_6px_14px_rgba(59,130,246,0.55)] transition-transform duration-300 hover:scale-105" />
+      <span className="text-2xl font-extrabold tracking-tight text-white font-display">
+        Eval AI
+      </span>
+      <span className="mt-1 text-[9px] font-bold uppercase tracking-[0.22em] text-white/70">
+        Assess · Measure · Improve
+      </span>
+    </div>
+  );
+}

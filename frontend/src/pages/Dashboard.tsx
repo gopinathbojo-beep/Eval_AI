@@ -1,300 +1,198 @@
-import { useToast } from "../components/Toast";
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { useToast } from "../components/Toast";
 import { useApi } from "../hooks/useApi";
 import { downloadFile } from "../api/client";
 import type { Dashboard as D } from "../types";
-import { LinkButton,
-  Button,
-  Card,
-  Empty,
-  ErrorPanel,
-  Loading,
-  Stat,
-  StatusBadge,
-} from "../components/ui";
+import { Empty, ErrorPanel, Loading, StatusBadge } from "../components/ui";
 import {
-  IconClasses,
-  IconSubjects,
-  IconExam,
-  IconStudents,
-  IconClock,
   IconCheckCircle,
+  IconClock,
   IconDownload,
-  IconPlus,
-  IconChevronRight,
-  IconFileText,
-} from "../components/Icons";
+  IconExam,
+    IconPlus,
+  } from "../components/Icons";
 import { useAuth } from "../context/Auth";
 
+/** School Management dashboard matching the modern Eval AI layout. */
 export default function Dashboard() {
   const { teacher } = useAuth();
   const { data, error, loading } = useApi<D>("/dashboard");
   const toast = useToast();
+  const nav = useNavigate();
   const [downloading, setDownloading] = useState(false);
 
-  const handleDownloadMarksheet = async () => {
+  const downloadMarksheet = async () => {
     try {
       setDownloading(true);
-      await downloadFile("/reports/marksheet", "ADEM_Student_Marksheet.xlsx");
+      await downloadFile("/reports/marksheet", "Student_Marksheet.xlsx");
       toast("Marksheet downloaded.");
-    } catch (err: any) {
-      toast(err.message || "Failed to download marksheet.", "mark");
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Failed to download marksheet.", "mark");
     } finally {
       setDownloading(false);
     }
   };
 
-  if (loading) return <Loading text="Loading your dashboard overview..." />;
+  if (loading) return <Loading text="Loading dashboard..." />;
   if (error || !data) return <ErrorPanel error={error} />;
 
   return (
-    <div className="space-y-6">
-      {/* Welcome & Overview Header */}
-      <div className="ruled relative flex flex-col gap-4 overflow-hidden rounded-lg border border-line bg-surface py-7 pl-16 pr-6 shadow-card sm:flex-row sm:items-center sm:justify-between">
-        <div className="space-y-2">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-mark/80">Today&rsquo;s marking</p>
-          <h1 className="font-display text-3xl font-semibold text-ink">
-            Welcome back{teacher?.name ? `, ${teacher.name}` : ""}
-          </h1>
-          <p className="text-sm text-mute">
-            {data.pending_evaluations > 0 ? (
-              <>
-                <span className="hl font-semibold text-ink">{data.pending_evaluations} scripts</span> are waiting for your
-                review.
-              </>
-            ) : (
-              "Every script is marked. Your desk is clear."
-            )}
-          </p>
+    <div className="w-full">
+      {/* Giant Floating White Canvas */}
+      <div className="glass-canvas p-5 sm:p-7 lg:p-8 space-y-7 stagger">
+        
+        {/* Welcome row & Action buttons */}
+        <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h1 className="aurora-text text-2xl sm:text-[2rem] font-bold tracking-tight">
+              Welcome{teacher?.name ? `, ${teacher.name}` : ""}
+            </h1>
+            <p className="mt-1.5 text-sm sm:text-base font-medium text-blue-800/80">
+              An overview of your school's exams and evaluated answer sheets
+            </p>
+          </div>
+          
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Export marksheet button */}
+            <button
+              type="button"
+              disabled={downloading}
+              onClick={downloadMarksheet}
+              className="inline-flex items-center gap-2 rounded-full border border-slate-200/90 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 hover:border-slate-300 active:scale-[0.98] transition-all cursor-pointer disabled:opacity-50"
+            >
+              <IconDownload size={16} className="text-slate-600" />
+              <span>{downloading ? "Exporting..." : "Export marksheet"}</span>
+            </button>
+
+            {/* Create Exam button */}
+            <Link
+              to="/exams/new"
+              className="inline-flex items-center gap-2 rounded-full aurora-fill px-6 py-2.5 text-sm font-semibold text-white shadow-md shadow-indigo-500/25 active:scale-[0.98] transition-all"
+            >
+              <IconPlus size={16} />
+              <span>Create Exam</span>
+            </Link>
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2.5">
-          <Button
-            variant="secondary"
-            busy={downloading}
-            onClick={handleDownloadMarksheet}
-            icon={<IconDownload size={16} />}
-          >
-            Export Marksheet (.xlsx)
-          </Button>
-          <LinkButton to="/exams/new" variant="primary">
-              Create Exam
-            </LinkButton>
-        </div>
-      </div>
 
-      {/* Operational Metrics Cards */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <Stat
-          label="Classes"
-          value={data.total_classes}
-          icon={<IconClasses size={20} />}
-          hint="Assigned classes"
-        />
-        <Stat
-          label="Subjects"
-          value={data.total_subjects}
-          icon={<IconSubjects size={20} />}
-          hint="Active subjects"
-        />
-        <Stat
-          label="Total Exams"
-          value={data.total_exams}
-          icon={<IconExam size={20} />}
-          hint="Created assessments"
-        />
-        <Stat
-          label="Students"
-          value={data.total_students}
-          icon={<IconStudents size={20} />}
-          hint="Registered students"
-        />
-        <Stat
-          label="Pending Review"
-          value={data.pending_evaluations}
-          tone={data.pending_evaluations > 0 ? "warn" : "mute"}
-          icon={<IconClock size={20} />}
-          hint={data.pending_evaluations > 0 ? "Awaiting review" : "Up to date"}
-        />
-        <Stat
-          label="Completed"
-          value={data.completed_evaluations}
-          tone="ok"
-          icon={<IconCheckCircle size={20} />}
-          hint="Finalized evaluations"
-        />
-      </div>
-
-      {/* Quick Action Shortcuts */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Link
-          to="/exams/new"
-          className="group relative flex items-center gap-3.5 rounded-lg border border-line bg-surface p-3.5 shadow-card transition-ui hover:-translate-y-0.5 hover:border-pen/40"
-        >
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-pen/10 text-pen group-hover:bg-pen group-hover:text-on-pen transition-colors">
-            <IconPlus size={18} />
-          </div>
-          <div className="min-w-0">
-            <p className="text-sm font-semibold text-ink group-hover:text-brown transition-colors">New Examination</p>
-            <p className="text-xs text-mute truncate">Setup paper, key & criteria</p>
-          </div>
-        </Link>
-
-        <Link
-          to="/exams"
-          className="group relative flex items-center gap-3.5 rounded-lg border border-line bg-surface p-3.5 shadow-card transition-ui hover:-translate-y-0.5 hover:border-pen/40"
-        >
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-ok/10 text-ok group-hover:bg-ok group-hover:text-surface transition-colors">
-            <IconFileText size={18} />
-          </div>
-          <div className="min-w-0">
-            <p className="text-sm font-semibold text-ink group-hover:text-brown transition-colors">Upload Answer Sheets</p>
-            <p className="text-xs text-mute truncate">Add scans for reading</p>
-          </div>
-        </Link>
-
-        <Link
-          to="/evaluations"
-          className="group relative flex items-center gap-3.5 rounded-lg border border-line bg-surface p-3.5 shadow-card transition-ui hover:-translate-y-0.5 hover:border-pen/40"
-        >
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-warn/10 text-warn group-hover:bg-warn group-hover:text-surface transition-colors">
-            <IconClock size={18} />
-          </div>
-          <div className="min-w-0">
-            <p className="text-sm font-semibold text-ink group-hover:text-brown transition-colors">Pending Evaluations</p>
-            <p className="text-xs text-mute truncate">{data.pending_evaluations} submissions to review</p>
-          </div>
-        </Link>
-
-        <Link
-          to="/results"
-          className="group relative flex items-center gap-3.5 rounded-lg border border-line bg-surface p-3.5 shadow-card transition-ui hover:-translate-y-0.5 hover:border-pen/40"
-        >
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-pen-soft text-pen group-hover:bg-pen group-hover:text-on-pen transition-colors">
-            <IconCheckCircle size={18} />
-          </div>
-          <div className="min-w-0">
-            <p className="text-sm font-semibold text-ink group-hover:text-brown transition-colors">Class Marksheets</p>
-            <p className="text-xs text-mute truncate">View score distributions</p>
-          </div>
-        </Link>
-      </div>
-
-      {/* Recent Activity Sections */}
-      <div className="grid gap-8 lg:grid-cols-2">
-        {/* Recent Exams */}
-        <section className="space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <h2 className="font-display text-xl font-semibold text-ink">Recent Exams</h2>
-              <span className="rounded-full bg-sunken px-2 py-0.5 text-xs font-medium text-mute">
-                {data.recent_exams.length}
-              </span>
+        {/* 3 Stat Cards */}
+        <div className="stagger grid grid-cols-1 gap-5 sm:grid-cols-3">
+          
+          {/* Card 1: Total Exams */}
+          <div className="lift-card group relative flex flex-col justify-between overflow-hidden rounded-3xl bg-white/80 p-5 sm:p-6 shadow-[0_8px_24px_-18px_rgba(30,64,175,0.4)]">
+            <div>
+              <div className="flex items-center justify-between text-slate-500">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">Total Exams</span>
+                </div>
+                <span className="corner-icon flex h-9 w-9 items-center justify-center rounded-full bg-blue-50 text-blue-600"><IconExam size={18} /></span>
+              </div>
+              <p className="mt-3 text-[2rem] font-bold leading-none tracking-tight tabular-nums text-slate-900">
+                {data.total_exams}
+              </p>
             </div>
+            <p className="mt-3 text-xs font-medium text-slate-500">
+              Active exams in workspace
+            </p>
+          </div>
+
+          {/* Card 3: Pending Review */}
+          <div className="lift-card group relative flex flex-col justify-between overflow-hidden rounded-3xl bg-white/80 p-5 sm:p-6 shadow-[0_8px_24px_-18px_rgba(30,64,175,0.4)]">
+            <div>
+              <div className="flex items-center justify-between text-slate-500">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">Pending Review</span>
+                </div>
+                <span className="corner-icon flex h-9 w-9 items-center justify-center rounded-full bg-amber-50 text-amber-500"><IconClock size={18} /></span>
+              </div>
+              <p className="mt-3 text-[2rem] font-bold leading-none tracking-tight tabular-nums text-amber-500">
+                {data.pending_review}
+              </p>
+            </div>
+            <p className="mt-3 text-xs font-medium text-slate-500">
+              {data.pending_review ? "Sheets flagged for a check" : "Nothing to review"}
+            </p>
+          </div>
+
+          {/* Card 4: Evaluated Sheets */}
+          <div className="lift-card group relative flex flex-col justify-between overflow-hidden rounded-3xl bg-white/80 p-5 sm:p-6 shadow-[0_8px_24px_-18px_rgba(30,64,175,0.4)]">
+            <div>
+              <div className="flex items-center justify-between text-slate-500">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">Evaluated Sheets</span>
+                </div>
+                <span className="corner-icon flex h-9 w-9 items-center justify-center rounded-full bg-emerald-50 text-emerald-500"><IconCheckCircle size={18} /></span>
+              </div>
+              <p className="mt-3 text-[2rem] font-bold leading-none tracking-tight tabular-nums text-emerald-500">
+                {data.evaluated_sheets}
+              </p>
+            </div>
+            <p className="mt-3 text-xs font-medium text-slate-500">
+              Completed answer sheets
+            </p>
+          </div>
+
+        </div>
+
+        {/* Recent Exams Section */}
+        <section className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-bold text-blue-950">Recent exams</h2>
             <Link
               to="/exams"
-              className="flex items-center gap-1 text-xs font-medium text-pen hover:underline"
+              className="group inline-flex items-center gap-1 text-sm font-semibold text-blue-600 hover:text-blue-700 transition-colors"
             >
               <span>View all</span>
-              <IconChevronRight size={14} />
+              <span className="transition-transform group-hover:translate-x-0.5">â†’</span>
             </Link>
           </div>
 
-          {data.recent_exams.length === 0 ? (
+          {!data.recent_exams.length ? (
             <Empty
-              title="No exams created yet"
-              hint="Create your first exam to get started."
-              icon={<IconExam size={24} />}
+              title="No exams yet"
+              hint="Create an exam and upload its question paper and answer key."
               action={
-                <LinkButton to="/exams/new" variant="primary" small>
-                    Create Exam
-                  </LinkButton>
+                <Link
+                  to="/exams/new"
+                  className="inline-flex items-center gap-2 rounded-full bg-blue-600 hover:bg-blue-700 px-5 py-2 text-sm font-semibold text-white shadow-sm"
+                >
+                  <IconPlus size={16} /> Create exam
+                </Link>
               }
             />
           ) : (
-            <Card className="divide-y divide-dashed divide-line overflow-hidden">
-              {data.recent_exams.map((e) => (
-                <Link
-                  key={e.id}
-                  to={`/exams/${e.id}`}
-                  className="flex items-center justify-between p-4 transition-ui hover:bg-hover group"
-                >
-                  <div className="min-w-0 flex-1 pr-4">
-                    <p className="truncate font-semibold text-sm text-ink group-hover:text-brown transition-colors">
-                      {e.name}
-                    </p>
-                    <div className="mt-1 flex items-center gap-2 text-xs text-mute">
-                      <span>{e.class_name}</span>
-                      <span>•</span>
-                      <span>{e.subject_name}</span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3 shrink-0">
-                    <StatusBadge status={e.status} />
-                    <IconChevronRight size={16} className="text-mute/60 group-hover:text-brown transition-colors" />
-                  </div>
-                </Link>
-              ))}
-            </Card>
-          )}
-        </section>
-
-        {/* Recent Evaluations */}
-        <section className="space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <h2 className="font-display text-xl font-semibold text-ink">Recent Evaluations</h2>
-              <span className="rounded-full bg-sunken px-2 py-0.5 text-xs font-medium text-mute">
-                {data.recent_evaluations.length}
-              </span>
+            <div className="overflow-hidden rounded-2xl border border-white bg-white/90 shadow-[0_10px_30px_-20px_rgba(30,64,175,0.35)]">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm">
+                  <thead>
+                    <tr className="border-b border-blue-100/70 bg-blue-50/40 text-xs font-bold uppercase tracking-wider text-blue-800">
+                      <th className="px-6 py-3.5">Exam</th>
+                      <th className="px-6 py-3.5">Class</th>
+                      <th className="px-6 py-3.5">Subject</th>
+                      <th className="px-6 py-3.5">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="stagger divide-y divide-blue-50">
+                    {data.recent_exams.map((e) => (
+                      <tr
+                        key={e.id}
+                        onClick={() => nav(`/exams/${e.id}`)}
+                        className="cursor-pointer transition-colors hover:bg-blue-50/60"
+                      >
+                        <td className="px-6 py-4 font-semibold text-blue-950">{e.name}</td>
+                        <td className="px-6 py-4 font-medium text-slate-600">{e.class_name}</td>
+                        <td className="px-6 py-4 font-medium text-slate-600">{e.subject_name}</td>
+                        <td className="px-6 py-4"><StatusBadge status={e.status} withDot /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
-            <Link
-              to="/evaluations"
-              className="flex items-center gap-1 text-xs font-medium text-pen hover:underline"
-            >
-              <span>View all</span>
-              <IconChevronRight size={14} />
-            </Link>
-          </div>
-
-          {data.recent_evaluations.length === 0 ? (
-            <Empty
-              title="No answer sheets evaluated yet"
-              hint="Open an existing exam to upload student answer sheets for reading."
-              icon={<IconFileText size={24} />}
-            />
-          ) : (
-            <Card className="divide-y divide-dashed divide-line overflow-hidden">
-              {data.recent_evaluations.map((e) => {
-                const targetLink =
-                  e.status === "FINALIZED" ? `/results/${e.id}` : `/evaluations/${e.id}`;
-                return (
-                  <Link
-                    key={e.id}
-                    to={targetLink}
-                    className="flex items-center justify-between p-4 transition-ui hover:bg-hover group"
-                  >
-                    <div className="min-w-0 flex-1 pr-4">
-                      <div className="flex items-center gap-2">
-                        <p className="truncate font-semibold text-sm text-ink group-hover:text-brown transition-colors">
-                          {e.student.name}
-                        </p>
-                        <span className="rounded bg-sunken px-1.5 py-px text-[11px] font-mono text-mute">
-                          {e.student.roll_number}
-                        </span>
-                      </div>
-                      <p className="mt-1 truncate text-xs text-mute">{e.exam_name}</p>
-                    </div>
-                    <div className="flex items-center gap-3 shrink-0">
-                      <StatusBadge status={e.status} />
-                      <IconChevronRight size={16} className="text-mute/60 group-hover:text-brown transition-colors" />
-                    </div>
-                  </Link>
-                );
-              })}
-            </Card>
           )}
         </section>
+
       </div>
     </div>
   );

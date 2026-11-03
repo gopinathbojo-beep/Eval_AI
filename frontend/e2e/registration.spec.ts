@@ -1,199 +1,115 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
-async function answer(page: import("@playwright/test").Page, value: string) {
-  await page.locator("input").fill(value);
+/** Answer the current chat question with the text input. */
+async function answer(page: Page, value: string) {
+  const question = page.locator("#chat-question");
+  const asked = (await question.count()) ? await question.innerText() : "";
+  await page.getByLabel("Registration conversation").locator("form input").last().fill(value);
   await page.getByRole("button", { name: "Send", exact: true }).click();
+  // the next question (or a validation message) must be on screen before the next answer is typed
+  await expect
+    .poll(async () => (await page.getByRole("alert").count()) > 0 ||
+      !(await question.count()) || (await question.innerText()) !== asked)
+    .toBe(true);
 }
 
-test("mobile landing and registration support edits, password validation and server errors", async ({
-  page,
-}) => {
+const unique = (prefix: string) => `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1e6)}@example.com`;
+
+/** Account chat (original questions), then the original profile chat in onboarding. */
+async function account(page: Page, name: string, email: string) {
+  await answer(page, name);
+  await answer(page, email);
+  await answer(page, "School-password-123");
+  await answer(page, "School-password-123");
+  await page.getByRole("button", { name: "Create account", exact: true }).click();
+  await expect(page).toHaveURL(/\/onboarding$/);
+}
+
+test("mobile landing: Login first, Register here, original questions, edits, validation and server errors", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
-  await expect(
-    page.getByRole("link", { name: "Login", exact: true }),
-  ).toBeVisible();
-  await page.getByRole("link", { name: "Register", exact: true }).click();
-  await page.getByRole("button", { name: /^Parent/ }).click();
+  await expect(page.getByRole("link", { name: "Login", exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "Register here" }).click();
+  await expect(page).toHaveURL(/\/register$/);
+  await page.getByRole("link", { name: /^Parent/ }).click();
+  await expect(page).toHaveURL(/\/register\/parent$/);
+
   await answer(page, "Original name");
-  await page
-    .getByRole("button", { name: "Edit Full name", exact: true })
-    .click();
-  await expect(page.locator("input")).toHaveValue("Original name");
-  await answer(page, "Updated name");
-  await answer(page, "new-parent@example.com");
+  await page.getByRole("button", { name: "Edit Full name", exact: true }).click();
+  await expect(page.getByLabel("Registration conversation").locator("form input").last()).toHaveValue("Original name");
+  await answer(page, "R2D2");  // digits are not a name
+  await expect(page.getByRole("alert").getByText("can contain only letters", { exact: false })).toBeVisible();
+  await answer(page, "Updated Name");
+  await answer(page, "not-an-email");
+  await expect(page.getByRole("alert").getByText("Enter a valid email address", { exact: false })).toBeVisible();
+  await answer(page, unique("parent"));
   await answer(page, "short");
-  await expect(
-    page.getByRole("alert").getByText("Use at least 10 characters", { exact: false }),
-  ).toBeVisible();
-  await answer(page, "my-private-password");
-  await expect(
-    page.getByText("my-private-password", { exact: true }),
-  ).toHaveCount(0);
-  await answer(page, "different-password");
-  await expect(
-    page.getByText("That doesn’t match", { exact: false }),
-  ).toBeVisible();
-  await answer(page, "my-private-password");
+  await expect(page.getByRole("alert").getByText("at least 10 characters", { exact: false })).toBeVisible();
+  await answer(page, "My-private-password1");
+  await expect(page.getByText("My-private-password1", { exact: true })).toHaveCount(0);
+  await answer(page, "Different-password1");
+  await expect(page.getByText("That doesn’t match", { exact: false })).toBeVisible();
+  await answer(page, "My-private-password1");
   await page.route("**/api/auth/register", (route) =>
-    route.fulfill({
-      status: 409,
-      contentType: "application/json",
-      body: JSON.stringify({
-        code: "EMAIL_EXISTS",
-        message: "An account with this email already exists. Sign in instead.",
-      }),
-    }),
-  );
-  await page
-    .getByRole("button", { name: "Create account", exact: true })
-    .click();
-  await expect(
-    page.getByText("An account with this email already exists.", {
-      exact: false,
-    }),
-  ).toBeVisible();
-  expect(
-    await page.evaluate(
-      () => document.documentElement.scrollWidth <= window.innerWidth,
-    ),
-  ).toBe(true);
-  await page.screenshot({
-    path: test.info().outputPath("mobile-registration.png"),
-    fullPage: true,
-  });
+    route.fulfill({ status: 409, contentType: "application/json",
+      body: JSON.stringify({ code: "EMAIL_EXISTS", message: "An account with this email already exists. Sign in instead." }) }));
+  await page.getByRole("button", { name: "Create account", exact: true }).click();
+  await expect(page.getByText("An account with this email already exists. Edit the email", { exact: false })).toBeVisible();
+  await expect(page.getByText("Updated Name", { exact: true })).toBeVisible();   // answers are kept
+  await expect(page.getByRole("button", { name: "Try again" })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 
-test("school registers without approval and provisions a teacher", async ({
-  page,
-  browser,
-}) => {
+test("school registers with the original questions and gets the school tabs", async ({ page }) => {
   await page.goto("/register");
-  await page.getByRole("button", { name: /^School management/ }).click();
-  await page.screenshot({
-    path: test.info().outputPath("registration-chat.png"),
-    fullPage: true,
-  });
+  await page.getByRole("link", { name: /^School Management/ }).click();
+  await account(page, "School Manager", unique("school"));
   await answer(page, "School Manager");
-  await answer(page, "school-browser@example.com");
-  await answer(page, "school-password-123");
-  await answer(page, "school-password-123");
-  await page
-    .getByRole("button", { name: "Create account", exact: true })
-    .click();
-  await expect(page).toHaveURL(/\/onboarding$/);
-  await answer(page, "School Manager");
-  await answer(page, "9876543210");
-  await answer(page, "New CBSE School");
-  await answer(page, "School Road");
-  await answer(page, "Chennai");
-  await answer(page, "Tamil Nadu");
-  await answer(page, "600001");
-  await page.getByRole("button", { name: "Skip for now" }).click();
-  await page.getByRole("button", { name: "Skip for now" }).click();
+  await answer(page, "12345");
+  await expect(page.getByRole("alert").getByText("10-digit phone number", { exact: false })).toBeVisible();
+  await answer(page, "044 2345 6789");
+  await page.getByRole("button", { name: "Skip for now" }).click();   // CBSE affiliation number (optional)
+  // the school name and address are one card: all six fields, then Submit Address
+  await expect(page.getByText("School address details", { exact: true })).toBeVisible();
+  await page.getByLabel("School name").fill("New CBSE School");
+  await page.getByLabel("Building / Institution Name").fill("Green Valley Campus");
+  await page.getByLabel("Locality / Area").fill("Anna Nagar");
+  await page.getByLabel("City").fill("Chennai");
+  await page.getByLabel("State").fill("Tamil Nadu");
+  await page.getByLabel("PIN Code").fill("60001");
+  await page.getByRole("button", { name: "Submit Address" }).click();
+  await expect(page.getByRole("alert").getByText("6-digit PIN code", { exact: false })).toBeVisible();
+  await page.getByLabel("PIN Code").fill("600001");
+  await page.getByRole("button", { name: "Submit Address" }).click();
+  await expect(page.getByText("Green Valley Campus, Anna Nagar, Chennai, Tamil Nadu - 600001", { exact: false })).toBeVisible();
+  await page.screenshot({ path: "C:/Users/Me/AppData/Local/Temp/claude/d--Eval-AI/efde37a7-8b85-4ea1-9b9e-506588af7557/scratchpad/shots/school-address-card.png" });
+  await answer(page, "Dr. Lakshmi Rao");            // principal: mandatory
   await page.getByRole("button", { name: "Open my workspace" }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
-  const c = await page.request.post("/api/classes", {
-    headers: { "X-Requested-With": "EvalAI" },
-    data: { std: "10", section: "A" },
-  });
-  expect(c.status()).toBe(201);
-  const s = await page.request.post("/api/subjects", {
-    headers: { "X-Requested-With": "EvalAI" },
-    data: { name: "English" },
-  });
-  expect(s.status()).toBe(201);
-  await page.goto("/management");
-  await page.getByRole("button", { name: "Add teacher", exact: true }).click();
-  await page.getByLabel("Teacher name", { exact: true }).fill("School Teacher");
-  await page
-    .getByLabel("Email", { exact: true })
-    .fill("school-teacher@example.com");
-  await page
-    .getByLabel("Temporary password", { exact: true })
-    .fill("temporary-password-123");
-  await page
-    .getByRole("button", { name: "Add assignment", exact: true })
-    .click();
-  await page.getByRole("button", { name: "Save teacher", exact: true }).click();
-  await expect(
-    page.getByText("school-teacher@example.com", { exact: true }),
-  ).toBeVisible();
-  await page.screenshot({
-    path: test.info().outputPath("school-management.png"),
-    fullPage: true,
-  });
-  const context = await browser.newContext();
-  const teacher = await context.newPage();
-  await teacher.goto("/login");
-  await teacher.getByLabel("Email address").fill("school-teacher@example.com");
-  await teacher
-    .getByLabel("Password", { exact: true })
-    .fill("temporary-password-123");
-  await teacher.getByRole("button", { name: "Sign in", exact: true }).click();
-  await expect(teacher).toHaveURL(/\/account$/);
-  await teacher
-    .getByLabel("Current password", { exact: false })
-    .fill("temporary-password-123");
-  await teacher
-    .getByLabel("New password", { exact: true })
-    .fill("updated-password-123");
-  await teacher
-    .getByLabel("Confirm new password", { exact: true })
-    .fill("updated-password-123");
-  await teacher.getByRole("button", { name: "Update password" }).click();
-  await expect(
-    teacher.getByText("Password updated.", { exact: false }),
-  ).toBeVisible();
-  await teacher
-    .getByRole("link", { name: "Open workspace", exact: true })
-    .click();
-  await expect(teacher).toHaveURL(/\/dashboard$/);
-  await teacher.goto("/students");
-  await expect(
-    teacher.getByRole("heading", { name: "Assigned students" }),
-  ).toBeVisible();
-  await expect(
-    teacher.getByRole("button", { name: "Add Student" }),
-  ).toHaveCount(0);
-  await context.close();
+  const nav = page.getByRole("navigation", { name: "School" });
+  for (const tab of ["Dashboard", "Exams", "Students", "Student Report", "QP & Answer Key"])
+    await expect(nav.getByRole("link", { name: tab, exact: true })).toBeVisible();
+  const me = await (await page.request.get("/api/auth/me")).json();
+  expect(me.role).toBe("MANAGEMENT");
+  expect(me.profile.principal_name).toBe("Dr. Lakshmi Rao");
+  expect(me.profile.address).toBe("Green Valley Campus, Anna Nagar, Chennai, Tamil Nadu - 600001");
+  expect(me.profile.locality).toBe("Anna Nagar");
+  await page.goto("/management");   // teachers were retired
+  await expect(page).toHaveURL(/\/dashboard$/);
 });
 
-test("parent registers with one child and edits the private family profile", async ({
-  page,
-}) => {
-  await page.goto("/register");
-  await page.getByRole("button", { name: /^Parent/ }).click();
-  await answer(page, "Parent User");
-  await answer(page, "parent-browser@example.com");
-  await answer(page, "parent-password-123");
-  await answer(page, "parent-password-123");
-  await page
-    .getByRole("button", { name: "Create account", exact: true })
-    .click();
-  await expect(page).toHaveURL(/\/onboarding$/);
-  await answer(page, "Parent User");
+test("parent registers with the original questions and reaches the family dashboard", async ({ page }) => {
+  await page.goto("/register/parent");
+  await account(page, "Meena Raman", unique("parent"));
+  await answer(page, "Meena Raman");
   await answer(page, "9876543210");
-  await answer(page, "Child One");
-  await page.getByRole("button", { name: "Class 12", exact: true }).click();
-  await page.getByRole("button", { name: "Skip for now" }).click();
+  await answer(page, "Arun Raman");
+  await page.getByRole("button", { name: "Class 12" }).click();
+  await page.getByRole("button", { name: "Skip for now" }).click();   // child's school (optional)
   await page.getByRole("button", { name: "Open my workspace" }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
-  await expect(
-    page.getByRole("link", { name: "School management", exact: true }),
-  ).toHaveCount(0);
-  await page.goto("/family");
-  await page
-    .getByLabel("Child's full name", { exact: true })
-    .fill("Child Updated");
-  await page.getByRole("button", { name: "Save profile", exact: true }).click();
-  await expect(page.getByText("Profile saved.", { exact: true })).toBeVisible();
-  await page.screenshot({
-    path: test.info().outputPath("parent-profile.png"),
-    fullPage: true,
-  });
-  const students = await page.request.get("/api/students");
-  expect((await students.json()).map((s: { name: string }) => s.name)).toEqual([
-    "Child Updated",
-  ]);
+  const me = await (await page.request.get("/api/auth/me")).json();
+  expect(me.role).toBe("PARENT");
+  expect(me.profile.child_name).toBe("Arun Raman");
+  await expect(page.getByRole("navigation", { name: "Family" }).getByRole("link", { name: "My child & profile" })).toBeVisible();
 });

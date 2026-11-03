@@ -290,14 +290,14 @@ def test_download_evaluation_report_auth_and_isolation(client, auth):
             other_teacher = Teacher(
                 name="Other Teacher",
                 email="other@school.org",
-                password_hash=hash_password("password123"),
+                password_hash=hash_password("Password@123"),
             )
             db.add(other_teacher)
             db.commit()
     finally:
         db.close()
 
-    login_b = c.post("/api/auth/login", json={"email": "other@school.org", "password": "password123"}).json()
+    login_b = c.post("/api/auth/login", json={"email": "other@school.org", "password": "Password@123"}).json()
     h_b = {"Authorization": f"Bearer {login_b['access_token']}"}
 
     # An account without a completed workspace is gated before resource access.

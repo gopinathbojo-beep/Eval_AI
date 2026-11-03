@@ -95,7 +95,7 @@ def migrate_database():
 
 
 # Columns added after a table first shipped. create_all never alters an existing table, so they are added here.
-_ADDED_COLUMNS = {"teachers": {"role": "VARCHAR(20) NOT NULL DEFAULT 'TEACHER'", "workspace_id": "VARCHAR(36)", "must_change_password": "BOOLEAN NOT NULL DEFAULT 0", "is_active": "BOOLEAN NOT NULL DEFAULT 1", "google_sub": "VARCHAR(255)",
+_ADDED_COLUMNS = {"teachers": {"role": "VARCHAR(20) NOT NULL DEFAULT 'MANAGEMENT'", "workspace_id": "VARCHAR(36)", "must_change_password": "BOOLEAN NOT NULL DEFAULT 0", "is_active": "BOOLEAN NOT NULL DEFAULT 1", "google_sub": "VARCHAR(255)",
                                 "session_version": "INTEGER NOT NULL DEFAULT 0", "last_login_at": "DATETIME",
                                 "approval_status": "VARCHAR(20) NOT NULL DEFAULT 'APPROVED'",
                                 "registration_source": "VARCHAR(20) NOT NULL DEFAULT 'ADMIN'", "profile": "JSON",
@@ -110,6 +110,11 @@ _ADDED_COLUMNS["exams"].update({"standard_profile_id": "VARCHAR(40)", "standard_
 _ADDED_COLUMNS["exam_questions"]["structure"] = "JSON"
 for _table in ("question_paper_documents", "answer_key_documents"):
     _ADDED_COLUMNS[_table] = {"extraction": "JSON"}
+_ADDED_COLUMNS["answer_sheet_documents"] = {"uploaded_by_code": "VARCHAR(36)"}
+_ADDED_COLUMNS["uploader_codes"] = {"uploader_name": "VARCHAR(100)"}
+
+
+_RETIRED_COLUMNS = (("audit_logs", "ip"),)
 
 
 def _add_missing_columns() -> None:
@@ -125,3 +130,12 @@ def _add_missing_columns() -> None:
                     logging.getLogger("adem").info("Database: added %s.%s", table, name)
         if insp.has_table("teachers"):
             conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_teachers_google_sub ON teachers (google_sub)"))
+        # Columns earlier versions required that this one never writes: every insert would fail, so they go
+        # (the rows stay). audit_logs.ip broke every sign-in (NOT NULL, no default).
+        for table, column in _RETIRED_COLUMNS:
+            if insp.has_table(table) and column in {c["name"] for c in insp.get_columns(table)}:
+                for index in insp.get_indexes(table):
+                    if column in index["column_names"]:
+                        conn.execute(text(f"DROP INDEX IF EXISTS {index['name']}"))
+                conn.execute(text(f"ALTER TABLE {table} DROP COLUMN {column}"))
+                logging.getLogger("adem").info("Database: removed retired column %s.%s", table, column)

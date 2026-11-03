@@ -643,7 +643,7 @@ def test_workspace_isolation_on_standards_review(client, auth):
         json={
             "name": "Other parent",
             "email": f"cbse-{uuid.uuid4()}@example.com",
-            "password": "password-12345",
+            "password": "Password-12345",
             "role": "PARENT",
         },
     )
@@ -652,7 +652,7 @@ def test_workspace_isolation_on_standards_review(client, auth):
         "/api/auth/login",
         json={
             "email": outsider.json()["teacher"]["email"],
-            "password": "password-12345",
+            "password": "Password-12345",
         },
     )
     token = {"Authorization": "Bearer " + login.json()["access_token"]}
@@ -731,7 +731,7 @@ def test_worker_no_longer_blocks_on_cbse_pattern_checks(client, auth):
         assert db.query(EvaluationItem).filter_by(evaluation_id=ev_id).first()
 
 
-@pytest.mark.parametrize("role", ["MANAGEMENT", "PARENT", "TEACHER"])
+@pytest.mark.parametrize("role", ["MANAGEMENT", "PARENT"])
 def test_full_upload_pipeline_and_reviewed_scheme_grading(
     client, auth, monkeypatch, role
 ):
@@ -747,13 +747,13 @@ def test_full_upload_pipeline_and_reviewed_scheme_grading(
             json={
                 "name": "Board parent",
                 "email": email,
-                "password": "password-12345",
+                "password": "Password-12345",
                 "role": "PARENT",
             },
         )
         assert result.status_code == 201, result.text
         token = client.post(
-            "/api/auth/login", json={"email": email, "password": "password-12345"}
+            "/api/auth/login", json={"email": email, "password": "Password-12345"}
         ).json()["access_token"]
         auth = {"Authorization": "Bearer " + token}
         result = client.put(

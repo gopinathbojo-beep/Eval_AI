@@ -274,11 +274,12 @@ async def upload_answer_key(
     for k in db.query(AnswerKey).filter_by(exam_id=exam.id, is_active=True):
         k.is_active = False
     doc = _save(db, "answer-key", exam.id, data, ext, mime, file.filename or "upload")
-    if early:
-        # read it only once the question list is final, so it maps onto verified questions (see release_waiting_key)
-        doc.status, doc.stage = "WAITING", "Waiting for verified questions"
-    else:
+    if not early:
         set_state(exam, "ANSWER_KEY_UPLOADED")
+    # one by one: an early key waits, unread, until the question paper's questions are extracted
+    # (pipeline._build_questions then queues it)
+    if early and not db.query(ExamQuestion.id).filter_by(exam_id=exam.id).first():
+        doc.status, doc.stage = "WAITING", "Waiting for the question paper"
     db.flush()
     audit(
         db,
@@ -290,7 +291,7 @@ async def upload_answer_key(
         new=doc.original_filename,
     )
     db.commit()
-    if not early:
+    if doc.status != "WAITING":
         bg.add_task(submit, exam.id, process_document, "answer-key", doc.id)
     return doc_view(doc, "answer-key")
 
@@ -299,7 +300,7 @@ EARLY_KEY_STATES = ("DRAFT", "QUESTION_PAPER_UPLOADED", "QUESTIONS_EXTRACTED")
 
 
 def release_waiting_key(db: Session, exam, bg: BackgroundTasks) -> bool:
-    """Called once questions are verified: start reading an answer key that was uploaded early."""
+    """Called once questions are verified: move the exam on to its answer key (read early, or still waiting)."""
     doc = (
         db.query(AnswerKeyDocument)
         .filter_by(exam_id=exam.id, is_active=True, status="WAITING")
@@ -307,9 +308,9 @@ def release_waiting_key(db: Session, exam, bg: BackgroundTasks) -> bool:
     )
     if doc is None:
         if (
-            exam.standard_profile_id
-            and db.query(AnswerKeyDocument)
-            .filter_by(exam_id=exam.id, is_active=True, status="READY")
+            db.query(AnswerKeyDocument)
+            .filter_by(exam_id=exam.id, is_active=True)
+            .filter(AnswerKeyDocument.status.in_(("READY", "NEEDS_ATTENTION")))
             .first()
         ):
             set_state(exam, "ANSWER_KEY_UPLOADED")
@@ -379,12 +380,6 @@ async def upload_answer_sheet(
             .first()
         )
         if st is None:
-            if t.role == "TEACHER":
-                raise err(
-                    403,
-                    "MANAGEMENT_REQUIRED",
-                    "Ask school management to add this student to the roster.",
-                )
             st = Student(
                 class_id=exam.class_id,
                 name=student_name.strip(),
@@ -549,6 +544,7 @@ def list_unassigned_sheets(
     docs = (
         db.query(AnswerSheetDocument)
         .filter_by(exam_id=exam.id, is_active=True, student_id=None)
+        .filter(AnswerSheetDocument.status != "CAPTURING")  # an uploader is still photographing its pages
         .order_by(AnswerSheetDocument.uploaded_at)
         .all()
     )

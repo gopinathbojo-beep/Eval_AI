@@ -1,6 +1,5 @@
 from io import BytesIO
 from openpyxl import Workbook, load_workbook
-from app.formatter.common.k_level import suggest_k_level
 from .conftest import BEHAVIOUR, make_pdf, make_png
 
 
@@ -20,18 +19,18 @@ def _xlsx(rows) -> bytes:
 
 
 def _exam_ready_for_sheets(c, h, class_name):
-    """Question paper + answer key uploaded together; the key waits and starts by itself once questions are verified."""
+    """Question paper + answer key uploaded together; one by one: the key waits unread until the questions are
+    extracted (not verified), then is read and built."""
     cls = j(c.post("/api/classes", json={"name": class_name}, headers=h), 201)
     sub = j(c.post("/api/subjects", json={"name": f"Biology {class_name}"}, headers=h), 201)
     eid = j(c.post("/api/_test/legacy-exams", headers=h, json={"name": "Bulk", "academic_year": "2026-27", "class_id": cls["id"],
                                                    "subject_id": sub["id"], "exam_type": "Unit", "total_marks": 15}), 201)["id"]
     key = j(c.post(f"/api/exams/{eid}/answer-key", headers=h, files={"file": ("key.png", make_png(), "image/png")}), 202)
-    assert key["status"] == "WAITING"
+    assert key["status"] == "WAITING"                                                    # unread, no questions yet
     j(c.post(f"/api/exams/{eid}/question-paper", headers=h, files={"file": ("paper.pdf", make_pdf(2), "application/pdf")}), 202)
-    assert j(c.get(f"/api/exams/{eid}/answer-key", headers=h))["status"] == "WAITING"   # untouched while questions change
+    assert j(c.get(f"/api/exams/{eid}/answer-key", headers=h))["status"] == "READY"     # built before any verification
     j(c.post(f"/api/exams/{eid}/questions/accept-valid", headers=h), 200)
-    assert j(c.post(f"/api/exams/{eid}/questions/verify", headers=h), 200)["answer_key_started"] is True
-    assert j(c.get(f"/api/exams/{eid}/answer-key", headers=h))["status"] == "READY"
+    j(c.post(f"/api/exams/{eid}/questions/verify", headers=h), 200)
     ks = j(c.get(f"/api/exams/{eid}/answer-keys", headers=h))["keys"]
     assert len(ks) == 4 and all(k["exam_question_id"] for k in ks)          # mapped onto the verified questions
     k2 = next(k for k in ks if k["raw_question_number"] == "2")
@@ -168,29 +167,3 @@ def test_student_import_export(client, auth):
     assert p.status_code == 200 and p.content.startswith(b"%PDF")
 
 
-def test_k_level_suggestions():
-    assert suggest_k_level("Define osmosis.") == "K1"
-    assert suggest_k_level("Explain diffusion with an example.") == "K2"
-    assert suggest_k_level("Solve for x: 2x + 3 = 7") == "K3"
-    assert suggest_k_level("Evaluate (3/4)² × 8") == "K3"
-    assert suggest_k_level("Compare mitosis and meiosis.") == "K4"
-    assert suggest_k_level("Evaluate the impact of deforestation and justify your view.") == "K5"
-    assert suggest_k_level("Design an experiment to show transpiration.") == "K6"
-    assert suggest_k_level("Write a letter to the editor about pollution.") == "K6"
-    assert suggest_k_level("") is None
-
-
-def test_k_level_suggestion_reads_tamil_command_words():
-    """Tamil papers have no English verbs; without the Tamil words every question fell back to K1."""
-    from app import formatter
-    with formatter.use("tamil"):
-        assert suggest_k_level("அ) கல்வியின் சிறப்புகள் யாவை? (2)") == "K1"
-        assert suggest_k_level("அ) கீழ்க்கண்ட சொற்களின் எதிர்ச்சொற்களை எழுதுக. ஆ) பன்மை வடிவங்களை எழுதுக.") == "K1"
-        assert suggest_k_level("ஆ) இயற்கையை நாம் ஏன் பாதுகாக்க வேண்டும்?") == "K2"
-        assert suggest_k_level("படித்துப் புரிந்து விடையளித்தல் (3)") == "K2"
-        assert suggest_k_level("கீழ்க்காணும் சொற்களுக்குப் பன்மை வடிவம் எழுதுக.") == "K3"
-        assert suggest_k_level("கடிதம் எழுதுதல் (5) / நண்பருக்குக் கடிதம் எழுதுக.") == "K6"
-        assert suggest_k_level("கட்டுரை எழுதுதல் (5)") == "K6"
-        assert suggest_k_level("அவன் தயார் நிலையில் இருந்தான்.") == "K1"  # "யார்" inside "தயார்" is no question word
-    with formatter.use("english"):
-        assert suggest_k_level("கட்டுரை எழுதுதல்") == "K1"  # Tamil words only under a Tamil subject

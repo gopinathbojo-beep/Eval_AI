@@ -91,27 +91,9 @@ export interface ImportSummary {
   updated: number;
   errors: { row: number; reason: string }[];
 }
-export interface OutcomeRow {
-  key: string;
-  label: string;
-  questions: number;
-  max_marks: number;
-  scored?: number;
-  average_scored?: number;
-  percentage: number | null;
-}
-export interface Outcomes {
-  k_levels: OutcomeRow[];
-  course_outcomes: OutcomeRow[];
-}
-export interface OutcomeSummary extends Outcomes {
+export interface QuestionSummary {
   finalized_students: number;
-  students: (Outcomes & {
-    evaluation_id: string;
-    student_id: string;
-    name: string;
-    roll_number: string;
-  })[];
+  questions: { no: string; max: number | null; average: number; percentage: number | null; full: number; zero: number }[];
 }
 export type ExamStatus =
   | "DRAFT"
@@ -208,9 +190,6 @@ export interface Question {
   visuals?: VisualEvidence[];
   verification_status: "UNVERIFIED" | "VERIFIED" | "NEEDS_REVIEW";
   review_reason: string | null;
-  k_level?: string | null;
-  k_level_source?: "SUGGESTED" | "TEACHER" | null;
-  course_outcome?: string | null;
 }
 export interface SectionSummary {
   section: string;
@@ -407,8 +386,6 @@ export interface ResultRow {
   official_answer: string | null;
   feedback: string | null;
   status: string;
-  k_level?: string | null;
-  course_outcome?: string | null;
 }
 export interface ResultResponse {
   finalized: boolean;
@@ -418,7 +395,6 @@ export interface ResultResponse {
   maximum_marks: number;
   percentage: number;
   questions: ResultRow[];
-  outcomes?: Outcomes;
 }
 export interface AuditRow {
   id: string;
@@ -437,6 +413,10 @@ export interface Dashboard {
   total_students: number;
   pending_evaluations: number;
   completed_evaluations: number;
+  /** School cards. credits is null while credits are unlimited (no payment gateway yet). */
+  credits: number | null;
+  pending_review: number;
+  evaluated_sheets: number;
   recent_exams: Exam[];
   recent_evaluations: Evaluation[];
 }
@@ -479,7 +459,52 @@ export interface ReportTemplate {
   config: TemplateConfig;
 }
 export interface ReportCardTerm {
+  term: string;
   academic_year: string;
   exam_type: string;
   subjects: string[];
+}
+
+export interface CatalogSubject {
+  key: string;
+  name: string;
+  profiles: string[];
+}
+
+export interface UploaderCode {
+  id: string;
+  code: string;
+  label: string | null;
+  uploader_name: string | null;
+  is_active: boolean;
+  created_at: string | null;
+  uploads: number;
+}
+
+export interface UploaderSession {
+  exam: { id: string; name: string; class_name: string | null; subject: string | null; exam_date: string | null };
+  label: string | null;
+  uploader_name: string | null;
+  uploads: {
+    id: string; original_filename: string; status: string; stage: string | null; uploaded_at: string; pages: number;
+    /** typed for scanned sheets; null for bulk files (read from the sheet) */
+    roll_number?: string | null;
+    /** why a sheet is held for review (e.g. cover page roll number or page count differs) */
+    note?: string | null;
+  }[];
+}
+
+export interface StudentTerm {
+  term: string;
+  academic_year: string;
+  subjects: number;
+  finalized: number;
+}
+
+/** A sheet being scanned page by page (POST /uploader/sheets). */
+export interface ScanSheet {
+  id: string;
+  roll_number: string;
+  pages: number;
+  status: string;
 }

@@ -2,19 +2,18 @@ import { useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { downloadFile } from "../api/client";
 import { FilteredEmptyState, TablePagination, TableToolbar } from "../components/TableToolbar";
-import { Badge, Button, Card, Empty, ErrorPanel, Loading, MathView, PageHeader, PenScore, StatusBadge } from "../components/ui";
+import { Badge, Button, Card, Empty, ErrorPanel, Loading, MathView, PageCanvas, PageHeader, PenScore, StatusBadge } from "../components/ui";
 import { useApi } from "../hooks/useApi";
 import { useCrumbName } from "../context/Crumbs";
 import { useTableState } from "../hooks/useTableState";
 import type { Evaluation, ResultResponse } from "../types";
-import { OutcomeTables } from "../components/OutcomeTables";
-import { date, fmt, kLabel } from "../utils/format";
+import { date, fmt } from "../utils/format";
 
 export function EvaluationsList() {
   const { data, loading, error } = useApi<Evaluation[]>("/evaluations");
 
   return (
-    <div className="space-y-4">
+    <PageCanvas>
       <PageHeader
         title="Evaluations Queue"
         sub="Answer sheets being evaluated."
@@ -30,11 +29,11 @@ export function EvaluationsList() {
             <Link
               key={e.id}
               to={e.status === "FINALIZED" ? `/results/${e.id}` : `/evaluations/${e.id}`}
-              className="group block rounded-lg border border-line bg-surface p-4 shadow-soft transition-all hover:border-pen/40 hover:shadow-card"
+              className="group block rounded-lg border border-line bg-surface p-4 shadow-sm rounded-2xl transition-all hover:border-pen/40 hover:shadow-card"
             >
               <div className="flex items-start justify-between gap-2">
                 <div>
-                  <p className="font-semibold text-ink group-hover:text-brown transition-colors">
+                  <p className="font-semibold text-ink group-hover:text-pen transition-colors">
                     {e.student.name}
                   </p>
                   <p className="font-mono text-xs text-mute">Roll: {e.student.roll_number}</p>
@@ -54,7 +53,7 @@ export function EvaluationsList() {
           ))}
         </div>
       )}
-    </div>
+    </PageCanvas>
   );
 }
 
@@ -151,19 +150,19 @@ export function ResultsList() {
   ];
 
   return (
-    <div className="space-y-4">
+    <PageCanvas>
       <PageHeader
         title="Finalized Examination Results"
         sub={view === "exam" ? "Class performance per exam." : "Finalized student results."}
         actions={
-          <div className="inline-flex items-center gap-1 rounded-lg border border-line bg-surface p-1 shadow-soft">
+          <div className="inline-flex items-center gap-1 rounded-lg border border-line bg-surface p-1 shadow-sm rounded-2xl">
             {(["student", "exam"] as const).map((v) => (
               <button
                 key={v}
                 type="button"
                 onClick={() => setView(v)}
                 className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-all ${
-                  view === v ? "bg-pen text-white shadow-xs" : "text-mute hover:bg-hover hover:text-brown"
+                  view === v ? "bg-pen text-white shadow-xs" : "text-mute hover:bg-hover hover:text-pen"
                 }`}
               >
                 {v === "exam" ? "Exam-wise" : "Student-wise"}
@@ -205,7 +204,7 @@ export function ResultsList() {
               onClearFilters={table.clearFilters}
             />
           ) : (
-            <Card className="overflow-x-auto shadow-soft">
+            <Card className="overflow-x-auto shadow-sm rounded-2xl">
               <table className="w-full text-left text-sm">
                 <thead className="border-b border-line bg-surface text-xs font-semibold uppercase tracking-wider text-mute">
                   <tr>
@@ -231,10 +230,10 @@ export function ResultsList() {
                       <td className="px-4 py-3 font-medium text-ink">{e.exam_name}</td>
                       <td className="px-4 py-3 text-mute">{e.class_name || e.student.class_name || "–"}</td>
                       <td className="px-4 py-3 text-mute">{e.subject_name || "–"}</td>
-                      <td className="px-4 py-3 font-mono font-medium text-ink">
+                      <td className="px-4 py-3 font-medium text-ink">
                         {fmt(e.total_marks)} / {fmt(e.maximum_marks)}
                       </td>
-                      <td className="px-4 py-3 font-mono font-semibold text-ink">
+                      <td className="px-4 py-3 font-semibold text-ink">
                         <span className="rounded bg-ok-soft/70 px-2 py-0.5 text-xs text-ok">
                           {e.percentage}%
                         </span>
@@ -268,7 +267,7 @@ export function ResultsList() {
           )}
         </>
       )}
-    </div>
+    </PageCanvas>
   );
 }
 
@@ -400,7 +399,7 @@ function ExamWiseResults({ data }: { data: Evaluation[] }) {
           onClearFilters={table.clearFilters}
         />
       ) : (
-        <Card className="overflow-x-auto shadow-soft">
+        <Card className="overflow-x-auto shadow-sm rounded-2xl">
           <table className="w-full text-left text-sm">
             <thead className="border-b border-line bg-surface text-xs font-semibold uppercase tracking-wider text-mute">
               <tr>
@@ -425,8 +424,8 @@ function ExamWiseResults({ data }: { data: Evaluation[] }) {
                   </td>
                   <td className="px-4 py-3 text-mute">{x.className}</td>
                   <td className="px-4 py-3 text-mute">{x.subject}</td>
-                  <td className="px-4 py-3 font-mono font-medium text-ink">{x.students}</td>
-                  <td className="px-4 py-3 font-mono font-semibold text-ink">
+                  <td className="px-4 py-3 font-medium text-ink">{x.students}</td>
+                  <td className="px-4 py-3 font-semibold text-ink">
                     <span className="rounded bg-ok-soft/70 px-2 py-0.5 text-xs text-ok">{x.average}%</span>
                   </td>
                   <td className="px-4 py-3 font-mono text-xs text-ink">
@@ -553,7 +552,7 @@ export function ResultPage() {
       )}
 
       {/* Performance Summary Banner */}
-      <Card className="flex flex-wrap items-center justify-between gap-6 p-6 shadow-soft">
+      <Card className="flex flex-wrap items-center justify-between gap-6 p-6 shadow-sm rounded-2xl">
         <div className="flex items-center gap-5">
           <PenScore got={data.total_marks} max={data.maximum_marks} />
           <div>
@@ -581,7 +580,7 @@ export function ResultPage() {
 
       {/* Tabs Navigation */}
       <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-        <div className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface p-1.5 shadow-soft">
+        <div className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface p-1.5 shadow-sm rounded-2xl">
           {/* Tab 1: Marks Breakdown by Question */}
           <button
             type="button"
@@ -589,7 +588,7 @@ export function ResultPage() {
             className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-xs sm:text-sm font-semibold transition-all select-none ${
               activeTab === "breakdown"
                 ? "bg-pen text-white shadow-xs"
-                : "text-mute hover:text-brown hover:bg-hover"
+                : "text-mute hover:text-pen hover:bg-hover"
             }`}
           >
             <svg
@@ -624,7 +623,7 @@ export function ResultPage() {
             className={`inline-flex items-center gap-2 rounded-lg px-4 py-2 text-xs sm:text-sm font-semibold transition-all select-none ${
               activeTab === "detailed"
                 ? "bg-pen text-white shadow-xs"
-                : "text-mute hover:text-brown hover:bg-hover"
+                : "text-mute hover:text-pen hover:bg-hover"
             }`}
           >
             <svg
@@ -655,14 +654,12 @@ export function ResultPage() {
       </div>
 
       {/* Tab 1 Content: Marks Breakdown by Question */}
-      {activeTab === "breakdown" && data.outcomes && <OutcomeTables outcomes={data.outcomes} />}
       {activeTab === "breakdown" && (
-        <Card className="overflow-x-auto shadow-soft">
+        <Card className="overflow-x-auto shadow-sm rounded-2xl">
           <table className="w-full text-left text-sm">
             <thead className="border-b border-line bg-surface text-xs font-semibold uppercase tracking-wider text-mute">
               <tr>
                 <th className="px-4 py-3">Question</th>
-                <th className="px-4 py-3">K Level</th>
                 <th className="px-4 py-3">Marks Awarded</th>
                 <th className="px-4 py-3">Max Marks</th>
                 <th className="px-4 py-3">Evaluation Status</th>
@@ -672,7 +669,6 @@ export function ResultPage() {
               {data.questions.map((q) => (
                 <tr key={q.question_id} className="hover:bg-hover">
                   <td className="px-4 py-3 font-bold text-ink">Question {q.question}</td>
-                  <td className="px-4 py-3 text-ink">{kLabel(q.k_level)}</td>
                   <td className="px-4 py-3 font-mono font-bold text-pen">{fmt(q.final_marks)}</td>
                   <td className="px-4 py-3 font-mono text-mute">{fmt(q.max_marks)}</td>
                   <td className="px-4 py-3">
@@ -693,7 +689,7 @@ export function ResultPage() {
       {activeTab === "detailed" && (
         <div className="space-y-4">
           {data.questions.map((q) => (
-            <Card key={q.question_id} className="p-5 shadow-soft space-y-3.5">
+            <Card key={q.question_id} className="p-5 shadow-sm rounded-2xl space-y-3.5">
               <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line pb-3">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">

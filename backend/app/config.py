@@ -7,8 +7,8 @@ from pydantic import AliasChoices, Field, model_validator
 from dotenv import dotenv_values
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-AI_UNAVAILABLE_MESSAGE = "OpenRouter is unavailable. Check the API key, Gemini model access and credit balance."
-AI_BAD_RESPONSE_MESSAGE = "Gemini did not return a valid structured response. Review the document and retry."
+AI_UNAVAILABLE_MESSAGE = "InternVL is unavailable. Check that Ollama is running on the model server and the model is pulled."
+AI_BAD_RESPONSE_MESSAGE = "InternVL did not return a valid structured response. Review the document and retry."
 
 
 def _root_oauth(name: str, legacy: str = "", default: str = "") -> str:
@@ -30,6 +30,12 @@ class Settings(BaseSettings):
     storage_timeout: int = 120
     openrouter_api_key: str = ""
     openrouter_model: str = "google/gemini-3.5-flash-lite"
+    # InternVL in Ollama on the remote model server does every AI task.
+    internvl_model: str = "blaifa/InternVL3_5:4B"
+    internvl_api_url: str = "http://192.168.1.9:11434"
+    internvl_timeout: int = 300
+    internvl_num_ctx: int = 16384
+    internvl_parallel_jobs: int = 1
     ai_request_logprobs: bool = False
     # OCR transcribes source evidence; reserve output tokens for the document.
     # Text-only grading retains the model's own reasoning defaults.
@@ -50,20 +56,20 @@ class Settings(BaseSettings):
             callback = urlsplit(self.google_redirect_uri)
             if not self.public_web_url.startswith("https://") or self.public_web_url.rstrip("/") != f"{callback.scheme}://{callback.netloc}":
                 raise ValueError("PUBLIC_WEB_URL must be the HTTPS origin of GOOGLE_REDIRECT_URI.")
-        if not (self.openrouter_api_key and self.openrouter_model):
-            raise ValueError("OpenRouter requires OPENROUTER_API_KEY and OPENROUTER_MODEL.")
+        if not (self.internvl_api_url and self.internvl_model):
+            raise ValueError("InternVL requires INTERNVL_API_URL and INTERNVL_MODEL.")
         if self.storage_provider == "supabase" and not (self.supabase_url.startswith("https://") and self.supabase_service_role_key and self.supabase_storage_bucket):
             raise ValueError("Supabase storage requires HTTPS SUPABASE_URL, service-role key and bucket.")
         return self
 
     @property
     def ai_model(self) -> str:
-        return self.openrouter_model
+        return self.internvl_model
 
     @property
     def ai_provider(self) -> str:
         """Compatibility alias retained in existing API responses."""
-        return "openrouter"
+        return "internvl"
 
     environment: Literal["development", "production"] = "development"
     cookie_secure: bool = False

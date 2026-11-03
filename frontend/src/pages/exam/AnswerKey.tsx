@@ -152,17 +152,20 @@ export default function AnswerKey() {
     prevDocStatus.current = doc.data?.status;
   }, [doc.data?.status, keys]);
 
+  // One by one: the question paper is read first, then the key; the key shows once it is read.
+  // Verifying the key still needs the questions verified.
+  const questionsPending = ["DRAFT", "QUESTION_PAPER_UPLOADED", "QUESTIONS_EXTRACTED"].includes(exam.status);
   if (
-    exam.status === "DRAFT" ||
-    ["QUESTION_PAPER_UPLOADED", "QUESTIONS_EXTRACTED"].includes(exam.status)
+    ["DRAFT", "QUESTION_PAPER_UPLOADED"].includes(exam.status) ||
+    (exam.status === "QUESTIONS_EXTRACTED" && !exam.answer_key_document)
   )
     return (
       <Empty
-        title="Verify questions first"
+        title={exam.answer_key_document ? "Reading the answer key" : "No answer key yet"}
         hint={
           exam.answer_key_document
-            ? "Your answer key is uploaded and waiting. It is read and matched to the questions as soon as the questions are verified."
-            : "You can upload the answer key now in the Question Paper & Answer Key tab. It is read as soon as the questions are verified."
+            ? "The question paper is read first, then your answer key. It appears here once it is read."
+            : "Upload the answer key in the Question Paper & Answer Key tab. It is read after the question paper."
         }
       />
     );
@@ -193,6 +196,12 @@ export default function AnswerKey() {
   return (
     <div className="space-y-4">
       <ErrorPanel error={doc.error || keys.error} />
+
+      {questionsPending && (
+        <Card className="p-4 text-sm text-mute">
+          Answer key extracted after the question paper. Verify the questions to confirm the matching and verify this key.
+        </Card>
+      )}
 
       {isLocked && (
         <Card className="flex items-center justify-between border-ok/30 bg-ok-soft/30 p-4 shadow-soft">

@@ -1,5 +1,6 @@
 """Pydantic schemas for model output. Strict enough to reject nonsense, lenient on types."""
 from __future__ import annotations
+import re
 from typing import Any
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -260,9 +261,17 @@ class StudentIdentityResult(_Base):
     registration_number: str | None = None
     class_name: str | None = None
     section: str | None = None
+    # the number of pages the student says they wrote (details page of a scanned sheet); null when not written
+    pages_written: int | None = None
 
     _s = field_validator("name", "roll_number", "registration_number", "class_name", "section",
                          mode="before")(lambda cls, v: (_str(v) or "").strip() or None)
+
+    @field_validator("pages_written", mode="before")
+    @classmethod
+    def _pages(cls, v):
+        m = re.search(r"\d+", str(v)) if v not in (None, "") else None
+        return int(m.group()) if m and 0 < int(m.group()) < 200 else None
 
 
 class QuestionTypeLabel(_Base):

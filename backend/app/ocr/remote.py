@@ -1,14 +1,12 @@
-"""OpenRouter vision/text transport used by Gemini for every AI task."""
+"""InternVL vision/text transport (Ollama on the remote model server) used for every AI task."""
 from __future__ import annotations
 import base64
-import mimetypes
 import logging
 from pathlib import Path
 import httpx
 from ..config import get_settings
 
 log = logging.getLogger("adem.ai")
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 
 class CompletionLimitError(ValueError):
@@ -23,67 +21,44 @@ class CompletionLimitError(ValueError):
 
 def connection():
     s = get_settings()
-    return OPENROUTER_BASE_URL, s.openrouter_api_key, s.openrouter_model
+    return s.internvl_api_url.rstrip("/"), "", s.internvl_model
 
 
 def call(system: str, user: str, image: Path | None, structured: bool, model: str | None = None):
     s = get_settings()
-    base, key, selected = connection()
-    content: str | list = user
+    base, _, selected = connection()
+    message = {"role": "user", "content": user}
     if image:
-        mime = mimetypes.guess_type(image.name)[0] or "image/png"
-        content = [{"type": "text", "text": user}, {"type": "image_url", "image_url": {
-            "url": f"data:{mime};base64," + base64.b64encode(image.read_bytes()).decode()}}]
-    payload = {"model": model or selected, "messages": [{"role": "system", "content": system},
-               {"role": "user", "content": content}], "stream": False, "temperature": 0,
-               "max_tokens": s.ai_max_output_tokens}
+        message["images"] = [base64.b64encode(image.read_bytes()).decode()]
+    payload = {"model": model or selected, "messages": [{"role": "system", "content": system}, message],
+               "stream": False, "options": {"temperature": 0, "num_ctx": s.internvl_num_ctx,
+                                            "num_predict": s.ai_max_output_tokens}}
     if structured:
-        payload["response_format"] = {"type": "json_object"}
-    payload["reasoning"] = {"effort": s.ai_ocr_reasoning_effort if image else s.ai_text_reasoning_effort}
+        payload["format"] = "json"
     if s.ai_request_logprobs:
         payload["logprobs"] = True
-    headers = {"Authorization": "Bearer " + key}
-    if s.public_web_url:
-        headers["HTTP-Referer"] = s.public_web_url
-        headers["X-Title"] = "Eval AI"
-    response = httpx.post(base + "/chat/completions", json=payload, headers=headers, timeout=s.ai_timeout)
-    # Do not propagate provider response bodies or request headers into application logs.
+    response = httpx.post(base + "/api/chat", json=payload, timeout=s.internvl_timeout)
     if not response.is_success:
         raise httpx.HTTPStatusError(f"AI provider returned HTTP {response.status_code}", request=response.request, response=response)
     body = response.json()
-    choices = body.get("choices") or []
-    if not choices:
-        raise ValueError("AI provider did not return a completion")
-    choice = choices[0]
-    usage = body.get("usage") or {}
-    completion_tokens = usage.get("completion_tokens")
-    reasoning_tokens = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens")
-    text = (choice.get("message") or {}).get("content") or ""
+    text = (body.get("message") or {}).get("content") or ""
     if not isinstance(text, str):
         raise ValueError("AI provider returned unsupported content")
-    log.info(
-        "AI completion model=%s finish=%s completion_tokens=%s reasoning_tokens=%s visible_characters=%d",
-        model or selected, choice.get("finish_reason"), completion_tokens, reasoning_tokens, len(text),
-    )
-    if choice.get("finish_reason") == "length":
-        raise CompletionLimitError(text, completion_tokens, reasoning_tokens)
-    return text, (choice.get("logprobs") or {}).get("content")
+    completion_tokens = body.get("eval_count")
+    log.info("AI completion model=%s finish=%s completion_tokens=%s visible_characters=%d",
+             model or selected, body.get("done_reason"), completion_tokens, len(text))
+    if body.get("done_reason") == "length":
+        raise CompletionLimitError(text, completion_tokens)
+    probabilities = body.get("logprobs")  # same per-token shape as OpenAI's: token, logprob, bytes
+    return text, probabilities or None
 
 
 def status():
-    s = get_settings()
-    base, key, model = connection()
-    authentication = httpx.get(base + "/key", headers={"Authorization": "Bearer " + key}, timeout=15)
-    if not authentication.is_success:
-        raise RuntimeError("The OpenRouter API key could not be authenticated")
-    response = httpx.get(base + "/models", headers={"Authorization": "Bearer " + key}, timeout=15)
+    base, _, model = connection()
+    response = httpx.get(base + "/api/tags", timeout=15)
     if not response.is_success:
         raise RuntimeError(f"AI provider health request failed (HTTP {response.status_code})")
-    models = response.json().get("data") or []
-    found = next((m for m in models if m.get("id") == model), None)
-    if not found:
-        raise RuntimeError("The configured AI model is not available from this provider")
-    inputs = (found.get("architecture") or {}).get("input_modalities")
-    if inputs is not None and "image" not in inputs:
-        raise RuntimeError("The selected model does not accept images; choose a vision model")
-    return {"available": True, "model": model, "provider": "openrouter", "url": base}
+    names = {m.get("name") for m in response.json().get("models") or []} | {m.get("model") for m in response.json().get("models") or []}
+    if model not in names and f"{model}:latest" not in names:
+        raise RuntimeError("The configured InternVL model is not pulled on the model server")
+    return {"available": True, "model": model, "provider": "internvl", "url": base}

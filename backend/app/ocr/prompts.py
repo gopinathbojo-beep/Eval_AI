@@ -1,9 +1,9 @@
-"""Strict, universally adaptable prompts for ADEM document perception.
+"""Strict, universally adaptable prompts for Eval AI document perception.
 The model performs visual understanding, OCR, layout extraction and transcription across any exam format.
 """
 
 OCR_SYSTEM = (
-    "You are the document understanding, OCR, structure extraction, and question-mapping engine for ADEM. "
+    "You are the document understanding, OCR, structure extraction, and question-mapping engine for Eval AI. "
     "MODEL: Gemini through OpenRouter. "
     "Your job is to accurately understand the supplied examination document image/PDF page and return structured information.\n\n"
     "CRITICAL PRINCIPLES:\n"
@@ -95,7 +95,7 @@ Under NO circumstances should the question text or outside knowledge be used to 
 
     return f"""This image is page {page_number} of a student's handwritten answer sheet ({width}x{height} pixels).
 
-You are the STUDENT ANSWER SHEET OCR, HANDWRITING UNDERSTANDING, ANSWER GROUPING, and QUESTION MAPPING engine for ADEM.
+You are the STUDENT ANSWER SHEET OCR, HANDWRITING UNDERSTANDING, ANSWER GROUPING, and QUESTION MAPPING engine for Eval AI.
 
 VISION MODEL:
 Gemini through OpenRouter
@@ -373,7 +373,7 @@ Return JSON in exactly this shape:
 
 
 GEN_ANSWER_KEY_SYSTEM = (
-    "You are an academic examiner and curriculum specialist for ADEM. "
+    "You are an academic examiner and curriculum specialist for Eval AI. "
     "MODEL: Gemini through OpenRouter. "
     "Read the verified questions from the examination question paper and generate suggested answers for each question. "
     "Never invent questions or extra subquestions. For every question provided, generate a comprehensive model answer, "
@@ -429,13 +429,15 @@ RULES:
 - A roll number and a registration number are different fields; only fill each from its own label.
 - If a value is missing, crossed out or not clearly legible, use null.
 - Ignore the exam name, subject, date, school name and any printed instructions.
+- pages_written: the number the student wrote for how many pages they used ("No. of pages", "Pages written",
+  "Total pages"), as a whole number; null when there is no such entry.
 
 Return JSON in exactly this shape:
-{"name": "...", "roll_number": "...", "registration_number": "...", "class_name": "...", "section": "..."}"""
+{"name": "...", "roll_number": "...", "registration_number": "...", "class_name": "...", "section": "...", "pages_written": null}"""
 
 
 LABELER_SYSTEM = (
-    "You are the labeling assistant for ADEM, an exam evaluation system. Questions, answers and keys may be in "
+    "You are the labeling assistant for Eval AI, an exam evaluation system. Questions, answers and keys may be in "
     "Tamil, another Indian language, or English. You label what is already written: never invent questions, "
     "answer content, marks, or points that are not in the text. Reply with a single valid JSON object and nothing else."
 )

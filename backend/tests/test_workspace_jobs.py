@@ -76,7 +76,7 @@ def test_jobs_keep_actor_attribution_and_recheck_access(client):
 
     job_queue._call(
         job_queue._Job(
-            "internvl", run, (), exam_id=eid, actor_id=mid, session_version=version
+            run, (), exam_id=eid, actor_id=mid, session_version=version
         )
     )
     assert called == [True]
@@ -88,7 +88,7 @@ def test_jobs_keep_actor_attribution_and_recheck_access(client):
     called.clear()
     job_queue._call(
         job_queue._Job(
-            "internvl", run, (), exam_id=eid, actor_id=tid, session_version=0
+            run, (), exam_id=eid, actor_id=tid, session_version=0
         )
     )
     assert not called

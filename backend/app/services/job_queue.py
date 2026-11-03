@@ -1,4 +1,4 @@
-"""Background AI job queue for the single hosted OpenRouter Gemini engine."""
+"""Background AI job queue for InternVL; INTERNVL_PARALLEL_JOBS documents are read at once."""
 from __future__ import annotations
 import logging
 import threading
@@ -15,32 +15,25 @@ from ..workspaces import can_access_exam
 
 log = logging.getLogger("adem.queue")
 
-MAX_SKIPS = 4  # times a job may be passed over for jobs of the loaded engine before the queue switches to it
-
 
 @dataclass(eq=False)
 class _Job:
-    engine: str
     fn: Callable
     args: tuple
     paper_format: str | None = None  # the exam subject's format, see services/paper_format.py
     subject: str | None = None  # the exam subject's formatter, see app/formatter
-    tamil_grading: bool = False  # compatibility field for persisted jobs from older releases
     exam_id: str | None = None
-    skips: int = 0
     actor_id: str | None = None
     session_version: int | None = None
     job_id: str | None = None
 
 
-_cond = threading.Condition()  # guards _waiting, _running, _switching and _current_engine
+_cond = threading.Condition()  # guards _waiting and _running
 _waiting: list[_Job] = []  # queue order
 _running = 0
-_switching = False  # a worker is changing engines outside the lock: no other job starts until it is done
 _workers: list[threading.Thread] = []
 _scheduled: set[str] = set()
 _inline_lock = threading.RLock()  # inline jobs may queue more jobs (identify -> read), which run in the same thread
-_current_engine: str | None = None  # None: unknown (e.g. after start), so a first switch frees everything else
 
 _key_locks: dict[str, threading.RLock] = {}
 _key_guard = threading.Lock()
@@ -50,10 +43,6 @@ def keyed_lock(key: str) -> threading.RLock:
     """One lock per key (e.g. "exam:<id>"), for work that jobs running in parallel must not do at the same time."""
     with _key_guard:
         return _key_locks.setdefault(key, threading.RLock())
-
-
-def engine_for(exam_id: str | None, grading: bool = False) -> str:
-    return "openrouter"
 
 
 def format_for(exam_id: str | None) -> str | None:
@@ -76,14 +65,8 @@ def subject_for(exam_id: str | None) -> str | None:
         db.close()
 
 
-def slots(engine: str) -> int:
-    return max(1, get_settings().ai_parallel_jobs)
-
-
-def switch_engine(engine: str) -> None:
-    """Record the single hosted engine; retained for queue compatibility."""
-    global _current_engine
-    _current_engine = engine
+def slots() -> int:
+    return max(1, get_settings().internvl_parallel_jobs)
 
 
 def _call(job: _Job) -> None:
@@ -136,45 +119,15 @@ def _call(job: _Job) -> None:
         actor_id.reset(context)
 
 
-def _pick() -> _Job | None:
-    """The job a free worker should start now, or None. Caller holds _cond."""
-    if _switching or not _waiting or (_running and _running >= slots(_current_engine)):
-        return None
-    for i, job in enumerate(_waiting):
-        if job.engine == _current_engine:
-            passed = _waiting[:i]
-            if any(j.tamil_grading and j.exam_id != job.exam_id for j in passed):
-                break  # another paper's grading comes first: switch to it once the running jobs finish
-            if any(j.skips >= MAX_SKIPS and not j.tamil_grading for j in passed):
-                break  # let the running jobs finish so the queue can switch to the job waiting longest
-            for j in passed:
-                j.skips += 1
-            return job
-    return _waiting[0] if not _running else None  # the GPU is free: switch to the oldest job's engine
-
-
 def _work() -> None:
-    global _running, _switching
+    global _running
     while True:
         with _cond:
-            while (job := _pick()) is None:
+            while not _waiting or _running >= slots():
                 _cond.wait()
-            _waiting.remove(job)
-            # _pick only hands out another engine's job when nothing is running
-            switch = _switching = job.engine != _current_engine
+            job = _waiting.pop(0)
             _running += 1
-            _cond.notify_all()  # another free worker may start alongside
         try:
-            if switch:
-                # Unloading takes seconds over the network: do it outside the lock so uploads queue meanwhile
-                try:
-                    switch_engine(job.engine)
-                except Exception:  # the job still runs and records the engine error on its document
-                    log.exception("Switching the GPU engine to %s failed", job.engine)
-                finally:
-                    with _cond:
-                        _switching = False
-                        _cond.notify_all()
             _call(job)
         finally:
             with _cond:
@@ -183,19 +136,17 @@ def _work() -> None:
 
 
 def _ensure_workers() -> None:
-    want = slots("openrouter")
+    want = slots()
     _workers[:] = [w for w in _workers if w.is_alive()]
     while len(_workers) < want:
-        w = threading.Thread(target=_work, name=f"gpu-job-queue-{len(_workers) + 1}", daemon=True)
+        w = threading.Thread(target=_work, name=f"ai-job-queue-{len(_workers) + 1}", daemon=True)
         w.start()
         _workers.append(w)
 
 
 def submit(exam_id: str | None, fn: Callable, *args: Any, grading: bool = False) -> None:
-    """Queue `fn(*args)` for the GPU. `exam_id` decides which engine the job runs on (`grading`: the grading model's)."""
-    engine = engine_for(exam_id, grading)
-    tamil_grading = False
-    job = _Job(engine, fn, args, format_for(exam_id), subject_for(exam_id), tamil_grading, exam_id)
+    """Queue `fn(*args)` for the AI workers, oldest first. `grading` is accepted from older callers and has no effect."""
+    job = _Job(fn, args, format_for(exam_id), subject_for(exam_id), exam_id)
     job.actor_id = actor_id.get()
     if job.actor_id:
         with SessionLocal() as db:
@@ -210,7 +161,6 @@ def submit(exam_id: str | None, fn: Callable, *args: Any, grading: bool = False)
             _scheduled.add(job.job_id)
     if get_settings().job_queue_inline:  # run in the caller's thread (tests: the result is there when the request returns)
         with _inline_lock:
-            switch_engine(job.engine)
             _call(job)
         return
     with _cond:
