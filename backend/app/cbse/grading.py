@@ -122,22 +122,33 @@ def _to_scheme_step(value, allocation):
 _WORD = re.compile(r"[^\W_]+")
 
 
+# letters and numbers apart: "1Ω" and "2A" quote the same working as "1 Ω" and "2 A"
+_TOKEN = re.compile(r"\d+(?:\.\d+)?|[^\W\d_]+")
+
+
 def _words(value):
-    return _WORD.findall(unicodedata.normalize("NFKC", value).casefold())
+    return _TOKEN.findall(unicodedata.normalize("NFKC", value).casefold())
 
 
 def _quoted(quote, student):
     """The excerpt is in the student's answer. Exact up to spacing and symbol forms; a longer excerpt may also differ
-    by OCR-garbled or dropped words (most of its words present), but never by a number, so changed working fails."""
+    by symbols the model garbled when copying (∴ or Ω returned as ≤) or by dropped words (most of its words
+    present), but never by a number, so changed working fails."""
     if _quote_text(quote) in _quote_text(student):
         return True
     words = _words(quote)
     if len(words) < 4:
         return False
     present = set(_words(student))
-    if any(w not in present for w in words if any(c.isdigit() for c in w)):
+    if any(w not in present for w in words if w[0].isdigit()):
         return False
     return sum(w in present for w in words) >= 0.75 * len(words)
+
+
+def _evidenced(quotes, student):
+    """The award rests on the student's own writing: every excerpt is found in the answer (a garbled symbol is
+    forgiven by _quoted; a remark such as "the student solved it correctly" is not an excerpt)."""
+    return all(_quoted(quote, student) for quote in quotes)
 
 
 def validate_result(result, q, key, options, student=None):
@@ -175,7 +186,7 @@ def validate_result(result, q, key, options, student=None):
         if (
             value > 0
             and student is not None
-            and not all(_quoted(quote, student) for quote in quotes)
+            and not _evidenced(quotes, student)
         ):
             raise EvaluationValidationError(
                 f"Criterion {key_id} quotes evidence absent from the student transcription"

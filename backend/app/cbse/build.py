@@ -295,6 +295,60 @@ def actionable(notes):
             and sum(c.isalpha() for c in x) >= 12 and not _CROP_NOTE.search(x)]
 
 
+# The option list printed once for a block of assertion-reason questions ("A. Both A and R are true, and R is the
+# correct explanation of A." ... "D. A is false but R is true.")
+_AR_OPTION = re.compile(
+    r"^\s*\(?\s*([A-Da-d])\s*[).:]?\s*\)?\s*(?:both\s+(?:a|\(a\))\s+and\s+(?:r|\(r\))\b"
+    r"|(?:a|\(a\))\s+is\s+(?:true|false|correct|incorrect)\b"
+    r"|(?:a|\(a\))\s+and\s+(?:r|\(r\))\s+are\s+(?:both\s+)?(?:true|false)\b)", re.I)
+_AR_QUESTION = re.compile(r"\bassertion\s*(?:\(\s*a\s*\))?\s*[:\-]", re.I)
+CBSE_AR_OPTIONS = {
+    "A": "A. Both A and R are true, and R is the correct explanation of A.",
+    "B": "B. Both A and R are true, and R is not the correct explanation of A.",
+    "C": "C. A is true but R is false.",
+    "D": "D. A is false but R is true.",
+}
+
+
+def share_assertion_reason_options(results):
+    """Assertion-reason questions share one option list, printed once above them and often split by a page break
+    (A and B at the foot of one page, C and D at the top of the next). The model reads the pieces as the text of
+    whichever question is nearby (C and D tacked onto the MCQ before them) or leaves them out. Take the list off
+    every question, and give each assertion-reason question the four options as the paper prints them (the PDF
+    text layer, then the model's reading, then the standard CBSE wording)."""
+    printed = {}
+
+    def harvest(text):
+        for line in (text or "").splitlines():
+            if (match := _AR_OPTION.match(line)) and len(line.strip()) <= 120:
+                printed.setdefault(match.group(1).upper(), re.sub(r"\s+", " ", line.strip()))
+
+    for page, _ in results:
+        harvest(page.get("page_text"))
+    for _, result in results:
+        for fragment in result.fragments:
+            harvest(fragment.text)
+    if not printed and not any(_AR_QUESTION.search(f.text or "") for _, r in results for f in r.fragments):
+        return
+    options = "\n".join(printed.get(letter) or text for letter, text in CBSE_AR_OPTIONS.items())
+    assertion, last = set(), {}
+    for _, result in results:
+        kept = []
+        for fragment in result.fragments:
+            lines = (fragment.text or "").split("\n")
+            rest = [line for line in lines if not _AR_OPTION.match(line)]
+            if len(rest) != len(lines) and not any(line.strip() for line in rest):
+                continue  # only the shared option list: it belongs to no single question
+            fragment.text = "\n".join(rest).strip()
+            if fragment.question_type == "assertion_reason" or _AR_QUESTION.search(fragment.text):
+                assertion.add(fragment.root)
+            last[fragment.root] = fragment
+            kept.append(fragment)
+        result.fragments = kept
+    for root in assertion:  # after the question's last piece: a question cut by a page break keeps its reason first
+        last[root].text = f"{last[root].text}\n{options}".strip()
+
+
 def collect(doc, results, kind="question-paper"):
     from .layout import ground_visuals
 
@@ -318,6 +372,8 @@ def collect(doc, results, kind="question-paper"):
             fragment.text = re.sub(rf"^\s*{fragment.root}(?=\s+[A-Z(])\s*", "", fragment.text, count=1)
             # notes about one half of a page the app split to re-read it ("cut off at the bottom of the cropped image")
             fragment.issues = [x for x in fragment.issues if not _CROP_NOTE.search(x)]
+    if kind == "question-paper":
+        share_assertion_reason_options(results)
     if kind == "answer-key":
         mark_answer_continuations(results)
     else:

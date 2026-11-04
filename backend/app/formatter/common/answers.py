@@ -10,6 +10,7 @@ Solves:
 """
 from __future__ import annotations
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Any
 from ... import formatter
@@ -459,6 +460,50 @@ def _segment_invented_labels(
     return out
 
 
+# An answer that is a choice: "D) A is false but R is true", "C. 4.0 A", "(b) 20 s"
+_CHOICE_ANSWER = re.compile(r"^\s*\(?[A-Da-d]\s*[).:]")
+# Words every option list shares: they say nothing about which question an answer belongs to
+_SHARED_WORDS = {"but", "true", "false", "both", "correct", "incorrect", "explanation", "not", "none", "all",
+                 "option", "statement", "assertion", "reason", "and", "only", "neither", "nor", "either"}
+
+
+def _telling_words(text: str | None) -> set[str]:
+    """Content words that can tell one question from another: no roman numerals, letters or shared option words.
+    Subscripts count as digits, so CH₃COOH is a word."""
+    return {w for w in _tokenize(unicodedata.normalize("NFKC", text or ""))
+            if not re.fullmatch(r"[ivx]+|[a-z]", w) and w not in _SHARED_WORDS}
+
+
+def _label_holds(text: str, norm: str, current: str | None, top: Any, top_q: Any, rec: list,
+                 numbers: bool) -> bool:
+    """The number the student wrote stands against a content match pointing elsewhere when the content is no real
+    evidence: the written question matches as well as the other one; the answer shares fewer than two telling words
+    and none of its distinctive numbers (numbers) with the other question; or it is a short choice written right
+    after the previous question's answer ("8. D) A is false but R is true" after 7: option wording is common to
+    many questions)."""
+    own_score = max((r.score for r in rec if parent_number(r.normalized_number or "") == parent_number(norm)), default=0)
+    if own_score >= top.score - 0.05:
+        return True
+    if not numbers and top_q is not None and len(_telling_words(text) & _telling_words(getattr(top_q, "question_text", ""))) < 2:
+        return True
+    prev, mine = parent_number(current or ""), parent_number(norm)
+    in_order = prev.isdigit() and mine.isdigit() and int(mine) == int(prev) + 1
+    return in_order and bool(_CHOICE_ANSWER.match(text or "")) and len(text.strip()) <= 160
+
+
+# "cells to move.\n\nA) The amount of energy ...": a sentence ending, then the answer's own first part
+_CARRIED_LEAD = re.compile(r"^([a-z][a-z ,;'\-]*[a-z][.;]?)[ \t]*\n\s*(?=\(?(?:[A-Da-d]|[ivx]{1,4})\s*[).:]|[*•\-]\s)")
+
+
+def _carried_lead(text: str) -> str | None:
+    """The words opening a page's first numbered answer that finish the previous page's sentence: lower-case
+    words only (no numbers or working), at least two of them, followed by this answer's own first part marker."""
+    match = _CARRIED_LEAD.match(text or "")
+    if not match or len(match[1]) > 120 or len(match[1].split()) < 2:
+        return None
+    return match[1]
+
+
 def segment_student_answers(
     page_results: list[tuple[dict, Any]],
     canonical_questions: list[Any] | None = None,
@@ -543,6 +588,12 @@ def segment_student_answers(
             for s_lbl, s_txt in splits:
                 for p_lbl, p_txt in _split_parts(s_lbl, s_txt, exam_norms):
                     expanded_items.append((p_lbl, p_txt, a_bb, a_conf))
+
+        if expanded_items and curr_text_parts and page_num > curr_page and expanded_items[0][0]:
+            lbl0, text0, bb0, conf0 = expanded_items[0]
+            if (lead := _carried_lead(text0)):
+                curr_text_parts.append(lead)  # the end of the previous page's answer, read into this page's first one
+                expanded_items[0] = (lbl0, text0[len(lead):].strip(), bb0, conf0)
 
         for raw_lbl, text, bb, conf in expanded_items:
             answered = {parent_number(g.normalized_number) for g in grouped if g.normalized_number}
@@ -673,6 +724,10 @@ def segment_student_answers(
                         should_redirect = True
                     elif top.score >= 0.95 and not exact_dist_nums:
                         should_redirect = True
+
+                    if should_redirect and exact_match and _label_holds(
+                            text, norm, curr_norm_num, top, top_q, rec, bool(top_dist_nums)):
+                        should_redirect = False
 
                     if should_redirect:
                         written = norm

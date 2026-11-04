@@ -223,6 +223,8 @@ Group all lines, points, and calculations under the active question.
 ==================================================
 If no new question/subquestion marker appears, continue using current answer context.
 Text continuing across page breaks without a new label belongs to the active answer.
+Lines at the very top of a page, before the first question number written on that page, finish the previous page's answer: return them as their own entry with question_number null. Never fold them into the first numbered answer on the page.
+If anything is handwritten on the page, return it: an empty answers list is only for a page with no handwriting at all.
 
 ==================================================
 11. HANDWRITTEN CORRECTIONS & CROSSED-OUT TEXT
@@ -231,6 +233,7 @@ Completely omit crossed-out, struck-through, or scribbled-out lines. Transcribe 
 When a digit or word is overwritten (a new character written on top of an old one), transcribe the character written on top.
 When you cannot tell whether a line is crossed out (a light or partial stroke), transcribe it: the grader keeps the best attempt, so a doubtful line is never dropped.
 Never drop the rest of an answer because part of it is crossed out.
+A crossed-out question number is not the label: when the student strikes out a number and writes a part letter or another number beside it ("B. 29" with 29 struck out), the label is what is not struck out (B, a part of the question being answered).
 
 ==================================================
 12. MATHEMATICAL & SCIENTIFIC ANSWERS

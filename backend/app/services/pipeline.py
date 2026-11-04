@@ -181,6 +181,8 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
             system = SYSTEM
         try:
             call = chat_structured(system, prompt_str, schema, img)
+            if kind == "answer-sheet":
+                call = _reread_empty_page(call, system, prompt_str, schema, img)
             out.write_text(json.dumps({"status": "OK", "raw": call.raw, "parsed": call.parsed.model_dump(),
                                        "attempts": call.attempts, "engine": "internvl"},
                                       ensure_ascii=False, indent=1), encoding="utf-8")
@@ -239,6 +241,28 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
         doc.status, doc.stage, doc.error_message = "READY", "Ready for review", None
     db.commit()
 
+
+
+EMPTY_PAGE_HINT = ("\n\nIMPORTANT: your previous reply for this page listed no answers at all. Look at the page again: "
+                   "if anything is handwritten on it, transcribe every answer and every line continuing an answer from "
+                   "the page before. Return an empty answers list only for a page with no handwriting at all.")
+
+
+def _reread_empty_page(call, system, prompt_str, schema, img):
+    """An answer page read as holding nothing is read once more: a model sometimes returns an empty list for a page
+    full of writing (a whole question lost), while a truly blank page reads empty again at the cost of one call."""
+    if getattr(call.parsed, "answers", None) or getattr(call.parsed, "unresolved", None):
+        return call
+    try:
+        again = chat_structured(system, prompt_str + EMPTY_PAGE_HINT, schema, img)
+    except AIResponseError as e:
+        log.warning("Re-reading an empty answer page failed: %s", e.detail)
+        return call
+    if not getattr(again.parsed, "answers", None):
+        return call
+    log.info("Answer page %s was read empty; the second reading found %d answers", img, len(again.parsed.answers))
+    again.attempts += call.attempts
+    return again
 
 
 def _load_results(doc, schema):
