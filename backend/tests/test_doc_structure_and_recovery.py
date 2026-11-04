@@ -131,28 +131,33 @@ def test_student_answer_segmentation_bullets():
     assert "2) They prevent soil erosion" in a.answer_text
 
 
-def test_ocr_recovery_q17_and_q27():
-    """Verify Q17 is recovered as candidate Q1 and Q27 as candidate Q2."""
+@pytest.mark.parametrize("first,second,third,read_first,read_second", [
+    ("1", "2", "3", "17", "27"),
+    ("41", "42", "43", "491", "492"),
+    ("53", "54", "55", "553", "554"),
+])
+def test_ocr_recovery_uses_uploaded_labels_and_content(first, second, third, read_first, read_second):
+    """Extra digits are handled for uploaded labels without a per-number lookup."""
     exam_qs = [
-        DummyQuestion("id-1", "1", pos=1, text="Define osmosis"),
-        DummyQuestion("id-2", "2", pos=2, text="Explain diffusion"),
-        DummyQuestion("id-3", "3", pos=3, text="Photosynthesis process"),
+        DummyQuestion("id-1", first, pos=1, text="Define osmosis"),
+        DummyQuestion("id-2", second, pos=2, text="Explain diffusion"),
+        DummyQuestion("id-3", third, pos=3, text="Photosynthesis process"),
     ]
 
     # For handwritten "Q17" at answer position 1
-    cands17 = find_recovery_candidates("Q17", "Osmosis is the passage of water", exam_qs, answer_index=1, total_answers=3)
+    cands17 = find_recovery_candidates(f"Q{read_first}", "Osmosis is the passage of water", exam_qs, answer_index=1, total_answers=3)
     assert len(cands17) >= 1
-    assert cands17[0].normalized_number == "1"
+    assert cands17[0].normalized_number == first
     assert cands17[0].score >= 0.80
 
     # For handwritten "Q27" at answer position 2
-    cands27 = find_recovery_candidates("Q27", "Diffusion occurs down concentration gradient", exam_qs, answer_index=2, total_answers=3)
+    cands27 = find_recovery_candidates(f"Q{read_second}", "Diffusion occurs down concentration gradient", exam_qs, answer_index=2, total_answers=3)
     assert len(cands27) >= 1
-    assert cands27[0].normalized_number == "2"
+    assert cands27[0].normalized_number == second
     assert cands27[0].score >= 0.80
 
     # Mapping with recovery
-    r17 = map_label("Q17", exam_qs, answer_text="Osmosis passage of water", answer_position=1)
+    r17 = map_label(f"Q{read_first}", exam_qs, answer_text="Osmosis passage of water", answer_position=1)
     assert r17.status == NEEDS_REVIEW
     assert "id-1" in r17.candidates
 

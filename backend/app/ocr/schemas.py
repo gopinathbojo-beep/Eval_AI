@@ -152,6 +152,7 @@ class GeneratedAnswerKeyResult(_Base):
 
 
 class StudentAnswerItem(_Base):
+    label_origin: str = "unknown"  # written, inferred, continuation or unknown
     question_number: str | None = None
     raw_question_label: str | None = None
     normalized_question_label: str | None = None
@@ -188,11 +189,14 @@ class StudentAnswerItem(_Base):
     def _populate_defaults(self):
         if not self.question_number:
             self.question_number = self.normalized_question_label or self.raw_question_label or self.question_id
-        if not self.raw_question_label:
+        if not self.raw_question_label and self.label_origin not in {"inferred", "continuation"}:
             self.raw_question_label = self.question_number
         if self.content_blocks:
+            from .student_text import cancelled_block
             texts = []
             for b in self.content_blocks:
+                if cancelled_block(b):
+                    continue
                 if isinstance(b, dict):
                     t = (b.get("text") or b.get("raw_text") or "").strip()
                     if t:
@@ -221,7 +225,20 @@ class StudentPageResult(_Base):
     def _sanitize_answers(cls, v):
         if not isinstance(v, list):
             return []
-        return [item for item in v if isinstance(item, (dict, StudentAnswerItem))]
+        items, seen = [], set()
+        for item in v:
+            if not isinstance(item, (dict, StudentAnswerItem)):
+                continue
+            data = item if isinstance(item, dict) else item.model_dump()
+            box = data.get("bbox")
+            if isinstance(box, dict) and isinstance(box.get("width"), (int, float)) and isinstance(box.get("height"), (int, float)) and box["width"] > 0 and box["height"] > 0:
+                identity = (str(data.get("question_number") or ""), str(data.get("answer_text") or "").strip(),
+                            tuple(str(box.get(k)) for k in ("x", "y", "width", "height")))
+                if identity in seen:
+                    continue
+                seen.add(identity)
+            items.append(item)
+        return items
 
     @model_validator(mode="after")
     def _sync_page(self):

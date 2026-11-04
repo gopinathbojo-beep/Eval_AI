@@ -74,3 +74,6 @@ chat.md
 
 # local file holding the OpenRouter test key
 eval_ai_test_key.env
+
+# Isolated extraction verification copies contain private uploaded documents.
+backend/.verification/

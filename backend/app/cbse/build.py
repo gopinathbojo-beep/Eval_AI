@@ -396,8 +396,31 @@ def collect(doc, results, kind="question-paper"):
 
 
 # an internal choice starts with its (A)/(B) label; a bare OR also sits between case-study parts, so it is not evidence
-# "(A)" or "25 A."; uppercase only: "(a) Long term Borrowings" opening a page is a part, not an alternative
-_CHOICE_MARK = re.compile(r"^\s*(?:(?:[Qq]?\s*\d{1,3}\s*\.?\s*)?\(\s*[AB]\s*\)|\d{1,3}\s*[AB]\s*\.)")
+# "(A)", "OR (B)" or "25 A."; uppercase only: "(a) Long term Borrowings" opening a page is a part, not an alternative
+_CHOICE_MARK = re.compile(r"^\s*(?:[Oo][Rr]\s+)?(?:(?:[Qq]?\s*\d{1,3}\s*\.?\s*)?\(\s*[AB]\s*\)|\d{1,3}\s*[AB]\s*\.)")
+
+_METHOD_HEADING = re.compile(r"^\s*(?:alternative|alternate|another)\s+(?:solution|method|approach)\b", re.I | re.M)
+_BRANCH_LABEL = re.compile(r"^\s*(?:Q\.?\s*)?(?:\d+\s*)?\(?([A-D])\)?[.)]?\s*$", re.I)
+
+
+def mark_solution_methods(fragment):
+    """A printed alternative solution is a method choice inside its question branch."""
+    if not fragment.tree or not _METHOD_HEADING.search(fragment.text or ""):
+        return
+
+    def visit(node):
+        for child in node.children:
+            visit(child)
+        if node.kind != "choose" or node.limit != 1:
+            return
+        branches = {match[1].upper() for child in node.children
+                    if (match := _BRANCH_LABEL.fullmatch(child.label or ""))}
+        method_label = any(_METHOD_HEADING.search(child.label or "")
+                           or _METHOD_HEADING.match(child.text or "") for child in node.children)
+        if method_label and len(branches) <= 1:
+            node.choice_type = "method"
+
+    visit(fragment.tree)
 
 
 def _alternatives(fragments, printed_choice=False):
@@ -430,7 +453,8 @@ def _alternatives(fragments, printed_choice=False):
     for index, group in enumerate(groups):
         merged, _ = merge_nodes([f.tree for _, f in group])
         child = dict(merged[0]) if len(merged) == 1 else heads[index].tree.model_dump()
-        if child.get("kind") == "choose" and child.get("limit") == 1 and len(child.get("children") or []) > 1:
+        if (child.get("kind") == "choose" and child.get("limit") == 1
+                and child.get("choice_type", "question") == "question" and len(child.get("children") or []) > 1):
             # one page read "VI version OR (B)" as its own choice: those are further alternatives, not one nested version
             versions += [(dict(c), _ACCESSIBLE.match(c.get("text") or "") is not None or c.get("audience") == "accessible")
                          for c in child["children"]]
@@ -577,6 +601,8 @@ _ONE_ROOT = "Review the whole-question scoring tree; one root is required."
 
 
 def combined(fragments, options=None, printed_choice=False):
+    for _, fragment in fragments:
+        mark_solution_methods(fragment)
     branched = _branch_versions(fragments, options, printed_choice)
     if branched:
         return branched
@@ -597,6 +623,29 @@ def combined(fragments, options=None, printed_choice=False):
         text += ("" if not text else "\nOR\n" if alternative and not f.continues else "\n") + f.text
     # a page ending on "OR" and the next page opening with it print one OR
     text = re.sub(r"(?m)^(\s*OR\s*\n)(?:\s*OR\s*\n)+", r"\1", text)
+    # A split MCQ may be classified differently on its continuation page. Its
+    # four printed options still represent a single scored response.
+    if (len(fragments) > 1 and all(f.tree and not f.tree.children for _, f in fragments)
+            and all(re.search(rf"(?m)^\s*{letter}[.)]\s", text) for letter in "ABCD")
+            and tree and all(f"Conflicting kind for {tree['id']}" == p for p in problems)):
+        tree.update(kind="point", response_type="mcq", children=[])
+        problems = []
+    # Reconstruct a whole-question A/B choice when a page break made the
+    # continuation look like another question. Keep each branch holistic:
+    # the paper does not give the individual allocations.
+    choice = re.search(r"(?ms)^\s*A[.)]\s*(.*?)^\s*OR\s*$\s*^\s*B[.)]\s*(.*)", text)
+    if (choice and re.search(r"attempt\s+either\s+option\s+A\s+or\s+B", text, re.I)
+            and any(_ALTERNATIVE in f.issues for _, f in fragments)):
+        starts_for_choice = [f.marks for _, f in fragments if f.marks is not None and not f.continues]
+        if starts_for_choice and len(set(starts_for_choice)) == 1:
+            mark = starts_for_choice[0]
+            root = f"q{fragments[0][1].root}"
+            tree = {"id": root, "kind": "choose", "limit": 1, "marks": mark,
+                    "children": [{"id": f"{root}.{label}", "kind": "point", "label": label,
+                                  "text": choice.group(index).strip(), "marks": mark, "children": []}
+                                 for index, label in ((1, "A"), (2, "B"))]}
+            for _, fragment in fragments:
+                fragment.issues = [issue for issue in fragment.issues if issue != _ALTERNATIVE]
     sections = {f.section for _, f in fragments if f.section}
     # a continuation piece carries step marks, not the whole question's
     starts = [f.marks for _, f in fragments if f.marks is not None and not f.continues]
@@ -707,9 +756,10 @@ def scheme_tree(tree, question, options):
     return tree if fits else copy.deepcopy(q_tree)
 
 
-def build_keys(db, doc, exam, results):
-    db.query(AnswerKey).filter_by(exam_id=exam.id).update({AnswerKey.is_active: False})
-    db.query(AnswerKey).filter_by(document_id=doc.id).delete()
+def build_keys(db, doc, exam, results, changed_pages=None):
+    if changed_pages is None:
+        db.query(AnswerKey).filter_by(exam_id=exam.id).update({AnswerKey.is_active: False})
+        db.query(AnswerKey).filter_by(document_id=doc.id).delete()
     qs = {
         q.normalized_number: q
         for q in db.query(ExamQuestion).filter_by(exam_id=exam.id)
@@ -718,6 +768,10 @@ def build_keys(db, doc, exam, results):
 
     choices = printed_twice(doc)
     for root, fragments in sorted(collect(doc, results, kind="answer-key").items()):
+        if changed_pages is not None:
+            if not any(page["page_number"] in changed_pages for page, _ in fragments):
+                continue
+            db.query(AnswerKey).filter_by(document_id=doc.id, normalized_number=str(root)).delete()
         visuals = crop_visuals(
             fragments, abs_path(doc.original_file).parent, f"k{root}"
         )

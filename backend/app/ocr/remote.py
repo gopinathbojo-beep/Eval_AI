@@ -3,11 +3,31 @@ from __future__ import annotations
 import base64
 import mimetypes
 import logging
+import os
+import ssl
+from functools import lru_cache
 from pathlib import Path
+import certifi
 import httpx
 from ..config import get_settings
 
 log = logging.getLogger("adem.ai")
+
+
+@lru_cache(maxsize=1)
+def tls_context():
+    """Keep certificate verification, including trusted Windows-installed issuers.
+
+    HTTPX's certifi-only default cannot see an organisation/antivirus certificate
+    installed in Windows. Honour explicit certificate configuration first.
+    """
+    cafile, capath = os.environ.get("SSL_CERT_FILE"), os.environ.get("SSL_CERT_DIR")
+    if cafile or capath:
+        return ssl.create_default_context(cafile=cafile, capath=capath)
+    context = ssl.create_default_context(cafile=certifi.where())
+    if os.name == "nt":
+        context.load_default_certs()
+    return context
 
 
 class CompletionLimitError(ValueError):
@@ -53,7 +73,8 @@ def call(system: str, user: str, image: Path | None, structured: bool, model: st
     if s.public_web_url:
         headers["HTTP-Referer"] = s.public_web_url
         headers["X-Title"] = "Eval AI"
-    response = httpx.post(base + "/v1/chat/completions", json=payload, headers=headers, timeout=s.ai_timeout)
+    response = httpx.post(base + "/v1/chat/completions", json=payload, headers=headers, timeout=s.ai_timeout,
+                          verify=tls_context())
     # Do not propagate provider response bodies or request headers into application logs.
     if not response.is_success:
         raise httpx.HTTPStatusError(f"AI provider returned HTTP {response.status_code}", request=response.request, response=response)
@@ -77,10 +98,10 @@ def call(system: str, user: str, image: Path | None, structured: bool, model: st
 
 def status():
     base, key, model = connection()
-    authentication = httpx.get(base + "/v1/key", headers=_headers(key), timeout=15)
+    authentication = httpx.get(base + "/v1/key", headers=_headers(key), timeout=15, verify=tls_context())
     if not authentication.is_success:
         raise RuntimeError("The OpenRouter API key could not be authenticated")
-    response = httpx.get(base + "/v1/models", headers=_headers(key), timeout=15)
+    response = httpx.get(base + "/v1/models", headers=_headers(key), timeout=15, verify=tls_context())
     if not response.is_success:
         raise RuntimeError(f"AI provider health request failed (HTTP {response.status_code})")
     found = next((m for m in response.json().get("data") or [] if m.get("id") == model), None)

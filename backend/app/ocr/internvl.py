@@ -48,8 +48,12 @@ def check_model(model: str | None = None) -> dict:
         if model and model != result["model"]:
             raise RuntimeError("Only the configured OpenRouter model may be used")
         return result
-    except (httpx.HTTPError, ValueError, RuntimeError):
-        raise AIUnavailable("OpenRouter or its configured Gemini vision model is unavailable.") from None
+    except httpx.HTTPError as error:
+        if "CERTIFICATE_VERIFY_FAILED" in str(error) or "certificate verify failed" in str(error).lower():
+            raise AIUnavailable("This computer could not verify OpenRouter's HTTPS certificate. Check the trusted certificates used by your network or security software.") from None
+        raise AIUnavailable("This computer could not connect to OpenRouter. Check the network, proxy and firewall connection.") from None
+    except (ValueError, RuntimeError):
+        raise AIUnavailable("OpenRouter or its configured vision model is unavailable. Check the API key and model access.") from None
 
 
 def _call_once(system: str, user: str, image_path: Path | None, format: str | None = "json",
@@ -79,13 +83,15 @@ def _measured(parsed: T, raw: str) -> T:
     confidence.apply(parsed, raw, getattr(_last, "logprobs", None))
     if not getattr(_last, "logprobs", None):
         # Do not represent the model's self-reported number as measured OCR confidence.
-        # Conservative values require human review when the provider supplies no token probabilities.
+        # Missing probabilities mean confidence is unavailable, not a measured
+        # reading failure. Do not make every printed question/key need review.
+        # Student mapping retains its conservative policy for handwritten labels.
         for name in ("questions", "answers"):
             for item in getattr(parsed, name, []) or []:
                 if hasattr(item, "ocr_confidence"):
                     item.ocr_confidence = min(item.ocr_confidence or 0.5, 0.5)
                 elif hasattr(item, "confidence"):
-                    item.confidence = min(item.confidence or 0.5, 0.5)
+                    item.confidence = None
     return parsed
 
 
@@ -311,6 +317,41 @@ def _split_page_call(system: str, user: str, schema: Type[T], image_path: Path,
 
 def chat_structured(system: str, user: str, schema: Type[T], image_path: Path | None = None,
                     model: str | None = None) -> AICall:
+    """Read sideways ruled student pages horizontally, retaining source files and coordinates."""
+    from .schemas import StudentPageResult
+    if image_path is not None and schema is StudentPageResult:
+        from .orientation import sideways_ruled_page
+        if sideways_ruled_page(Path(image_path)):
+            from PIL import Image
+            from uuid import uuid4
+            import json
+            source = Path(image_path)
+            turned = source.with_name(f"{source.stem}-upright-{uuid4().hex}.png")
+            try:
+                with Image.open(source) as image:
+                    width, height = image.size
+                    image.rotate(90, expand=True).save(turned)
+                rotated_prompt = re.sub(r"\d+x\d+ pixels", f"{height}x{width} pixels", user)
+                rotated_prompt += ("\nSOURCE VIEW: This sideways ruled sheet was rotated for reading. Read the entire page, "
+                    "including writing above and below separators, all option/subpart labels and diagrams. "
+                    "A circled page number near the header is not a question label. Keep unnumbered continuation "
+                    "unnumbered. Inspect corrections carefully; never fill a gap using the question text.")
+                call = _chat_structured(system, rotated_prompt, schema, turned, model)
+                for answer in call.parsed.answers:
+                    if answer.bbox:
+                        box = answer.bbox
+                        answer.bbox = type(box)(x=max(0, width - box.y - box.height), y=box.x,
+                                                width=box.height, height=box.width)
+                saved = call.parsed.model_dump()
+                saved["_source_view"] = {"rotation": 90, "provider_raw": call.raw}
+                return AICall(call.parsed, json.dumps(saved, ensure_ascii=False), call.attempts)
+            finally:
+                turned.unlink(missing_ok=True)
+    return _chat_structured(system, user, schema, image_path, model)
+
+
+def _chat_structured(system: str, user: str, schema: Type[T], image_path: Path | None = None,
+                    model: str | None = None) -> AICall:
     """Call Gemini, parse and validate the response, with image split recovery when needed."""
     s = get_settings()
     attempts = s.ai_max_retries + 1
@@ -350,6 +391,10 @@ def chat_structured(system: str, user: str, schema: Type[T], image_path: Path | 
         try:
             obj = extract_json_object(raw)
             parsed = _measured(schema.model_validate(obj), raw)
+            if image_path is not None and "unresolved" in schema.model_fields and not getattr(parsed, "answers", []):
+                recovered = _retry_empty_student_page(system, user, schema, Path(image_path), model)
+                if recovered is not None:
+                    return AICall(recovered.parsed, recovered.raw, i + recovered.attempts)
             # Check if this is a tall document page where the model only extracted items in the upper portion
             if image_path is not None and hasattr(parsed, "questions") and parsed.questions:
                 try:
@@ -414,3 +459,34 @@ def chat_structured(system: str, user: str, schema: Type[T], image_path: Path | 
             log.warning("2-stage fallback failed: %s", e)
 
     raise AIResponseError(kind, last_err, raw)
+
+
+def _retry_empty_student_page(system, user, schema, image_path, model=None):
+    """Reinspect an apparently empty student scan in a rotated view, without changing source coordinates."""
+    from PIL import Image
+    from uuid import uuid4
+    turned_path = image_path.with_name(f"{image_path.stem}-orientation-{uuid4().hex[:8]}.png")
+    try:
+        with Image.open(image_path) as image:
+            width, height = image.size
+            image.rotate(90, expand=True).save(turned_path)
+        rotated_prompt = re.sub(r"\d+x\d+ pixels", f"{height}x{width} pixels", user)
+        rotated_prompt += ("\nEMPTY-PAGE RECHECK: The previous read found no answers. This view was turned 90 degrees. "
+                           "Inspect the entire handwritten body, including unnumbered working and diagrams. "
+                           "Do not mistake missing question numbers for an empty page. Transcribe only visible ink; "
+                           "use a null question number if no number is written. If the body is blank, keep answers empty.")
+        raw = _call_once(system, rotated_prompt, turned_path, format="json", model=model)
+        result = _measured(schema.model_validate(extract_json_object(raw)), raw)
+        for answer in result.answers:
+            if answer.bbox:
+                box = answer.bbox
+                answer.bbox = type(box)(x=max(0, width - box.y - box.height), y=box.x,
+                                        width=box.height, height=box.width)
+        return AICall(result, raw, 1)
+    except AIUnavailable:
+        raise
+    except (OSError, ValueError, AIResponseError, httpx.HTTPError) as error:
+        log.warning("Empty student page recheck failed: %s", type(error).__name__)
+        return None
+    finally:
+        turned_path.unlink(missing_ok=True)

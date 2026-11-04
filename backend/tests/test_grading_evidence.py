@@ -61,3 +61,13 @@ def test_missing_extracted_allocations_use_scheme_text_without_guessing_step_mar
         {"id": "overall", "marks": 2, "evidence_quotes": ["angle sum = 180°"]},
     ])
     assert validate_result(result, q, key, {}, "angle sum = 180°").marks_awarded == 2
+
+
+def test_partial_awards_keep_quarter_marks_and_non_mcq_flag_cannot_erase_them():
+    q = NS(max_marks=1, question_type="descriptive")
+    key = NS(rubric={"cbse_tree": {"id": "part", "kind": "point", "marks": 1}})
+    result = EvaluationResult(marks_awarded=.25, criterion_awards=[
+        {"id": "part", "marks": .25, "evidence_quotes": ["correct step"], "multiple_answers": True},
+    ])
+    validated = validate_result(result, q, key, {}, "correct step")
+    assert validated.marks_awarded == .25 and validated.decision == "PARTIALLY_CORRECT"

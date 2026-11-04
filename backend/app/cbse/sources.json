@@ -304,5 +304,23 @@
     "sha256": "844c174b105a4fa090067342ffaf495a83f84463efacbf622a4f7fa5331ea692",
     "page_count": 10,
     "text_pages": 10
+  },
+  {
+    "profile_id": "cbse-12-041",
+    "version": "2026-27.1",
+    "kind": "question-paper",
+    "path": "exam/Class 12/Maths-SQP.pdf",
+    "sha256": "705d2d63fe927b42af9db503a88ad1119f26cf85513fa07e5e5871ce303f7e37",
+    "page_count": 8,
+    "text_pages": 8
+  },
+  {
+    "profile_id": "cbse-12-041",
+    "version": "2026-27.1",
+    "kind": "answer-key",
+    "path": "exam/Class 12/Maths-MS.pdf",
+    "sha256": "383e0dd4f2f8db95d59b21027857002bade6b85413c098c51ba954d9c1870f75",
+    "page_count": 13,
+    "text_pages": 13
   }
 ]

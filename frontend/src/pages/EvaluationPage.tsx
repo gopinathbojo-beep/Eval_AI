@@ -5,6 +5,7 @@ import { useApi } from "../hooks/useApi";
 import { useCrumbName } from "../context/Crumbs";
 import type { EvalItem, EvalQuestion, EvaluationDetail, StudentAnswer } from "../types";
 import { fmt, label, pct, BUSY_DOC, nameIsRoll } from "../utils/format";
+import { groupAnswerBlocks } from "../utils/answerBlocks";
 import {
   Badge,
   Button,
@@ -747,11 +748,7 @@ function MarksTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<vo
   const [confirmFinalize, setConfirmFinalize] = useState(false);
 
   const items = new Map(d.items.map((i) => [i.exam_question_id, i]));
-  const ans = new Map(
-    d.answers
-      .filter((a) => a.exam_question_id && a.status !== "IGNORED")
-      .map((a) => [a.exam_question_id!, a])
-  );
+  const ans = groupAnswerBlocks(d.answers);
   // every page the student's answer to a question is written on (a whole question can run over several pages)
   const pagesOf = new Map<string, number[]>();
   for (const a of d.answers) {
@@ -929,7 +926,7 @@ function MarksTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<vo
         <div className="space-y-4">
           {d.questions.map((q) => {
             const it = items.get(q.id);
-            const a = ans.get(q.id);
+            const answerBlocks = ans.get(q.id) ?? [];
             const isMissing = it && ["EVALUATION_ERROR", "MISSING"].includes(it.status);
 
             return (
@@ -984,10 +981,18 @@ function MarksTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<vo
                   <div className="rounded-lg border border-line bg-surface p-3.5 space-y-1">
                     <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-mute">
                       Student's Answer (Transcribed)
+                      {(pagesOf.get(q.id)?.length ?? 0) > 1 && ` · All ${pagesOf.get(q.id)!.length} pages`}
                     </p>
-                    <div className="doc-text text-sm text-ink leading-7 max-h-40 overflow-y-auto">
-                      {a?.answer_text ? (
-                        <MathView text={a.answer_text} />
+                    <div className="doc-text text-sm text-ink leading-7 max-h-80 overflow-y-auto">
+                      {answerBlocks.some((a) => a.answer_text) ? (
+                        <div className="space-y-3">
+                          {answerBlocks.filter((a) => a.answer_text).map((a) => (
+                            <div key={a.id}>
+                              {answerBlocks.length > 1 && <p className="mb-1 font-sans text-[11px] font-semibold text-mute">Page {a.page_number ?? "–"}</p>}
+                              <MathView text={a.answer_text} />
+                            </div>
+                          ))}
+                        </div>
                       ) : (
                         <em className="text-mark font-normal">No answer mapped to this question</em>
                       )}
@@ -1033,6 +1038,7 @@ function MarksTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<vo
                         AI Assessment: {fmt(it.ai_marks)} / {fmt(q.max_marks)} marks
                       </span>
                       {it.ai_decision && <Badge tone="pen">{label(it.ai_decision)}</Badge>}
+                      {it.evidence_checked && <Badge tone="ok">Evidence checked</Badge>}
                       {it.ai_confidence !== null && (
                         <span className="text-mute">
                           (Confidence {pct(it.ai_confidence)})
@@ -1044,6 +1050,24 @@ function MarksTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<vo
                       <p className="text-ink/90 italic leading-relaxed">
                         “{it.ai_feedback}”
                       </p>
+                    )}
+
+                    {(it.criterion_awards?.length ?? 0) > 0 && (
+                      <details className="rounded border border-line bg-surface/60 p-2.5">
+                        <summary className="cursor-pointer font-semibold text-ink">Marks and supporting evidence</summary>
+                        <div className="mt-2 space-y-3">
+                          {it.criterion_awards!.filter((award) => award.counted !== false).map((award) => (
+                            <div key={award.id} className="border-t border-line pt-2">
+                              <p className="font-semibold">{award.id}: {fmt(award.marks)}{award.allocation !== undefined ? ` / ${fmt(award.allocation)}` : ""} marks</p>
+                              {award.evidence && <p className="mt-1 text-mute">{award.evidence}</p>}
+                              {award.evidence_quotes?.map((quote, index) => (
+                                <blockquote key={index} className="mt-1 border-l-2 border-pen/40 pl-2"><MathView text={quote} /></blockquote>
+                              ))}
+                              {award.scheme_quote && <p className="mt-1 text-mute"><b>Scheme point:</b> {award.scheme_quote}</p>}
+                            </div>
+                          ))}
+                        </div>
+                      </details>
                     )}
 
                     {it.matched_points.length > 0 && (
@@ -1286,7 +1310,7 @@ function MarksDlg({
               type="number"
               min={0}
               max={q.max_marks ?? undefined}
-              step={0.5}
+              step="any"
               value={marks}
               onChange={(e) => setMarks(e.target.value)}
             />
