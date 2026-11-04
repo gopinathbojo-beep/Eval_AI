@@ -8,7 +8,7 @@ import pymupdf
 
 from ..documents.storage import abs_path
 from ..documents.cropping import normalise_bbox
-from .extraction import Fragment, VisualEvidence
+from .extraction import Fragment, Node, VisualEvidence
 
 log = logging.getLogger("adem.layout")
 _LABEL = re.compile(r"^(?:Q(?:uestion)?\.?\s*)?(\d{1,3})(?:[.)](?:\(?[A-Za-z]\)?)?|\([A-Za-z]\)[.]?|[A-D])$", re.I)  # "17A": choice A of 17
@@ -171,6 +171,32 @@ def _band_root(rect, bands):
     return scored[0][1]
 
 
+def _recovered_parts(page, root, top, bottom):
+    """Recover clearly aligned, separately marked roman-numbered parts from a PDF row."""
+    words = [w for w in page.get_text("words") if top - 2 <= w[1] < bottom]
+    labels = sorted((w for w in words if re.fullmatch(r"\((?:i|ii|iii|iv)\)", w[4], re.I)), key=lambda w: w[1])
+    if len(labels) < 2 or [w[4].lower() for w in labels] != [f"({s})" for s in ("i", "ii", "iii", "iv")[:len(labels)]]:
+        return None
+    if any(re.search(r"\b(?:or|either)\b", w[4], re.I) for w in words if w[1] >= labels[0][1]):
+        return None
+    children = []
+    for index, label in enumerate(labels):
+        end = labels[index + 1][1] if index + 1 < len(labels) else bottom
+        marks = [w for w in words if w[0] >= page.rect.width * .85 and label[1] - 2 <= w[1] < end
+                 and re.fullmatch(r"[1-9](?:\.\d+)?", w[4])]
+        if len(marks) != 1 or marks[0][1] > label[1] + 24:
+            return None
+        text = page.get_textbox(pymupdf.Rect(label[0], label[1] - 2, page.rect.width * .85, end)).strip()
+        part = label[4][1:-1].lower()
+        start = re.search(r"\(" + re.escape(part) + r"\)", text, re.I)
+        if not start:
+            return None
+        text = text[start.start():].strip()
+        children.append(Node(id=f"q{root}.{part}", kind="point", label=f"{root}({part})", text=text,
+                             marks=float(marks[0][4])))
+    return Node(id=f"q{root}", kind="all", label=str(root), marks=sum(c.marks for c in children), children=children)
+
+
 def _reconcile_fragments(page, meta, result, anchors, lead=None):
     """Ground model roots in printed row labels and recover omitted PDF-text rows.
 
@@ -212,12 +238,14 @@ def _reconcile_fragments(page, meta, result, anchors, lead=None):
             _rename_root(misfiled.tree, old, root)
             present.add(root)
             continue
+        tree = _recovered_parts(page, root, top, bottom)
         result.fragments.append(Fragment(
             root=root,
             text=text,
+            tree=tree,
             bbox={"x": 0, "y": max(0, top - 2) * sy, "width": meta["ocr_width"],
                   "height": min(page.rect.height, bottom) * sy - max(0, top - 2) * sy},
-            issues=[
+            issues=[] if tree else [
                 "The AI omitted this printed question row; its text and visual boundary were recovered "
                 "from the PDF source. Review its parts and marks."
             ],

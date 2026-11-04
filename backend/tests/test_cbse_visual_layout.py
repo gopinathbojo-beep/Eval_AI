@@ -164,6 +164,28 @@ def test_native_images_recover_ai_omissions_without_inventing_diagrams(tmp_path,
     assert fragments[1].visuals == []
 
 
+def test_recovered_parts_use_aligned_printed_marks():
+    pdf = pymupdf.open()
+    page = pdf.new_page(width=600, height=800)
+    page.insert_text((80, 100), "(i) First question")
+    page.insert_text((520, 100), "2")
+    page.insert_text((80, 130), "(ii) Second question")
+    page.insert_text((520, 130), "2")
+    tree = layout._recovered_parts(page, 38, 50, 200)
+    assert tree.marks == 4
+    assert [child.marks for child in tree.children] == [2, 2]
+    assert tree.children[1].text == "(ii) Second question"
+    result = Page(page_number=1)
+    layout._reconcile_fragments(page, {"ocr_width": 600, "ocr_height": 800}, result, [(38, 50, 0)])
+    assert result.fragments[0].tree.marks == 4
+    assert result.fragments[0].issues == []
+    page.insert_text((80, 115), "OR")
+    assert layout._recovered_parts(page, 38, 50, 200) is None
+    ambiguous = Page(page_number=1)
+    layout._reconcile_fragments(page, {"ocr_width": 600, "ocr_height": 800}, ambiguous, [(38, 50, 0)])
+    assert ambiguous.fragments[0].issues
+
+
 @pytest.mark.parametrize("first_root", [7, 37])
 def test_printed_rows_recover_an_omitted_question_and_correct_shifted_visuals(tmp_path, monkeypatch, first_root):
     """A skipped row must not shift the following question or borrow its image."""

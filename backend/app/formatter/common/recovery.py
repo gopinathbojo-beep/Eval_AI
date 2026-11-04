@@ -1,7 +1,7 @@
 """OCR Recovery and Evidence-Based Mapping Scorer.
 
 Solves:
-- Handwritten question numbers misread (Q1 -> Q17, Q2 -> Q27).
+- Handwritten question labels misread or containing an extra digit.
 - Lack of OCR recovery mechanism.
 - Treating raw OCR as authoritative instead of probabilistic evidence.
 - Generates evidence-based candidate suggestions with confidence scores and explanations.
@@ -22,23 +22,19 @@ class RecoveryCandidate:
     reason: str
 
 
-# Common handwritten OCR digit confusion patterns from screenshots:
-# '17' -> '1' (hook/serif on top of 1 misread as 7)
-# '27' -> '2' (loop on base of 2 misread as 7)
-# '71' -> '1' or '7'
-# '8' <-> '9' (closed loop in 9 or incomplete loop in 8)
-# '6' <-> '10' (1 and 0 touching or slant misread)
-_DIGIT_CONFUSIONS: dict[str, list[str]] = {
-    "17": ["1"],
-    "27": ["2"],
-    "71": ["1", "7"],
-    "8": ["9", "3"],
-    "9": ["8"],
-    "6": ["10", "5"],
-    "10": ["6"],
-    "3": ["8"],
-    "5": ["6"],
-}
+def _near_label(source: str, target: str) -> bool:
+    """One character edit, using only labels present in the uploaded paper."""
+    if source == target or not source.isdigit() or not target.isdigit():
+        return False
+    if len(source) == len(target):
+        differences = [i for i, (a, b) in enumerate(zip(source, target)) if a != b]
+        return len(differences) == 1 or (len(differences) == 2
+            and differences[1] == differences[0] + 1
+            and source[differences[0]] == target[differences[1]]
+            and source[differences[1]] == target[differences[0]])
+    longer, shorter = sorted((source, target), key=len, reverse=True)
+    return len(longer) == len(shorter) + 1 and any(
+        longer[:i] + longer[i + 1:] == shorter for i in range(len(longer)))
 
 _STOP_WORDS = {
     # English prepositions, pronouns, conjunctions, auxiliaries
@@ -125,9 +121,9 @@ def find_recovery_candidates(
 
     generic_consts = {"100", "0", "1", "2", "3"}
 
-    # 1. Handwritten digit confusion recovery (e.g. 17 -> 1, 27 -> 2, 8 <-> 9, 6 <-> 10)
-    if norm and norm in _DIGIT_CONFUSIONS:
-        alternatives = _DIGIT_CONFUSIONS[norm]
+    # Label similarity proposes candidates; student content must support them.
+    if norm:
+        alternatives = [label for label in q_by_norm if _near_label(norm, label)]
         for alt in alternatives:
             if alt in q_by_norm:
                 target_q = q_by_norm[alt]
@@ -139,6 +135,11 @@ def find_recovery_candidates(
                 # Distinct numerical constants match
                 q_nums = _extract_distinct_numbers(getattr(target_q, "question_text", None))
                 shared_nums = ans_nums & q_nums
+
+                other_words = set().union(*(_tokenize(getattr(q, "question_text", None))
+                    for label, q in q_by_norm.items() if label != alt))
+                if len(common) < 2 and not (common - other_words) and not (shared_nums - generic_consts):
+                    continue
 
                 if exact_q:
                     alt_dist_nums = (shared_nums - exact_nums) - generic_consts
@@ -155,7 +156,7 @@ def find_recovery_candidates(
                         continue
 
                 score = 0.70
-                reasons = [f"Digit misread: '{norm}' is commonly misread for '{alt}'"]
+                reasons = [f"Similar uploaded label: '{norm}' / '{alt}', supported by student content"]
 
                 # If sequential position also matches the alternative's position
                 q_pos = getattr(target_q, "position", None)
