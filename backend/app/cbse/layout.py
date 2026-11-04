@@ -261,10 +261,54 @@ def _reconcile_fragments(page, meta, result, anchors, lead=None):
             ],
         ))
         present.add(root)
+    _recover_page_top(page, meta, result, bands, lead, present, sy)
     # a question continued from the previous page (lead) is printed above this page's first number
     result.fragments.sort(key=lambda fragment: (-1 if fragment.root == lead and fragment.root not in printed else next(
         (top for candidate, top, _bottom in bands if candidate == fragment.root), page.rect.height
     ), fragment.root))
+
+
+_HEADING_ONLY = re.compile(r"^\s*(?:SECTION|PART)\s*[-\u2013:]?\s*[A-E]\b[^\n]*$", re.I)
+
+
+def _recover_page_top(page, meta, result, bands, lead, present, sy):
+    """The printed text above a page's first question number continues the previous question (lead). When the AI
+    read none of it, it is recovered from the PDF text layer, as omitted numbered rows are. Lines the previous page
+    also prints (a running header or footer) and lone section headings are not question text. Text the AI read on
+    this page under any number (e.g. instructions leading into the next question) is left where the AI put it."""
+    if not bands or not page.number:
+        return
+    previous = page.parent[page.number - 1]
+    # the question this text continues is the last one the previous source page prints: when an earlier page failed
+    # to read, the last number among the pages that were read (lead) is not it
+    printed_before = _anchors(previous)
+    carry = printed_before[-1][0] if printed_before else lead
+    if carry is None or carry in present or carry in {root for root, _t, _b in bands}:
+        return
+    first_top = bands[0][1]
+    if first_top <= 0:
+        return
+    above = page.get_textbox(pymupdf.Rect(0, 0, page.rect.width, max(0, first_top - 2)))
+    repeated = {_squash(line) for line in previous.get_text().splitlines() if _squash(line)}
+    lines = [line.strip() for line in above.splitlines()
+             if line.strip() and _squash(line) not in repeated and not _HEADING_ONLY.match(line)
+             and not re.fullmatch(r"\d{1,2}(?:\.\d)?", line.strip())]  # a stray marks-column value
+    text = "\n".join(lines)
+    if len(_squash(text)) < 30:
+        return
+    read = _squash(" ".join(fragment.text or "" for fragment in result.fragments))
+    if _squash(text)[:40] in read:
+        return
+    lead = carry
+    result.fragments.append(Fragment(
+        root=lead,
+        text=text,
+        continues=True,
+        bbox={"x": 0, "y": 0, "width": meta["ocr_width"], "height": max(0, first_top - 2) * sy},
+        issues=[f"The AI omitted the text continuing question {lead} at the top of source page {meta['page_number']}; "
+                "it was recovered from the PDF source. Review its parts and marks."],
+    ))
+    present.add(lead)
 
 
 def _keep_with(fragment, root, tag):

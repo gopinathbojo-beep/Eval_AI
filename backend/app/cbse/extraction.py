@@ -99,12 +99,42 @@ class Fragment(BaseModel):
     issues: list[str] = Field(default_factory=list)
 
 
+PARTLY_READ = ("Text is missing: the AI reply for this source page was partly invalid, so some of it could not be "
+               "read. Check this question against the printed paper, or reprocess the page.")
+
+
 class Page(BaseModel):
     page_number: int
     metadata: dict = Field(default_factory=dict)
     instructions: list[str] = Field(default_factory=list)
     fragments: list[Fragment] = Field(default_factory=list)
     issues: list[str] = Field(default_factory=list)
+
+    @classmethod
+    def salvage(cls, obj):
+        """The page from a reply that failed validation only in some of its question pieces (e.g. the model ran on
+        into junk strings after the first piece): the valid pieces are kept, never the whole page dropped, and the
+        page and its pieces say that something is missing. None when nothing usable is left."""
+        if not isinstance(obj, dict) or not isinstance(obj.get("fragments"), list):
+            return None
+        kept = []
+        for item in obj["fragments"]:
+            try:
+                kept.append(Fragment.model_validate(item))
+            except ValueError:
+                continue
+        if not kept or len(kept) == len(obj["fragments"]):
+            return None
+        for fragment in kept:
+            fragment.issues.append(PARTLY_READ)
+        rest = {k: obj[k] for k in ("page_number", "metadata", "instructions", "issues") if k in obj}
+        try:
+            page = cls.model_validate({**rest, "fragments": []})
+        except ValueError:
+            page = cls.model_validate({"page_number": obj.get("page_number") or 0, "fragments": []})
+        page.fragments = kept
+        page.issues.append(PARTLY_READ)
+        return page
 
 
 SYSTEM = """You read uploaded CBSE examination documents. Return JSON only, based on visible source evidence.

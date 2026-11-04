@@ -315,6 +315,7 @@ def chat_structured(system: str, user: str, schema: Type[T], image_path: Path | 
     s = get_settings()
     attempts = s.ai_max_retries + 1
     raw, last_err, kind = "", "", "AI_ERROR"
+    invalid = None  # (object, raw) of the last reply that was valid JSON but failed the schema
     for i in range(1, attempts + 1):
         if i > 1 and is_looping(raw) and LOOP_HINT not in user:
             user += LOOP_HINT  # the same prompt would loop the same way again (temperature 0)
@@ -388,6 +389,7 @@ def chat_structured(system: str, user: str, schema: Type[T], image_path: Path | 
             last_err, kind = f"JSON parse failed: {e}", "FAILED_PARSE"
         except ValidationError as e:
             last_err, kind = f"Schema validation failed: {e.errors()[:3]}", "FAILED_PARSE"
+            invalid = (obj, raw)
         log.warning("AI attempt %d/%d invalid output: %s | raw[:300]=%r", i, attempts, last_err, raw[:300])
 
     # 2-Stage Automatic Fallback: CLAHE contrast enhancement & plain text transcription
@@ -413,4 +415,11 @@ def chat_structured(system: str, user: str, schema: Type[T], image_path: Path | 
         except Exception as e:
             log.warning("2-stage fallback failed: %s", e)
 
+    # every attempt failed: keep the valid part of a reply that was only partly invalid (the schema says how)
+    salvage = getattr(schema, "salvage", None)
+    if invalid is not None and salvage is not None:
+        kept = salvage(invalid[0])
+        if kept is not None:
+            log.warning("Kept the valid part of an invalid AI reply: %s", last_err)
+            return AICall(kept, invalid[1], attempts)
     raise AIResponseError(kind, last_err, raw)
