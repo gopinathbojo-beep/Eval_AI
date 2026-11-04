@@ -93,6 +93,19 @@ def printed_twice(doc):
     return {root for root, count in counts.items() if count > 1}
 
 
+def printed_by_page(doc):
+    """{page number: question numbers the PDF prints on it}; None for a scan (no text layer to trust)."""
+    source = getattr(doc, "original_file", None)
+    if not source or not str(source).lower().endswith(".pdf"):
+        return None
+    try:
+        pdf = pymupdf.open(abs_path(source))
+    except (OSError, RuntimeError, ValueError):
+        return None
+    with pdf:
+        return {index + 1: {root for root, _y, _x in _anchors(page)} for index, page in enumerate(pdf)}
+
+
 def _anchors(page):
     found, bare = [], []
     skip = _instruction_span(page)

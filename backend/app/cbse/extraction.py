@@ -181,6 +181,11 @@ def merge_nodes(nodes):
             by_id[key] = dict(data, marks=data.get("marks") if data.get("marks") is not None else old.get("marks"),
                               children=[first] + list(data["children"]))
             continue
+        if old.get("kind") != data.get("kind") and bool(old.get("children")) != bool(data.get("children")):
+            # one page shows only the stem (a single item), the next the parts: the piece with parts has the structure
+            if data.get("children"):
+                old["kind"] = data.get("kind")
+            data = dict(data, kind=old["kind"])
         for field in ("kind", "marks", "limit", "audience"):
             if (
                 old.get(field) is not None

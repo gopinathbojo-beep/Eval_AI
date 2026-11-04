@@ -214,17 +214,26 @@ def apply_printed_sections(doc, results):
 
 # a lone paper title such as "MATHEMATICS BASIC (241)" left after the header is removed
 _TITLE_ONLY = re.compile(r"^[A-Z][A-Z &,\-]*(?:\(\d+\))?\s*$")
-_ALTERNATIVE_START = re.compile(r"^\s*(?:\d{1,3}\s*)?(?:\(\s*B\s*\)|OR\b|\W*for\s+visually\s+(?:impaired|challenged))", re.I)
+_ALTERNATIVE_START = re.compile(
+    r"^\s*(?:Q(?:uestion)?\.?\s*)?(?:\d{1,3}\s*)?(?:\(\s*B\s*\)|OR\b|\W*for\s+visually\s+(?:impaired|challenged))", re.I)
 
 
-def mark_answer_continuations(results):
-    """An answer cut by a page break restarts at the top of the next page under the same number."""
+def mark_answer_continuations(results, printed=None):
+    """A question or answer cut by a page break restarts at the top of the next page under the same number.
+
+    printed = {page: numbers the PDF prints there} (layout.printed_by_page): a number printed again on the new page
+    is a new printing of that question (an OR alternative or a visually impaired version), never a continuation;
+    one the page does not print can only be carried over. Without it (a scan) the piece's own text decides."""
     last = None
-    for _, result in results:
+    for page, result in results:
         if result.fragments and last is not None:
             first = result.fragments[0]
-            if first.root == last and not first.continues and not _ALTERNATIVE_START.match(first.text or ""):
-                first.continues = True
+            if first.root == last and not first.continues:
+                on_page = printed.get(page.get("page_number")) if printed is not None else None
+                if on_page is not None:
+                    first.continues = first.root not in on_page
+                else:
+                    first.continues = not _ALTERNATIVE_START.match(first.text or "")
         if result.fragments:
             last = result.fragments[-1].root
 
@@ -311,6 +320,9 @@ def collect(doc, results, kind="question-paper"):
             fragment.issues = [x for x in fragment.issues if not _CROP_NOTE.search(x)]
     if kind == "answer-key":
         mark_answer_continuations(results)
+    else:
+        from .layout import printed_by_page
+        mark_answer_continuations(results, printed_by_page(doc))
     # before marks are set: a piece wrongly flagged as a continuation gets no whole-question marks
     fix_false_continuations(results)
     apply_printed_sections(doc, results)
@@ -474,7 +486,10 @@ _PAGE_ONLY_NOTE = re.compile(r"(?:next|previous|following|preceding) page|(?:on|
 
 def combined(fragments, options=None, printed_choice=False):
     alternative = _alternatives(fragments, printed_choice)
-    trees, problems = ([alternative], []) if alternative else merge_nodes([f.tree for _, f in fragments])
+    # a continuation's root marks are a part's marks (or a guess where no marks are printed), not the question's
+    trees, problems = ([alternative], []) if alternative else merge_nodes(
+        [f.tree.model_copy(update={"marks": None}) if f.continues and f.tree is not None else f.tree
+         for _, f in fragments])
     if len(trees) != 1:
         problems.append("Review the whole-question scoring tree; one root is required.")
     tree = shape_choices(trees[0]) if len(trees) == 1 else None
@@ -489,7 +504,8 @@ def combined(fragments, options=None, printed_choice=False):
     text = re.sub(r"(?m)^(\s*OR\s*\n)(?:\s*OR\s*\n)+", r"\1", text)
     sections = {f.section for _, f in fragments if f.section}
     # a continuation piece carries step marks, not the whole question's
-    marks = {f.marks for _, f in fragments if f.marks is not None and not f.continues}
+    starts = [f.marks for _, f in fragments if f.marks is not None and not f.continues]
+    marks = set(starts)
     if len(marks) > 1:
         problems.append("Conflicting whole-question marks across pages")
     if len(sections) > 1:
@@ -499,7 +515,8 @@ def combined(fragments, options=None, printed_choice=False):
         # page-by-page model notes ("continues on the next page", "not visible on this page") are settled once joined
         issues = [x for x in issues if not _PAGE_ONLY_NOTE.search(x)]
     problems += issues
-    derived = next(iter(marks), None)
+    # the marks column prints them where the question starts: the first piece in page order, not any of a set
+    derived = starts[0] if starts else None
     if derived is None and tree:
         derived = tree_total(tree, options or {}) or None
     return text, tree, problems, derived, next(iter(sections), None)
