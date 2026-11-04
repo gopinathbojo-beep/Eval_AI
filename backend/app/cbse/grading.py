@@ -160,8 +160,9 @@ def validate_result(result, q, key, options, student=None):
             or getattr(q, "question_type", None) == "mcq"
             and len(nodes) == 1
         )
-        if is_mcq and value not in (0, nodes[key_id]["marks"]):
-            raise EvaluationValidationError("MCQ criteria do not receive partial marks")
+        if (is_mcq or (q.max_marks or 0) <= 1) and 0 < value < nodes[key_id]["marks"] - 1e-7:
+            # an MCQ or a 1-mark question is right or wrong: anything short of full marks is 0 (no error, no review)
+            value = award["marks"] = 0
         quotes = _evidence_quotes(award, student, is_mcq)
         if value > 0 and (not quotes or any(not quote.strip() for quote in quotes)):
             raise EvaluationValidationError(

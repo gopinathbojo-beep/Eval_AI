@@ -486,16 +486,11 @@ def test_unknown_missing_duplicate_criteria_and_multiple_mcq_answers():
     )
     assert validate_result(result, q, key, {}).marks_awarded == 0
     mcq_key = NS(rubric={"cbse_tree": point("q", 1) | {"response_type": "mcq"}})
-    with pytest.raises(EvaluationValidationError):
-        validate_result(
-            EvaluationResult(
-                marks_awarded=0.5,
-                criterion_awards=[{"id": "q", "marks": 0.5, "evidence": "A"}],
-            ),
-            q,
-            mcq_key,
-            {},
-        )
+    # an MCQ is right or wrong: a half mark is 0, not an error
+    assert validate_result(
+        EvaluationResult(marks_awarded=0.5, criterion_awards=[{"id": "q", "marks": 0.5, "evidence": "A"}]),
+        q, mcq_key, {},
+    ).marks_awarded == 0
     for awards in (
         [],
         [{"id": "other", "marks": 1}],

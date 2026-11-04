@@ -29,7 +29,7 @@ export function EvaluationsList() {
             <Link
               key={e.id}
               to={e.status === "FINALIZED" ? `/results/${e.id}` : `/evaluations/${e.id}`}
-              className="group block rounded-lg border border-line bg-surface p-4 shadow-sm rounded-2xl transition-all hover:border-pen/40 hover:shadow-card"
+              className="group block rounded-lg border border-line bg-surface p-4 shadow-sm transition-all hover:border-pen/40 hover:shadow-card"
             >
               <div className="flex items-start justify-between gap-2">
                 <div>
@@ -155,7 +155,7 @@ export function ResultsList() {
         title="Finalized Examination Results"
         sub={view === "exam" ? "Class performance per exam." : "Finalized student results."}
         actions={
-          <div className="inline-flex items-center gap-1 rounded-lg border border-line bg-surface p-1 shadow-sm rounded-2xl">
+          <div className="inline-flex items-center gap-1 rounded-lg border border-line bg-surface p-1 shadow-sm">
             {(["student", "exam"] as const).map((v) => (
               <button
                 key={v}
@@ -204,7 +204,7 @@ export function ResultsList() {
               onClearFilters={table.clearFilters}
             />
           ) : (
-            <Card className="overflow-x-auto shadow-sm rounded-2xl">
+            <Card className="overflow-x-auto shadow-sm">
               <table className="w-full text-left text-sm">
                 <thead className="border-b border-line bg-surface text-xs font-semibold uppercase tracking-wider text-mute">
                   <tr>
@@ -412,7 +412,7 @@ function ExamWiseResults({ data }: { data: Evaluation[] }) {
           onClearFilters={table.clearFilters}
         />
       ) : (
-        <Card className="overflow-x-auto shadow-sm rounded-2xl">
+        <Card className="overflow-x-auto shadow-sm">
           <table className="w-full text-left text-sm">
             <thead className="border-b border-line bg-surface text-xs font-semibold uppercase tracking-wider text-mute">
               <tr>
@@ -572,7 +572,7 @@ export function ResultPage() {
       )}
 
       {/* Performance Summary Banner */}
-      <Card className="flex flex-wrap items-center justify-between gap-6 p-6 shadow-sm rounded-2xl">
+      <Card className="flex flex-wrap items-center justify-between gap-6 p-6 shadow-sm">
         <div className="flex items-center gap-5">
           <PenScore got={data.total_marks} max={data.maximum_marks} />
           <div>
@@ -600,7 +600,7 @@ export function ResultPage() {
 
       {/* Tabs Navigation */}
       <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-        <div className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface p-1.5 shadow-sm rounded-2xl">
+        <div className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface p-1.5 shadow-sm">
           {/* Tab 1: Marks Breakdown by Question */}
           <button
             type="button"
@@ -675,7 +675,7 @@ export function ResultPage() {
 
       {/* Tab 1 Content: Marks Breakdown by Question */}
       {activeTab === "breakdown" && (
-        <Card className="overflow-x-auto shadow-sm rounded-2xl">
+        <Card className="overflow-x-auto shadow-sm">
           <table className="w-full text-left text-sm">
             <thead className="border-b border-line bg-surface text-xs font-semibold uppercase tracking-wider text-mute">
               <tr>
@@ -709,7 +709,7 @@ export function ResultPage() {
       {activeTab === "detailed" && (
         <div className="space-y-4">
           {data.questions.map((q) => (
-            <Card key={q.question_id} className="p-5 shadow-sm rounded-2xl space-y-3.5">
+            <Card key={q.question_id} className="p-5 shadow-sm space-y-3.5">
               <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line pb-3">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
