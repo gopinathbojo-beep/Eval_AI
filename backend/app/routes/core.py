@@ -536,7 +536,9 @@ def textbook_subjects() -> dict:
 @router.get("/subjects/catalog")
 def subject_catalog(grade: Literal["10", "12"] | None = None, t: Teacher = Depends(current_teacher)):
     """Create Exam's subject list (scripts/build_textbook_subjects.py): {grade: [{key, name, profiles}]}."""
-    data = textbook_subjects()
+    from ..cbse.catalog import profile_options
+    data = {g: [{**s, "options": profile_options((s.get("profiles") or [None])[0])} for s in items]
+            for g, items in textbook_subjects().items()}
     return {grade: data.get(grade, [])} if grade else data
 
 
@@ -546,6 +548,8 @@ class SimpleExamIn(BaseModel):
     section: str = Field("", max_length=20)
     subject_key: str = Field(min_length=1, max_length=80)
     exam_date: str | None = None
+    # choices the subject's board pattern needs (/subjects/catalog "options"), e.g. Accountancy's Part B option
+    standard_options: dict[str, str] | None = None
 
 
 @router.post("/exams/simple", status_code=201)
@@ -572,7 +576,8 @@ def create_simple_exam(body: SimpleExamIn, db: Session = Depends(get_db), t: Tea
     if entry["profiles"]:
         from ..cbse.catalog import creation_data
         data = creation_data(ExamIn(name=body.name, class_id=c.id, subject_id=s.id, exam_date=body.exam_date,
-                                    standard_profile_id=entry["profiles"][0]), c, s)
+                                    standard_profile_id=entry["profiles"][0],
+                                    standard_options=body.standard_options), c, s)
     else:  # no CBSE pattern on file: read the paper as it is (generic formatter)
         data = {**ExamIn(name=body.name, class_id=c.id, subject_id=s.id, exam_date=body.exam_date,
                          exam_type="School exam").model_dump(exclude={"standard_profile_id", "standard_options"}),
