@@ -155,6 +155,9 @@ export interface ExamDetail extends Exam {
   verified_question_count: number;
   evaluation_count: number;
   finalized_count: number;
+  /** the latest AI-generated paper for this exam (app/generation), if any */
+  generation?: { id: string; status: "QUEUED" | "GENERATING" | "READY" | "FAILED"; stage: string | null;
+                 error: string | null; question_count: number } | null;
 }
 export interface BBox {
   x: number;

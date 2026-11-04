@@ -25,6 +25,7 @@ import { useApi } from "../hooks/useApi";
 import { useTableState } from "../hooks/useTableState";
 import type { CatalogSubject, Exam } from "../types";
 import { UploadZone } from "../components/DocPanel";
+import PaperGenerator, { type GenerateBody } from "../components/PaperGenerator";
 
 export function ExamsList() {
   const { data, error, loading, reload } = useApi<Exam[]>("/exams");
@@ -308,6 +309,8 @@ export function ExamNew() {
   const [subjectKey, setSubjectKey] = useState("");
   const [paper, setPaper] = useState<File | null>(null);
   const [key, setKey] = useState<File | null>(null);
+  const [source, setSource] = useState<"upload" | "generate">("upload");
+  const [genBody, setGenBody] = useState<GenerateBody | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
 
@@ -315,7 +318,8 @@ export function ExamNew() {
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!paper || !key) return setError(new Error("Add both the question paper and the answer key."));
+    if (source === "upload" && (!paper || !key)) return setError(new Error("Add both the question paper and the answer key."));
+    if (source === "generate" && !genBody) return setError(new Error("Choose the paper options first."));
     setBusy(true);
     setError(null);
     try {
@@ -323,13 +327,19 @@ export function ExamNew() {
         method: "POST",
         json: { name: name.trim(), grade, section: section.trim(), subject_key: subjectKey },
       });
+      if (source === "generate") {
+        // the paper and key are written from the textbooks, then read and reviewed like uploaded files
+        await api(`/exams/${exam.id}/generate-paper`, { method: "POST", json: genBody });
+        nav(`/exams/${exam.id}`, { replace: true });
+        return;
+      }
       const upload = (path: string, file: File) => {
         const form = new FormData();
         form.append("file", file);
         return api(`/exams/${exam.id}/${path}`, { method: "POST", form });
       };
-      await upload("question-paper", paper);  // the paper first: the key is read alongside it, then built on it
-      await upload("answer-key", key);
+      await upload("question-paper", paper!);  // the paper first: the key is read alongside it, then built on it
+      await upload("answer-key", key!);
       nav(`/exams/${exam.id}`, { replace: true });
     } catch (err) {
       setError(err);
@@ -339,7 +349,7 @@ export function ExamNew() {
 
   return (
     <PageCanvas className="max-w-3xl mx-auto">
-      <PageHeader title="Create exam" sub="The question paper and answer key are read as soon as you create the exam." />
+      <PageHeader title="Create exam" sub="Upload your question paper and answer key, or let the AI write them from the NCERT textbooks." />
       <form onSubmit={submit}>
         <Card className="space-y-5 p-6">
           <Field label="Exam name" required>
@@ -369,18 +379,43 @@ export function ExamNew() {
               </Select>
             )}
           </Field>
+          <div className="space-y-2">
+            <p className="text-[13px] font-semibold text-ink">Question paper and answer key</p>
+            <div className="inline-flex rounded-full border border-slate-200 bg-slate-50 p-1" role="radiogroup">
+              {([["upload", "Upload my own"], ["generate", "Generate with AI"]] as const).map(([v, text]) => (
+                <button key={v} type="button" role="radio" aria-checked={source === v} disabled={busy}
+                        onClick={() => setSource(v)}
+                        className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${source === v ? "bg-white text-blue-700 shadow-xs" : "text-slate-600 hover:text-ink"}`}>
+                  {text}
+                </button>
+              ))}
+            </div>
+          </div>
+          {source === "generate" ? (
+            subjectKey ? (
+              <div className="rounded-xl border border-blue-100 bg-blue-50/30 p-4">
+                <p className="mb-4 text-xs text-mute">
+                  Written from the NCERT textbook and CBSE sample papers. The questions and answer key go straight into the exam, ready for answer sheets.
+                </p>
+                <PaperGenerator key={subjectKey} grade={grade} subjectKey={subjectKey} onChange={setGenBody} disabled={busy} />
+              </div>
+            ) : (
+              <p className="text-sm text-mute">Choose the subject first.</p>
+            )
+          ) : (
           <div className="grid gap-4 sm:grid-cols-2">
             <UploadZone compact title="Question paper" accept=".pdf,.png,.jpg,.jpeg,.docx" chosen={paper?.name}
                         hint="PDF, image or Word" disabled={busy} onFile={async (f) => setPaper(f)} />
             <UploadZone compact title="Answer key" accept=".pdf,.png,.jpg,.jpeg,.docx" chosen={key?.name}
                         hint="PDF, image or Word" disabled={busy} onFile={async (f) => setKey(f)} />
           </div>
+          )}
           <ErrorPanel error={error} />
         </Card>
         <div className="mt-5 flex justify-end gap-2">
           <LinkButton to="/exams" variant="secondary">Cancel</LinkButton>
-          <Button type="submit" variant="primary" busy={busy} disabled={!name.trim() || !subjectKey || !paper || !key}>
-            Create exam
+          <Button type="submit" variant="primary" busy={busy} disabled={!name.trim() || !subjectKey || (source === "upload" ? !paper || !key : !genBody)}>
+            {source === "generate" ? "Create exam and generate paper" : "Create exam"}
           </Button>
         </div>
       </form>

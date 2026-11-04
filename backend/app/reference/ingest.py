@@ -4,6 +4,7 @@ Text Books/Class N/<Subject>/...: NCERT chapter PDFs, loose or inside zips; *an 
 Sample Question paper/Class N/<Paper>-MS.pdf: marking schemes (the question papers themselves are not loaded).
 A file is re-read only when its sha256 changes."""
 import hashlib, io, logging, re, zipfile
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -167,11 +168,61 @@ def discover(root: Path, report: Report):
                            question_paper=sqp.read_bytes() if sqp.is_file() else None)
 
 
-def _chapter_title(doc: pymupdf.Document, number: int | None) -> str | None:
+_NOT_TITLE = re.compile(r"(?i)^(_?chapter\s*\d*|lesson\s*\d*|\d+|notes? for (the )?teachers?.*|reprint.*|mathematics|science|"
+                        r".*\d{4}-\d{2}.*|(before you read|section|unit|part|theme|activity|appendix)\W*[ivx\d]*\W*)$")
+
+
+_NOT_TITLE_PART = re.compile(r"(?i)sourcesforinformation|notes?for(the)?teachers?|beforeyouread")  # on letters only
+
+
+def _heading(page, skip_largest: bool = False) -> str | None:
+    """The chapter name: the largest-font lines on the chapter's first page. skip_largest: the largest lines are
+    the book's banner (the same on every chapter), take the next size down."""
+    lines = []
+    for b in page.get_text("dict")["blocks"]:
+        for line in b.get("lines", []):
+            t = clean_text("".join(s["text"] for s in line["spans"])).strip()
+            key = re.sub(r"\s+", " ", re.sub(r"[_\W]+", " ", t)).strip()
+            if sum(c.isalpha() for c in t) >= 3 and not _NOT_TITLE.match(key) and not _NOT_TITLE_PART.search(re.sub(r"[\W_]+", "", t)):
+                lines.append((max(s["size"] for s in line["spans"]), t))
+    if not lines:
+        return None
+    if skip_largest:
+        biggest = max(size for size, _ in lines)
+        lines = [(size, t) for size, t in lines if size < biggest - 0.6]
+        if not lines:
+            return None
+    sizes = sorted(size for size, _ in lines)
+    top, body = sizes[-1], sizes[len(sizes) // 2]
+    if top < body * 1.15:  # no line stands out: there is no typeset heading on this page
+        return None
+    picked = []
+    for size, t in lines:  # headings are often printed twice (running head, shadow text)
+        if size >= top - 0.6 and t not in picked:
+            picked.append(t)
+    words = re.sub(r"\s+", " ", " ".join(picked)).split()
+    title = " ".join(w for i, w in enumerate(words) if i == 0 or w.lower() != words[i - 1].lower())
+    title = re.sub(r"(?i)^chapter\s*\d+\s*:?\s*", "", title)
+    title = " ".join(title.split()[:12])[:150]
+    return title.title() if title.isupper() else title
+
+
+def _chapter_title(doc: pymupdf.Document, number: int | None, skip_largest: bool = False) -> str | None:
     if number is None or not len(doc):
         return None
+    try:
+        heading = _heading(doc[0], skip_largest)
+    except Exception:  # an odd page must not stop the load
+        heading = None
+    if heading:
+        return f"Chapter {number}: {heading}"[:300]
     for line in clean_text(page_text(doc[0])).splitlines()[:12]:
-        if len(line) > 3 and sum(c.isalpha() for c in line) > 0.7 * len(line) and not re.match(r"(?i)chapter\b", line):
+        words = line.split()
+        looks_like_heading = (line.isupper() or sum(w[:1].isupper() for w in words) >= 0.6 * len(words)) \
+            and not line.rstrip().endswith((".", ",", ";", ":", ")"))
+        if (looks_like_heading and not _NOT_TITLE.match(re.sub(r"\s+", " ", re.sub(r"[_\W]+", " ", line)).strip())
+                and len(line) > 3 and len(words) <= 7 and sum(c.isalpha() for c in line) > 0.7 * len(line) and not re.match(r"(?i)chapter\b", line)
+                and not _NOT_TITLE_PART.search(re.sub(r"[\W_]+", "", line))):
             return f"Chapter {number}: {line.title() if line.isupper() else line}"[:300]
     return f"Chapter {number}"
 
@@ -238,6 +289,8 @@ def ingest(db: Session, root: Path, only: str | None = None) -> Report:
         report.loaded.append(d.path)
         report.chunks += len(chunks)
         log.info("Reference: %s (%d passages)", d.path, len(chunks))
+    if report.loaded:
+        refresh_titles(db, root)  # chapter names that repeat across a book are corrected with all chapters in view
     return report
 
 
@@ -268,3 +321,31 @@ def _delete_chunks(db: Session, src: ReferenceSource, sqlite: bool):
     if sqlite and ids:
         db.execute(sql("DELETE FROM reference_fts WHERE rowid = :id"), [{"id": i} for i in ids])
     db.query(ReferenceChunk).filter_by(source_id=src.id).delete()
+
+
+def refresh_titles(db: Session, root: Path) -> int:
+    """Re-reads the chapter names of loaded textbook chapters (without reloading their passages)."""
+    found = []
+    for d in discover(root, Report()):
+        if d.kind != "TEXTBOOK":
+            continue
+        src = db.query(ReferenceSource).filter_by(path=d.path).one_or_none()
+        if src is None:
+            continue
+        try:
+            chapter = _chapter_title(pymupdf.open(stream=io.BytesIO(d.data), filetype="pdf"), d.chapter)
+        except Exception:
+            continue
+        found.append((d, src, chapter))
+    # a name shared by 3+ chapters of one book is the book's banner, not the chapter's name
+    seen = Counter((d.subject, d.book, (c or "").split(": ", 1)[-1]) for d, _, c in found)
+    n = 0
+    for d, src, chapter in found:
+        if chapter and seen[(d.subject, d.book, chapter.split(": ", 1)[-1])] >= 3:
+            chapter = _chapter_title(pymupdf.open(stream=io.BytesIO(d.data), filetype="pdf"), d.chapter, True) or chapter
+        if chapter:
+            src.title = _title(d, chapter)
+            db.query(ReferenceChunk).filter_by(source_id=src.id).update({"chapter": chapter})
+            n += 1
+    db.commit()
+    return n

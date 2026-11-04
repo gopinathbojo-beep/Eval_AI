@@ -4,13 +4,19 @@ import Overview from "./Overview";
 import QuestionPaper from "./QuestionPaper";
 import Questions from "./Questions";
 import AnswerKey from "./AnswerKey";
+import ExamPaperGenerator from "../../components/ExamPaperGenerator";
+
+// a generated paper can replace the exam's paper and key until answer sheets arrive
+const GEN_OPEN = ["DRAFT", "QUESTION_PAPER_UPLOADED", "QUESTIONS_EXTRACTED", "QUESTIONS_VERIFIED", "ANSWER_KEY_UPLOADED",
+                  "ANSWER_KEY_VERIFIED", "READY_FOR_EVALUATION"];
 
 interface ContentAndKeyProps {
   defaultSubTab?: "overview" | "paper" | "questions" | "key";
 }
 
 export default function ContentAndKey({ defaultSubTab }: ContentAndKeyProps) {
-  const { exam } = useExam();
+  const { exam, reload } = useExam();
+  const generating = ["QUEUED", "GENERATING"].includes(exam.generation?.status ?? "");
 
   // Determine initial subtab based on prop or exam progress
   const getInitialTab = (): "overview" | "paper" | "questions" | "key" => {
@@ -45,7 +51,7 @@ export default function ContentAndKey({ defaultSubTab }: ContentAndKeyProps) {
     {
       id: "paper" as const,
       label: "Files",
-      badge: exam.question_paper && exam.answer_key_document ? null : "Missing",
+      badge: generating ? "Generating" : exam.question_paper && exam.answer_key_document ? null : "Missing",
       badgeTone: "warn",
     },
   ];
@@ -91,7 +97,15 @@ export default function ContentAndKey({ defaultSubTab }: ContentAndKeyProps) {
       <div>
         {activeSubTab === "overview" && <Overview onSelectSubTab={(tab) => setActiveSubTab(tab)} />}
         {activeSubTab === "paper" && <QuestionPaper onReviewQuestions={() => setActiveSubTab("questions")} onOpenAnswerKey={() => setActiveSubTab("key")} />}
-        {activeSubTab === "questions" && <Questions />}
+        {activeSubTab === "questions" && (
+          <div className="space-y-5">
+            {/* AI generation lives with the questions it produces: progress here, then the questions below */}
+            <ExamPaperGenerator examId={exam.id} examStatus={exam.status} onAttached={reload}
+              locked={!GEN_OPEN.includes(exam.status) || (exam.evaluation_count ?? 0) > 0} />
+            {/* remount when a generated paper lands so the list reloads */}
+            {!generating && <Questions key={`${exam.status}-${exam.question_count}-${exam.generation?.status ?? ""}`} />}
+          </div>
+        )}
         {activeSubTab === "key" && <AnswerKey />}
       </div>
     </div>
