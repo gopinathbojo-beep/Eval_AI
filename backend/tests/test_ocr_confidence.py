@@ -2,7 +2,18 @@
 import math
 
 from app.ocr import confidence
-from app.ocr.schemas import AnswerKeyPageResult, StudentPageResult
+from app.ocr.schemas import AnswerKeyPageResult, StudentPageResult, QuestionPageResult
+
+
+def test_unavailable_provider_probabilities_do_not_invent_low_paper_confidence(monkeypatch):
+    from app.ocr import internvl
+    monkeypatch.setattr(internvl._last, "logprobs", None, raising=False)
+    paper = QuestionPageResult.model_validate({"questions": [{"raw_question_number": "1",
+        "question_text": "Printed question", "marks": 1, "confidence": .99}]})
+    key = AnswerKeyPageResult.model_validate({"answers": [{"question_number": "1",
+        "answer_text": "Printed answer", "confidence": .99}]})
+    assert internvl._measured(paper, "{}").questions[0].confidence is None
+    assert internvl._measured(key, "{}").answers[0].confidence is None
 
 
 def _tokens(*pieces):

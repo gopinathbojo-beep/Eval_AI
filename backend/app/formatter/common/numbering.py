@@ -234,6 +234,12 @@ def extract_label_from_text_prefix(text: str) -> tuple[str | None, str]:
         return lbl, (rest if rest else s)
 
     # Pattern 3: Number followed by separator: e.g. '01.', '1)', '1 -', '01/02', '1.a', '3(a)', '1>', '1,'
+    # A leading fraction or arithmetic step is working, not an answer heading.
+    if (re.match(r"^\d+(?:\.\d+)?\s*=", s)
+            or re.match(r"^\d+(?:\.\d+)?\s*/\s*[a-zA-Z(]", s)
+            or re.match(r"^\d+(?:\.\d+)?\s*/\s*\d+(?:\.\d+)?\s*(?:[\[({=+\u00d7\u00f7\u221a\u222b]|$)", s)
+            or re.match(r"^\d+(?:\.\d+)?\s*[+\-\u2212\u00d7\u00f7=]\s*\d", s)):
+        return None, s
     m_num = re.match(r"^\s*([0-9]{1,3}(?:[\.\-\/][0-9]{1,3}|\([a-zA-Z0-9]+\)|[a-zA-Z])?)[\.\:\)\s\-\/\,\>\→]+(.*)", s, re.DOTALL)
     if m_num:
         lbl = m_num.group(1).strip()

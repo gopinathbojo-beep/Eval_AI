@@ -4,8 +4,8 @@ from types import SimpleNamespace as NS
 
 import pytest
 
-from app.cbse.build import collect, combined, mark_answer_continuations
-from app.cbse.extraction import Fragment, Node, Page, merge_nodes
+from app.cbse.build import _ALTERNATIVE, collect, combined, mark_answer_continuations, use_question_marks
+from app.cbse.extraction import Fragment, Node, Page, merge_nodes, tree_total
 
 
 def leaf(id_, marks, text=""):
@@ -18,6 +18,26 @@ def page(n, *fragments):
 
 def frag(root, text, tree, marks=None, continues=False):
     return Fragment(root=root, text=text, marks=marks, continues=continues, tree=Node.model_validate(tree))
+
+
+def test_split_mcq_conflicting_leaf_types_is_one_point():
+    first = frag(19, "Question\nA. one\nB. two", {"id": "q19", "kind": "all"}, 1)
+    second = frag(19, "C. three\nD. four", leaf("q19", None), continues=True)
+    _, tree, issues, _, _ = combined([({"page_number": 1}, first), ({"page_number": 2}, second)])
+    assert tree["kind"] == "point" and tree["response_type"] == "mcq"
+    assert not issues
+
+
+def test_split_whole_question_choice_keeps_both_branches_complete():
+    first = frag(29, "Attempt either option A or B.\nA.\nI. first", leaf("q29", 5), 5)
+    second = frag(29, "II. extra\nOR\nB.\nI. second\nII. more", leaf("q29", None))
+    second.issues = [_ALTERNATIVE]
+    _, tree, issues, _, _ = combined([({"page_number": 1}, first), ({"page_number": 2}, second)])
+    assert tree["kind"] == "choose" and tree["limit"] == 1
+    assert [child["marks"] for child in tree["children"]] == [5, 5]
+    assert "II. extra" in tree["children"][0]["text"]
+    assert "II. more" in tree["children"][1]["text"]
+    assert not issues
 
 
 @pytest.mark.parametrize("whole", [2, 4, 5])
@@ -80,3 +100,32 @@ def test_merge_keeps_real_structure_conflicts():
     assert len(trees) == 1  # both pieces have parts and disagree: that is a real conflict, handled as before
     trees, problems = merge_nodes([leaf("q", 4), {"id": "q", "kind": "all", "children": [leaf("a", 2), leaf("b", 2)]}])
     assert problems == [] and trees[0]["kind"] == "all" and trees[0]["marks"] == 4
+
+
+@pytest.mark.parametrize("root", [7, 41])
+def test_cross_page_alternative_with_different_ids_retains_nested_solution_methods(root):
+    first = frag(root, f"{root}(A). First alternative", {
+        "id": f"q{root}A", "kind": "all", "marks": 3,
+        "children": [leaf("a1", 1), leaf("a2", 2)],
+    }, marks=3)
+    second = frag(root, f"OR\n{root}(B). Second alternative\nAlternative Solution:\nAnother solution", {
+        "id": f"q{root}", "kind": "choose", "limit": 1,
+        "children": [
+            {"id": "main", "kind": "all", "label": f"{root}(B)",
+             "children": [leaf("b1", 1), leaf("b2", 2)]},
+            {"id": "method", "kind": "all", "label": "Alternative Solution",
+             "children": [leaf("method1", 3)]},
+        ],
+    }, continues=True)
+    fragments = collect(NS(), [page(1, first), page(2, second)], kind="answer-key")[root]
+    assert not second.continues
+    use_question_marks(fragments, NS(max_marks=3))
+    _, tree, issues, marks, _ = combined(fragments)
+    assert issues == [] and marks == 3
+    assert tree["kind"] == "choose" and tree["limit"] == 1
+    assert len(tree["children"]) == 2
+    method_choice = tree["children"][1]
+    assert method_choice["kind"] == "choose" and method_choice["choice_type"] == "method"
+    assert tree_total(tree, {}) == 3
+    assert tree_total(tree, {}, {"a1": 1, "a2": 2, "b1": 1, "b2": 2, "method1": 3}) == 3
+    assert tree_total(tree, {}, {"b1": 1, "method1": 1.5}) == 1.5

@@ -332,6 +332,7 @@ export interface StudentAnswer {
   mapping_candidates: string[];
   mapping_confirmed: boolean;
   edited: boolean;
+  position?: number;
 }
 
 export interface EvalItem {
@@ -349,6 +350,17 @@ export interface EvalItem {
   teacher_overridden: boolean;
   teacher_feedback: string | null;
   not_attempted_confirmed: boolean;
+  evidence_checked?: boolean;
+  criterion_awards?: {
+    id: string;
+    marks: number;
+    allocation?: number;
+    counted?: boolean;
+    credit_type?: string;
+    scheme_quote?: string;
+    evidence?: string;
+    evidence_quotes?: string[];
+  }[];
 }
 export interface Issue {
   question?: string | null;

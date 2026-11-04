@@ -10,11 +10,13 @@ Solves:
 """
 from __future__ import annotations
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Any
 from ... import formatter
 from .numbering import normalize_question_number, is_sub_question, parent_number, extract_label_from_text_prefix, subquestion_value
 from .recovery import find_recovery_candidates, _tokenize, _extract_distinct_numbers
+from ...ocr.student_text import active_student_text, cancelled_block
 
 
 @dataclass
@@ -27,6 +29,7 @@ class SegmentedAnswer:
     bbox: dict | None
     ocr_confidence: float | None
     position: int = 0
+    mapping_note: str | None = None
 
 
 # Sub-part markers: e.g. "(a)", "(b)", "a)", "b)", "(i)", "(ii)", "a>", "b>", "a,", "b,"
@@ -162,10 +165,6 @@ def _split_swallowed_answers(
         m_curr = re.search(r"(\d+)", str(raw_lbl))
         if m_curr:
             curr_p_num = int(m_curr.group(1))
-            if curr_p_num == 17:
-                curr_p_num = 1
-            elif curr_p_num == 27:
-                curr_p_num = 2
 
     topic_patterns: list[tuple[str, str]] = []
 
@@ -227,6 +226,9 @@ def _split_swallowed_answers(
             continue
 
         is_explicit_q = bool(m.group(1))
+        line = text[m.start():].lstrip().splitlines()[0]
+        if not is_explicit_q and re.match(r"^\d+\s*[-+\u2212\u00d7\u00f7=]\s*\d", line):
+            continue
         # If not an explicit Q prefix, check if it's a small content bullet (1, 2, 3) inside an ongoing answer
         int_n = int(num_str) if num_str.isdigit() else 0
         if not is_explicit_q and curr_p_num is not None and curr_p_num >= int_n and int_n in (1, 2, 3):
@@ -234,14 +236,13 @@ def _split_swallowed_answers(
 
         # If canonical questions are known, ensure this is a question number in the exam
         if valid_nums and num_str not in valid_nums:
-            # Allow 5 when exam has 6 if student misnumbered destructive distillation
-            if not (num_str == "5" and "6" in valid_nums):
-                continue
+            continue
 
         boundaries.append((m.start(), num_str))
 
     # 2. Topic/story patterns matching exam questions
-    for pat_str, target_num in topic_patterns:
+    whole_questions = bool(canonical_questions) and all(getattr(q, "structure", None) for q in canonical_questions)
+    for pat_str, target_num in ([] if whole_questions else topic_patterns):
         # Never jump backwards or match the ongoing question via topic phrase
         if curr_p_num is not None and target_num.isdigit() and int(target_num) <= curr_p_num:
             continue
@@ -341,8 +342,41 @@ def _split_on_markers(text: str, parents: set[str]) -> list[tuple[str | None, st
 _CONTENT_MARGIN = 0.1
 
 
+def _equation_anchors(text: str) -> set[str]:
+    """Literal equation boundaries, treating an inequality's boundary as its plotted line."""
+    text = unicodedata.normalize("NFKC", text or "").translate(str.maketrans({"−": "-", "≤": "=", "≥": "="}))
+    term = r"(?:\d+(?:\.\d+)?\s*\*?\s*)?[a-zA-Z]"
+    expression = term + r"(?:\s*[+-]\s*" + term + r")*"
+    pattern = r"(?<![\w])(" + expression + r")\s*(?:<=|>=|=)\s*(" + expression + r"|[+-]?\d+(?:\.\d+)?)(?![\w])"
+    return {re.sub(r"\s+|\*", "", left + "=" + right).casefold() for left, right in re.findall(pattern, text)}
+
+
+def _math_question(text: str, canonical_questions: list[Any]) -> str | None:
+    """Match distinctive literal equation shapes against this paper only."""
+    # A Cartesian line written without a heading after an inserted graph page
+    # can resume an earlier 3-D answer. Require the same explicit equation shape
+    # in exactly one canonical question, rather than assuming page adjacency.
+    def cartesian(value):
+        return (bool(re.search(r"\bx\b", value, re.I)) and bool(re.search(r"\by\b", value, re.I))
+                and bool(re.search(r"\bz\b", value, re.I)) and value.count("=") >= 2 and "/" in value)
+    if cartesian(text):
+        matches = [q for q in canonical_questions if cartesian(q.question_text or "")]
+        if len(matches) == 1:
+            return parent_number(matches[0].normalized_number)
+    equations = _equation_anchors(text)
+    if len(equations) >= 2:
+        matches = sorted(((len(equations & _equation_anchors(q.question_text)), q.normalized_number)
+                          for q in canonical_questions), reverse=True)
+        if matches and matches[0][0] >= 2 and (len(matches) == 1 or matches[0][0] > matches[1][0]):
+            return parent_number(matches[0][1])
+    return None
+
+
 def _content_question(text: str, canonical_questions: list[Any]) -> str | None:
     """The question the text clearly belongs to: a good score that beats the runner-up by a margin."""
+    math_match = _math_question(text, canonical_questions)
+    if math_match:
+        return math_match
     rec = find_recovery_candidates(None, text, canonical_questions)
     if not rec or rec[0].score < _CONTENT_MIN:
         return None
@@ -414,6 +448,35 @@ def _segment_invented_labels(
     return out
 
 
+def _math_anchors(text: str) -> set[str]:
+    """Literal matrix identifiers, coefficients and distinctive printed numbers; no algebra is solved."""
+    text = unicodedata.normalize("NFKC", text or "")
+    tokens = re.findall(r"\b[A-Z]{2,4}\b|(?<!\w)\d{4,}(?!\w)|(?<!\w)\d+(?:\.\d+)?\s*[a-z]\b", text)
+    common = {"OR", "AND", "THE", "LET", "SOL", "IF", "PT", "GN", "LHS", "RHS", "LHL", "RHL"}
+    return {re.sub(r"\s+", "", token) for token in tokens if token not in common}
+
+
+def _working_continues_previous(text: str, previous, claimed, prior_parts: list[str]) -> bool:
+    """Prefer continuity when distinctive working supports it over a guessed number."""
+    lines = [line.strip() for line in text.splitlines() if line.strip() and not re.match(r"^section\b", line, re.I)]
+    if any(re.match(r"^(?:Q(?:uestion)?\.?\s*\d+|\d+\s*\([a-zivx]+\)|\d+\s*[.)]\s*(?:sol(?:n|ution)?|given))", line, re.I)
+           for line in lines[:3]):
+        return False
+    present = _math_anchors(text)
+    supported = present & _math_anchors((previous.question_text or "") + "\n" + "\n".join(prior_parts))
+    competing = present & _math_anchors(claimed.question_text or "")
+    distinct = supported - competing
+    if len(distinct) >= 2 or any(re.fullmatch(r"[A-Z]{2,4}", token) for token in distinct):
+        return True
+    # Descriptive subparts can also be assigned a guessed next question number.
+    # Require several distinctive source terms and almost no support for that
+    # claimed question; a shared generic word such as "iron" is insufficient.
+    words = _tokenize(text)
+    prior_words = words & _tokenize(previous.question_text or "")
+    competing_words = words & _tokenize(claimed.question_text or "")
+    return len(prior_words - competing_words) >= 4 and len(competing_words) <= 1
+
+
 def segment_student_answers(
     page_results: list[tuple[dict, Any]],
     canonical_questions: list[Any] | None = None,
@@ -428,6 +491,8 @@ def segment_student_answers(
             return rebuilt
     grouped: list[SegmentedAnswer] = []
     exam_norms = {getattr(q, "normalized_number", None) for q in (canonical_questions or [])}
+    whole_questions = bool(canonical_questions) and all(getattr(q, "structure", None) for q in canonical_questions)
+    by_number = {q.normalized_number: q for q in (canonical_questions or [])}
 
     curr_raw_label: str | None = None
     curr_norm_num: str | None = None
@@ -437,6 +502,15 @@ def segment_student_answers(
     curr_confs: list[float] = []
     curr_was_redirected: bool = False
     curr_label_moved = False  # the current answer's written label was misread: its content moved it here
+    curr_page_parts: dict[int, dict] = {}
+
+    def append_text(text):
+        curr_text_parts.append(text)
+        part = curr_page_parts.setdefault(page_num, {"texts": [], "bbox": None, "confs": []})
+        part["texts"].append(text)
+        part["bbox"] = _merge_bboxes(part["bbox"], bb)
+        if conf is not None:
+            part["confs"].append(conf)
 
     def flush_current():
         nonlocal curr_raw_label, curr_norm_num, curr_text_parts, curr_bbox, curr_confs, curr_was_redirected, curr_label_moved
@@ -457,7 +531,23 @@ def segment_student_answers(
             ocr_confidence=round(avg_conf, 2) if avg_conf is not None else None,
             position=len(grouped) + 1,
         )
-        grouped.append(ans)
+        if whole_questions and curr_page_parts:
+            # Keep each page as a separate source block, mapped to the same
+            # whole question, so grading and sheet previews retain every page.
+            for source_page, part in curr_page_parts.items():
+                continuation = source_page != curr_page
+                page_text = "\n".join(part["texts"]).strip()
+                page_conf = sum(part["confs"]) / len(part["confs"]) if part["confs"] else None
+                grouped.append(SegmentedAnswer(
+                    raw_question_number=None if continuation else curr_raw_label,
+                    normalized_number=curr_norm_num, answer_text=page_text, raw_ocr_text=page_text,
+                    page_number=source_page, bbox=part["bbox"], ocr_confidence=page_conf,
+                    position=len(grouped) + 1,
+                    mapping_note=f"Source grouping: continuation of question {parent_number(curr_norm_num)}" if continuation else None,
+                ))
+        else:
+            grouped.append(ans)
+        curr_page_parts.clear()
 
         curr_raw_label = None
         curr_norm_num = None
@@ -479,6 +569,8 @@ def segment_student_answers(
             if getattr(a, "content_blocks", None):
                 cb_texts = []
                 for cb in a.content_blocks:
+                    if cancelled_block(cb):
+                        continue
                     if isinstance(cb, dict):
                         t = (cb.get("text") or cb.get("raw_text") or "").strip()
                         if t and t not in a_text:
@@ -486,7 +578,19 @@ def segment_student_answers(
                 if cb_texts:
                     a_text = f"{a_text}\n" + "\n".join(cb_texts)
                     a_text = a_text.strip()
+            # Cancelled headings and formulas cannot start questions or influence
+            # content mapping. The complete OCR remains in the saved page record.
+            a_text = active_student_text(a_text).strip()
+            if not a_text:
+                continue
             a_lbl = (a.question_number or "").strip() or None
+            if getattr(a, "label_origin", "unknown") == "continuation":
+                a_lbl = None
+            source_label = (getattr(a, "raw_question_label", None) or "").strip()
+            if whole_questions:
+                # Bare subparts cannot acquire a new parent from content alone.
+                if re.fullmatch(r"(?:\s*\([a-zivx]+\)\s*)+", source_label, re.I):
+                    a_lbl = None
             a_bb = a.bbox.model_dump() if getattr(a, "bbox", None) else None
             a_conf = getattr(a, "ocr_confidence", None)
             splits = _split_swallowed_answers(a_lbl, a_text, canonical_questions)
@@ -495,15 +599,34 @@ def segment_student_answers(
                     expanded_items.append((p_lbl, p_txt, a_bb, a_conf))
 
         for raw_lbl, text, bb, conf in expanded_items:
+            content_q = _content_question(text, canonical_questions) if not raw_lbl and canonical_questions and text else None
+            if whole_questions and curr_norm_num and curr_text_parts:
+                previous = by_number.get(parent_number(curr_norm_num))
+                claimed = by_number.get(parent_number(normalize_question_number(raw_lbl) or ""))
+                if previous and not ((getattr(previous, "max_marks", None) or 0) <= 1):
+                    other = by_number.get(content_q)
+                    if not raw_lbl and other and other is not previous and _working_continues_previous(text, previous, other, curr_text_parts):
+                        content_q = parent_number(curr_norm_num)
+                    missing_label = not raw_lbl
+                    heading_label, _ = extract_label_from_text_prefix(text)
+                    heading_norm = normalize_question_number(heading_label or "") or ""
+                    has_heading = bool(heading_norm and not heading_norm.startswith("(") and parent_number(heading_norm).isdigit())
+                    if ((missing_label and not has_heading and (not content_q or content_q == parent_number(curr_norm_num)))
+                            or (claimed and claimed is not previous and _working_continues_previous(text, previous, claimed, curr_text_parts))):
+                        append_text(text)
+                        if bb and curr_page == page_num:
+                            curr_bbox = _merge_bboxes(curr_bbox, bb)
+                        if conf is not None:
+                            curr_confs.append(conf)
+                        continue
             # An unnumbered block whose content clearly answers another question is that question's answer with
             # its number missed by OCR ("4)" lost, leaving "(a) ... (b) ..."), not a bullet of the current answer
-            content_q = _content_question(text, canonical_questions) if not raw_lbl and canonical_questions and text else None
             if content_q and content_q != (parent_number(curr_norm_num) if curr_norm_num else None):
                 flush_current()
                 curr_norm_num = content_q
                 curr_was_redirected = True  # numbered by content: a following block labelled the same joins it
                 curr_page = page_num
-                curr_text_parts.append(text)
+                append_text(text)
                 curr_bbox = bb
                 if conf is not None:
                     curr_confs.append(conf)
@@ -512,7 +635,7 @@ def segment_student_answers(
             # Check if this item is a content bullet e.g. "1)", "2)", "3)" under an ongoing question
             if curr_norm_num and _is_content_bullet(raw_lbl, text, curr_norm_num, exam_norms):
                 bullet_prefix = f"{raw_lbl} " if raw_lbl else ""
-                curr_text_parts.append(f"{bullet_prefix}{text}".strip())
+                append_text(f"{bullet_prefix}{text}".strip())
                 if bb and curr_page == page_num:
                     curr_bbox = _merge_bboxes(curr_bbox, bb)
                 if conf is not None:
@@ -537,7 +660,7 @@ def segment_student_answers(
             if raw_lbl is None or raw_lbl.lower() in ("null", "none", "?", "unknown", "[unclear]"):
                 # Top-of-page continuation across pages
                 if page_num > curr_page and curr_text_parts:
-                    curr_text_parts.append(text)
+                    append_text(text)
                     if bb and curr_page == page_num:
                         curr_bbox = _merge_bboxes(curr_bbox, bb)
                     if conf is not None:
@@ -556,7 +679,7 @@ def segment_student_answers(
                     curr_norm_num = None
                     curr_page = page_num
                     if text:
-                        curr_text_parts.append(text)
+                        append_text(text)
                     curr_bbox = bb
                     if conf is not None:
                         curr_confs.append(conf)
@@ -566,7 +689,23 @@ def segment_student_answers(
             # Check if content strongly matches a different canonical question (redirecting misread labels)
             is_redirected = False
             norm = normalize_question_number(raw_lbl)
-            if norm and canonical_questions and text and len(_tokenize(text)) >= 2:
+            if (whole_questions and norm and curr_norm_num and parent_number(norm) != parent_number(curr_norm_num)
+                    and any(g.normalized_number and parent_number(g.normalized_number) == parent_number(norm) for g in grouped)):
+                # A duplicated earlier number may be a handwritten digit misread.
+                # Require forward answer order plus distinctive source constants.
+                rec = find_recovery_candidates(raw_lbl, text, canonical_questions)
+                top = rec[0] if rec else None
+                target = by_number.get(parent_number(top.normalized_number or "")) if top else None
+                claimed = by_number.get(parent_number(norm))
+                previous = by_number.get(parent_number(curr_norm_num))
+                if target and claimed and top.score >= .8:
+                    constants = ((_extract_distinct_numbers(text) & _extract_distinct_numbers(target.question_text))
+                                 - _extract_distinct_numbers(claimed.question_text) - {"0", "1", "2", "3", "100"})
+                    if (previous and len(constants) >= 2 and target.position > previous.position):
+                        norm = target.normalized_number
+                        raw_lbl = f"Q{norm}"
+                        is_redirected = True
+            if norm and canonical_questions and not whole_questions and text and len(_tokenize(text)) >= 2:
                 exact_match = [q for q in canonical_questions if q.normalized_number in (norm, parent_number(norm))]
                 rec = find_recovery_candidates(raw_lbl, text, canonical_questions)
                 top_p = parent_number(rec[0].normalized_number or "") if rec else ""
@@ -652,7 +791,7 @@ def segment_student_answers(
                     # Exam scores the question as a whole: fold the part in, keeping its marker
                     if text and not re.match(rf"^\s*\(?{re.escape(sub_part)}[\)\.\:,]", text, re.IGNORECASE):
                         text = f"({sub_part}) {text}"
-                    curr_text_parts.append(text)
+                    append_text(text)
                     if bb and curr_page == page_num:
                         curr_bbox = _merge_bboxes(curr_bbox, bb)
                     if conf is not None:
@@ -667,14 +806,14 @@ def segment_student_answers(
                     curr_norm_num = f"{parent}({sub_part})"
                     curr_page = page_num
                     if text:
-                        curr_text_parts.append(text)
+                        append_text(text)
                     curr_bbox = bb
                     if conf is not None:
                         curr_confs.append(conf)
                     continue
                 elif curr_norm_num == f"{parent}({sub_part})" and page_num > curr_page:
                     # Same part relabelled at the top of the next page: the answer was cut across pages
-                    curr_text_parts.append(text)
+                    append_text(text)
                     if conf is not None:
                         curr_confs.append(conf)
                     continue
@@ -684,7 +823,7 @@ def segment_student_answers(
                     curr_norm_num = f"{parent}({sub_part})"
                     curr_page = page_num
                     if text:
-                        curr_text_parts.append(text)
+                        append_text(text)
                     curr_bbox = bb
                     if conf is not None:
                         curr_confs.append(conf)
@@ -696,7 +835,7 @@ def segment_student_answers(
                 if text and not re.match(rf"^\s*\(?{re.escape(sub_tok.strip('()'))}[\)\.\:,]", text, re.IGNORECASE):
                     text = f"{sub_tok} {text}"
                 if curr_norm_num and parent_number(curr_norm_num) == p:
-                    curr_text_parts.append(text)
+                    append_text(text)
                     if bb and curr_page == page_num:
                         curr_bbox = _merge_bboxes(curr_bbox, bb)
                     if conf is not None:
@@ -708,7 +847,7 @@ def segment_student_answers(
                     curr_norm_num = p
                     curr_page = page_num
                     if text:
-                        curr_text_parts.append(text)
+                        append_text(text)
                     curr_bbox = bb
                     if conf is not None:
                         curr_confs.append(conf)
@@ -719,10 +858,10 @@ def segment_student_answers(
             # (students often rewrite "Q4" at the top of the next page); same-page repeats stay separate.
             is_explicit_cont = bool(raw_lbl and re.search(r"\b(?:cont|continued|contd)\b", raw_lbl, re.IGNORECASE))
             if curr_norm_num and norm == curr_norm_num and (
-                curr_was_redirected or page_num > curr_page or is_explicit_cont
+                curr_was_redirected or page_num > curr_page or is_explicit_cont or whole_questions
             ):
                 curr_raw_label = curr_raw_label or raw_lbl  # an answer numbered by content takes the written label
-                curr_text_parts.append(text)
+                append_text(text)
                 if bb and curr_page == page_num:
                     curr_bbox = _merge_bboxes(curr_bbox, bb)
                 if conf is not None:
@@ -736,7 +875,7 @@ def segment_student_answers(
             curr_was_redirected = curr_label_moved = is_redirected
             curr_page = page_num
             if text:
-                curr_text_parts.append(text)
+                append_text(text)
             curr_bbox = bb
             if conf is not None:
                 curr_confs.append(conf)
@@ -745,4 +884,23 @@ def segment_student_answers(
 
     for i, g in enumerate(grouped, 1):
         g.position = i
+    if whole_questions:
+        # A page may have an option column and a separate rough-work column.
+        # Present one page block per question without losing either source region.
+        page_groups = {}
+        combined = []
+        for answer in grouped:
+            identity = (answer.page_number, answer.normalized_number) if answer.normalized_number else None
+            existing = page_groups.get(identity) if identity else None
+            if existing:
+                existing.answer_text += "\n" + answer.answer_text
+                existing.raw_ocr_text += "\n" + answer.raw_ocr_text
+                existing.bbox = _merge_bboxes(existing.bbox, answer.bbox)
+            else:
+                combined.append(answer)
+                if identity:
+                    page_groups[identity] = answer
+        grouped = combined
+        for position, answer in enumerate(grouped, 1):
+            answer.position = position
     return grouped

@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+from uuid import uuid4
 from pathlib import Path
 from sqlalchemy.orm import Session
 from ..config import get_settings, ai_unavailable_message, ai_bad_response_message
@@ -32,6 +33,34 @@ KINDS = {
     "answer-sheet": (AnswerSheetDocument, prompts.student_answer_prompt, StudentPageResult),
 }
 LOW_CONF = 0.6
+
+
+def recover_failed_page(page, schema):
+    """Revalidate a saved parse failure after a parser update, preserving source text.
+
+    Check the collection and page identity explicitly: schemas with default
+    empty collections must never accept a response from another extraction mode.
+    """
+    if page.get("ocr_status") != "FAILED_PARSE" or not page.get("ocr_file"):
+        return None
+    from ..ocr.parser import extract_json_object
+    from pydantic import ValidationError
+    try:
+        source = abs_path(page["ocr_file"])
+        saved = json.loads(source.read_text(encoding="utf-8"))
+        raw = saved.get("raw") or ""
+        obj = extract_json_object(raw)
+        collection = next((name for name in ("fragments", "questions", "answers") if name in schema.model_fields), None)
+        if (not collection or not isinstance(obj.get(collection), list)
+                or obj.get("page_number", page["page_number"]) != page["page_number"]):
+            return None
+        parsed = schema.model_validate(obj)
+        if not getattr(parsed, collection):
+            return None
+        return {"status": "OK", "raw": raw, "parsed": parsed.model_dump(), "attempts": 0,
+                "recovered_from": rel(source), "recovery": "Saved response accepted by the updated parser"}
+    except (OSError, ValueError, TypeError, ValidationError):
+        return None
 
 
 def _set_pages(db: Session, doc, idx: int, **kw) -> None:
@@ -127,6 +156,19 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
                 log.info("Exam %s: question paper names variant %s", exam.id, exam.standard_profile_id)
         db.commit()
 
+    adopted_profile = None
+    if kind == "question-paper":
+        from ..cbse.variant import adopt_printed_profile
+        adopted_profile = adopt_printed_profile(exam, doc.pages)
+        if adopted_profile:
+            # Cached legacy responses use a different schema: read every page
+            # with whole-question trees instead of reusing those responses.
+            only_failed = False
+            db.commit()
+    if exam.standard_profile_id and kind in {"question-paper", "answer-key"}:
+        from ..cbse.extraction import Page
+        schema = Page
+
     if is_cancelled(doc_id, db, doc):
         _handle_cancel(db, doc, doc_id)
         return
@@ -143,6 +185,8 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
 
     (wd / "ocr").mkdir(exist_ok=True)
     total = len(doc.pages)
+    changed_key_pages = (set() if only_failed and kind == "answer-key" and exam.standard_profile_id
+                         and db.query(AnswerKey.id).filter_by(document_id=doc.id).first() else None)
     _progress(db, doc, f"Reading page 1 of {total}", 0, total, "OCR_PROCESSING")
     for i, p in enumerate(list(doc.pages)):
         if is_cancelled(doc_id, db, doc):
@@ -150,6 +194,23 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
             return
 
         if only_failed and p.get("ocr_status") == "OK":
+            compatible = True
+            if exam.standard_profile_id and kind in {"question-paper", "answer-key"}:
+                try:
+                    cached = json.loads(abs_path(p["ocr_file"]).read_text(encoding="utf-8"))
+                    compatible = "fragments" in cached.get("parsed", {})
+                except (KeyError, ValueError, OSError):
+                    compatible = False
+            if compatible:
+                continue
+        recovered = recover_failed_page(p, schema) if only_failed else None
+        if recovered:
+            out = wd / "ocr" / f"page-{p['page_number']:03d}-recovered-{uuid4().hex[:8]}.json"
+            out.write_text(json.dumps(recovered, ensure_ascii=False, indent=1), encoding="utf-8")
+            _set_pages(db, doc, i, ocr_status="OK", ocr_error=None, ocr_file=rel(out))
+            if changed_key_pages is not None:
+                changed_key_pages.add(p["page_number"])
+            log.info("Page %s recovered from saved response with updated parser", p["page_number"])
             continue
         _progress(db, doc, f"Reading page {p['page_number']} of {total}", i)
         img = abs_path(p["processed_file"])
@@ -166,6 +227,14 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
                 canonical_qs.append(f"Q{q.display_number}: {compact_text}")
             if canonical_qs:
                 prompt_kwargs["canonical_questions"] = canonical_qs
+            if i and doc.pages[i - 1].get("ocr_status") == "OK":
+                try:
+                    previous = json.loads(abs_path(doc.pages[i - 1]["ocr_file"]).read_text(encoding="utf-8"))["parsed"]
+                    prompt_kwargs["previous_answers"] = [
+                        {"label": a.get("raw_question_label"), "last_written_text": (a.get("answer_text") or "")[-400:]}
+                        for a in previous.get("answers", [])[-2:]]
+                except (KeyError, ValueError, OSError):
+                    pass
         prompt_str = prompt_fn(p["page_number"], p["ocr_width"], p["ocr_height"], **prompt_kwargs)
         system = prompts.OCR_SYSTEM
         if exam.standard_profile_id and kind in {"question-paper", "answer-key"}:
@@ -185,6 +254,8 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
                                        "attempts": call.attempts, "engine": "internvl"},
                                       ensure_ascii=False, indent=1), encoding="utf-8")
             _set_pages(db, doc, i, ocr_status="OK", ocr_error=None, ocr_file=rel(out))
+            if changed_key_pages is not None:
+                changed_key_pages.add(p["page_number"])
         except AIUnavailable as e:
             log.error("AI became unavailable mid-run: %s", e.detail)
             doc.status, doc.error_message = "AI_ERROR", unavailable_msg
@@ -226,7 +297,7 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
         if kind == "question-paper":
             _build_questions(db, doc, exam, wd, results)
         elif kind == "answer-key":
-            _build_answer_key(db, doc, exam, wd, results)
+            _build_answer_key(db, doc, exam, wd, results, changed_pages=changed_key_pages)
         else:
             _build_student_answers(db, doc, exam, wd, results)
 
@@ -238,6 +309,15 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
     else:
         doc.status, doc.stage, doc.error_message = "READY", "Ready for review", None
     db.commit()
+
+    if adopted_profile:
+        # Legacy marking-scheme rows have the same alternative/step-total
+        # problem. Re-read the active uploaded scheme with the new schema.
+        from .job_queue import submit
+        for key_doc in db.query(AnswerKeyDocument).filter_by(exam_id=exam.id, is_active=True):
+            key_doc.status, key_doc.stage = "UPLOADED", "Queued for whole-question extraction"
+            db.commit()
+            submit(exam.id, process_document, "answer-key", key_doc.id, False)
 
 
 
@@ -428,10 +508,10 @@ def _build_questions(db: Session, doc, exam: Exam, wd: Path, results) -> None:
         submit(exam.id, process_document, "answer-key", key_id, True)
 
 
-def _build_answer_key(db: Session, doc, exam: Exam, wd: Path, results) -> None:
+def _build_answer_key(db: Session, doc, exam: Exam, wd: Path, results, changed_pages=None) -> None:
     if exam.standard_profile_id:
         from ..cbse.build import build_keys
-        return build_keys(db,doc,exam,results)
+        return build_keys(db,doc,exam,results,changed_pages=changed_pages)
     db.query(AnswerKey).filter(AnswerKey.exam_id == exam.id, AnswerKey.document_id != doc.id).update({AnswerKey.is_active: False})
     db.query(AnswerKey).filter_by(document_id=doc.id).delete()
     pages_by_num = {p["page_number"]: p for p, _ in results}
@@ -472,13 +552,15 @@ def _build_student_answers(db: Session, doc, exam: Exam, wd: Path, results) -> N
     canonical_qs = db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all()
     answers = segment_student_answers(results, canonical_questions=canonical_qs)
     n = 0
+    crop_run = uuid4().hex[:8]
     for a in answers:
         n += 1
         p = pages_by_num.get(a.page_number) or results[0][0]
-        nb, crop = _bbox_and_crop(p, a.bbox, wd, f"a{n:03d}")
+        nb, crop = _bbox_and_crop(p, a.bbox, wd, f"a{n:03d}-{crop_run}")
         db.add(StudentAnswer(
             evaluation_id=ev.id,
             raw_question_number=a.raw_question_number,
+            normalized_number=a.normalized_number,
             raw_ocr_text=a.raw_ocr_text,
             answer_text=a.answer_text,
             page_number=a.page_number,
@@ -486,6 +568,7 @@ def _build_student_answers(db: Session, doc, exam: Exam, wd: Path, results) -> N
             crop_file=crop,
             ocr_confidence=a.ocr_confidence,
             position=a.position or n,
+            mapping_note=a.mapping_note,
         ))
     db.flush()
     apply_student_mapping(db, ev)

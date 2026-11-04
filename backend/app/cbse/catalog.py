@@ -218,6 +218,12 @@ PROFILES = [
     ),
     profile(12, "042", "Physics", "Physics", 70, deepcopy(_SCIENCE12)),
     profile(
+        12, "041", "Mathematics", "Maths", 80, [],
+        ("Math", "Maths"),
+        notes=("Question count, sections, marks, nested choices and accessible alternatives come from the uploaded paper and scheme.",),
+        upload_driven=True,
+    ),
+    profile(
         12,
         "028",
         "Political Science",

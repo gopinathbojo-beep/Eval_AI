@@ -7,7 +7,7 @@ from .. import formatter
 from ..config import get_settings
 from ..models import AnswerKey, Evaluation, ExamQuestion, StudentAnswer
 from ..formatter.common.mapping import MAPPED, NEEDS_REVIEW, UNMAPPED, flag_duplicates, map_label, detect_mapping_anomalies
-from ..formatter.common.numbering import part_labels
+from ..formatter.common.numbering import part_labels, normalize_question_number, parent_number
 
 DUP_NOTE = "DUPLICATE_MAPPING: another answer also maps to this question"
 _RECOMPUTABLE = {"UNMAPPED", "NEEDS_REVIEW", "MAPPED"}
@@ -56,6 +56,21 @@ def apply_student_mapping(db: Session, ev: Evaluation) -> None:
             a.status, a.mapping_note, a.mapping_candidates = "MAPPED", None, []
             prev_qid = a.exam_question_id
             continue
+        continuation = re.fullmatch(r"Source grouping: continuation of question (\d+)", a.mapping_note or "")
+        root = cbse_roots.get(continuation[1]) if continuation else None
+        if root and a.normalized_number and prev_qid == root.id:
+            a.exam_question_id, a.normalized_number = root.id, root.normalized_number
+            a.status, a.mapping_candidates = "MAPPED", []
+            prev_qid = root.id
+            continue
+        if not a.raw_question_number and a.normalized_number in cbse_roots:
+            from ..formatter.common.answers import _math_question
+            if _math_question(a.answer_text or "", qs) == a.normalized_number:
+                root = cbse_roots[a.normalized_number]
+                a.exam_question_id, a.status = root.id, "MAPPED"
+                a.mapping_note, a.mapping_candidates = "Matched distinctive equations in the uploaded question", []
+                prev_qid = root.id
+                continue
         res = map_label(
             in_part.get(a.id) or a.raw_question_number,
             qs,
@@ -68,7 +83,6 @@ def apply_student_mapping(db: Session, ev: Evaluation) -> None:
         )
         if cbse_roots and a.raw_question_number and (a.ocr_confidence or 0) >= minc:
             from ..formatter.common.numbering import normalize_question_number
-            import re
             label = normalize_question_number(a.raw_question_number) or ""
             match = re.match(r"^(\d+)(?:$|[.(])",label)
             root = cbse_roots.get(match.group(1)) if match else None
@@ -129,6 +143,9 @@ def _continues(prev, a, before: ExamQuestion) -> bool:
     text with no number or option of its own, which is the previous answer's explanation."""
     if prev.page_number != a.page_number:
         return False
+    label = normalize_question_number(getattr(a, "raw_question_number", None))
+    if label and not label.startswith("(") and parent_number(label).isdigit():
+        return False  # A separate numbered answer is not the preceding answer's explanation.
     if _opens_with_number(a.answer_text, "2"):
         return not _is_one_mark(before) and re.search(r"(?:^|\s)1\s*[.)]", prev.answer_text or "") is not None
     return not _opens_with_number(a.answer_text) and not _OPTION_FIRST.match(a.answer_text or "")
@@ -142,8 +159,8 @@ def _repair_misread_labels(answers: list, qs: list) -> None:
     """Fix the number the model read for an answer when the sheet itself shows it was misread.
 
     1. The student's own heading inside the answer ("36>", "Q36") beats a misread label, if 36 has no other answer.
-    2. A one-mark number read twice in a row ("Q6", "Q6") is the next question when that one has no answer.
-    3. A long working mapped to a one-mark question that already has its answer is placed by its content.
+    Repeated answers and rough working can share a question number. A known
+    numeric label must not be reassigned merely because the answer is long.
     Only free questions are used; anything still unclear stays NEEDS_REVIEW for the teacher.
     """
     by_num = {q.normalized_number: q for q in qs if q.normalized_number}
@@ -163,13 +180,8 @@ def _repair_misread_labels(answers: list, qs: list) -> None:
         if target and not taken(target.id, a):
             move(a, target, f"The answer starts with the student's heading {heading}; mapped to Q{heading}.")
     ordered = sorted(live, key=lambda x: x.position or 0)
-    for prev, a in zip(ordered, ordered[1:]):  # 2. a one-mark number read twice in a row
-        q = by_id.get(a.exam_question_id)
-        if q and prev.exam_question_id == q.id and _is_one_mark(q) and q.normalized_number and q.normalized_number.isdigit():
-            nxt = by_num.get(str(int(q.normalized_number) + 1))
-            if nxt and not taken(nxt.id, a):
-                move(a, nxt, f"Read as Q{q.normalized_number} again right after Q{q.normalized_number}; "
-                             f"placed as Q{nxt.normalized_number} by answer order.")
+    # Repeated numbers can be rough working or another attempt. Answer order
+    # alone cannot establish a new question number.
     for prev, a in zip(ordered, ordered[1:]):  # a part or explanation the student wrote under the previous answer
         q, before = by_id.get(a.exam_question_id), by_id.get(prev.exam_question_id)
         if not (q and before and q.id != before.id and _is_one_mark(q) and taken(q.id, a)):
@@ -192,6 +204,9 @@ def _repair_misread_labels(answers: list, qs: list) -> None:
             a.mapping_candidates = [x.id for x in qs if _is_one_mark(x) and not taken(x.id, a)][:3]
     for a in ordered:  # 3. long working on an already-answered one-mark question
         q = by_id.get(a.exam_question_id)
+        label = normalize_question_number(getattr(a, "raw_question_number", None))
+        if q and label and parent_number(label) == q.normalized_number:
+            continue
         if (a.mapping_note or "").startswith("Written under") or "numbered" in (a.mapping_note or ""):
             continue  # settled by the two steps above
         if not (q and _is_one_mark(q) and len((a.answer_text or "").strip()) > 120 and taken(q.id, a)):

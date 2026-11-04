@@ -106,6 +106,17 @@ class Page(BaseModel):
     fragments: list[Fragment] = Field(default_factory=list)
     issues: list[str] = Field(default_factory=list)
 
+    @field_validator("fragments", mode="before")
+    @classmethod
+    def misplaced_diagnostic_placeholders(cls, value):
+        # Some providers append a schema-explanation placeholder as an array
+        # item after valid fragments. It is neither source content nor a row.
+        # Unknown strings still fail validation rather than silently losing text.
+        if isinstance(value, list) and any(isinstance(item, dict) for item in value):
+            return [item for item in value if not (
+                isinstance(item, str) and item.strip().lower().startswith("issues_found_"))]
+        return value
+
 
 SYSTEM = """You read uploaded CBSE examination documents. Return JSON only, based on visible source evidence.
 Transcribe the document; do not solve questions or derive proofs. Keep JSON compact.

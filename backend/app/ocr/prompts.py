@@ -2,6 +2,8 @@
 The model performs visual understanding, OCR, layout extraction and transcription across any exam format.
 """
 
+import json
+
 OCR_SYSTEM = (
     "You are the document understanding, OCR, structure extraction, and question-mapping engine for Eval AI. "
     "MODEL: Gemini through OpenRouter. "
@@ -81,7 +83,8 @@ Return JSON in exactly this shape:
 {{"page_number": {page_number}, "answers": [{{"question_number": "3(a)", "answer_text": "...", "marks": 5, "criteria": ["..."], "accepted_answers": [], "keywords": [], "confidence": 0.9, "bbox": null}}]}}"""
 
 
-def student_answer_prompt(page_number: int, width: int, height: int, canonical_questions: list[str] | None = None) -> str:
+def student_answer_prompt(page_number: int, width: int, height: int, canonical_questions: list[str] | None = None,
+                          previous_answers: list[dict] | None = None) -> str:
     canonical_section = ""
     if canonical_questions:
         q_lines = "\n".join(f"- {q}" for q in canonical_questions)
@@ -98,7 +101,7 @@ Under NO circumstances should the question text or outside knowledge be used to 
 You are the STUDENT ANSWER SHEET OCR, HANDWRITING UNDERSTANDING, ANSWER GROUPING, and QUESTION MAPPING engine for Eval AI.
 
 VISION MODEL:
-Gemini through OpenRouter
+The configured vision model through OpenRouter
 
 Your task is to read a student's actual handwritten answer sheet from the supplied page image and map each answer to the VERIFIED canonical question from the examination.
 
@@ -136,8 +139,22 @@ NEVER silently correct handwriting.
 NEVER AUTOCOMPLETE INCOMPLETE ANSWERS: Students frequently write incomplete answers, forget explanations, or stop mid-sentence. You must STOP transcribing at the EXACT last visible handwritten pen stroke.
 NEVER APPEND UNWRITTEN REASONS, FORMULAS, OR EXPLANATIONS: If the student wrote "no reaction occurs", you MUST transcribe ONLY "no reaction occurs" and STOP. NEVER append "because copper is less reactive than zinc", even if the question asked for a reason!
 NEVER FINISH A STUDENT'S SENTENCE OR THOUGHT: Adding even a single unwritten word or clause is considered a critical hallucination and corrupts the grading evaluation.
+Preserve clearly struck-out writing as ~~cancelled text~~, or mark its content block crossed_out:true. Do not mix cancelled text into the active replacement. Do not infer cancellation merely because working is wrong. Retain separate active attempts verbatim; the grader selects supported credit without inventing a combined solution.
 CANONICAL_QUESTIONS ARE STRICTLY FOR NUMBER IDENTIFICATION: The question text is provided ONLY so you know which question ID to map to. NEVER use the question text, prompt instructions, or domain knowledge to generate, complete, or elaborate what the student wrote.
 The image is the source of truth.
+LAYOUT AND EXACT MATH CHECK: Read separate columns independently. Side-margin rough working is not automatically
+part of the nearest answer or the last numbered answer on the page. Keep separate regions with tight bounding
+boxes; assign rough working only where its visible formulas identify the question, and leave uncertain ownership
+unassigned. Never renumber an answer because the question already has an option response. A graph on an inserted
+page can belong to the following numbered answer; do not assume that all page-top writing belongs to the previous
+question. Describe only visible graph labels and coordinates.
+Transcribe every matrix row and column as written, even if it has the wrong dimensions. Never turn an irregular or
+4-row working array into a standard square matrix. Read each sign, decimal, subscript, fraction numerator and
+denominator independently. Preserve mistaken entries and arithmetic; never repair them from the question or key.
+Do not copy a diagram, matrix or earlier-page calculation again unless it is physically repeated on this page.
+Set label_origin="written" only for a visibly written main number, "inferred" for a content-based assignment,
+and "continuation" for unnumbered writing continuing an answer. raw_question_label must contain only visible ink
+and must be null when there is no written label. Keep each subpart marker in answer_text.
 
 ==================================================
 2. CANONICAL QUESTION LIST
@@ -148,6 +165,11 @@ The image is the source of truth.
 3. FIRST TASK — VISUAL READING
 ==================================================
 Before mapping anything, inspect the actual handwritten image.
+The page may be sideways or upside down, including a scanned PDF page. Determine the reading direction from the
+writing and printed header before reading; follow the page's natural top-to-bottom order. Report bounding boxes in
+the original supplied image coordinates, even when the page is rotated. If the orientation or writing is unclear,
+retain the uncertainty rather than guessing. Printed school headers, roll numbers, page totals and section headings
+are not answers or question labels.
 For every answer region determine:
 - handwritten question label
 - handwriting text
@@ -223,11 +245,20 @@ Group all lines, points, and calculations under the active question.
 ==================================================
 If no new question/subquestion marker appears, continue using current answer context.
 Text continuing across page breaks without a new label belongs to the active answer.
+Previous-page student OCR, for continuity only (never copy this into the current page's transcription):
+{json.dumps(previous_answers or [], ensure_ascii=False)}
+On a new page, transcribe any writing before the first new question as an unlabelled continuation; do not invent
+its question number. A diagram, table, calculation or labelled subpart can also continue a previous answer.
 
 ==================================================
 11. HANDWRITTEN CORRECTIONS & CROSSED-OUT TEXT
 ==================================================
-Completely omit crossed-out, struck-through, or scribbled-out lines. Transcribe ONLY the student's visible final intended writing. Never transcribe struck-through words, and never invent corrected text.
+Keep crossed-out, struck-through or scribbled-out words out of active answer text. If retained for provenance,
+enclose them in ~~...~~ or use a separate content block with crossed_out:true. Read the remaining visible final
+intended writing without inventing corrections. A ruled notebook line, underline, fraction bar, equals sign,
+separator between answers, or ray/circuit line is not a cancellation. Cancelling a word does not cancel the whole
+subpart or its neighbouring diagram. Preserve labels A/B and i/ii/iii/iv exactly as written; they are alternatives
+or subparts of the parent question, not new main question numbers.
 
 ==================================================
 12. MATHEMATICAL & SCIENTIFIC ANSWERS
@@ -240,6 +271,8 @@ Preserve scientific notation: chemical formulas (H₂O, CO₂, H₂SO₄), units
 ==================================================
 - Preserve table rows, columns, and cells (format as Markdown tables).
 - For student drawings, geometric figures, ray diagrams, circuits, and sketches: YOU MUST describe the visual drawing in detail inside `[Diagram: ...]`, including components, connections, arrow directions, axes, ray paths, and labels (e.g. `[Diagram: Convex lens with incident rays parallel to principal axis converging at focal point F; inverted real image labelled A'B']`). This allows the AI grading engine to award partial or full marks for required diagram features.
+- Describe only features and labels actually visible in the drawing. Mark unclear features as unclear; do not
+infer a correct ray path, genetic cross, circuit connection, chemical formula or missing label from the question.
 
 ==================================================
 14. QUESTION MAPPING PRIORITY
@@ -281,6 +314,7 @@ Return ONLY valid JSON in exactly this structure (include a separate entry in "a
   "answers": [
     {{
       "answer_id": "ans_001",
+      "label_origin": "written",
       "question_number": "Q1",
       "raw_question_label": "1>",
       "normalized_question_label": "Q1",

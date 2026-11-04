@@ -130,7 +130,7 @@ def test_remote_ai_transport_and_unmeasured_confidence(monkeypatch, tmp_path):
     assert captured["json"]["model"] == settings.openrouter_model
     assert captured["json"]["reasoning"] == {"enabled": False}
     assert captured["json"]["messages"][1]["content"][1]["image_url"]["url"].startswith("data:image/png;base64,")
-    assert result.parsed.questions[0].confidence <= 0.5
+    assert result.parsed.questions[0].confidence is None
 
 
 def test_openrouter_grading_limits_reasoning_and_reports_token_usage(monkeypatch):
