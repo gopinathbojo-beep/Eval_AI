@@ -18,7 +18,8 @@ WORKER = str(uuid.uuid4())
 STALE_SECONDS = 120
 HANDLERS = {"app.services.pipeline:process_document", "app.services.student_identity:identify_sheets",
             "app.services.student_identity:run_sheet", "app.services.student_identity:_read_sheet",
-            "app.services.evaluation_service:run_evaluation", "app.services.sheet_capture:complete_sheet"}
+            "app.services.evaluation_service:run_evaluation", "app.services.sheet_capture:complete_sheet",
+            "app.services.evaluation_service:auto_evaluate_sheet"}
 
 
 def now():

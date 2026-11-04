@@ -386,7 +386,7 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
                     <MathView text={q.question_text} />
                   </div>
                   <p className="text-xs text-mute">
-                    If it was answered, find it on the scan and use "Edit Text & Mapping" to link it.
+                    If it was answered, find it on the scan and use "Edit" to link it.
                   </p>
                 </Card>
               ))
@@ -556,7 +556,7 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
                               </Button>
                             )}
 
-                            {/* Consolidated single Edit Text & Mapping button */}
+                            {/* Consolidated single Edit button */}
                             <Button
                               small
                               variant="secondary"
@@ -564,7 +564,7 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
                               icon={<IconEdit size={13} />}
                               title="Edit transcribed text or change the mapped question"
                             >
-                              Edit Text & Mapping
+                              Edit
                             </Button>
 
                             <Button
@@ -741,6 +741,15 @@ function MarksTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<vo
       .filter((a) => a.exam_question_id && a.status !== "IGNORED")
       .map((a) => [a.exam_question_id!, a])
   );
+  // every page the student's answer to a question is written on (a whole question can run over several pages)
+  const pagesOf = new Map<string, number[]>();
+  for (const a of d.answers) {
+    if (!a.exam_question_id || a.status === "IGNORED" || !a.page_number) continue;
+    const list = pagesOf.get(a.exam_question_id) ?? [];
+    if (!list.includes(a.page_number)) list.push(a.page_number);
+    pagesOf.set(a.exam_question_id, list.sort((x, y) => x - y));
+  }
+  const [shown, setShown] = useState<string | null>(null);
   const locked = ev.status === "FINALIZED";
 
   const call = async (key: string, fn: () => Promise<unknown>) => {
@@ -977,8 +986,31 @@ function MarksTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<vo
                         <em className="text-mark font-normal">No answer mapped to this question</em>
                       )}
                     </div>
+                    {(pagesOf.get(q.id)?.length ?? 0) > 0 && (
+                      <button
+                        type="button"
+                        className="mt-1 inline-flex items-center gap-1 text-[11px] font-semibold text-pen hover:underline"
+                        onClick={() => setShown(shown === q.id ? null : q.id)}
+                        aria-expanded={shown === q.id}
+                      >
+                        <IconEye size={13} />
+                        {shown === q.id ? "Hide sheet" : `View on sheet (page ${pagesOf.get(q.id)!.join(", ")})`}
+                      </button>
+                    )}
                   </div>
                 </div>
+
+                {shown === q.id && (
+                  <div className="mt-3 space-y-2 rounded-lg border border-line bg-sunken/40 p-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-[11px] text-mute">The student's sheet as scanned, including any drawing. Use + / − to zoom.</p>
+                      <Button small variant="secondary" onClick={() => setShown(null)} title="Close this page">
+                        Close
+                      </Button>
+                    </div>
+                    <AnswerPages docId={d.document.id} pages={d.document.pages} numbers={pagesOf.get(q.id)!} />
+                  </div>
+                )}
 
                 {it?.error && (
                   <p className="mt-3 text-xs font-semibold text-mark flex items-center gap-1.5">
@@ -1140,6 +1172,17 @@ function MarksTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<vo
           onClose={() => setConfirmFinalize(false)}
         />
       )}
+    </div>
+  );
+}
+
+/** The page(s) a student's answer is written on, full page with zoom: drawings are never cropped away. */
+function AnswerPages({ docId, pages, numbers }: { docId: string; pages: EvaluationDetail["document"]["pages"]; numbers: number[] }) {
+  const own = pages.filter((p) => numbers.includes(p.page_number));
+  const [page, setPage] = useState(numbers[0]);
+  return (
+    <div className="h-[34rem] overflow-hidden rounded border border-line/60 bg-surface">
+      <PageViewer kind="answer-sheet" docId={docId} pages={own} page={page} onPage={setPage} baseZoom={0.5} />
     </div>
   );
 }

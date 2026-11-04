@@ -124,6 +124,8 @@ export interface DocInfo {
   error_message: string | null;
   uploaded_at: string;
   pages: PageInfo[];
+  /** typed roll number vs the "Roll No" written on the sheet (uploader sheets only) */
+  roll_check?: { typed: string; written: string | null; status: "MATCH" | "NOT_WRITTEN" | "MISMATCH" | "CONFIRMED"; chosen?: string } | null;
 }
 export interface Exam {
   standard_profile_id?: string | null;

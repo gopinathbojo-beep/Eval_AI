@@ -21,6 +21,7 @@ export function PageViewer({
   onPage,
   highlight,
   actions,
+  baseZoom = 1,
 }: {
   kind: string;
   docId: string;
@@ -29,16 +30,17 @@ export function PageViewer({
   onPage: (n: number) => void;
   highlight?: BBox | null;
   actions?: ReactNode;
+  baseZoom?: number;
 }) {
   const info = pages.find((p) => p.page_number === page) ?? pages[0];
   const { url, failed } = useBlobUrl(
     info ? `/documents/${kind}/${docId}/pages/${info.page_number}/image` : null
   );
-  const [zoom, setZoom] = useState(1);
+  const [zoom, setZoom] = useState(baseZoom);
 
   // Reset zoom whenever page changes
   useEffect(() => {
-    setZoom(1);
+    setZoom(baseZoom);
   }, [page]);
 
   if (!info) return null;
@@ -80,16 +82,16 @@ export function PageViewer({
           <div className="flex items-center rounded-lg border border-line bg-sunken/60 p-0.5">
             <button
               type="button"
-              onClick={() => setZoom((z) => Math.max(0.5, z - 0.25))}
+              onClick={() => setZoom((z) => Math.max(0.25, z - 0.25))}
               aria-label="Zoom out"
               className="rounded p-1 text-mute transition-colors hover:bg-surface hover:text-brown disabled:opacity-40"
-              disabled={zoom <= 0.5}
+              disabled={zoom <= 0.25}
             >
               <IconZoomOut size={15} />
             </button>
             <button
               type="button"
-              onClick={() => setZoom(1)}
+              onClick={() => setZoom(baseZoom)}
               title="Reset zoom to 100%"
               className="px-2 text-xs font-semibold font-mono text-ink hover:text-brown"
             >
@@ -104,10 +106,10 @@ export function PageViewer({
             >
               <IconZoomIn size={15} />
             </button>
-            {zoom !== 1 && (
+            {zoom !== baseZoom && (
               <button
                 type="button"
-                onClick={() => setZoom(1)}
+                onClick={() => setZoom(baseZoom)}
                 title="Reset zoom"
                 aria-label="Reset zoom"
                 className="ml-0.5 rounded border-l border-line pl-1.5 pr-1 text-mute hover:text-brown"

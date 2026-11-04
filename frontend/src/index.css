@@ -171,6 +171,23 @@ h1, h2, h3, h4, h5, h6 {
 
 .doc-text {
   @apply font-sans whitespace-pre-wrap leading-relaxed;
+  /* long chemical formulas and URLs wrap instead of running out of their card */
+  overflow-wrap: anywhere;
+  max-width: 100%;
+}
+/* a formula wider than its card scrolls inside it */
+.doc-text .katex-display,
+.doc-text .katex {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.doc-text .katex {
+  display: inline-block;
+  vertical-align: middle;
+}
+.doc-text .katex-display > .katex {
+  white-space: normal;
 }
 
 .transition-ui {

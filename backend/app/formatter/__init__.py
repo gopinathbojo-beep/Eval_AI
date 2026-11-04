@@ -1,7 +1,7 @@
 """Subject formatters: how each subject's question papers, answer keys and answer sheets are read, and its answers
 mapped and graded.
 
-One folder per subject (tamil/, english/, maths/, physics/, chemistry/) holds that subject's rules, so changing a
+One folder per subject (tamil/, english/, hindi/, maths/, physics/, chemistry/) holds that subject's rules, so changing a
 subject touches only its own folder. common/ holds what every subject shares; a subject formatter starts from it and
 overrides only what its papers do differently. A subject not listed here uses common/ alone.
 
@@ -23,6 +23,7 @@ COMMON = "common"
 SUBJECTS: dict[str, tuple[str, ...]] = {
     "tamil": ("tamil", "தமிழ்"),
     "english": ("english",),
+    "hindi": ("hindi", "हिन्दी", "हिंदी"),
     "maths": ("math", "கணிதம்"),
     "physics": ("physics", "இயற்பியல்"),
     "chemistry": ("chemistry", "வேதியியல்"),

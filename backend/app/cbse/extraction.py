@@ -40,6 +40,18 @@ class Node(BaseModel):
         return value
 
 
+def _box(value):
+    """A position as {x, y, width, height}. Models also send [x0, y0, x1, y1] (or [x, y, w, h]); rejecting that would
+    throw away a whole correctly read page, so convert it."""
+    if isinstance(value, (list, tuple)) and len(value) == 4 and all(isinstance(v, (int, float)) for v in value):
+        x0, y0, a, b = (float(v) for v in value)
+        width, height = (a - x0, b - y0) if a > x0 and b > y0 else (a, b)
+        return {"x": x0, "y": y0, "width": width, "height": height}
+    if isinstance(value, dict) or value is None:
+        return value
+    return None
+
+
 class VisualEvidence(BaseModel):
     kind: Literal["diagram", "image", "graph", "map", "table", "formula", "other"]
     description: str
@@ -54,6 +66,11 @@ class VisualEvidence(BaseModel):
         return names.get(value, value if value in {"diagram", "image", "graph", "map", "table", "formula"} else "other")
     labels: list[str] = Field(default_factory=list)
     bbox: dict
+
+    @field_validator("bbox", mode="before")
+    @classmethod
+    def any_box(cls, value):
+        return _box(value) or {}
 
 
 class Fragment(BaseModel):
@@ -73,6 +90,11 @@ class Fragment(BaseModel):
     accepted_answers: list[str] = Field(default_factory=list)
     bbox: dict | None = None
     visuals: list[VisualEvidence] = Field(default_factory=list)
+
+    @field_validator("bbox", mode="before")
+    @classmethod
+    def any_box(cls, value):
+        return _box(value)
     continues: bool = False
     issues: list[str] = Field(default_factory=list)
 

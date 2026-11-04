@@ -35,6 +35,8 @@ def doc_view(doc, kind: str) -> dict | None:
             }
             for p in doc.pages
         ],
+        # answer sheets from an uploader: the typed roll number checked against the "Roll No" written on the sheet
+        "roll_check": (getattr(doc, "identity", None) or {}).get("roll_check"),
     }
 
 

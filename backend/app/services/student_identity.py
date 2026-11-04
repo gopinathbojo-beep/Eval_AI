@@ -278,9 +278,52 @@ def run_sheet(doc_id: str) -> None:
     try:
         with keyed_lock(f"sheet:{doc_id}"):
             process_document("answer-sheet", doc_id, True)
-            auto_evaluate_sheet(doc_id)
+            if check_typed_roll(doc_id):
+                auto_evaluate_sheet(doc_id)
     finally:
         _IN_FLIGHT.discard(doc_id)
+
+
+def _roll_label_identity(image) -> dict:
+    """Only a number written against a "Roll No" label (the uploader check ignores every other number)."""
+    return chat_structured(prompts.IDENTITY_SYSTEM, prompts.roll_label_prompt(), StudentIdentityResult,
+                           image).parsed.model_dump()
+
+
+def check_typed_roll(doc_id: str, read_fn=_roll_label_identity) -> bool:
+    """Second check on the roll number an uploader typed: compare it with the roll number written on the sheet.
+
+    Written and the same, or not written at all: go on and grade. Written and different: hold the sheet for the
+    school to say which is right (grading waits). Returns True when grading may go ahead."""
+    db = SessionLocal()
+    try:
+        doc = db.get(AnswerSheetDocument, doc_id)
+        if doc is None or not doc.uploaded_by_code or doc.student_id is None:
+            return True  # only sheets sent by an uploader, with a typed roll, are checked
+        identity = dict(doc.identity or {})
+        if (identity.get("roll_check") or {}).get("status") in ("MATCH", "NOT_WRITTEN", "CONFIRMED"):
+            return True  # checked before, or the school already decided
+        typed = identity.get("typed_roll") or db.get(Student, doc.student_id).roll_number
+        try:
+            written = clean_id(_read_header(doc, read_fn).get("roll_number"))
+        except (AIUnavailable, AIResponseError):
+            return True  # the check is a safeguard; an unreadable header never blocks grading
+        if not written:
+            status = "NOT_WRITTEN"
+        elif _roll_key(written) == _roll_key(typed):
+            status = "MATCH"
+        else:
+            status = "MISMATCH"
+        identity["roll_check"] = {"typed": typed, "written": written, "status": status}
+        doc.identity = identity
+        if status == "MISMATCH":
+            doc.stage = f"Roll number check: typed {typed}, the sheet says {written}"
+            audit(db, exam_id=doc.exam_id, teacher_id=None, entity_type="answer_sheet", entity_id=doc.id,
+                  action="roll_number_mismatch", new={"typed": typed, "written": written})
+        db.commit()
+        return status != "MISMATCH"
+    finally:
+        db.close()
 
 
 def _still_ours(doc_id: str, outcome: str) -> bool:

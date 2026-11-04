@@ -101,6 +101,39 @@ def apply_student_mapping(db: Session, ev: Evaluation) -> None:
     db.flush()
 
 
+_OPTION_FIRST = re.compile(r"^\s*(?:Q?\s*\d{1,3}\s*[.):]?\s*)?\(?([A-Da-d])\)?(?=[.):\s]|$)")
+_OPTIONS = re.compile(r"\(?\b([A-D])[.)]\s*(.+?)(?=\s+\(?[A-D][.)]\s|$)", re.S)
+
+
+def _squash(text: str) -> str:
+    return re.sub(r"\W+", "", (text or "").casefold())
+
+
+def _chooses_option(q: ExamQuestion, text: str | None) -> bool:
+    """The answer opens with an option letter ("C. [NiCl₄]²⁻ ...", "B. 32 min") or names one of the question's
+    options: it is this one-mark question's own answer, even when an explanation makes it long."""
+    if _OPTION_FIRST.match(text or ""):
+        return True
+    answer = _squash((text or "")[:200])
+    return any(len(_squash(o)) >= 4 and _squash(o) in answer
+               for _, o in _OPTIONS.findall(q.question_text or ""))
+
+
+def _opens_with_number(text: str | None, number: str | None = None) -> bool:
+    match = re.match(r"\s*(?:Q\.?\s*)?(\d{1,3})\s*[.):]", text or "")
+    return bool(match) and (number is None or match[1] == str(number))
+
+
+def _continues(prev, a, before: ExamQuestion) -> bool:
+    """Same page, and either the next numbered part of the question above ("17A 1. ..." then "2. ...") or plain
+    text with no number or option of its own, which is the previous answer's explanation."""
+    if prev.page_number != a.page_number:
+        return False
+    if _opens_with_number(a.answer_text, "2"):
+        return not _is_one_mark(before) and re.search(r"(?:^|\s)1\s*[.)]", prev.answer_text or "") is not None
+    return not _opens_with_number(a.answer_text) and not _OPTION_FIRST.match(a.answer_text or "")
+
+
 def _is_one_mark(q: ExamQuestion) -> bool:
     return (q.question_type or "").lower() == "mcq" or (q.max_marks is not None and q.max_marks <= 1)
 
@@ -137,10 +170,34 @@ def _repair_misread_labels(answers: list, qs: list) -> None:
             if nxt and not taken(nxt.id, a):
                 move(a, nxt, f"Read as Q{q.normalized_number} again right after Q{q.normalized_number}; "
                              f"placed as Q{nxt.normalized_number} by answer order.")
+    for prev, a in zip(ordered, ordered[1:]):  # a part or explanation the student wrote under the previous answer
+        q, before = by_id.get(a.exam_question_id), by_id.get(prev.exam_question_id)
+        if not (q and before and q.id != before.id and _is_one_mark(q) and taken(q.id, a)):
+            continue
+        if not _chooses_option(q, a.answer_text) and _continues(prev, a, before):
+            move(a, before, f"Written under Q{before.normalized_number} with no number of its own; "
+                            f"kept with Q{before.normalized_number}.")
+    numbered = {}
+    for a in ordered:
+        q = by_id.get(a.exam_question_id)
+        if q and _is_one_mark(q) and _opens_with_number(a.answer_text, q.normalized_number):
+            numbered[q.id] = a
+    for a in ordered:  # the sheet prints this number on another answer, so this one's number was misread
+        q = by_id.get(a.exam_question_id)
+        if (q and numbered.get(q.id) not in (None, a) and not _opens_with_number(a.answer_text)
+                and not (a.mapping_note or "").startswith("Written under")):
+            a.status = "NEEDS_REVIEW"
+            a.mapping_note = (f"Read as Q{q.normalized_number}, but another answer is numbered "
+                              f"{q.normalized_number} on the sheet. Choose the question for this answer.")
+            a.mapping_candidates = [x.id for x in qs if _is_one_mark(x) and not taken(x.id, a)][:3]
     for a in ordered:  # 3. long working on an already-answered one-mark question
         q = by_id.get(a.exam_question_id)
+        if (a.mapping_note or "").startswith("Written under") or "numbered" in (a.mapping_note or ""):
+            continue  # settled by the two steps above
         if not (q and _is_one_mark(q) and len((a.answer_text or "").strip()) > 120 and taken(q.id, a)):
             continue
+        if _chooses_option(q, a.answer_text):
+            continue  # it answers this question (an option and its explanation): it stays; the other piece moves
         res = map_label(None, [x for x in qs if not _is_one_mark(x)], answer_text=a.answer_text)
         details = sorted(res.candidate_details or [], key=lambda d: -(d.get("score") or 0))
         top = details[0] if details else None

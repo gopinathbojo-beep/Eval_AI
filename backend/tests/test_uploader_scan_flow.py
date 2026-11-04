@@ -62,18 +62,55 @@ def test_scan_flow_uses_the_typed_roll_and_grades(client, auth):
     assert _start(up, "31").status_code == 409
 
 
-def test_typed_roll_wins_over_what_the_sheet_says(client, auth, monkeypatch):
-    from app.services import student_identity
+def _roll(doc_id):
+    from app.database import SessionLocal
+    from app.models import Evaluation
+    with SessionLocal() as db:
+        return db.query(Evaluation).filter_by(answer_sheet_id=doc_id).first().student.roll_number
+
+
+def _grading_calls(monkeypatch):
+    """Records which sheets were sent on to grading (the stub sheets always need a mapping review after that)."""
+    from app.services import evaluation_service, student_identity
+    calls = []
+    monkeypatch.setattr(student_identity, "auto_evaluate_sheet", calls.append)
+    monkeypatch.setattr(evaluation_service, "auto_evaluate_sheet", calls.append)
+    return calls
+
+
+def test_a_typed_roll_that_differs_from_the_sheet_is_held_until_the_school_decides(client, auth, monkeypatch):
+    graded = _grading_calls(monkeypatch)
     up, cls, eid = _uploader(client, auth)
-    read = []
-    monkeypatch.setattr(student_identity, "_read_page", lambda *a, **k: read.append(a) or {})
-    # the details page would say roll 42 and 6 pages; neither is checked
-    sheet = j(_start(up, "41", {"roll_number": "42", "pages_written": 6}), 201)
+    sheet = j(_start(up, "41", {"roll_number": "42"}), 201)        # "Roll No: 42" written on the sheet
     j(up.post(f"/api/uploader/sheets/{sheet['id']}/finish", headers=BROWSER), 202)
     doc = _sheet(eid, sheet["id"])
-    assert doc.student_id and doc.status != "NEEDS_STUDENT" and not read
-    results = j(client.get(f"/api/exams/{eid}/results", headers=auth), 200)
-    assert any(e["student"]["roll_number"] == "41" for e in results)
+    assert doc.identity["roll_check"] == {"typed": "41", "written": "42", "status": "MISMATCH"}
+    assert "typed 41, the sheet says 42" in doc.stage
+    assert doc.id not in graded                                     # not graded until the school says which
+    j(client.post(f"/api/answer-sheets/{doc.id}/roll-check", headers=auth, json={"use": "written"}), 202)
+    assert _roll(doc.id) == "42" and doc.id in graded               # moved to the written roll, then graded
+    assert _sheet(eid, doc.id).identity["roll_check"]["status"] == "CONFIRMED"
+
+
+def test_keeping_the_typed_roll_grades_the_sheet(client, auth, monkeypatch):
+    graded = _grading_calls(monkeypatch)
+    up, cls, eid = _uploader(client, auth)
+    sheet = j(_start(up, "43", {"roll_number": "34"}), 201)
+    j(up.post(f"/api/uploader/sheets/{sheet['id']}/finish", headers=BROWSER), 202)
+    assert sheet["id"] not in graded
+    j(client.post(f"/api/answer-sheets/{sheet['id']}/roll-check", headers=auth, json={"use": "typed"}), 202)
+    assert _roll(sheet["id"]) == "43" and sheet["id"] in graded
+
+
+def test_a_matching_or_missing_written_roll_is_graded_at_once(client, auth, monkeypatch):
+    graded = _grading_calls(monkeypatch)
+    up, cls, eid = _uploader(client, auth)
+    same = j(_start(up, "44", {"roll_number": "044"}), 201)         # leading zero: the same roll number
+    j(up.post(f"/api/uploader/sheets/{same['id']}/finish", headers=BROWSER), 202)
+    assert _sheet(eid, same["id"]).identity["roll_check"]["status"] == "MATCH" and same["id"] in graded
+    blank = j(_start(up, "45", {}), 201)                            # no Roll No written: the check is skipped
+    j(up.post(f"/api/uploader/sheets/{blank['id']}/finish", headers=BROWSER), 202)
+    assert _sheet(eid, blank["id"]).identity["roll_check"]["status"] == "NOT_WRITTEN" and blank["id"] in graded
 
 
 def test_page_gaps_duplicates_and_discard(client, auth):

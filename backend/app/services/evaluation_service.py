@@ -1,11 +1,14 @@
 from __future__ import annotations
 import logging
+import re
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 from ..database import SessionLocal
 from dataclasses import dataclass, field
 from ..models import AnswerKey, AnswerSheetDocument, Evaluation, Exam, ExamQuestion, EvaluationItem, StudentAnswer
 from ..ocr import prompts
+import json
+from ..documents.storage import abs_path
 from ..ocr.internvl import AIResponseError, AIUnavailable, chat_structured, check_model
 from ..config import ai_bad_response_message
 from ..ocr.schemas import EvaluationResult
@@ -252,6 +255,65 @@ def _reset_item(item: EvaluationItem) -> None:
     item.not_attempted_confirmed = False
 
 
+_DRAWING = re.compile(r"\b(?:draw|drawn|diagram|sketch|figure|graph|plot|label(?:l?ed)?|flow\s?chart|circuit|"
+                      r"ray\s+diagram|structure)\b|\[diagram", re.I)
+DRAWING_NOTE = ("\nThe scanned page(s) the student wrote this answer on are attached. Use them only to check drawings, "
+                "diagrams, graphs, structures and their labels that the transcription may describe incompletely; "
+                "the transcription stays the student's answer for everything else.")
+
+
+def drawing_image(db: Session, ev: Evaluation, q: ExamQuestion, key_text: str, answers: list, text: str):
+    """The student's page(s) for a question that asks for or contains a drawing, as one image for the grader.
+
+    Only such questions get an image (it costs more); others are graded on the transcription alone."""
+    if not (_DRAWING.search(q.question_text or "") or _DRAWING.search(key_text or "") or "[Diagram" in (text or "")):
+        return None
+    doc = db.get(AnswerSheetDocument, ev.answer_sheet_id)
+    numbers = sorted({a.page_number for a in answers if a.page_number})[:3]
+    pages = {p.get("page_number"): p for p in (doc.pages if doc else [])}
+    files = [abs_path(pages[n]["source_file"]) for n in numbers if n in pages and pages[n].get("source_file")]
+    files = [f for f in files if f.exists()]
+    if not files:
+        return None
+    from PIL import Image
+    images = [Image.open(f).convert("RGB") for f in files]
+    width = 1100
+    images = [im.resize((width, round(im.height * width / im.width))) for im in images]
+    sheet = Image.new("RGB", (width, sum(im.height for im in images)), "white")
+    y = 0
+    for im in images:
+        sheet.paste(im, (0, y))
+        y += im.height
+    out = abs_path(doc.original_file).parent / "grading" / f"{q.id}.jpg"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    sheet.save(out, "JPEG", quality=80)
+    return out
+
+
+_references: dict = {}
+
+
+def textbook_references(db: Session, exam, q: ExamQuestion, key) -> list:
+    """NCERT passages for a question, found once per question and key and reused for every student.
+    Background reference only: the answer key's marking scheme alone decides the marks."""
+    from ..config import get_settings
+    if not get_settings().reference_in_grading:
+        return []
+    cache_key = (getattr(q, "id", None), getattr(key, "id", None), getattr(q, "question_text", ""), getattr(key, "answer_text", ""))
+    if cache_key not in _references:
+        try:
+            from ..reference.search import retrieve, subject_of
+            scope = subject_of(exam)
+            _references[cache_key] = retrieve(db, f"{q.question_text}\n{key.answer_text}", *scope,
+                                              kinds=["TEXTBOOK", "TEXTBOOK_ANSWERS"], k=3) if scope else []
+        except Exception:  # the library is reference only: grading goes on without it
+            log.exception("Textbook reference lookup failed for question %s", q.id)
+            _references[cache_key] = []
+        if len(_references) > 500:
+            _references.pop(next(iter(_references)))
+    return _references[cache_key]
+
+
 def evaluate_item(db: Session, ev: Evaluation, q: ExamQuestion, item: EvaluationItem, model: str | None = None) -> None:
     """Evaluate one question. Raises AIUnavailable only; every other failure is recorded on the item."""
     _reset_item(item)
@@ -277,18 +339,29 @@ def evaluate_item(db: Session, ev: Evaluation, q: ExamQuestion, item: Evaluation
                                                    key.accepted_answers, key.keywords, q.max_marks, text)
                 system = prompts.EVAL_SYSTEM
                 exam_record = db.get(Exam,ev.exam_id)
+                from ..cbse import grading
+                references = textbook_references(db, exam_record, q, key)  # with an answer key too: reference only
                 if getattr(exam_record,"standard_profile_id",None):
-                    from ..cbse import grading
                     from ..cbse.validation import active_doc
                     from ..models import AnswerKeyDocument
                     scheme_doc = active_doc(db,AnswerKeyDocument,exam_record.id)
-                    prompt = grading.prompt(q,key,text,exam_record.standard_options or {},(scheme_doc.extraction or {}).get("instructions",[]))
+                    prompt = grading.prompt(q,key,text,exam_record.standard_options or {},(scheme_doc.extraction or {}).get("instructions",[]),
+                                            references)
                     system = grading.SYSTEM
+                else:
+                    prompt += "\n" + grading.textbook_block(references)
+                rules = fmt.grading_rules(q.question_text, key.answer_text)  # language subjects: by question kind
+                if rules:
+                    prompt += "\n" + rules
                 exam_owner = db.get(Exam, ev.exam_id).teacher_id
                 audit(db, exam_id=ev.exam_id, teacher_id=exam_owner, entity_type="evaluation", entity_id=ev.id,
                       action="ai_grading_request")
                 db.commit()
-                call = chat_structured(system, prompt, EvaluationResult, model=model)
+                picture = drawing_image(db, ev, q, key.answer_text, resolved.constituent_answers, text)
+                if picture:  # only drawing questions carry the sheet picture (and its extra cost)
+                    call = chat_structured(system, prompt + DRAWING_NOTE, EvaluationResult, image_path=picture, model=model)
+                else:
+                    call = chat_structured(system, prompt, EvaluationResult, model=model)
                 item.raw_response = call.raw
                 if getattr(exam_record,"standard_profile_id",None):
                     res = grading.validate_result(call.parsed,q,key,exam_record.standard_options or {},text)
@@ -553,6 +626,26 @@ def auto_evaluate_sheet(doc_id: str) -> None:
     submit(exam_id, run_evaluation, ev_id, grading=True)
 
 
+_empty_pages: dict = {}
+
+
+def pages_without_answers(doc) -> list[int]:
+    """Sheet pages read as OK with nothing on them: a blank page, or written answers the AI silently skipped."""
+    if doc.id not in _empty_pages:
+        empty = []
+        for page in doc.pages or []:
+            if page.get("ocr_status") != "OK" or not page.get("ocr_file"):
+                continue
+            try:
+                parsed = json.loads(abs_path(page["ocr_file"]).read_text(encoding="utf-8")).get("parsed") or {}
+            except (OSError, ValueError):
+                continue
+            if not parsed.get("answers") and not parsed.get("unresolved"):
+                empty.append(page["page_number"])
+        _empty_pages[doc.id] = empty
+    return _empty_pages[doc.id]
+
+
 def review_reasons(db: Session, ev: Evaluation, snap: ExamSnapshot) -> list[dict]:
     """Why this sheet cannot be finalized together with the others.
 
@@ -566,6 +659,9 @@ def review_reasons(db: Session, ev: Evaluation, snap: ExamSnapshot) -> list[dict
         issues.append({"question": "Evaluation", "reason": "Not graded yet. Fix the answer mapping, then run the evaluation."})
     if doc is not None and doc.status == "NEEDS_ATTENTION":
         issues.insert(0, {"question": "Answer sheet", "reason": "Some pages could not be read. Retry them first."})
+    if doc is not None and (empty := pages_without_answers(doc)):
+        issues.insert(0, {"question": "Answer sheet", "reason": f"No answers were read from page(s) "
+                          f"{', '.join(map(str, empty))}. Check the sheet: answers there are not being marked."})
     if ev.run_status == "ERROR":
         issues.insert(0, {"question": "Evaluation", "reason": "The AI evaluation stopped with an error. Run it again."})
     qs = {q.id: q for q in snap.questions}

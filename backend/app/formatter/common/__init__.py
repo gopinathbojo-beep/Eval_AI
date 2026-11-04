@@ -9,7 +9,7 @@ mark_rules.py (checks on the grader's marks).
 from __future__ import annotations
 from typing import Any
 
-__all__ = ["parse_paper", "segment_keys", "segment_answers", "grading_attempts", "check_deductions",
+__all__ = ["parse_paper", "segment_keys", "segment_answers", "grading_attempts", "grading_rules", "check_deductions",
            "uses_pdf_text", "build_rubric"]
 
 
@@ -31,6 +31,13 @@ def segment_answers(page_results: list[tuple[dict, Any]], canonical_questions: l
 def grading_attempts(question_text: str | None, answer_text: str) -> list[tuple[str, str]]:
     """Several attempts in one answer, each graded and the best counted: [(title, text)]; [] grades it as one."""
     return []
+
+
+def grading_rules(question_text: str | None, key_text: str | None) -> str:
+    """Extra marking instructions for the grader (evaluation only; never used when reading papers); "" for none.
+    Shared default: understanding-based marking of descriptive answers (Science, Social Science, ...)."""
+    from .language import theory_rules
+    return theory_rules(question_text, key_text)
 
 
 def check_deductions(result: Any, answer_text: str, key_text: str | None, max_marks: float) -> Any:

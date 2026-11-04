@@ -11,7 +11,7 @@ from ..documents.cropping import normalise_bbox
 from .extraction import Fragment, VisualEvidence
 
 log = logging.getLogger("adem.layout")
-_LABEL = re.compile(r"^(?:Q(?:uestion)?\.?\s*)?(\d{1,3})(?:[.)](?:\(?[A-Za-z]\)?)?|\([A-Za-z]\)[.]?)$", re.I)
+_LABEL = re.compile(r"^(?:Q(?:uestion)?\.?\s*)?(\d{1,3})(?:[.)](?:\(?[A-Za-z]\)?)?|\([A-Za-z]\)[.]?|[A-D])$", re.I)  # "17A": choice A of 17
 _BARE = re.compile(r"\d{1,2}")
 _VISUALLY_IMPAIRED = re.compile(r"^\W*for\s+visually\s+(?:impaired|challenged)", re.I)
 _TEXT_ROOT = re.compile(r"^\s*(?:Q(?:uestion)?\.?\s*)?(\d{1,3})(?=[.):\s])", re.I)
@@ -214,6 +214,24 @@ def _reconcile_fragments(page, meta, result, anchors, lead=None):
     ), fragment.root))
 
 
+def _keep_with(fragment, root, tag):
+    """Move a piece onto question `root` as a part of it: its own whole-question marks are dropped and its part ids
+    made unique, so pieces numbered alike by the model ("q1.i" on every page) do not clash."""
+    if fragment.root != root:
+        old = fragment.root
+        fragment.root = root
+        _rename_root(fragment.tree, old, root)
+    fragment.marks = None
+    if fragment.tree is not None:
+        fragment.tree.marks = None if fragment.tree.children else fragment.tree.marks
+
+        def tag_ids(node):
+            for child in node.children:
+                child.id = f"{child.id}@{tag}"
+                tag_ids(child)
+        tag_ids(fragment.tree)
+
+
 def _squash(text):
     return re.sub(r"[^a-z0-9]+", "", (text or "").casefold())
 
@@ -317,17 +335,23 @@ def ground_visuals(doc, results, answers=False):
             page = pdf[number]
             anchors = _anchors(page)
             if not anchors:
-                # no printed question number on this page: all of it belongs to the last printed question
+                # no printed question number on this page: all of it belongs to the last printed question.
+                # The model may number its parts (I), (II) as questions 1, 2: they are parts, not new copies.
                 if last_printed is not None:
                     for index, fragment in enumerate(result.fragments):
-                        if fragment.root != last_printed:
-                            old = fragment.root
-                            fragment.root = last_printed
-                            _rename_root(fragment.tree, old, last_printed)  # settled by the PDF: not a review item
-                        if index == 0 and not _VISUALLY_IMPAIRED.match(fragment.text or ""):
-                            fragment.continues = True
+                        _keep_with(fragment, last_printed, f"p{meta['page_number']}-{index + 1}")
+                        # a visually impaired version starts its own alternative; every other piece continues
+                        fragment.continues = not _VISUALLY_IMPAIRED.match(fragment.text or "")
                 continue
             lead, last_printed = last_printed, anchors[-1][0]
+            if lead is not None:
+                printed_here = {root for root, _y, _x in anchors}
+                for index, fragment in enumerate(result.fragments):
+                    # a question that already ended on an earlier page cannot reappear here unprinted:
+                    # the piece continues the last question printed before this page
+                    if fragment.root not in printed_here and fragment.root < lead:
+                        _keep_with(fragment, lead, f"p{meta['page_number']}-{index + 1}")
+                        fragment.continues = not _VISUALLY_IMPAIRED.match(fragment.text or "")
             previous = _anchors(pdf[number - 1]) if number else []
             if answers:  # a question paper may print a case-study passage above its number
                 # before reconciling, so a printed row the model skipped is then recovered from the PDF
@@ -411,6 +435,61 @@ def ground_visuals(doc, results, answers=False):
                 fragment.issues.append(issue)
                 if not normalise_bbox(visual.bbox, meta["ocr_width"], meta["ocr_height"], page.rect.width, page.rect.height):
                     placeholders.append((fragment, issue))
+            # A printed equation or structure drawn from many small pieces (arrows, bonds, sub/superscripts):
+            # one picture of the whole printed area reads far better than the pieces or a garbled transcription.
+            pieces = {}
+            for index, (kind, rect) in enumerate(candidates):
+                if kind == "image" and rect.get_area() < page.rect.get_area() * .01:
+                    root = owner(rect)
+                    if root is not None:
+                        pieces.setdefault(root, []).append(index)
+            for root, indexes in pieces.items():
+                target = next((f for f in result.fragments if f.root == root), None)
+                if target is None or len(indexes) < 3:
+                    continue
+                area = pymupdf.Rect(candidates[indexes[0]][1])
+                for index in indexes[1:]:
+                    area |= candidates[index][1]
+                area = pymupdf.Rect(page.rect.width * .12, max(0, area.y0 - 14),
+                                    page.rect.width * .9, min(page.rect.height, area.y1 + 14))
+                target.visuals = [VisualEvidence(
+                    kind="formula", description="The printed answer, shown as in the uploaded document.", labels=[],
+                    bbox={"x": area.x0 * meta["ocr_width"] / page.rect.width,
+                          "y": area.y0 * meta["ocr_height"] / page.rect.height,
+                          "width": area.width * meta["ocr_width"] / page.rect.width,
+                          "height": area.height * meta["ocr_height"] / page.rect.height},
+                )]
+                # the picture is authoritative for this part; doubts about its garbled text layer no longer matter
+                garbled = any(re.search(r"garbled|text layer", x, re.I) for x in target.issues)
+                target.issues = [x for x in target.issues if not re.search(r"garbled|text layer|ownership", x, re.I)]
+                if garbled:
+                    # the typed-out working is the unreadable part: keep the short answer, the picture shows the rest
+                    parts = re.split(r"(?<=\.)\s+(?=\((?:i|1|a)\)|\(?I\.)", target.text or "")
+                    short, rest = parts[0].strip(), parts[1:]
+                    while len(short) < 8 and rest:  # "D." alone is the option letter; keep "D. (i) and (ii)."
+                        short = f"{short} {rest.pop(0).strip()}"
+                    if 0 < len(short) < len(target.text or ""):
+                        target.text = short + "\n[Working shown in the picture below, as printed in the marking scheme.]"
+                used.update(i for i, (kind, _r) in enumerate(candidates) if kind == "image" and owner(_r) == root)
+            # A "visual" that is only a rule or an empty box (no text, no image, a few strokes) shows nothing
+            drawings = page.get_drawings()
+            for fragment in result.fragments:
+                kept = []
+                for visual in fragment.visuals:
+                    b = visual.bbox or {}
+                    rect = pymupdf.Rect(b.get("x", 0) * page.rect.width / meta["ocr_width"],
+                                        b.get("y", 0) * page.rect.height / meta["ocr_height"],
+                                        (b.get("x", 0) + b.get("width", 0)) * page.rect.width / meta["ocr_width"],
+                                        (b.get("y", 0) + b.get("height", 0)) * page.rect.height / meta["ocr_height"])
+                    strokes = [d for d in drawings if d["rect"].intersects(rect)]
+                    empty = (not page.get_textbox(rect).strip()
+                             and not any(pymupdf.Rect(i["bbox"]).intersects(rect) for i in page.get_image_info())
+                             and len(strokes) <= 4
+                             # only straight rules and boxes; a circle or curve is a real drawing
+                             and all(item[0] in ("l", "re") for d in strokes for item in d["items"]))
+                    if not empty or visual.kind == "table":
+                        kept.append(visual)
+                fragment.visuals = kept
             # Recover native images the AI omitted, but only inside a confirmed
             # question band. Never manufacture an image for a text-only question.
             for index, (kind, rect) in enumerate(candidates):

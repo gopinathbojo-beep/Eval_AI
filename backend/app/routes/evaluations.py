@@ -261,6 +261,43 @@ def run(ev_id: str, bg: BackgroundTasks, db: Session = Depends(get_db), t: Teach
     return {"run_status": "RUNNING"}
 
 
+@router.post("/evaluations/{ev_id}/remap-and-run", status_code=202)
+def remap_and_run(ev_id: str, bg: BackgroundTasks, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    """Map the sheet's answers again with the current rules (pages are not re-read), then grade what is not settled.
+
+    Kept: answers a teacher mapped by hand or ignored, and marks a teacher approved or changed."""
+    ev = get_evaluation(db, t, ev_id)
+    _not_finalized(ev)
+    if ev.run_status == "RUNNING":
+        raise err(409, "ALREADY_RUNNING", "Evaluation is already running.")
+    for a in db.query(StudentAnswer).filter_by(evaluation_id=ev.id):
+        if a.status != "IGNORED" and not a.mapping_confirmed:
+            a.status = "MAPPED"  # recomputable again; apply_student_mapping decides the question
+    apply_student_mapping(db, ev)
+    settled = (EvaluationItem.status == "APPROVED") | EvaluationItem.teacher_overridden.is_(True)
+    db.query(EvaluationItem).filter(EvaluationItem.evaluation_id == ev.id).filter(~settled).delete(synchronize_session=False)
+    audit(db, exam_id=ev.exam_id, teacher_id=t.id, entity_type="evaluation", entity_id=ev.id, action="remapped_and_rerun")
+    db.commit()
+    return run(ev_id, bg, db, t)
+
+
+@router.post("/exams/{exam_id}/remap-and-run", status_code=202)
+def remap_and_run_all(exam_id: str, bg: BackgroundTasks, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    """Re-map and grade every sheet of the exam that is not finalized, busy or still being read."""
+    exam = get_exam(db, t, exam_id)
+    started, skipped = 0, []
+    for ev in db.query(Evaluation).filter_by(exam_id=exam.id).all():
+        if ev.status == "FINALIZED" or ev.run_status == "RUNNING":
+            continue
+        try:
+            remap_and_run(ev.id, bg, db, t)
+            started += 1
+        except Exception as e:  # one sheet that cannot run yet (unreadable pages, unclear answers) does not stop the rest
+            db.rollback()
+            skipped.append({"evaluation_id": ev.id, "reason": getattr(e, "detail", None) or str(e)})
+    return {"started": started, "skipped": skipped}
+
+
 class ItemPatch(BaseModel):
     final_marks: float | None = Field(None, ge=0)
     teacher_feedback: str | None = None

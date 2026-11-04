@@ -436,6 +436,22 @@ Return JSON in exactly this shape:
 {"name": "...", "roll_number": "...", "registration_number": "...", "class_name": "...", "section": "...", "pages_written": null}"""
 
 
+def roll_label_prompt() -> str:
+    """Second check on an uploader's typed roll number: only a value written against a "Roll No" label counts."""
+    return """This image is the top of the first page of a student's answer sheet.
+Find the roll number the student wrote next to a printed or written label "Roll No", "Roll No.", "Roll Number" or "Roll".
+
+RULES:
+- Return roll_number ONLY when it is written against one of those labels. Copy it exactly as written.
+- Any other number on the page (registration number, question numbers, marks, dates, page numbers, phone numbers,
+  numbers in a header without a Roll label) is NOT a roll number: ignore it.
+- If there is no Roll No label, or its value is empty, crossed out or not clearly legible, use null.
+- Never return the label itself as the value.
+
+Return JSON in exactly this shape:
+{"name": null, "roll_number": "...", "registration_number": null, "class_name": null, "section": null, "pages_written": null}"""
+
+
 LABELER_SYSTEM = (
     "You are the labeling assistant for Eval AI, an exam evaluation system. Questions, answers and keys may be in "
     "Tamil, another Indian language, or English. You label what is already written: never invent questions, "

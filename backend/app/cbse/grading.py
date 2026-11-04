@@ -17,7 +17,24 @@ Choice limits and totals will be applied by the backend. Never transfer credit b
 Return valid JSON only."""
 
 
-def prompt(q, key, student, options, instructions):
+TEXTBOOK_RULE = """NCERT TEXTBOOK REFERENCE (read-only, printed text; it never replaces the marking scheme):
+{passages}
+Grade against the marking scheme above; it alone decides the criteria and marks. These passages are background
+reference only: use them to understand the topic and to judge whether the student's own wording of a scheme point is
+correct and equivalent. Do not withhold marks because an answer differs from the textbook's wording, and do not
+award or deduct anything for the textbook itself; it adds no criteria, no marks and no extra requirements."""
+
+
+def textbook_block(references):
+    """The reference passages as numbered, cited quotes; empty when none were found."""
+    if not references:
+        return ""
+    passages = "\n".join(f'[{i}] {h.title} p.{h.page_start}-{h.page_end}: "{h.text.strip()}"'
+                         for i, h in enumerate(references, 1))
+    return TEXTBOOK_RULE.format(passages=passages) + "\n"
+
+
+def prompt(q, key, student, options, instructions, references=None):
     tree = scoring_tree(q, key, options)
     question_visuals = [
         {k: v for k, v in item.items() if k != "crop_file"}
@@ -39,7 +56,7 @@ GENERAL EXAMINER INSTRUCTIONS:
 {json.dumps(instructions, ensure_ascii=False)}
 REVIEWED SCORING TREE:
 {json.dumps(tree, ensure_ascii=False)}
-If the only criterion is overall, the extracted step allocations are incomplete. Assess the whole answer against the uploaded scheme text and its instructions, within the question maximum. Explain any partial credit in feedback; do not invent step allocations or require exact scheme wording for equivalent correct working.
+{textbook_block(references)}If the only criterion is overall, the extracted step allocations are incomplete. Assess the whole answer against the uploaded scheme text and its instructions, within the question maximum. Explain any partial credit in feedback; do not invent step allocations or require exact scheme wording for equivalent correct working.
 SELECTED VERSION: {json.dumps(options)}
 ACCEPTED ALTERNATIVES: {json.dumps(key.accepted_answers, ensure_ascii=False)}
 GRADE EXACTLY THESE CRITERION IDS: {json.dumps([n["id"] for n in leaves(tree, options)])}
@@ -89,6 +106,11 @@ def _evidence_quotes(award, student, is_mcq):
     return [evidence] if evidence else []
 
 
+def _to_scheme_step(value, allocation):
+    """CBSE marks move in half marks: a judged fraction (0.8) lands on the nearest step, within the allocation."""
+    return min(math.floor(value * 2 + .5) / 2, allocation)
+
+
 def validate_result(result, q, key, options, student=None):
     tree = scoring_tree(q, key, options)
     nodes = {n["id"]: n for n in leaves(tree, options)}
@@ -135,7 +157,7 @@ def validate_result(result, q, key, options, student=None):
             raise EvaluationValidationError(
                 "MCQ multiple-answer flag must be true or false"
             )
-        scores[key_id] = 0 if award.get("multiple_answers") is True else value
+        scores[key_id] = 0 if award.get("multiple_answers") is True else _to_scheme_step(value, nodes[key_id]["marks"])
     if set(scores) != set(nodes):
         raise EvaluationValidationError(
             "Every reviewed criterion must have an award, including unattempted parts"

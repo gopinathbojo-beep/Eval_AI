@@ -68,6 +68,49 @@ _TABLE_HEAD_INLINE = re.compile(r"Q\.?\s*No\.?\s+(?:Question|ANS\b[^\n]*?)\s+Mar
 _SECTION_LINE = re.compile(r"^\s*section\s*\W{0,3}\s*[A-E]\b(?:\s*\[[^\]]*\])?[^\n]*?(?=\d+\s*[.(]|$)", re.I | re.M)
 _PAPER_HEADER = re.compile(r"^[^\n]*\b(?:marking\s+scheme|sample\s+question\s+paper|subject\s*:|class\s*-\s*x)\b[^\n]*$", re.I | re.M)
 _FOOTER = re.compile(r"^.*\bPage\s+\d+\s+of\s+\d+\s*$", re.I | re.M)
+# CBSE sample papers repeat this note at the foot of every page
+_PAPER_NOTE = re.compile(r"^\W*there is no change in the question paper design[^\n]*(?:\n[^\n]*\d{4}-\d{2}\.?\s*)?$", re.I | re.M)
+# "Question No. 31 to 33 are long answer type questions carrying 5 marks each." is the section's instruction
+_SECTION_RULE = re.compile(r"^\s*questions?\s+no\.?\s*\d+\s*(?:to|-|\u2013)\s*\d+\s+are\b[^\n]*$", re.I | re.M)
+
+
+_CROP_NOTE = re.compile(r"cropped (?:image|region|page|area|portion)|(?:this|the) crop\b|split(?:-page)? (?:half|region)", re.I)
+_NUMBER_TOKEN = re.compile(r"^[-−–+]?\d+(?:\.\d+)?$")
+
+
+def _drop_axis_labels(text):
+    """A chart's axis ticks and data labels copied from the PDF text layer ("0 0.00333 … -0.5 -1 -1.5 … log k …")
+    sit just before its "Figure N" caption. The chart is kept as a picture, so drop that run of numbers."""
+    out, pos = [], 0
+    for caption in re.finditer(r"Figure\s+\d+", text):
+        before = text[pos:caption.start()]
+        tokens = list(re.finditer(r"\S+", before))
+        start, numbers = len(tokens), 0
+        while start and (_NUMBER_TOKEN.match(tokens[start - 1].group()) or len(tokens[start - 1].group()) <= 6):
+            start -= 1
+            numbers += bool(_NUMBER_TOKEN.match(tokens[start].group()))
+        if numbers >= 10 and numbers >= .7 * (len(tokens) - start):
+            # keep a sentence's closing stop that the walk swallowed, and a space before the caption
+            kept = before[:tokens[start].start()].rstrip()
+            before = kept + ("." if tokens[start].group() == "." else "") + " "
+        out.append(before + caption.group())
+        pos = caption.end()
+    return "".join(out) + text[pos:]
+
+
+# printed markers that start a new line: OR, a choice ("17B", "31(B)"), a part ("II.", "(III)", "a)")
+_BREAK_BEFORE = re.compile(
+    r"\s+(?=(?:OR\b(?!\s*[a-z])|\d{1,3}\s*\(?[AB]\)?[.:]?\s+(?:I\b|\(I\))|\(?\b(?:II|III|IV|V|VI)\b\)?[.)]\s|"
+    r"\((?:II|III|IV|V|VI|ii|iii|iv|v|vi)\)\s|\b[b-e]\)\s))")
+
+
+def break_lines(text):
+    """A long answer read as one run-on line ("17A I. … II. … OR 17B I. …") gets a new line at each printed marker.
+    Text that already has its own line breaks is left as written."""
+    out = []
+    for line in text.split("\n"):
+        out.append(_BREAK_BEFORE.sub("\n", line) if len(line) > 160 else line)
+    return re.sub(r"\n{2,}", "\n", "\n".join(out))
 
 
 def clean_text(text):
@@ -82,6 +125,10 @@ def clean_text(text):
     text = _PAPER_HEADER.sub("", text)
     text = _SECTION_LINE.sub("", text)
     text = _FOOTER.sub("", text)
+    text = _PAPER_NOTE.sub("", text)
+    text = _SECTION_RULE.sub("", text)
+    text = _drop_axis_labels(text)
+    text = break_lines(text)
     out, run, dropped = [], [], False
     for line in text.split("\n") + [None]:
         if line is not None and 0 < len(line.strip()) <= 4:
@@ -189,9 +236,11 @@ def fix_false_continuations(results):
     for _, result in results:
         kept = []
         for index, fragment in enumerate(result.fragments):
-            # only the first piece of a page, under the previous page's last number, can continue it,
-            # and never one that opens with its own choice label or a visually impaired heading
-            if fragment.continues and (index > 0 or fragment.root != last or _CHOICE_MARK.match(fragment.text or "")
+            # a piece continues what comes just before it: the previous page's last question for the first piece,
+            # the piece above it on the same page otherwise; never one that opens with its own choice label
+            # or a visually impaired heading
+            before = kept[-1].root if kept else last
+            if fragment.continues and (fragment.root != before or _CHOICE_MARK.match(fragment.text or "")
                                        or _ACCESSIBLE.match(fragment.text or "")):
                 fragment.continues = False
                 fragment.issues = [x for x in fragment.issues if "continu" not in x.lower()]
@@ -211,7 +260,11 @@ def _squash_all(text):
 _UNSPLIT_MARKS = re.compile(
     r"(?:individual|separate|per[- ]?(?:part|subpart)|split|breakdown|distribution|allocation)s?\b[^.;]*"
     r"(?:not (?:printed|shown|given|specified|stated|indicated|visible)|unspecified|missing)"
-    r"|share[sd]? (?:a |one )?(?:printed |combined |single )?(?:total|mark)", re.I)
+    r"|share[sd]? (?:a |one )?(?:printed |combined |single )?(?:total|mark)"
+    # the printed split ("3x1 in the marks column") is the marking scheme's business, not a paper problem
+    r"|\ballocation\b|\b\d+\s*[x\u00d7]\s*\d+\b[^.;]*marks?", re.I)
+# layout remarks: where a section heading or its instructions sit is not a problem with any question
+_LAYOUT_NOTE = re.compile(r"section[- ]?[A-E]?\s+heading|heading and (?:its )?instructions|instructions? (?:is|are) printed", re.I)
 
 
 def collect(doc, results, kind="question-paper"):
@@ -224,12 +277,17 @@ def collect(doc, results, kind="question-paper"):
             if kind == "question-paper":
                 # a paper printing one mark for several subparts is normal: the marking scheme gives the split
                 fragment.issues = [x for x in fragment.issues if not _UNSPLIT_MARKS.search(x)]
+            fragment.issues = [x for x in fragment.issues if not _LAYOUT_NOTE.search(x)]
         result.fragments = [f for f in result.fragments
                             if (f.text and not _TITLE_ONLY.match(f.text)) or (f.tree and f.tree.children)]
     ground_visuals(doc, results, answers=kind == "answer-key")
     for _, result in results:  # rows recovered from the PDF text layer need the same clean-up
         for fragment in result.fragments:
             fragment.text = clean_text(fragment.text or "")
+            # "23 The values of…": the printed number is shown by the app already
+            fragment.text = re.sub(rf"^\s*{fragment.root}(?=\s+[A-Z(])\s*", "", fragment.text, count=1)
+            # notes about one half of a page the app split to re-read it ("cut off at the bottom of the cropped image")
+            fragment.issues = [x for x in fragment.issues if not _CROP_NOTE.search(x)]
     if kind == "answer-key":
         mark_answer_continuations(results)
     # before marks are set: a piece wrongly flagged as a continuation gets no whole-question marks
@@ -364,7 +422,7 @@ def shape_choices(node):
     return node
 
 
-_PAGE_ONLY_NOTE = re.compile(r"(?:next|previous|following|preceding) page|not visible on this page|"
+_PAGE_ONLY_NOTE = re.compile(r"(?:next|previous|following|preceding) page|(?:on|in) this page|"
                              r"may continue|continues? (?:on|from)|cut off", re.I)
 
 
@@ -374,7 +432,13 @@ def combined(fragments, options=None, printed_choice=False):
     if len(trees) != 1:
         problems.append("Review the whole-question scoring tree; one root is required.")
     tree = shape_choices(trees[0]) if len(trees) == 1 else None
-    text = ("\nOR\n" if alternative else "\n").join(dict.fromkeys(f.text for _, f in fragments if f.text.strip()))
+    # "OR" only between printed alternatives; a page-break continuation of the same alternative joins with a newline
+    text, seen = "", set()
+    for _, f in fragments:
+        if not f.text.strip() or f.text in seen:
+            continue
+        seen.add(f.text)
+        text += ("" if not text else "\nOR\n" if alternative and not f.continues else "\n") + f.text
     # a page ending on "OR" and the next page opening with it print one OR
     text = re.sub(r"(?m)^(\s*OR\s*\n)(?:\s*OR\s*\n)+", r"\1", text)
     sections = {f.section for _, f in fragments if f.section}

@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     ai_max_retries: int = 2
     ai_max_output_tokens: int = 8192
     ai_parallel_jobs: int = 1
+    # local embeddings for the reference library (fastembed, CPU); empty = keyword search only
+    reference_embed_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    # textbook passages shown to the grader as read-only reference
+    reference_in_grading: bool = True
     durable_jobs: bool = False
     auto_migrate: bool = False
     public_web_url: str = ""

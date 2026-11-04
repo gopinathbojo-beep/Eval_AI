@@ -311,7 +311,15 @@ def verify_questions(exam_id: str, bg: BackgroundTasks, db: Session = Depends(ge
     # 7. Collect validation issues
     issues = []
     if doc is None or doc.status != "READY":
-        issues.append({"question": "Question paper", "reason": "Some pages could not be read. Retry them before verifying."})
+        unread = [str(p.get("page_number")) for p in (doc.pages if doc else []) if p.get("ocr_status") != "OK"]
+        if doc is not None and doc.status == "FAILED" and "interrupted" in (doc.error_message or "").lower():
+            reason = (f"Reading was interrupted before page(s) {', '.join(unread)} were read. "
+                      "Use Reprocess on the question paper to finish them.")
+        elif unread:
+            reason = f"Page(s) {', '.join(unread)} could not be read. Retry them before verifying."
+        else:
+            reason = "The question paper is still being read. Verify once it is ready."
+        issues.append({"question": "Question paper", "reason": reason})
     for q in qs:
         for p in _validate_for_verified(q, qs):
             issues.append({"question": q.display_number, "reason": p})

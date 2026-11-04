@@ -633,6 +633,53 @@ def retry_identify(
     return _unassigned_view(db, doc)
 
 
+class RollCheckBody(BaseModel):
+    use: str  # "typed": the uploader's roll number is right; "written": the roll number on the sheet is right
+
+
+@router.post("/answer-sheets/{doc_id}/roll-check", status_code=202)
+def settle_roll_check(doc_id: str, body: RollCheckBody, bg: BackgroundTasks,
+                      db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    """The typed and the written roll number differ: the school says which is right, then the sheet is graded."""
+    from ..services.evaluation_service import auto_evaluate_sheet
+    from ..services.student_io import split_class_name
+
+    doc = db.get(AnswerSheetDocument, doc_id)
+    if doc is None or not doc.is_active:
+        raise err(404, "NOT_FOUND", "Answer sheet not found.")
+    exam = get_exam(db, t, doc.exam_id)
+    identity = dict(doc.identity or {})
+    check = dict(identity.get("roll_check") or {})
+    if check.get("status") != "MISMATCH":
+        raise err(409, "NO_ROLL_MISMATCH", "This sheet has no roll number to check.")
+    if body.use not in ("typed", "written"):
+        raise err(400, "INVALID_CHOICE", "Choose the typed or the written roll number.")
+    ev = db.query(Evaluation).filter_by(answer_sheet_id=doc.id).first()
+    if body.use == "written":
+        roll = check["written"]
+        student = db.query(Student).filter_by(class_id=exam.class_id, roll_number=roll).first()
+        if student is None:
+            section = split_class_name(exam.school_class.name)[1] if exam.school_class else None
+            student = Student(class_id=exam.class_id, roll_number=roll, section=section, name=f"Roll {roll}")
+            db.add(student)
+            db.flush()
+        other = db.query(Evaluation).filter_by(exam_id=exam.id, student_id=student.id).first()
+        if other is not None and other.id != (ev.id if ev else None):
+            raise err(409, "ANSWER_SHEET_EXISTS", f"Roll number {roll} already has an answer sheet in this exam.")
+        doc.student_id = student.id
+        if ev is not None:
+            ev.student_id = student.id
+    check["status"], check["chosen"] = "CONFIRMED", body.use
+    identity["roll_check"] = check
+    doc.identity = identity
+    doc.stage = "Ready for review" if doc.status == "READY" else doc.stage
+    audit(db, exam_id=exam.id, teacher_id=t.id, entity_type="answer_sheet", entity_id=doc.id,
+          action="roll_number_settled", new={"use": body.use, "typed": check.get("typed"), "written": check.get("written")})
+    db.commit()
+    bg.add_task(submit, exam.id, auto_evaluate_sheet, doc.id)
+    return {"roll_number": check["written"] if body.use == "written" else check["typed"]}
+
+
 @router.delete("/answer-sheets/{doc_id}")
 def delete_unassigned_sheet(
     doc_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)

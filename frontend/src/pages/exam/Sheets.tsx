@@ -349,6 +349,39 @@ export function AnswerSheets() {
   const summary = useReviewSummary(exam.id, () => Promise.all([sheets.reload(), unassigned.reload()]), open);
 
   const [del, setDel] = useState<Evaluation | null>(null);
+  const [remapping, setRemapping] = useState<string | null>(null);
+  const [remapError, setRemapError] = useState<unknown>(null);
+  const [remapNote, setRemapNote] = useState<string | null>(null);
+  // the typed and the written roll number differ: the school says which is right, then the sheet is graded
+  const settleRoll = async (rowId: string, docId: string, use: "typed" | "written") => {
+    setRemapping(rowId + use); setRemapError(null);
+    try {
+      await api(`/answer-sheets/${docId}/roll-check`, { method: "POST", json: { use } });
+    } catch (err) {
+      setRemapError(err);
+    } finally {
+      setRemapping(null);
+      await refresh();
+    }
+  };
+  // map the answers again with the current rules (no page is re-read), then grade what is not yet approved
+  const remap = async (target: string) => {
+    setRemapping(target); setRemapError(null); setRemapNote(null);
+    try {
+      if (target === "all") {
+        const r = await api<{ started: number; skipped: { reason: string }[] }>(`/exams/${exam.id}/remap-and-run`, { method: "POST" });
+        setRemapNote(`Re-mapped and grading ${r.started} sheet${r.started === 1 ? "" : "s"}` +
+          (r.skipped.length ? `; ${r.skipped.length} need a look first (open their review).` : "."));
+      } else {
+        await api(`/evaluations/${target}/remap-and-run`, { method: "POST" });
+      }
+    } catch (e) {
+      setRemapError(e);
+    } finally {
+      setRemapping(null);
+      await refresh();
+    }
+  };
 
   const taken = new Set((sheets.data ?? []).map((s) => s.student.id));
 
@@ -375,7 +408,8 @@ export function AnswerSheets() {
         </Card>
       )}
 
-      <ErrorPanel error={sheets.error || unassigned.error} />
+      <ErrorPanel error={sheets.error || unassigned.error || remapError} />
+      {remapNote && <Card className="p-3 text-sm text-ink">{remapNote}</Card>}
 
       {summary.data && <BatchReview examId={exam.id} summary={summary.data} onChanged={refresh} />}
 
@@ -386,8 +420,13 @@ export function AnswerSheets() {
 
       {sheets.data && sheets.data.length > 0 && (
         <Card className="overflow-x-auto shadow-soft">
-          <div className="border-b border-line px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-3">
             <h3 className="text-sm font-semibold text-ink">Uploaded Answer Sheets ({sheets.data.length})</h3>
+            <Button small variant="soft" busy={remapping === "all"} disabled={!!remapping}
+                    title="Map every sheet's answers again with the current rules, then grade what is not yet approved"
+                    onClick={() => remap("all")}>
+              Re-map &amp; evaluate all
+            </Button>
           </div>
           <table className="w-full text-left text-sm">
             <thead className="border-b border-line bg-surface text-xs font-semibold uppercase tracking-wider text-mute">
@@ -406,6 +445,25 @@ export function AnswerSheets() {
                 <tr key={e.id} className="hover:bg-hover">
                   <td className="px-4 py-3">
                     <p className="font-mono font-medium text-ink">{e.student.roll_number}</p>
+                    {e.document?.roll_check?.status === "MISMATCH" && (
+                      <div className="mt-1.5 max-w-xs rounded-md border border-warn/40 bg-warn-soft/40 p-2 text-xs">
+                        <p className="font-semibold text-ink">
+                          Roll number check: typed <span className="font-mono">{e.document.roll_check.typed}</span>, the
+                          sheet says <span className="font-mono">{e.document.roll_check.written}</span>
+                        </p>
+                        <p className="mt-0.5 text-mute">Grading waits until you choose.</p>
+                        <div className="mt-1.5 flex flex-wrap gap-1.5">
+                          <Button small variant="soft" busy={remapping === e.id + "typed"} disabled={!!remapping}
+                                  onClick={() => settleRoll(e.id, e.document!.id, "typed")}>
+                            Keep {e.document.roll_check.typed}
+                          </Button>
+                          <Button small variant="soft" busy={remapping === e.id + "written"} disabled={!!remapping}
+                                  onClick={() => settleRoll(e.id, e.document!.id, "written")}>
+                            Use {e.document.roll_check.written}
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                     {!nameIsRoll(e.student) && (
                       <p className="text-xs text-mute">{e.student.name}</p>
                     )}
@@ -446,6 +504,14 @@ export function AnswerSheets() {
                               onClick={() => downloadFile(`/evaluations/${e.id}/extraction-report.pdf`, "Sheet_Report.pdf")}>
                         Report
                       </Button>
+                      {e.status !== "FINALIZED" && (
+                        <Button small variant="soft" busy={remapping === e.id}
+                                disabled={!!remapping || e.run_status === "RUNNING" || (!!e.document && BUSY_DOC.includes(e.document.status))}
+                                title="Map this sheet's answers again with the current rules, then grade what is not yet approved"
+                                onClick={() => remap(e.id)}>
+                          Re-map &amp; evaluate
+                        </Button>
+                      )}
                       {e.status !== "FINALIZED" && (
                         <Button
                           small

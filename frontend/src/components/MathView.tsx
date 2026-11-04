@@ -72,7 +72,12 @@ function normalizeMathText(raw: string): string {
     const hasMathIndicator = /\\frac|\\sqrt|_\{[a-zA-Z0-9_]+\}|\^\{?[0-9a-zA-Z+-]+\}?|\\times|\\div|\\pm|\\pi|\\cdot|\\,|×|÷/.test(trimmed);
     const hasEquation = trimmed.includes("=") || trimmed.includes("≈");
 
-    if (!hasMathDelim && hasMathIndicator && hasEquation) {
+    // A line that is mostly words ("Slope = … (value of slope may vary slightly …) Equating …") is prose, not a
+    // formula: rendered as maths its spaces vanish and it cannot wrap, so it runs out of its box.
+    const words = trimmed.match(/[A-Za-z]{4,}/g) ?? [];
+    const prose = words.length > 4 || trimmed.length > 140;
+
+    if (!hasMathDelim && hasMathIndicator && hasEquation && !prose) {
       const labelMatch = trimmed.match(/^([0-9]+\.|\([a-zA-Z0-9]+\)|[a-zA-Z]\.|\bQ[0-9]+[a-z]?\.?)\s+/);
       if (labelMatch) {
         const lbl = labelMatch[0];

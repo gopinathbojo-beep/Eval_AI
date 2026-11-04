@@ -49,3 +49,9 @@ def build_rubric(question_text: str | None, key_text: str | None, key_criteria: 
                  max_marks: float | None) -> Any:
     from .rubric import build_rubric as build
     return build(question_text, key_text, key_criteria, max_marks)
+
+
+def grading_rules(question_text: str | None, key_text: str | None) -> str:
+    """Language marking rules (evaluation only): comprehension by meaning, literature exact, grammar exact."""
+    from ..common.language import language_rules
+    return language_rules(question_text, key_text)
