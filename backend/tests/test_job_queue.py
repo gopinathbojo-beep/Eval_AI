@@ -4,7 +4,7 @@ from app.services import job_queue as jq
 
 
 def test_parallelism_is_one_setting(monkeypatch):
-    monkeypatch.setattr(get_settings(), "internvl_parallel_jobs", 3)
+    monkeypatch.setattr(get_settings(), "ai_parallel_jobs", 3)
     assert jq.slots() == 3
 
 

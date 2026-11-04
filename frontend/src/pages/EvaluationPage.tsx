@@ -4,7 +4,7 @@ import { api, ApiError } from "../api/client";
 import { useApi } from "../hooks/useApi";
 import { useCrumbName } from "../context/Crumbs";
 import type { EvalItem, EvalQuestion, EvaluationDetail, StudentAnswer } from "../types";
-import { fmt, label, pct, BUSY_DOC } from "../utils/format";
+import { fmt, label, pct, BUSY_DOC, nameIsRoll } from "../utils/format";
 import {
   Badge,
   Button,
@@ -33,8 +33,6 @@ import {
   IconCheck,
   IconCheckCircle,
   IconEdit,
-  IconSplit,
-  IconMerge,
   IconSparkles,
   IconFileText,
   IconAlertCircle,
@@ -71,9 +69,11 @@ export default function EvaluationPage() {
         title={
           <div className="flex flex-wrap items-center gap-2.5">
             <span>{ev.student.name}</span>
-            <span className="inline-flex items-center rounded-lg bg-pen-soft px-2.5 py-1 text-xs font-bold text-pen border border-pen/30">
-              Roll {ev.student.roll_number}
-            </span>
+            {!nameIsRoll(ev.student) && (
+              <span className="inline-flex items-center rounded-lg bg-pen-soft px-2.5 py-1 text-xs font-bold text-pen border border-pen/30">
+                Roll {ev.student.roll_number}
+              </span>
+            )}
           </div>
         }
         sub={
@@ -160,8 +160,6 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
   const [page, setPage] = useState(1);
   const [sel, setSel] = useState<string | null>(null);
   const [dlg, setDlg] = useState<StudentAnswer | null>(null);
-  const [splitAns, setSplitAns] = useState<StudentAnswer | null>(null);
-  const [mergeAns, setMergeAns] = useState<StudentAnswer | null>(null);
   const [err, setErr] = useState<unknown>(null);
   const [busy, setBusy] = useState<string | null>(null);
   // Responsive mode on tablet/mobile: "document" vs "mappings"
@@ -571,26 +569,6 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
 
                             <Button
                               small
-                              variant="secondary"
-                              onClick={() => setSplitAns(a)}
-                              icon={<IconSplit size={13} />}
-                              title="Split this answer into two questions"
-                            >
-                              Split
-                            </Button>
-
-                            <Button
-                              small
-                              variant="secondary"
-                              onClick={() => setMergeAns(a)}
-                              icon={<IconMerge size={13} />}
-                              title="Merge with another detected answer card"
-                            >
-                              Merge
-                            </Button>
-
-                            <Button
-                              small
                               variant="ghost"
                               busy={busy === a.id + "i"}
                               onClick={() => act(a, { ignore: true }, "i")}
@@ -610,25 +588,8 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
         </div>
       </div>
 
-      {/* Modals for Editing, Splitting, Merging */}
+      {/* Edit modal */}
       {dlg && <MapDlg a={dlg} d={d} onClose={() => setDlg(null)} onDone={reload} />}
-      {splitAns && (
-        <SplitAnswerModal
-          a={splitAns}
-          evId={d.evaluation.id}
-          onClose={() => setSplitAns(null)}
-          onDone={reload}
-        />
-      )}
-      {mergeAns && (
-        <MergeAnswerModal
-          a={mergeAns}
-          evId={d.evaluation.id}
-          allAnswers={d.answers}
-          onClose={() => setMergeAns(null)}
-          onDone={reload}
-        />
-      )}
     </div>
   );
 }
@@ -761,201 +722,6 @@ function MapDlg({
 
           <ErrorPanel error={err} />
         </div>
-      </div>
-    </Modal>
-  );
-}
-
-function SplitAnswerModal({
-  a,
-  evId,
-  onClose,
-  onDone,
-}: {
-  a: StudentAnswer;
-  evId: string;
-  onClose: () => void;
-  onDone: () => Promise<void>;
-}) {
-  const [pos, setPos] = useState(Math.floor(a.answer_text.length / 2));
-  const [lbl, setLbl] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<unknown>(null);
-  const head = a.answer_text.slice(0, pos);
-  const tail = a.answer_text.slice(pos);
-
-  const save = async () => {
-    setBusy(true);
-    setErr(null);
-    try {
-      await api(`/evaluations/${evId}/answers/${a.id}/split`, {
-        method: "POST",
-        json: { at_char: pos, new_label: lbl },
-      });
-      await onDone();
-      onClose();
-    } catch (e) {
-      setErr(e);
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Modal
-      title={`Split Answer Block “${a.raw_question_number ?? "no number"}”`}
-      wide
-      onClose={onClose}
-      icon={<IconSplit size={20} className="text-pen" />}
-      footer={
-        <>
-          <Button variant="secondary" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            variant="primary"
-            busy={busy}
-            disabled={pos <= 0 || !lbl.trim()}
-            onClick={save}
-            icon={<IconCheck size={16} />}
-          >
-            Split Here
-          </Button>
-        </>
-      }
-    >
-      <div className="space-y-4">
-        <p className="text-sm text-mute">
-          Drag the slider to choose where to split. The second part becomes a new answer.
-        </p>
-
-        <Field label="Question Number for Second Answer (e.g. Q8(b) or 9)" required>
-          {(id) => (
-            <Input
-              id={id}
-              placeholder="e.g. Q8(b)"
-              value={lbl}
-              onChange={(e) => setLbl(e.target.value)}
-            />
-          )}
-        </Field>
-
-        <div className="space-y-1.5 rounded-lg border border-line bg-sunken/40 p-4">
-          <div className="flex items-center justify-between text-xs text-mute font-medium">
-            <span>Split slider position</span>
-            <span className="font-mono text-pen font-bold">
-              Character {pos} of {a.answer_text.length}
-            </span>
-          </div>
-          <input
-            type="range"
-            min={1}
-            max={Math.max(1, a.answer_text.length - 1)}
-            value={pos}
-            onChange={(e) => setPos(Number(e.target.value))}
-            className="w-full accent-pen cursor-pointer"
-          />
-        </div>
-
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="rounded-lg border border-line bg-surface p-3.5 text-xs shadow-xs">
-            <p className="mb-1.5 font-bold uppercase tracking-wider text-pen">
-              Kept in Current Answer ({a.raw_question_number ?? "none"})
-            </p>
-            <div className="doc-text max-h-40 overflow-y-auto whitespace-pre-wrap font-mono text-xs text-ink/90 bg-sunken/30 rounded p-2">
-              {head}
-            </div>
-          </div>
-          <div className="rounded-lg border border-line bg-sunken/60 p-3.5 text-xs shadow-xs">
-            <p className="mb-1.5 font-bold uppercase tracking-wider text-ok">
-              New Answer ({lbl || "..."})
-            </p>
-            <div className="doc-text max-h-40 overflow-y-auto whitespace-pre-wrap font-mono text-xs text-ink/90 bg-surface rounded p-2">
-              {tail}
-            </div>
-          </div>
-        </div>
-
-        <ErrorPanel error={err} />
-      </div>
-    </Modal>
-  );
-}
-
-function MergeAnswerModal({
-  a,
-  evId,
-  allAnswers,
-  onClose,
-  onDone,
-}: {
-  a: StudentAnswer;
-  evId: string;
-  allAnswers: StudentAnswer[];
-  onClose: () => void;
-  onDone: () => Promise<void>;
-}) {
-  const [otherId, setOtherId] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<unknown>(null);
-  const others = allAnswers.filter((x) => x.id !== a.id && x.status !== "IGNORED");
-
-  const save = async () => {
-    setBusy(true);
-    setErr(null);
-    try {
-      await api(`/evaluations/${evId}/answers/${a.id}/merge`, {
-        method: "POST",
-        json: { other_id: otherId },
-      });
-      await onDone();
-      onClose();
-    } catch (e) {
-      setErr(e);
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Modal
-      title={`Merge Answer Block “${a.raw_question_number ?? "no number"}”`}
-      onClose={onClose}
-      icon={<IconMerge size={20} className="text-pen" />}
-      footer={
-        <>
-          <Button variant="secondary" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            variant="primary"
-            busy={busy}
-            disabled={!otherId}
-            onClick={save}
-            icon={<IconCheck size={16} />}
-          >
-            Confirm Merge
-          </Button>
-        </>
-      }
-    >
-      <div className="space-y-4">
-        <p className="text-sm text-mute leading-relaxed">
-          Add another answer's text to this one. The other answer is removed.
-        </p>
-
-        <Field label="Select Answer Block to Merge Into This One" required>
-          {(id) => (
-            <Select id={id} value={otherId} onChange={(e) => setOtherId(e.target.value)}>
-              <option value="">Choose an answer...</option>
-              {others.map((x) => (
-                <option key={x.id} value={x.id}>
-                  Answer {x.raw_question_number ?? "(no number)"} (p.{x.page_number}) — {x.answer_text.slice(0, 50)}
-                </option>
-              ))}
-            </Select>
-          )}
-        </Field>
-
-        <ErrorPanel error={err} />
       </div>
     </Modal>
   );
@@ -1363,7 +1129,7 @@ function MarksTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<vo
                 <b className="text-ink">
                   {fmt(total)} out of {fmt(max)} marks
                 </b>{" "}
-                for student <b>{ev.student.name}</b> (Roll {ev.student.roll_number})?
+                for student <b>{ev.student.name}</b>{nameIsRoll(ev.student) ? "" : ` (Roll ${ev.student.roll_number})`}?
               </p>
               <p className="text-xs text-mute">
                 Once finalized, the marks are locked and appear in the results.

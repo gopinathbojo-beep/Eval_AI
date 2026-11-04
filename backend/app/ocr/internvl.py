@@ -345,7 +345,7 @@ def chat_structured(system: str, user: str, schema: Type[T], image_path: Path | 
             continue
         except (httpx.TimeoutException, httpx.HTTPError) as e:
             last_err, kind = f"HTTP/timeout error: {e}", "AI_ERROR"
-            log.warning("InternVL attempt %d/%d failed: %s", i, attempts, last_err)
+            log.warning("AI attempt %d/%d failed: %s", i, attempts, last_err)
             continue
         try:
             obj = extract_json_object(raw)
@@ -388,7 +388,7 @@ def chat_structured(system: str, user: str, schema: Type[T], image_path: Path | 
             last_err, kind = f"JSON parse failed: {e}", "FAILED_PARSE"
         except ValidationError as e:
             last_err, kind = f"Schema validation failed: {e.errors()[:3]}", "FAILED_PARSE"
-        log.warning("InternVL attempt %d/%d invalid output: %s | raw[:300]=%r", i, attempts, last_err, raw[:300])
+        log.warning("AI attempt %d/%d invalid output: %s | raw[:300]=%r", i, attempts, last_err, raw[:300])
 
     # 2-Stage Automatic Fallback: CLAHE contrast enhancement & plain text transcription
     if image_path is not None:

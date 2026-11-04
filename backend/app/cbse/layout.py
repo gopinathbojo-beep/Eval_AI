@@ -12,16 +12,110 @@ from .extraction import Fragment, VisualEvidence
 
 log = logging.getLogger("adem.layout")
 _LABEL = re.compile(r"^(?:Q(?:uestion)?\.?\s*)?(\d{1,3})(?:[.)](?:\(?[A-Za-z]\)?)?|\([A-Za-z]\)[.]?)$", re.I)
+_BARE = re.compile(r"\d{1,2}")
+_VISUALLY_IMPAIRED = re.compile(r"^\W*for\s+visually\s+(?:impaired|challenged)", re.I)
 _TEXT_ROOT = re.compile(r"^\s*(?:Q(?:uestion)?\.?\s*)?(\d{1,3})(?=[.):\s])", re.I)
 
 
+# the heading can share a text block with "Time: 3 hours ... Max. Marks", so it is searched, not anchored
+_INSTRUCTIONS = re.compile(r"general\s+instructions|read\s+the\s+following\s+instructions", re.I)
+_SECTION = re.compile(r"^\s*section\b", re.I)
+
+
+def _instruction_span(page):
+    """The numbered General Instructions block (heading to the first SECTION heading): its numbers are not questions."""
+    start = end = None
+    for block in sorted(page.get_text("blocks"), key=lambda b: b[1]):
+        if start is None and _INSTRUCTIONS.search(block[4]):
+            start = block[1]
+        elif start is not None and _SECTION.match(block[4]):
+            end = block[1]
+            break
+    return (start, end if end is not None else page.rect.height) if start is not None else None
+
+
+_SECTION_HEADING = re.compile(r"^\s*section\s*\W{0,3}\s*([A-E])\b(?:.*?\(\s*\d+\s*\S\s*(\d+(?:\.\d+)?)\s*=\s*\d+)?", re.I | re.S)
+
+
+_SECTION_MARKS = re.compile(r"section\s*[-\u2013]?\s*([A-E])\b[^.\n]*?\b(?:carrying|of)\s+0?(\d+)\s+marks?\s+each", re.I)
+
+
+def printed_sections(doc):
+    """Question root -> (section letter, printed marks per question) from the SECTION headings, in page order.
+
+    Pages are read one at a time, so the model cannot see a heading printed on an earlier page; the PDF can.
+    """
+    source = getattr(doc, "original_file", None)
+    if not source or not str(source).lower().endswith(".pdf"):
+        return {}  # scans have no text layer; the model's section labels stand
+    try:
+        pdf = pymupdf.open(abs_path(source))
+    except (OSError, RuntimeError, ValueError):
+        return {}
+    found, current = {}, None
+    with pdf:
+        # "SECTION B consists of 5 ... carrying 2 marks each": per-question marks when a heading prints none
+        each = {letter.upper(): float(marks) for page in list(pdf)[:2]
+                for letter, marks in _SECTION_MARKS.findall(page.get_text())}
+        for page in pdf:
+            skip = _instruction_span(page)
+            events = []
+            for block in page.get_text("blocks"):
+                match = _SECTION_HEADING.match(block[4])
+                if match and not (skip and skip[0] <= block[1] < skip[1]):
+                    letter = match[1].upper()
+                    events.append((block[1], 0, (letter, float(match[2]) if match[2] else each.get(letter))))
+            events += [(y, 1, root) for root, y, _x in _anchors(page)]
+            for _y, kind, value in sorted(events, key=lambda e: (e[0], e[1])):
+                if kind == 0:
+                    current = value
+                elif current and value not in found:
+                    found[value] = current
+    return found
+
+
+def printed_twice(doc):
+    """Question numbers the PDF prints more than once: Q30 (A) ... OR ... Q30 (B) is an internal choice."""
+    source = getattr(doc, "original_file", None)
+    if not source or not str(source).lower().endswith(".pdf"):
+        return set()
+    try:
+        pdf = pymupdf.open(abs_path(source))
+    except (OSError, RuntimeError, ValueError):
+        return set()
+    counts = {}
+    with pdf:
+        for page in pdf:
+            for root, _y, _x in _anchors(page):
+                counts[root] = counts.get(root, 0) + 1
+    return {root for root, count in counts.items() if count > 1}
+
+
 def _anchors(page):
-    found = []
+    found, bare = [], []
+    skip = _instruction_span(page)
     for word in page.get_text("words"):
+        if skip and skip[0] <= word[1] < skip[1]:
+            continue
         match = _LABEL.fullmatch(word[4])
         if match and (word[4].lower().startswith("q") or word[0] < page.rect.width * .2):
             found.append((int(match[1]), float(word[1]), float(word[0])))
-    return sorted(found, key=lambda item: item[1])
+        elif (_BARE.fullmatch(word[4]) and word[7] == 0 and word[0] < page.rect.width * .22
+              and 0 < int(word[4]) <= 60):
+            # a Q.No table column prints a bare "1": first word of its line, in the left-hand column
+            bare.append((int(word[4]), float(word[1]), float(word[0])))
+    if not bare:
+        return sorted(found, key=lambda item: item[1])
+    kept = []
+    marks = [(root, y, x, True) for root, y, x in found] + [(root, y, x, False) for root, y, x in bare]
+    for root, y, x, labelled in sorted(marks, key=lambda item: item[1]):
+        # question numbers run in order; digits inside a question's own table or a fraction do not
+        last = kept[-1][0] if kept else None
+        if last is not None and root < last:
+            continue  # a numbered list inside a question: printed question numbers never go back on a page
+        if labelled or last is None or root in (last, last + 1):
+            kept.append((root, y, x))
+    return kept
 
 
 def _bands(page, anchors):
@@ -62,7 +156,7 @@ def _band_root(rect, bands):
     return scored[0][1]
 
 
-def _reconcile_fragments(page, meta, result, anchors):
+def _reconcile_fragments(page, meta, result, anchors, lead=None):
     """Ground model roots in printed row labels and recover omitted PDF-text rows.
 
     This is deliberately layout-driven: it never assumes particular question
@@ -74,14 +168,16 @@ def _reconcile_fragments(page, meta, result, anchors):
         label = _TEXT_ROOT.match(fragment.text or "")
         text_root = int(label.group(1)) if label and int(label.group(1)) in printed else None
         layout_root = _band_root(_bbox_rect(fragment, meta, page), bands)
-        grounded = text_root or layout_root
+        # model boxes can be on another scale (DeepSeek); a root the page prints is only overruled by the text's own label
+        grounded = text_root or (layout_root if fragment.root not in printed else None)
         if grounded is not None and grounded != fragment.root:
             old = fragment.root
             fragment.root = grounded
             _rename_root(fragment.tree, old, grounded)
-            fragment.issues.append(
-                f"Model root {old} was corrected to printed question {grounded} from the source row boundary."
-            )
+            if grounded != text_root:  # the text printing its own number settles it; a layout guess is worth a look
+                fragment.issues.append(
+                    f"Model root {old} was corrected to printed question {grounded} from the source row boundary."
+                )
 
     present = {fragment.root for fragment in result.fragments}
     sy = meta["ocr_height"] / page.rect.height
@@ -90,6 +186,16 @@ def _reconcile_fragments(page, meta, result, anchors):
             continue
         text = page.get_textbox(pymupdf.Rect(0, max(0, top - 2), page.rect.width, bottom)).strip()
         if not text:
+            continue
+        # the model read this row inside a piece filed under a number the page does not print: re-file it, don't copy it
+        head = _squash(text)[:40]
+        misfiled = next((f for f in result.fragments if f.root not in printed and len(head) >= 20
+                         and head in _squash(f.text)), None)
+        if misfiled is not None:
+            old = misfiled.root
+            misfiled.root = root
+            _rename_root(misfiled.tree, old, root)
+            present.add(root)
             continue
         result.fragments.append(Fragment(
             root=root,
@@ -102,9 +208,33 @@ def _reconcile_fragments(page, meta, result, anchors):
             ],
         ))
         present.add(root)
-    result.fragments.sort(key=lambda fragment: (next(
+    # a question continued from the previous page (lead) is printed above this page's first number
+    result.fragments.sort(key=lambda fragment: (-1 if fragment.root == lead and fragment.root not in printed else next(
         (top for candidate, top, _bottom in bands if candidate == fragment.root), page.rect.height
     ), fragment.root))
+
+
+def _squash(text):
+    return re.sub(r"[^a-z0-9]+", "", (text or "").casefold())
+
+
+def _carry_page_top(page, result, anchors, previous):
+    """Text printed above a page's first question number continues the previous page's last question.
+
+    Models without position boxes (Qwen3-VL) label it with the next number; the PDF text layer settles it.
+    """
+    if not (result.fragments and anchors and previous):
+        return
+    carry = previous[-1][0]
+    top = _squash(page.get_textbox(pymupdf.Rect(0, 0, page.rect.width, max(0, anchors[0][1] - 12))))
+    for fragment in result.fragments:
+        head = _squash(fragment.text)[:20]
+        if fragment.root == carry or len(head) < 12 or head not in top:
+            continue
+        old = fragment.root
+        fragment.root, fragment.continues = carry, True
+        _rename_root(fragment.tree, old, carry)
+        fragment.issues.append(f"Text above printed question {anchors[0][0]} continues question {carry} from the previous page.")
 
 
 def _tokens(text):
@@ -161,7 +291,7 @@ def _rename_root(node, old, new):
         _rename_root(child, old, new)
 
 
-def ground_visuals(doc, results):
+def ground_visuals(doc, results, answers=False):
     """Use source layout once per build; recover only source-confirmed visuals.
 
     A missing/ambiguous match is retained as a review issue, not guessed from
@@ -179,6 +309,7 @@ def ground_visuals(doc, results):
         return
     with pdf:
         placeholders = []
+        last_printed = None
         for meta, result in results:
             number = meta["page_number"] - 1
             if number >= len(pdf):
@@ -186,9 +317,22 @@ def ground_visuals(doc, results):
             page = pdf[number]
             anchors = _anchors(page)
             if not anchors:
+                # no printed question number on this page: all of it belongs to the last printed question
+                if last_printed is not None:
+                    for index, fragment in enumerate(result.fragments):
+                        if fragment.root != last_printed:
+                            old = fragment.root
+                            fragment.root = last_printed
+                            _rename_root(fragment.tree, old, last_printed)  # settled by the PDF: not a review item
+                        if index == 0 and not _VISUALLY_IMPAIRED.match(fragment.text or ""):
+                            fragment.continues = True
                 continue
-            _reconcile_fragments(page, meta, result, anchors)
+            lead, last_printed = last_printed, anchors[-1][0]
             previous = _anchors(pdf[number - 1]) if number else []
+            if answers:  # a question paper may print a case-study passage above its number
+                # before reconciling, so a printed row the model skipped is then recovered from the PDF
+                _carry_page_top(page, result, anchors, previous)
+            _reconcile_fragments(page, meta, result, anchors, lead)
             # Repeated printed root at the page start confirms its continuation.
             carry = previous[-1][0] if previous and previous[-1][0] == anchors[0][0] else None
             printed = {root for root, _, _ in anchors}
@@ -203,7 +347,7 @@ def ground_visuals(doc, results):
                 # Reject columns with competing labels instead of selecting by y.
                 preceding = [(root, y, x) for root, y, x in anchors if y <= rect.y0 + 3]
                 if not preceding:
-                    return carry
+                    return carry or lead  # above the first printed number: the previous page's question
                 root, y, x = preceding[-1]
                 if any(other != root and abs(oy - y) < 12 and abs(ox - x) > page.rect.width * .25
                        for other, oy, ox in preceding):
@@ -247,6 +391,11 @@ def ground_visuals(doc, results):
                             continue
                     matches.append((score, index, root, rect))
                 matches.sort(reverse=True, key=lambda match: match[0])
+                own = [m for m in matches if m[2] == fragment.root and m[0] >= 2]
+                if len(own) > 1 and matches[0][0] - matches[1][0] <= .15:
+                    # several drawings inside this question's printed band and model boxes too rough to choose:
+                    # the model lists visuals in reading order, so take the band's next one from the top
+                    matches = [min(own, key=lambda m: (m[3].y0, m[3].x0))]
                 if matches and (len(matches) == 1 or matches[0][0] - matches[1][0] > .15):
                     _, index, root, rect = matches[0]
                     target = next((f for f in result.fragments if f.root == root), None)

@@ -127,6 +127,26 @@ def export_questions_pdf(exam_id: str, db: Session = Depends(get_db), t: Teacher
     })
 
 
+@router.get("/exams/{exam_id}/extraction-report.pdf")
+def export_extraction_report_pdf(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    """Question paper and answer key as extracted, with the AI's review notes, for checking against the uploads."""
+    from ..models import AnswerKey, AnswerKeyDocument
+    from ..services.extracted_pdf import exam_extraction_report_pdf
+
+    exam = get_exam(db, t, exam_id)
+    paper = db.query(QuestionPaperDocument).filter_by(exam_id=exam.id, is_active=True).first()
+    key_doc = db.query(AnswerKeyDocument).filter_by(exam_id=exam.id, is_active=True).first()
+    if paper is None and key_doc is None:
+        raise err(409, "NOTHING_UPLOADED", "Upload the question paper or answer key first.")
+    questions = db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all()
+    positions = {q.id: q.position for q in questions}
+    keys = db.query(AnswerKey).filter_by(exam_id=exam.id, is_active=True).all()
+    keys.sort(key=lambda k: (positions.get(k.exam_question_id, 10**9), k.created_at))
+    filename = re.sub(r"[^A-Za-z0-9_-]+", "_", exam.name).strip("_") or "Exam"
+    return Response(exam_extraction_report_pdf(exam, paper, key_doc, questions, keys), media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}_Extraction_Report.pdf"'})
+
+
 class QuestionPatch(BaseModel):
     display_number: str | None = None
     question_text: str | None = None
@@ -228,62 +248,6 @@ def delete_question(qid: str, db: Session = Depends(get_db), t: Teacher = Depend
     _resequence(db, exam.id)
     db.commit()
     return {"ok": True}
-
-
-class MergeIn(BaseModel):
-    other_id: str
-
-
-@router.post("/exam-questions/{qid}/merge")
-def merge_question(qid: str, body: MergeIn, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
-    """Append another question's text (e.g. a page-continuation fragment) to this one and delete the other."""
-    q = _get_q(db, t, qid)
-    exam = _require_editable(db, q.exam_id)
-    o = _get_q(db, t, body.other_id)
-    if o.exam_id != q.exam_id or o.id == q.id:
-        raise err(400, "INVALID_MERGE", "Choose a different question from the same exam.")
-    audit(db, exam_id=exam.id, teacher_id=t.id, entity_type="exam_question", entity_id=q.id, action="questions_merged",
-          old={"kept": question_view(q), "absorbed": question_view(o)})
-    q.question_text = (q.question_text.rstrip() + "\n" + o.question_text.lstrip()).strip()
-    q.page_end = max(q.page_end or 0, o.page_end or 0) or None
-    if q.max_marks is None:
-        q.max_marks = o.max_marks
-    q.verification_status, q.review_reason = "UNVERIFIED", None
-    db.delete(o)
-    _resequence(db, exam.id)
-    db.commit()
-    return question_view(q)
-
-
-class SplitIn(BaseModel):
-    at_char: int = Field(gt=0)
-    new_number: str
-    new_marks: float | None = Field(None, gt=0)
-
-
-@router.post("/exam-questions/{qid}/split")
-def split_question(qid: str, body: SplitIn, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
-    q = _get_q(db, t, qid)
-    exam = _require_editable(db, q.exam_id)
-    if body.at_char >= len(q.question_text):
-        raise err(400, "INVALID_SPLIT", "Split position is beyond the end of the text.")
-    norm = normalize_question_number(body.new_number)
-    if norm is None:
-        raise err(400, "INVALID_QUESTION_NUMBER", f"'{body.new_number}' is not a readable question number.")
-    head, tail = q.question_text[:body.at_char].rstrip(), q.question_text[body.at_char:].lstrip()
-    for other in db.query(ExamQuestion).filter(ExamQuestion.exam_id == exam.id, ExamQuestion.position > q.position):
-        other.position += 1
-    new = ExamQuestion(exam_id=exam.id, document_id=q.document_id, display_number=norm, normalized_number=norm,
-                       question_text=tail, raw_ocr_text="", max_marks=body.new_marks, section=q.section,
-                       position=q.position + 1, page_start=q.page_end, page_end=q.page_end,
-                       verification_status="UNVERIFIED")
-    audit(db, exam_id=exam.id, teacher_id=t.id, entity_type="exam_question", entity_id=q.id, action="question_split",
-          old=q.question_text, new={"head": head, "tail": tail, "new_number": norm})
-    q.question_text = head
-    q.verification_status, q.review_reason = "UNVERIFIED", None
-    db.add(new)
-    db.commit()
-    return {"original": question_view(q), "new": question_view(new)}
 
 
 @router.post("/exams/{exam_id}/questions/accept-valid")

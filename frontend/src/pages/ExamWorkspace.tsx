@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { Navigate, NavLink, Outlet, useLocation, useNavigate, useOutletContext, useParams } from "react-router-dom";
-import { api } from "../api/client";
+import { api, downloadFile } from "../api/client";
 import { useApi } from "../hooks/useApi";
 import { useCrumbName } from "../context/Crumbs";
 import type { ExamDetail, UploaderCode } from "../types";
 import { BUSY_DOC } from "../utils/format";
 import { Button, Card, Confirm, ErrorPanel, Loading, PageCanvas, PageHeader, StatusBadge } from "../components/ui";
-import { IconCheckCircle, IconPlus, IconTrash, IconUpload } from "../components/Icons";
+import { IconCheckCircle, IconDownload, IconPlus, IconTrash, IconUpload } from "../components/Icons";
 import { UploaderCodesModal } from "./exam/Codes";
 
 export interface ExamCtx { exam: ExamDetail; reload: () => Promise<void> }
@@ -261,6 +261,14 @@ function FinalizeBanner({ exam, onDone, onReload }: {
         <span className="text-xs text-mute">Wrong file?</span>
         {fileButton("question-paper", "question paper")}
         {fileButton("answer-key", "answer key")}
+        {(exam.question_paper || exam.answer_key_document) && (
+          <Button small variant="soft" icon={<IconDownload size={14} />}
+                  title="Everything the AI read from the paper and key, with its review notes"
+                  onClick={() => downloadFile(`/exams/${exam.id}/extraction-report.pdf`,
+                    `${exam.name.replace(/[^a-zA-Z0-9_-]/g, "_")}_Extraction_Report.pdf`).catch((e) => setError(e))}>
+            Download extraction report
+          </Button>
+        )}
         <span className="text-xs text-mute">
           {[exam.question_paper && `Paper: ${exam.question_paper.original_filename}`,
             exam.answer_key_document && `Key: ${exam.answer_key_document.original_filename}`].filter(Boolean).join(" · ")}

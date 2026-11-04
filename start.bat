@@ -3,17 +3,16 @@ setlocal
 title Eval AI - Start
 cd /d "%~dp0"
 
-rem InternVL runs in Ollama on the remote model server; nothing AI runs on this PC.
-set "INTERNVL_API_URL=http://192.168.1.9:11434"
-for /f "tokens=1,* delims==" %%a in ('findstr /b /c:"INTERNVL_API_URL=" backend\.env 2^>nul') do set "INTERNVL_API_URL=%%b"
-echo Checking InternVL at %INTERNVL_API_URL% ...
-curl -s -m 5 "%INTERNVL_API_URL%/api/tags" >nul 2>&1
+rem Every AI step uses OpenRouter (OPENROUTER_API_KEY and OPENROUTER_MODEL in backend\.env).
+findstr /b /c:"OPENROUTER_API_KEY=" .env backend\.env 2>nul | findstr /v /r "OPENROUTER_API_KEY=$" >nul
 if errorlevel 1 (
-  echo [WARNING] InternVL is not reachable at %INTERNVL_API_URL%.
-  echo           Start Ollama on the model server with OLLAMA_HOST=0.0.0.0 and check INTERNVL_API_URL in backend\.env.
-  echo           The app will start, but OCR and grading will fail until it is reachable.
-) else (
-  echo InternVL is reachable.
+  echo [ERROR] Set OPENROUTER_API_KEY in backend\.env first.
+  pause
+  exit /b 1
+)
+curl -s -m 5 https://openrouter.ai/api/v1/models >nul 2>&1
+if errorlevel 1 (
+  echo [WARNING] OpenRouter is not reachable. Check the internet connection; OCR and grading fail until it is.
 )
 
 echo Starting backend at http://127.0.0.1:8000 ...

@@ -3,88 +3,9 @@ import { Link } from "react-router-dom";
 import { api, downloadFile, fetchBlobUrl } from "../../api/client";
 import { useApi } from "../../hooks/useApi";
 import type { Evaluation, IdentityRead, QuestionSummary, ReviewSummary, Student, UnassignedSheet } from "../../types";
-import { BUSY_DOC, date, fmt, label } from "../../utils/format";
+import { BUSY_DOC, date, fmt, label, nameIsRoll } from "../../utils/format";
 import { Badge, Button, Card, Confirm, Empty, ErrorPanel, LinkButton, Loading, Modal, Select, StatusBadge, Table } from "../../components/ui";
-import { UploadZone } from "../../components/DocPanel";
 import { useExam } from "../ExamWorkspace";
-
-export function ExamStudents() {
-  const { exam } = useExam();
-  const students = useApi<Student[]>(`/students?class_id=${exam.class_id}`);
-  const sheets = useApi<Evaluation[]>(`/exams/${exam.id}/answer-sheets`);
-
-  if (students.loading || sheets.loading) return <Loading />;
-  const by = new Map((sheets.data ?? []).map((s) => [s.student.id, s]));
-
-  if (!students.data?.length) {
-    return (
-      <Empty
-        title="No students in this class"
-        hint="Add or import students in the Students section."
-      />
-    );
-  }
-
-  return (
-    <Card className="overflow-x-auto shadow-soft">
-      <table className="w-full text-left text-sm">
-        <thead className="border-b border-line bg-surface text-xs font-semibold uppercase tracking-wider text-mute">
-          <tr>
-            <th className="px-4 py-3">Roll No.</th>
-            <th className="px-4 py-3">Student Name</th>
-            <th className="px-4 py-3">Answer Sheet</th>
-            <th className="px-4 py-3">Evaluation Status</th>
-            <th className="px-4 py-3 text-right">Marks</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-line text-sm">
-          {students.data.map((s) => {
-            const ev = by.get(s.id);
-            return (
-              <tr key={s.id} className="hover:bg-hover">
-                <td className="whitespace-nowrap px-4 py-3 font-mono font-medium text-ink">{s.roll_number}</td>
-                <td className="px-4 py-3 font-medium text-ink">{s.name}</td>
-                <td className="px-4 py-3">
-                  {ev ? (
-                    <span className="inline-flex items-center gap-1.5 text-xs font-medium text-ok">
-                      <span className="h-1.5 w-1.5 rounded-full bg-ok" />
-                      Uploaded
-                    </span>
-                  ) : (
-                    <span className="text-xs text-mute">Not uploaded</span>
-                  )}
-                </td>
-                <td className="px-4 py-3">
-                  {ev ? (
-                    <Link
-                      to={ev.status === "FINALIZED" ? `/results/${ev.id}` : `/evaluations/${ev.id}`}
-                      className="inline-block transition-opacity hover:opacity-80"
-                    >
-                      <StatusBadge status={ev.status} />
-                    </Link>
-                  ) : (
-                    <span className="text-mute">–</span>
-                  )}
-                </td>
-                <td className="whitespace-nowrap px-4 py-3 text-right font-medium text-ink">
-                  {ev?.status === "FINALIZED" ? (
-                    <span className="rounded bg-ok-soft px-2 py-0.5 text-xs text-ok font-semibold">
-                      {fmt(ev.total_marks)} / {fmt(ev.maximum_marks)}
-                    </span>
-                  ) : (
-                    <span className="text-mute">–</span>
-                  )}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </Card>
-  );
-}
-
-const UPLOAD_BATCH = 10;
 
 function IdentityDetails({ read }: { read?: Partial<IdentityRead> }) {
   const parts: [string, string | null | undefined][] = [
@@ -262,17 +183,20 @@ function UnassignedSheets({
 
 /** Every database round trip is slow, so pages poll gently while sheets are being worked on. */
 const POLL_MS = 4000;
+// while the exam takes sheets, keep checking: the uploader sends them from another device at any time
+const WATCH_MS = 6000;
+const TAKES_SHEETS = ["ANSWER_KEY_VERIFIED", "READY_FOR_EVALUATION", "EVALUATING", "REVIEW_REQUIRED"];
 
 /** The batch summary, polled while sheets are still being read or graded. `onProgress` refreshes the lists alongside,
  * but only when a sheet has moved on, not on every poll. */
-function useReviewSummary(examId: string, onProgress?: () => Promise<unknown>) {
+function useReviewSummary(examId: string, onProgress?: () => Promise<unknown>, watch = false) {
   const progress = useRef(onProgress);
   progress.current = onProgress;
   const last = useRef<number | null>(null);
   return useApi<ReviewSummary>(`/exams/${examId}/review-summary`, (d) => {
     if (last.current !== null && last.current !== d.processing) void progress.current?.();
     last.current = d.processing;
-    return d.processing ? POLL_MS : null;
+    return d.processing ? POLL_MS : watch ? WATCH_MS : null;
   });
 }
 
@@ -338,7 +262,7 @@ function BatchReview({
               <tr key={r.evaluation_id} className="align-top hover:bg-hover">
                 <td className="px-4 py-3">
                   <p className="font-medium text-ink">{r.student.name}</p>
-                  <p className="font-mono text-xs text-mute">Roll: {r.student.roll_number}</p>
+                  {!nameIsRoll(r.student) && <p className="font-mono text-xs text-mute">Roll: {r.student.roll_number}</p>}
                 </td>
                 <td className="px-4 py-3">
                   <ul className="space-y-0.5 text-xs">
@@ -411,41 +335,25 @@ function BatchReview({
 
 export function AnswerSheets() {
   const { exam, reload } = useExam();
+  const open = TAKES_SHEETS.includes(exam.status);
   const students = useApi<Student[]>(`/students?class_id=${exam.class_id}`);
   const sheets = useApi<Evaluation[]>(
     `/exams/${exam.id}/answer-sheets`,
-    (d) => (d.some((s) => (s.document && BUSY_DOC.includes(s.document.status)) || s.run_status === "RUNNING") ? POLL_MS : null)
+    (d) => (d.some((s) => (s.document && BUSY_DOC.includes(s.document.status)) || s.run_status === "RUNNING")
+      ? POLL_MS : open ? WATCH_MS : null)
   );
   const unassigned = useApi<UnassignedSheet[]>(
     `/exams/${exam.id}/answer-sheets/unassigned`,
-    (d) => (d.some((s) => BUSY_DOC.includes(s.status)) ? POLL_MS : null)
+    (d) => (d.some((s) => BUSY_DOC.includes(s.status)) ? POLL_MS : open ? WATCH_MS : null)
   );
-  const summary = useReviewSummary(exam.id, () => Promise.all([sheets.reload(), unassigned.reload()]));
+  const summary = useReviewSummary(exam.id, () => Promise.all([sheets.reload(), unassigned.reload()]), open);
 
   const [del, setDel] = useState<Evaluation | null>(null);
-  const [progress, setProgress] = useState<string | null>(null);
 
-  const open = ["ANSWER_KEY_VERIFIED", "READY_FOR_EVALUATION", "EVALUATING", "REVIEW_REQUIRED"].includes(exam.status);
   const taken = new Set((sheets.data ?? []).map((s) => s.student.id));
 
   const refresh = async () => {
     await Promise.all([sheets.reload(), unassigned.reload(), summary.reload(), reload()]);
-  };
-
-  const upload = async (files: File[]) => {
-    try {
-      for (let i = 0; i < files.length; i += UPLOAD_BATCH) {
-        const batch = files.slice(i, i + UPLOAD_BATCH);
-        setProgress(`Uploading ${Math.min(i + batch.length, files.length)} of ${files.length}…`);
-        const f = new FormData();
-        batch.forEach((file) => f.append("files", file));
-        await api(`/exams/${exam.id}/answer-sheets/bulk`, { method: "POST", form: f });
-        await Promise.all([unassigned.reload(), summary.reload()]);
-      }
-    } finally {
-      setProgress(null);
-      await refresh();
-    }
   };
 
   return (
@@ -458,23 +366,12 @@ export function AnswerSheets() {
           <span>Answer sheets can be uploaded once the exam questions and answer key are verified.</span>
         </Card>
       ) : (
-        <Card className="space-y-4 p-5 shadow-soft">
-          <div className="border-b border-line pb-3">
-            <h2 className="text-lg font-semibold text-ink">Upload Student Answer Sheets</h2>
-            <p className="text-xs text-mute">
-              Drop all sheets at once. Each is matched to its student by the registration or roll number on it.
-            </p>
-          </div>
-          <UploadZone
-            accept=".pdf,.png,.jpg,.jpeg,.docx"
-            onFiles={upload}
-            hint={progress ?? "PDF, Word, PNG or JPG. One student per file."}
-          />
-          {!students.loading && !students.data?.length && (
-            <p className="text-xs text-warn">
-              No students in {exam.class_name} yet. Add or import them in the Students section so sheets can be matched.
-            </p>
-          )}
+        <Card className="space-y-1 p-5 shadow-soft">
+          <h2 className="text-lg font-semibold text-ink">Student Answer Sheets</h2>
+          <p className="text-xs text-mute">
+            Sheets are sent from the uploader app with the student's roll number, then read and graded on their own.
+            Each sheet is listed here by its roll number.
+          </p>
         </Card>
       )}
 
@@ -495,7 +392,7 @@ export function AnswerSheets() {
           <table className="w-full text-left text-sm">
             <thead className="border-b border-line bg-surface text-xs font-semibold uppercase tracking-wider text-mute">
               <tr>
-                <th className="px-4 py-3">Student</th>
+                <th className="px-4 py-3">Roll number</th>
                 <th className="px-4 py-3">Reading Status</th>
                 <th className="px-4 py-3">Pages</th>
                 <th className="px-4 py-3">Detected</th>
@@ -508,8 +405,10 @@ export function AnswerSheets() {
               {sheets.data.map((e) => (
                 <tr key={e.id} className="hover:bg-hover">
                   <td className="px-4 py-3">
-                    <p className="font-medium text-ink">{e.student.name}</p>
-                    <p className="font-mono text-xs text-mute">Roll: {e.student.roll_number}</p>
+                    <p className="font-mono font-medium text-ink">{e.student.roll_number}</p>
+                    {!nameIsRoll(e.student) && (
+                      <p className="text-xs text-mute">{e.student.name}</p>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     {e.document && (
@@ -543,6 +442,10 @@ export function AnswerSheets() {
                           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                         </svg>
                       </LinkButton>
+                      <Button small variant="soft" title="The sheet as read, how each answer was mapped, and the AI's grading notes"
+                              onClick={() => downloadFile(`/evaluations/${e.id}/extraction-report.pdf`, "Sheet_Report.pdf")}>
+                        Report
+                      </Button>
                       {e.status !== "FINALIZED" && (
                         <Button
                           small
@@ -593,8 +496,10 @@ export function AnswerSheets() {
 
 export function ExamEvaluation() {
   const { exam, reload } = useExam();
-  const { data, loading, error, reload: reloadSheets } = useApi<Evaluation[]>(`/exams/${exam.id}/answer-sheets`);
-  const summary = useReviewSummary(exam.id, reloadSheets);
+  const watching = TAKES_SHEETS.includes(exam.status);
+  const { data, loading, error, reload: reloadSheets } = useApi<Evaluation[]>(`/exams/${exam.id}/answer-sheets`,
+    (d) => (d.some((s) => s.run_status === "RUNNING") ? POLL_MS : watching ? WATCH_MS : null));
+  const summary = useReviewSummary(exam.id, reloadSheets, watching);
 
   if (loading) return <Loading />;
   if (error) return <ErrorPanel error={error} />;
@@ -632,7 +537,7 @@ export function ExamEvaluation() {
                 <p className="font-semibold text-ink group-hover:text-brown transition-colors">
                   {e.student.name}
                 </p>
-                <p className="font-mono text-xs text-mute">Roll: {e.student.roll_number}</p>
+                {!nameIsRoll(e.student) && <p className="font-mono text-xs text-mute">Roll: {e.student.roll_number}</p>}
               </div>
               <StatusBadge status={e.status} />
             </div>

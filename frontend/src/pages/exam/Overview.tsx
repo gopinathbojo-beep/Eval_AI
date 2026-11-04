@@ -10,7 +10,7 @@ const NEXT: Record<string, [string, string, string]> = {
   QUESTIONS_EXTRACTED: ["Review and Verify Questions", "questions", "Verify each question number, text, and marks against the page scan."],
   QUESTIONS_VERIFIED: ["Upload or Generate Answer Key", "answer-key", "Provide the official answers or generate model answers using AI."],
   ANSWER_KEY_UPLOADED: ["Review and Verify Answer Key", "answer-key", "Confirm every question has an approved answer and marking criteria."],
-  ANSWER_KEY_VERIFIED: ["Upload Student Answer Sheets", "answer-sheets", "Upload scanned PDF or image sheets for each student."],
+  ANSWER_KEY_VERIFIED: ["Collect Answer Sheets", "answer-sheets", "Sheets come from the uploader app, one per roll number, and are graded as they arrive."],
   READY_FOR_EVALUATION: ["Review Mapping and Run Evaluation", "evaluation", "Inspect question mapping and trigger AI grading."],
   EVALUATING: ["Evaluation is in Progress", "evaluation", "AI is assessing student answers against verified criteria."],
   REVIEW_REQUIRED: ["Review Marks & Finalize Students", "evaluation", "Inspect AI feedback, adjust marks if needed, and finalize."],

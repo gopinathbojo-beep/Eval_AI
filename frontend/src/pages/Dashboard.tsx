@@ -144,7 +144,7 @@ export default function Dashboard() {
               className="group inline-flex items-center gap-1 text-sm font-semibold text-blue-600 hover:text-blue-700 transition-colors"
             >
               <span>View all</span>
-              <span className="transition-transform group-hover:translate-x-0.5">â†’</span>
+              <span className="transition-transform group-hover:translate-x-0.5">→</span>
             </Link>
           </div>
 

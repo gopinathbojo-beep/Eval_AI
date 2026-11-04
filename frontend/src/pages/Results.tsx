@@ -7,7 +7,7 @@ import { useApi } from "../hooks/useApi";
 import { useCrumbName } from "../context/Crumbs";
 import { useTableState } from "../hooks/useTableState";
 import type { Evaluation, ResultResponse } from "../types";
-import { date, fmt } from "../utils/format";
+import { date, fmt, nameIsRoll } from "../utils/format";
 
 export function EvaluationsList() {
   const { data, loading, error } = useApi<Evaluation[]>("/evaluations");
@@ -36,7 +36,7 @@ export function EvaluationsList() {
                   <p className="font-semibold text-ink group-hover:text-pen transition-colors">
                     {e.student.name}
                   </p>
-                  <p className="font-mono text-xs text-mute">Roll: {e.student.roll_number}</p>
+                  {!nameIsRoll(e.student) && <p className="font-mono text-xs text-mute">Roll: {e.student.roll_number}</p>}
                 </div>
                 <StatusBadge status={e.status} />
               </div>
@@ -225,7 +225,7 @@ export function ResultsList() {
                         <Link className="font-semibold text-pen hover:underline block" to={`/results/${e.id}`}>
                           {e.student.name}
                         </Link>
-                        <span className="font-mono text-xs text-mute">Roll: {e.student.roll_number}</span>
+                        {!nameIsRoll(e.student) && <span className="font-mono text-xs text-mute">Roll: {e.student.roll_number}</span>}
                       </td>
                       <td className="px-4 py-3 font-medium text-ink">{e.exam_name}</td>
                       <td className="px-4 py-3 text-mute">{e.class_name || e.student.class_name || "–"}</td>
@@ -506,7 +506,7 @@ export function ResultPage() {
   return (
     <div className="space-y-5">
       <PageHeader
-        title={`${s.name} (${s.roll_number})`}
+        title={nameIsRoll(s) ? s.name : `${s.name} (${s.roll_number})`}
         sub={`${data.exam.name} · ${data.exam.subject} · ${data.exam.class}`}
         actions={
           <div className="flex flex-wrap items-center gap-2.5">

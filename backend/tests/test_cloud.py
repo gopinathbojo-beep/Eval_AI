@@ -114,7 +114,6 @@ def test_signed_upload_completion_is_authorized_validated_and_idempotent(client,
     assert client.get(f"/api/documents/question-paper/{uid}/pdf", headers=auth).status_code == 200
 
 
-@pytest.mark.skip(reason="OpenRouter transport is switched off while InternVL is in use; re-enable when switching back")
 def test_remote_ai_transport_and_unmeasured_confidence(monkeypatch, tmp_path):
     settings = get_settings()
     monkeypatch.setattr(settings,"openrouter_api_key","private-ai-key")
@@ -129,12 +128,11 @@ def test_remote_ai_transport_and_unmeasured_confidence(monkeypatch, tmp_path):
     result=internvl.chat_structured("system","read",QuestionPageResult,image)
     assert captured["headers"]["Authorization"] == "Bearer private-ai-key"
     assert captured["json"]["model"] == settings.openrouter_model
-    assert captured["json"]["reasoning"] == {"effort": "minimal"}
+    assert captured["json"]["reasoning"] == {"enabled": False}
     assert captured["json"]["messages"][1]["content"][1]["image_url"]["url"].startswith("data:image/png;base64,")
     assert result.parsed.questions[0].confidence <= 0.5
 
 
-@pytest.mark.skip(reason="OpenRouter transport is switched off while InternVL is in use; re-enable when switching back")
 def test_openrouter_grading_limits_reasoning_and_reports_token_usage(monkeypatch):
     settings = get_settings()
     monkeypatch.setattr(settings, "openrouter_api_key", "test-key")
@@ -151,7 +149,7 @@ def test_openrouter_grading_limits_reasoning_and_reports_token_usage(monkeypatch
     monkeypatch.setattr(remote.httpx, "post", post)
     with pytest.raises(remote.CompletionLimitError) as error:
         remote.call("Grade", "Use the marking scheme", None, True)
-    assert captured["reasoning"] == {"effort": "low"}
+    assert captured["reasoning"] == {"effort": "low", "exclude": True}
     assert "reasoning_tokens=8188" in str(error.value)
     assert error.value.raw == '{"partial":'
 

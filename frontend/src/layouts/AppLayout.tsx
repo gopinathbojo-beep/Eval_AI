@@ -757,7 +757,7 @@ function AppShell() {
               <AiStatusPill status={aiStatus} />
             )}
             {!teacher.is_admin && (
-              <span className="text-xs sm:text-sm font-medium text-slate-600 mr-0.5">
+              <span className="mr-0.5 whitespace-nowrap rounded-full border border-line bg-surface/90 px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm backdrop-blur sm:text-sm">
                 Credits: <span className="font-semibold text-emerald-600">{dash?.credits ?? "Unlimited"}</span>
               </span>
             )}

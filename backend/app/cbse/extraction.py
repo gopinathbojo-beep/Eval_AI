@@ -13,7 +13,7 @@ class Deduction(BaseModel):
 
 
 class Node(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="ignore")  # models add fields such as issues/bbox to a node; a retry would be paid for
     id: str
     kind: Literal["all", "choose", "point", "context"]
     label: str = ""
@@ -43,6 +43,15 @@ class Node(BaseModel):
 class VisualEvidence(BaseModel):
     kind: Literal["diagram", "image", "graph", "map", "table", "formula", "other"]
     description: str
+
+    @field_validator("kind", mode="before")
+    @classmethod
+    def known_kind(cls, value):
+        # models invent kinds ("chart", "figure", "structure"); a rejected page would be re-read and paid for
+        names = {"chart": "graph", "plot": "graph", "figure": "diagram", "structure": "diagram", "photo": "image",
+                 "picture": "image", "equation": "formula"}
+        value = str(value or "other").lower()
+        return names.get(value, value if value in {"diagram", "image", "graph", "map", "table", "formula"} else "other")
     labels: list[str] = Field(default_factory=list)
     bbox: dict
 
@@ -53,6 +62,12 @@ class Fragment(BaseModel):
     section: str | None = None
     marks: float | None = Field(None, gt=0, allow_inf_nan=False)
     question_type: str = "descriptive"
+
+    @field_validator("question_type", mode="before")
+    @classmethod
+    def default_question_type(cls, value):
+        # Qwen3-VL sends null for a marking-scheme fragment; the type is only a hint.
+        return value or "descriptive"
     tree: Node | None = None
     criteria: list[str] = Field(default_factory=list)
     accepted_answers: list[str] = Field(default_factory=list)
@@ -105,6 +120,7 @@ For alternative SOLUTION METHODS of the same required question use choice_type='
 Use audience tags 'standard'/'accessible' for visually impaired alternatives and 'financial'/'computerised' for Accountancy Part B branches. These are alternative versions, never additional marks.
 For a marking scheme, point marks must come from its explicit allocations. If only a whole-question total is given, one holistic point with that printed total is acceptable; NEVER invent finer allocations.
 For a paper, points represent the smallest independently marked parts, not MCQ options. Include printed branch labels and choice instructions in text.
+For a paper, when one printed mark covers several subparts (e.g. (II) a) and b) together worth 2), make that group one point with the printed mark. Do not report the missing split as an issue: the marking scheme gives it.
 For every diagram, image, map, graph, meaningful table or visual formula used by a question or marking rule, add a visuals item. Give a TIGHT bbox around the visual only in pixels of the supplied page image, list only visible labels, and describe visible relationships without solving or inventing content. Do not add decorative logos, borders or page furniture. Keep the surrounding question/answer text in fragment.text.
 Most questions have no visual: use visuals:[] unless one is actually present. Associate each visual with the printed question boundaries, never the nearest text alone. A diagram at the top of a page may continue the LAST root from the previous page; do not assign it to an earlier question. Keep tables for different OR branches separate. Include a fragment bbox enclosing its visible source content when available.
 Mark MCQ leaf nodes response_type='mcq'. MCQ alternatives are options inside one point, not scored child nodes. MCQs have no partial marks.
@@ -129,6 +145,20 @@ def merge_nodes(nodes):
             by_id[key] = dict(data)
             continue
         old = by_id[key]
+        if old.get("kind") == "choose" and data.get("kind") != "choose" and old.get("children"):
+            # a page break inside an internal choice: the continuation carries on the last printed alternative
+            last = old["children"][-1]
+            last["children"] = (last.get("children") or []) + (data.get("children") or [])
+            if data.get("text") and data["text"] not in (last.get("text") or ""):
+                last["text"] = ((last.get("text") or "") + "\n" + data["text"]).strip()
+            continue
+        if (old.get("kind") != "choose" and data.get("kind") == "choose" and data.get("limit") == 1
+                and data.get("choice_type", "question") == "question" and data.get("children")):
+            # (A) on one page, "OR (B)" on the next: what was read first is the first alternative
+            first = dict(old, id=f"{key}.A" if f"{key}.A" not in {c["id"] for c in data["children"]} else f"{key}.alt1")
+            by_id[key] = dict(data, marks=data.get("marks") if data.get("marks") is not None else old.get("marks"),
+                              children=[first] + list(data["children"]))
+            continue
         for field in ("kind", "marks", "limit", "audience"):
             if (
                 old.get(field) is not None

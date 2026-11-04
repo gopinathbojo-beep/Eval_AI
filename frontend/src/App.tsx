@@ -220,14 +220,7 @@ export default function App() {
               </Suspended>
             }
           />
-          <Route
-            path="students"
-            element={
-              <Suspended>
-                <Submissions defaultSubTab="roster" />
-              </Suspended>
-            }
-          />
+          <Route path="students" element={<Navigate to="../answer-sheets" replace />} />
           <Route
             path="answer-sheets"
             element={

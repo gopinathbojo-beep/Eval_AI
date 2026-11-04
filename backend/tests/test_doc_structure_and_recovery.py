@@ -177,71 +177,8 @@ def test_answer_key_multipage_continuation():
     assert "Second part continues" in keys[0].answer_text
 
 
-def test_answer_key_split_and_merge_api(client, auth):
-    """Test splitting and merging answer keys via the API."""
-    c, h = client, auth
-    from app.database import SessionLocal
-    from app.models import AnswerKey, Exam, ExamQuestion, SchoolClass, Subject, Teacher
-    db = SessionLocal()
-    try:
-        t = db.query(Teacher).filter_by(email="rao@school.org").first() or db.query(Teacher).first()
-        cls = SchoolClass(teacher_id=t.id, name="Class SplitKey")
-        sub = Subject(teacher_id=t.id, name="Subject SplitKey")
-        db.add_all([cls, sub])
-        db.commit()
-
-        exam = Exam(
-            teacher_id=t.id, class_id=cls.id, subject_id=sub.id,
-            name="Exam SplitKey", academic_year="2026-27", exam_type="Unit",
-            total_marks=20, status="ANSWER_KEY_UPLOADED"
-        )
-        db.add(exam)
-        db.commit()
-
-        q1 = ExamQuestion(exam_id=exam.id, display_number="1", normalized_number="1",
-                          question_text="Q1 text", max_marks=5.0, position=1)
-        q2 = ExamQuestion(exam_id=exam.id, display_number="2", normalized_number="2",
-                          question_text="Q2 text", max_marks=5.0, position=2)
-        db.add_all([q1, q2])
-        db.commit()
-
-        k1 = AnswerKey(
-            exam_id=exam.id, raw_question_number="1", normalized_number="1",
-            exam_question_id=q1.id, answer_text="Part A text\nPart B text",
-            raw_ocr_text="Part A text\nPart B text", marks=5.0, mapping_status="MAPPED"
-        )
-        db.add(k1)
-        db.commit()
-        k1_id = k1.id
-        eid = exam.id
-    finally:
-        db.close()
-
-    # Split k1 at split index
-    at_char = len("Part A text\n")
-    r_split = c.post(f"/api/answer-keys/{k1_id}/split", headers=h, json={
-        "at_char": at_char, "new_label": "2", "new_marks": 5.0
-    })
-    assert r_split.status_code == 200, r_split.text
-    split_data = r_split.json()
-    assert "Part A text" in split_data["original"]["answer_text"]
-    assert "Part B text" in split_data["new"]["answer_text"]
-    assert split_data["new"]["raw_question_number"] == "2"
-
-    # Merge them back
-    k_orig_id = split_data["original"]["id"]
-    k_new_id = split_data["new"]["id"]
-    r_merge = c.post(f"/api/answer-keys/{k_orig_id}/merge", headers=h, json={
-        "other_id": k_new_id
-    })
-    assert r_merge.status_code == 200, r_merge.text
-    merged = r_merge.json()
-    assert "Part A text" in merged["answer_text"]
-    assert "Part B text" in merged["answer_text"]
-
-
-def test_student_answer_split_merge_and_suggestion_api(client, auth):
-    """Test splitting, merging, and accepting suggestions on student answers via API."""
+def test_student_answer_suggestion_api(client, auth):
+    """Test accepting a mapping suggestion on a student answer via API."""
     c, h = client, auth
     from app.database import SessionLocal
     from app.models import AnswerSheetDocument, Evaluation, Exam, ExamQuestion, SchoolClass, Student, StudentAnswer, Subject, Teacher
@@ -310,28 +247,6 @@ def test_student_answer_split_merge_and_suggestion_api(client, auth):
     ans_updated = r_acc.json()
     assert ans_updated["status"] == "MAPPED"
     assert ans_updated["exam_question_id"] == q1_id
-
-    # 2. Split answer
-    at_char = len("First answer text\n")
-    r_split = c.post(f"/api/evaluations/{ev_id}/answers/{ans1_id}/split", headers=h, json={
-        "at_char": at_char,
-        "new_label": "2"
-    })
-    assert r_split.status_code == 200, r_split.text
-    split_data = r_split.json()
-    assert "First answer text" in split_data["original"]["answer_text"]
-    assert "Second answer text" in split_data["new"]["answer_text"]
-
-    # 3. Merge answers
-    a_orig_id = split_data["original"]["id"]
-    a_new_id = split_data["new"]["id"]
-    r_merge = c.post(f"/api/evaluations/{ev_id}/answers/{a_orig_id}/merge", headers=h, json={
-        "other_id": a_new_id
-    })
-    assert r_merge.status_code == 200, r_merge.text
-    merged = r_merge.json()
-    assert "First answer text" in merged["answer_text"]
-    assert "Second answer text" in merged["answer_text"]
 
 
 def test_doc_structure_preserves_short_and_unnumbered_questions():
@@ -1336,5 +1251,3 @@ def test_pdf_text_layer_recovers_question_merged_into_previous():
     assert "Jody" not in qs[0].question_text and qs[0].question_text.endswith("(1 mark)")
     assert qs[1].question_text.startswith("Literature:\nWhy did Jody") and qs[1].max_marks == 3
     assert qs[1].verification_status == "NEEDS_REVIEW" and "SECTION C" not in qs[1].question_text
-
-

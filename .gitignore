@@ -68,3 +68,9 @@ gpu_server/ollama.log*
 .bat
 # Shared reference library source files (NCERT, CBSE); loaded by backend/scripts/ingest_reference.py
 CBSE - Website/
+
+# chat notes holding the Qwen server API key
+chat.md
+
+# local file holding the OpenRouter test key
+eval_ai_test_key.env

@@ -18,7 +18,6 @@ import {
   MathView,
   Modal,
   MoreMenu,
-  Select,
   StatusBadge,
 } from "../../components/ui";
 import { PageViewer } from "../../components/PageViewer";
@@ -28,7 +27,7 @@ import { SaveToVerifiedCollectionModal } from "../../components/SaveToVerifiedCo
 import { useExam } from "../ExamWorkspace";
 
 type Dlg = {
-  kind: "edit" | "split" | "merge" | "delete" | "review" | "add";
+  kind: "edit" | "delete" | "review" | "add";
   q?: Question;
 } | null;
 
@@ -855,18 +854,6 @@ export default function Questions() {
                                 <MoreMenu
                                   items={[
                                     {
-                                      label: "Split",
-                                      onClick: () =>
-                                        setDlg({ kind: "split", q }),
-                                      hidden: data.locked,
-                                    },
-                                    {
-                                      label: "Merge",
-                                      onClick: () =>
-                                        setDlg({ kind: "merge", q }),
-                                      hidden: data.locked,
-                                    },
-                                    {
                                       label: "Flag for review",
                                       onClick: () =>
                                         setDlg({ kind: "review", q }),
@@ -1000,17 +987,6 @@ export default function Questions() {
       )}
       {dlg?.kind === "add" && (
         <EditDlg onClose={() => setDlg(null)} onDone={after} examId={exam.id} />
-      )}
-      {dlg?.kind === "split" && dlg.q && (
-        <SplitDlg q={dlg.q} onClose={() => setDlg(null)} onDone={after} />
-      )}
-      {dlg?.kind === "merge" && dlg.q && (
-        <MergeDlg
-          q={dlg.q}
-          all={qs}
-          onClose={() => setDlg(null)}
-          onDone={after}
-        />
       )}
       {dlg?.kind === "review" && dlg.q && (
         <ReviewDlg q={dlg.q} onClose={() => setDlg(null)} onDone={after} />
@@ -1187,166 +1163,6 @@ function EditDlg({
             )}
           </Field>
         )}
-        <ErrorPanel error={err} />
-      </div>
-    </Modal>
-  );
-}
-
-function SplitDlg({
-  q,
-  onClose,
-  onDone,
-}: {
-  q: Question;
-  onClose: () => void;
-  onDone: () => Promise<void>;
-}) {
-  const ref = useRef<HTMLTextAreaElement>(null);
-  const [pos, setPos] = useState(0);
-  const [num, setNum] = useState("");
-  const [marks, setMarks] = useState("");
-  const { busy, err, go } = useSubmit(onDone, onClose);
-
-  return (
-    <Modal
-      title={`Split Question ${q.display_number}`}
-      wide
-      onClose={onClose}
-      footer={
-        <>
-          <Button onClick={onClose}>Cancel</Button>
-          <Button
-            variant="primary"
-            busy={busy}
-            disabled={pos <= 0 || !num}
-            onClick={() =>
-              go(() =>
-                api(`/exam-questions/${q.id}/split`, {
-                  method: "POST",
-                  json: {
-                    at_char: pos,
-                    new_number: num,
-                    new_marks: marks ? Number(marks) : null,
-                  },
-                }),
-              )
-            }
-          >
-            Split Here
-          </Button>
-        </>
-      }
-    >
-      <div className="space-y-4">
-        <p className="text-xs text-mute">
-          Click anywhere in the text below where the new question begins.
-        </p>
-        <textarea
-          ref={ref}
-          readOnly
-          rows={8}
-          value={q.question_text}
-          className="doc-text w-full rounded-lg border border-line bg-surface p-3 font-doc text-sm focus:outline-none"
-          onClick={(e) => setPos(e.currentTarget.selectionStart)}
-          onKeyUp={(e) => setPos(e.currentTarget.selectionStart)}
-        />
-        <p className="text-xs font-medium text-ink">
-          Split Position:{" "}
-          <span className="font-mono font-bold text-pen">{pos}</span> characters
-        </p>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Number for New Question">
-            {(id) => (
-              <Input
-                id={id}
-                placeholder="e.g. 2 or 1(b)"
-                value={num}
-                onChange={(e) => setNum(e.target.value)}
-              />
-            )}
-          </Field>
-          <Field label="Marks for New Question">
-            {(id) => (
-              <Input
-                id={id}
-                type="number"
-                min={0.5}
-                step={0.5}
-                value={marks}
-                onChange={(e) => setMarks(e.target.value)}
-              />
-            )}
-          </Field>
-        </div>
-        <ErrorPanel error={err} />
-      </div>
-    </Modal>
-  );
-}
-
-function MergeDlg({
-  q,
-  all,
-  onClose,
-  onDone,
-}: {
-  q: Question;
-  all: Question[];
-  onClose: () => void;
-  onDone: () => Promise<void>;
-}) {
-  const [other, setOther] = useState("");
-  const { busy, err, go } = useSubmit(onDone, onClose);
-
-  return (
-    <Modal
-      title={`Merge into Question ${q.display_number}`}
-      onClose={onClose}
-      footer={
-        <>
-          <Button onClick={onClose}>Cancel</Button>
-          <Button
-            variant="primary"
-            busy={busy}
-            disabled={!other}
-            onClick={() =>
-              go(() =>
-                api(`/exam-questions/${q.id}/merge`, {
-                  method: "POST",
-                  json: { other_id: other },
-                }),
-              )
-            }
-          >
-            Merge Questions
-          </Button>
-        </>
-      }
-    >
-      <div className="space-y-4">
-        <p className="text-xs text-mute">
-          The selected question text will be appended to Question{" "}
-          {q.display_number}, and the second entry will be removed.
-        </p>
-        <Field label="Question to Absorb">
-          {(id) => (
-            <Select
-              id={id}
-              value={other}
-              onChange={(e) => setOther(e.target.value)}
-            >
-              <option value="">Choose question...</option>
-              {all
-                .filter((x) => x.id !== q.id)
-                .map((x) => (
-                  <option key={x.id} value={x.id}>
-                    Q{x.display_number} — {x.question_text.slice(0, 50)}...
-                  </option>
-                ))}
-            </Select>
-          )}
-        </Field>
         <ErrorPanel error={err} />
       </div>
     </Modal>

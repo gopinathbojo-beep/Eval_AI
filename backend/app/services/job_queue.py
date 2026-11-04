@@ -1,4 +1,4 @@
-"""Background AI job queue for InternVL; INTERNVL_PARALLEL_JOBS documents are read at once."""
+"""Background AI job queue for OpenRouter; AI_PARALLEL_JOBS documents are read at once."""
 from __future__ import annotations
 import logging
 import threading
@@ -66,7 +66,7 @@ def subject_for(exam_id: str | None) -> str | None:
 
 
 def slots() -> int:
-    return max(1, get_settings().internvl_parallel_jobs)
+    return max(1, get_settings().ai_parallel_jobs)
 
 
 def _call(job: _Job) -> None:

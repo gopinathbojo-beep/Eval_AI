@@ -13,7 +13,6 @@ from ..serializers import key_view
 from ..services.audit import audit
 from ..formatter.common.mapping import map_label
 from ..services.mapping_service import exam_questions, refresh_key_state, refresh_rubric
-from ..formatter.common.numbering import normalize_question_number
 from ..services.state import set_state
 from ..reference.search import subject_of
 from ..reference.verify import find_board_answer, find_references, label_sources, verify_answers
@@ -210,79 +209,6 @@ def delete_key(kid: str, db: Session = Depends(get_db), t: Teacher = Depends(cur
     refresh_key_state(db, exam.id)
     db.commit()
     return {"ok": True}
-
-
-class SplitKeyIn(BaseModel):
-    at_char: int = Field(gt=0)
-    new_label: str
-    new_marks: float | None = Field(None, ge=0)
-
-
-@router.post("/answer-keys/{kid}/split")
-def split_key(kid: str, body: SplitKeyIn, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
-    k = _get_key(db, t, kid)
-    exam = db.get(Exam, k.exam_id)
-    _editable(exam)
-    if body.at_char >= len(k.answer_text):
-        raise err(400, "INVALID_SPLIT", "Split position is beyond the end of the text.")
-    norm = normalize_question_number(body.new_label)
-    head, tail = k.answer_text[:body.at_char].rstrip(), k.answer_text[body.at_char:].lstrip()
-
-    qs = exam_questions(db, exam.id)
-    res = map_label(body.new_label, qs)
-
-    new_k = AnswerKey(
-        exam_id=exam.id,
-        document_id=k.document_id,
-        raw_question_number=body.new_label,
-        normalized_number=norm,
-        exam_question_id=res.question_id,
-        answer_text=tail,
-        raw_ocr_text=tail,
-        marks=body.new_marks,
-        page_number=k.page_number,
-        mapping_status=res.status,
-        mapping_note=res.note,
-        mapping_candidates=res.candidates,
-    )
-    k.answer_text = head
-    db.add(new_k)
-    db.flush()
-    refresh_key_state(db, exam.id)
-    audit(db, exam_id=exam.id, teacher_id=t.id, entity_type="answer_key", entity_id=k.id,
-          action="answer_key_split", old=k.raw_ocr_text, new={"head": head, "tail": tail, "new_label": body.new_label})
-    db.commit()
-    return {"original": key_view(k), "new": key_view(new_k)}
-
-
-class MergeKeyIn(BaseModel):
-    other_id: str
-
-
-@router.post("/answer-keys/{kid}/merge")
-def merge_key(kid: str, body: MergeKeyIn, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
-    k = _get_key(db, t, kid)
-    exam = db.get(Exam, k.exam_id)
-    _editable(exam)
-    o = _get_key(db, t, body.other_id)
-    if o.exam_id != k.exam_id or o.id == k.id:
-        raise err(400, "INVALID_MERGE", "Choose a different answer key row from the same exam.")
-
-    audit(db, exam_id=exam.id, teacher_id=t.id, entity_type="answer_key", entity_id=k.id,
-          action="answer_key_merged", old={"kept": key_view(k), "absorbed": key_view(o)})
-    k.answer_text = (k.answer_text.rstrip() + "\n" + o.answer_text.lstrip()).strip()
-    k.raw_ocr_text = (k.raw_ocr_text.rstrip() + "\n" + o.raw_ocr_text.lstrip()).strip()
-    if not k.criteria and o.criteria:
-        k.criteria = o.criteria
-    if not k.accepted_answers and o.accepted_answers:
-        k.accepted_answers = o.accepted_answers
-    if not k.keywords and o.keywords:
-        k.keywords = o.keywords
-    db.delete(o)
-    db.flush()
-    refresh_key_state(db, exam.id)
-    db.commit()
-    return key_view(k)
 
 
 @router.post("/exams/{exam_id}/answer-keys/generate-ai")

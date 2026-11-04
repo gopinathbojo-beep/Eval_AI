@@ -32,3 +32,7 @@ export const EXAM_STEPS: { key: string; label: string }[] = [
   { key: "READY_FOR_EVALUATION", label: "Ready" }, { key: "EVALUATING", label: "Evaluating" },
   { key: "REVIEW_REQUIRED", label: "In review" }, { key: "FINALIZED", label: "Finalized" },
 ];
+
+/** A sheet from the uploader is named "Roll 1021" when no name was given: then the name already is the roll number. */
+export const nameIsRoll = (s: { name: string; roll_number: string }) =>
+  !s.name || s.name.trim() === `Roll ${s.roll_number}`;

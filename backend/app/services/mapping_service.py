@@ -87,6 +87,8 @@ def apply_student_mapping(db: Session, ev: Evaluation) -> None:
         if not a.raw_question_number and res.status == NEEDS_REVIEW and res.question_id and res.candidate_details:
             suggested.append((a, res.candidate_details))
     _spread_content_suggestions(answers, qs, suggested)
+    if cbse_roots:
+        _repair_misread_labels(answers, qs)
     live = [a for a in answers if a.status != "IGNORED"]
     dups = flag_duplicates(live)
     dups -= {q.id for q in cbse_roots.values()}  # Whole questions intentionally contain several answer blocks.
@@ -97,6 +99,63 @@ def apply_student_mapping(db: Session, ev: Evaluation) -> None:
             a.status, a.mapping_note = "MAPPED", None
     _confirm_content_mappings(live, qs, suggested)
     db.flush()
+
+
+def _is_one_mark(q: ExamQuestion) -> bool:
+    return (q.question_type or "").lower() == "mcq" or (q.max_marks is not None and q.max_marks <= 1)
+
+
+def _repair_misread_labels(answers: list, qs: list) -> None:
+    """Fix the number the model read for an answer when the sheet itself shows it was misread.
+
+    1. The student's own heading inside the answer ("36>", "Q36") beats a misread label, if 36 has no other answer.
+    2. A one-mark number read twice in a row ("Q6", "Q6") is the next question when that one has no answer.
+    3. A long working mapped to a one-mark question that already has its answer is placed by its content.
+    Only free questions are used; anything still unclear stays NEEDS_REVIEW for the teacher.
+    """
+    by_num = {q.normalized_number: q for q in qs if q.normalized_number}
+    by_id = {q.id: q for q in qs}
+    live = [a for a in answers if a.status in _RECOMPUTABLE]
+
+    def taken(qid, but):
+        return any(x is not but and x.exam_question_id == qid and x.status != "IGNORED" for x in answers)
+
+    def move(a, q, note):
+        a.exam_question_id, a.normalized_number = q.id, q.normalized_number
+        a.status, a.mapping_note, a.mapping_candidates = "MAPPED", note, []
+
+    for a in live:  # 1. the student's own heading
+        heading = conflicting_answer_heading(a.answer_text or "", a.normalized_number or a.raw_question_number)
+        target = by_num.get(heading) if heading else None
+        if target and not taken(target.id, a):
+            move(a, target, f"The answer starts with the student's heading {heading}; mapped to Q{heading}.")
+    ordered = sorted(live, key=lambda x: x.position or 0)
+    for prev, a in zip(ordered, ordered[1:]):  # 2. a one-mark number read twice in a row
+        q = by_id.get(a.exam_question_id)
+        if q and prev.exam_question_id == q.id and _is_one_mark(q) and q.normalized_number and q.normalized_number.isdigit():
+            nxt = by_num.get(str(int(q.normalized_number) + 1))
+            if nxt and not taken(nxt.id, a):
+                move(a, nxt, f"Read as Q{q.normalized_number} again right after Q{q.normalized_number}; "
+                             f"placed as Q{nxt.normalized_number} by answer order.")
+    for a in ordered:  # 3. long working on an already-answered one-mark question
+        q = by_id.get(a.exam_question_id)
+        if not (q and _is_one_mark(q) and len((a.answer_text or "").strip()) > 120 and taken(q.id, a)):
+            continue
+        res = map_label(None, [x for x in qs if not _is_one_mark(x)], answer_text=a.answer_text)
+        details = sorted(res.candidate_details or [], key=lambda d: -(d.get("score") or 0))
+        top = details[0] if details else None
+        runner = details[1].get("score") or 0 if len(details) > 1 else 0
+        best = by_id.get(top["id"]) if top else None
+        score = top.get("score") or 0 if top else 0
+        # a clear winner, or the only question its working matches at all (a continuation of a whole question)
+        if best and ((score >= AUTO_MIN_SCORE and score - runner >= AUTO_MARGIN) or (len(details) == 1 and score >= .6)):
+            move(a, best, f"Read as Q{q.normalized_number}, which is a one-mark question already answered; "
+                          f"the working matches Q{best.normalized_number}.")
+        else:
+            a.status = "NEEDS_REVIEW"
+            a.mapping_note = (f"Read as Q{q.normalized_number}, a one-mark question already answered; "
+                              "this longer working belongs to another question.")
+            a.mapping_candidates = [d["id"] for d in details[:3]]
 
 
 AUTO_MIN_SCORE = 0.75

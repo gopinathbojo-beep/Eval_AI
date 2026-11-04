@@ -17,7 +17,6 @@ from ..services.evaluation_service import (ExamSnapshot, approve_clean_items, fi
                                            refresh_evaluation_status, review_reasons, run_evaluation)
 from ..formatter.common.mapping import map_label
 from ..services.mapping_service import apply_student_mapping, exam_questions, mapping_summary
-from ..formatter.common.numbering import normalize_question_number
 from ..services.school_reports import build_evaluation_pdf_report, build_exam_pdf_report
 from ..services.state import set_state
 from ..services.student_identity import in_flight
@@ -62,6 +61,23 @@ def evaluation_detail(ev_id: str, db: Session = Depends(get_db), t: Teacher = De
         "summary": mapping_summary(db, ev),
         "issues": [] if ev.status == "FINALIZED" else finalize_issues(db, ev),
     }
+
+
+@router.get("/evaluations/{ev_id}/extraction-report.pdf")
+def evaluation_extraction_report(ev_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    """The student's sheet as read, how each answer was mapped, and the AI's grading notes."""
+    import re
+    from ..services.extracted_pdf import sheet_extraction_report_pdf
+
+    ev = get_evaluation(db, t, ev_id)
+    exam = get_exam(db, t, ev.exam_id)
+    sheet = db.get(AnswerSheetDocument, ev.answer_sheet_id)
+    answers = db.query(StudentAnswer).filter_by(evaluation_id=ev.id).order_by(StudentAnswer.position).all()
+    items = db.query(EvaluationItem).filter_by(evaluation_id=ev.id).all()
+    questions = db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all()
+    name = re.sub(r"[^A-Za-z0-9_-]+", "_", f"{ev.student.roll_number}_{ev.student.name}" if ev.student else ev.id)
+    return Response(sheet_extraction_report_pdf(exam, ev, sheet, answers, items, questions), media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{name.strip("_")}_Sheet_Report.pdf"'})
 
 
 # ---------- mapping ----------
@@ -213,79 +229,6 @@ def confirm_all_mappings(ev_id: str, db: Session = Depends(get_db), t: Teacher =
     db.commit()
     refresh_evaluation_status(db, ev)
     return {"confirmed": count, "evaluation_status": ev.status}
-
-
-class SplitAnswerIn(BaseModel):
-
-    at_char: int = Field(gt=0)
-    new_label: str
-
-
-@router.post("/evaluations/{ev_id}/answers/{answer_id}/split")
-def split_student_answer(ev_id: str, answer_id: str, body: SplitAnswerIn,
-                         db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
-    ev = get_evaluation(db, t, ev_id)
-    _not_finalized(ev)
-    a = db.get(StudentAnswer, answer_id)
-    if not a or a.evaluation_id != ev.id:
-        raise err(404, "NOT_FOUND", "Answer not found.")
-    if body.at_char >= len(a.answer_text):
-        raise err(400, "INVALID_SPLIT", "Split position is beyond the end of the text.")
-    norm = normalize_question_number(body.new_label)
-    head, tail = a.answer_text[:body.at_char].rstrip(), a.answer_text[body.at_char:].lstrip()
-
-    for other in db.query(StudentAnswer).filter(StudentAnswer.evaluation_id == ev.id, StudentAnswer.position > a.position):
-        other.position += 1
-
-    new_ans = StudentAnswer(
-        evaluation_id=ev.id,
-        raw_question_number=body.new_label,
-        normalized_number=norm,
-        answer_text=tail,
-        raw_ocr_text=tail,
-        page_number=a.page_number,
-        position=a.position + 1,
-        status="UNMAPPED",
-    )
-    a.answer_text = head
-    db.add(new_ans)
-    db.flush()
-    apply_student_mapping(db, ev)
-    audit(db, exam_id=ev.exam_id, teacher_id=t.id, entity_type="student_answer", entity_id=a.id,
-          action="student_answer_split", old=a.raw_ocr_text, new={"head": head, "tail": tail, "new_label": body.new_label})
-    db.commit()
-    refresh_evaluation_status(db, ev)
-    return {"original": answer_view(a), "new": answer_view(new_ans)}
-
-
-class MergeAnswerIn(BaseModel):
-    other_id: str
-
-
-@router.post("/evaluations/{ev_id}/answers/{answer_id}/merge")
-def merge_student_answer(ev_id: str, answer_id: str, body: MergeAnswerIn,
-                         db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
-    ev = get_evaluation(db, t, ev_id)
-    _not_finalized(ev)
-    a = db.get(StudentAnswer, answer_id)
-    o = db.get(StudentAnswer, body.other_id)
-    if not a or not o or a.evaluation_id != ev.id or o.evaluation_id != ev.id or a.id == o.id:
-        raise err(400, "INVALID_MERGE", "Choose a different answer from the same evaluation.")
-
-    audit(db, exam_id=ev.exam_id, teacher_id=t.id, entity_type="student_answer", entity_id=a.id,
-          action="student_answers_merged", old={"kept": answer_view(a), "absorbed": answer_view(o)})
-    a.answer_text = (a.answer_text.rstrip() + "\n" + o.answer_text.lstrip()).strip()
-    a.raw_ocr_text = (a.raw_ocr_text.rstrip() + "\n" + o.raw_ocr_text.lstrip()).strip()
-    db.delete(o)
-    db.flush()
-
-    for i, ans in enumerate(db.query(StudentAnswer).filter_by(evaluation_id=ev.id).order_by(StudentAnswer.position), 1):
-        ans.position = i
-
-    apply_student_mapping(db, ev)
-    db.commit()
-    refresh_evaluation_status(db, ev)
-    return answer_view(a)
 
 
 # ---------- evaluation run ----------

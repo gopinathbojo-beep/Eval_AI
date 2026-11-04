@@ -51,7 +51,7 @@ export default function AnswerKey() {
   const [page, setPage] = useState(1);
   const [sel, setSel] = useState<string | null>(null);
   const [dlg, setDlg] = useState<{
-    kind: "edit" | "delete" | "add" | "split" | "merge";
+    kind: "edit" | "delete" | "add";
     row?: AnswerKeyRow;
     qid?: string;
   } | null>(null);
@@ -508,6 +508,7 @@ export default function AnswerKey() {
                         <RubricView
                           rubric={r.rubric}
                           status={r.rubric_status}
+                          criteria={r.criteria}
                           questionMarks={
                             k.questions?.find(
                               (q) => q.id === r.exam_question_id,
@@ -586,18 +587,6 @@ export default function AnswerKey() {
                           </Button>
                           <Button
                             small
-                            onClick={() => setDlg({ kind: "split", row: r })}
-                          >
-                            Split
-                          </Button>
-                          <Button
-                            small
-                            onClick={() => setDlg({ kind: "merge", row: r })}
-                          >
-                            Merge
-                          </Button>
-                          <Button
-                            small
                             variant="ghost"
                             className="text-mark hover:bg-mark-soft hover:text-mark"
                             onClick={() => setDlg({ kind: "delete", row: r })}
@@ -646,21 +635,6 @@ export default function AnswerKey() {
           onClose={() => setDlg(null)}
           onDone={after}
           examId={exam.id}
-        />
-      )}
-      {dlg?.kind === "split" && dlg.row && (
-        <SplitKeyModal
-          row={dlg.row}
-          onClose={() => setDlg(null)}
-          onDone={after}
-        />
-      )}
-      {dlg?.kind === "merge" && dlg.row && k && (
-        <MergeKeyModal
-          row={dlg.row}
-          allKeys={k.keys}
-          onClose={() => setDlg(null)}
-          onDone={after}
         />
       )}
       {dlg?.kind === "delete" && dlg.row && (
@@ -1150,200 +1124,6 @@ function KeyDlg({
           marks={marks ? Number(marks) : q?.max_marks}
           onChange={setCriteriaList}
         />
-        <ErrorPanel error={err} />
-      </div>
-    </Modal>
-  );
-}
-
-function SplitKeyModal({
-  row,
-  onClose,
-  onDone,
-}: {
-  row: AnswerKeyRow;
-  onClose: () => void;
-  onDone: () => Promise<void>;
-}) {
-  const [pos, setPos] = useState(Math.floor(row.answer_text.length / 2));
-  const [num, setNum] = useState("");
-  const [marks, setMarks] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<unknown>(null);
-  const head = row.answer_text.slice(0, pos);
-  const tail = row.answer_text.slice(pos);
-
-  const save = async () => {
-    setBusy(true);
-    setErr(null);
-    try {
-      await api(`/answer-keys/${row.id}/split`, {
-        method: "POST",
-        json: {
-          at_char: pos,
-          new_label: num,
-          new_marks: marks ? Number(marks) : null,
-        },
-      });
-      await onDone();
-      onClose();
-    } catch (e) {
-      setErr(e);
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Modal
-      title={`Split Answer “${row.raw_question_number ?? "none"}”`}
-      wide
-      onClose={onClose}
-      footer={
-        <>
-          <Button onClick={onClose}>Cancel</Button>
-          <Button
-            variant="primary"
-            busy={busy}
-            disabled={pos <= 0 || !num.trim()}
-            onClick={save}
-          >
-            Split here
-          </Button>
-        </>
-      }
-    >
-      <div className="space-y-4">
-        <p className="text-xs text-mute">
-          Adjust slider to choose where to split this answer row into two.
-        </p>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="New Question Label (e.g. Q4 or 4(b))">
-            {(id) => (
-              <Input
-                id={id}
-                value={num}
-                onChange={(e) => setNum(e.target.value)}
-              />
-            )}
-          </Field>
-          <Field label="Marks for New Row (optional)">
-            {(id) => (
-              <Input
-                id={id}
-                type="number"
-                min={0}
-                step={0.5}
-                value={marks}
-                onChange={(e) => setMarks(e.target.value)}
-              />
-            )}
-          </Field>
-        </div>
-        <div>
-          <input
-            type="range"
-            min={1}
-            max={Math.max(1, row.answer_text.length - 1)}
-            value={pos}
-            onChange={(e) => setPos(Number(e.target.value))}
-            className="w-full accent-pen"
-          />
-          <p className="text-xs text-mute mt-1 font-mono">
-            Character {pos} of {row.answer_text.length}
-          </p>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="rounded-lg border border-line bg-surface p-3 text-xs">
-            <p className="mb-1 font-semibold text-mute uppercase">
-              Kept in Current Row
-            </p>
-            <p className="font-mono text-ink">{head}</p>
-          </div>
-          <div className="rounded-lg border border-line bg-sunken p-3 text-xs">
-            <p className="mb-1 font-semibold text-mute uppercase">
-              Moved to New Row ({num || "..."})
-            </p>
-            <p className="font-mono text-ink">{tail}</p>
-          </div>
-        </div>
-        <ErrorPanel error={err} />
-      </div>
-    </Modal>
-  );
-}
-
-function MergeKeyModal({
-  row,
-  allKeys,
-  onClose,
-  onDone,
-}: {
-  row: AnswerKeyRow;
-  allKeys: AnswerKeyRow[];
-  onClose: () => void;
-  onDone: () => Promise<void>;
-}) {
-  const [otherId, setOtherId] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<unknown>(null);
-  const others = allKeys.filter((k) => k.id !== row.id);
-
-  const save = async () => {
-    setBusy(true);
-    setErr(null);
-    try {
-      await api(`/answer-keys/${row.id}/merge`, {
-        method: "POST",
-        json: { other_id: otherId },
-      });
-      await onDone();
-      onClose();
-    } catch (e) {
-      setErr(e);
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Modal
-      title={`Merge Answer “${row.raw_question_number ?? "none"}”`}
-      onClose={onClose}
-      footer={
-        <>
-          <Button onClick={onClose}>Cancel</Button>
-          <Button
-            variant="primary"
-            busy={busy}
-            disabled={!otherId}
-            onClick={save}
-          >
-            Merge
-          </Button>
-        </>
-      }
-    >
-      <div className="space-y-4">
-        <p className="text-xs text-mute">
-          Append another row's answer text into this one. The merged row will be
-          removed.
-        </p>
-        <Field label="Choose Row to Merge into This One">
-          {(id) => (
-            <Select
-              id={id}
-              value={otherId}
-              onChange={(e) => setOtherId(e.target.value)}
-            >
-              <option value="">Select row...</option>
-              {others.map((k) => (
-                <option key={k.id} value={k.id}>
-                  {k.raw_question_number ?? "(no number)"} —{" "}
-                  {k.answer_text.slice(0, 50)}
-                </option>
-              ))}
-            </Select>
-          )}
-        </Field>
         <ErrorPanel error={err} />
       </div>
     </Modal>

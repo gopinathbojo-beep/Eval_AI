@@ -9,8 +9,6 @@ os.environ["DATABASE_URL"] = ""
 os.environ["OPENROUTER_API_KEY"] = "test-openrouter-key"
 os.environ["OPENROUTER_MODEL"] = "google/gemini-3.5-flash-lite"
 os.environ["AI_PARALLEL_JOBS"] = "1"
-os.environ["INTERNVL_MODEL"] = "google/gemini-3.5-flash-lite"  # the stub answers for one model name
-os.environ["INTERNVL_PARALLEL_JOBS"] = "1"
 os.environ["STORAGE_PROVIDER"] = "local"
 os.environ["DURABLE_JOBS"] = "false"
 os.environ["AUTO_MIGRATE"] = "false"
@@ -132,9 +130,8 @@ def openrouter_stub():
     srv = HTTPServer(("127.0.0.1", 0), _H)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     from app.ocr import remote
-    remote.OPENROUTER_BASE_URL = f"http://127.0.0.1:{srv.server_port}"
     from app.config import get_settings
-    get_settings().internvl_api_url = f"http://127.0.0.1:{srv.server_port}"
+    get_settings().openrouter_base_url = f"http://127.0.0.1:{srv.server_port}"
     yield srv
     srv.shutdown()
 
