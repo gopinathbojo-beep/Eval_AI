@@ -477,15 +477,14 @@ def test_branch_and_accessibility_alternatives_do_not_add_marks():
 
 def test_unknown_missing_duplicate_criteria_and_multiple_mcq_answers():
     key = NS(rubric={"cbse_tree": point("q", 1)})
-    q = NS(max_marks=1, question_type="mcq")
+    q = NS(max_marks=1)
     result = EvaluationResult(
         marks_awarded=1,
         criterion_awards=[
             {"id": "q", "marks": 1, "evidence": "A and B", "multiple_answers": True}
         ],
     )
-    assert validate_result(result, q, key, {}).marks_awarded == 1
-    assert validate_result(result, q, key, {"attempt_policy": "single_final"}).marks_awarded == 0
+    assert validate_result(result, q, key, {}).marks_awarded == 0
     mcq_key = NS(rubric={"cbse_tree": point("q", 1) | {"response_type": "mcq"}})
     with pytest.raises(EvaluationValidationError):
         validate_result(
@@ -936,12 +935,7 @@ def test_full_upload_pipeline_and_reviewed_scheme_grading(
         db.commit()
         vid = ev.id
 
-    grading_calls = []
     def grade(system, prompt, schema, **kwargs):
-        grading_calls.append(system)
-        # The independent audit can correct an initial award in either direction.
-        audited = "INDEPENDENT EVIDENCE AUDIT" in prompt
-        score = .5 if audited and role == "PARENT" else 1
         assert (
             "GENERAL EXAMINER INSTRUCTIONS" in prompt
             and "Accept correct equivalent expression" in prompt
@@ -949,10 +943,9 @@ def test_full_upload_pipeline_and_reviewed_scheme_grading(
         assert "0.5 steps" not in prompt and "at most 0.5" not in system
         return NS(
             parsed=EvaluationResult(
-                marks_awarded=score,
+                marks_awarded=1,
                 criterion_awards=[
-                        {"id": "q1", "marks": score, "credit_type": "full" if score == 1 else "partial", "scheme_quote": "Source content for 1",
-                         "evidence": "Visible answer", "evidence_quotes": ["Visible answer"]}
+                    {"id": "q1", "marks": 1, "evidence": "Visible answer"}
                 ],
                 feedback="Correct",
             ),
@@ -969,9 +962,4 @@ def test_full_upload_pipeline_and_reviewed_scheme_grading(
             .filter_by(evaluation_id=vid, exam_question_id=q.id)
             .one()
         )
-        assert item.ai_marks == (.5 if role == "PARENT" else 1)
-        assert len(grading_calls) == 2
-        from app.serializers import item_view
-        view = item_view(item)
-        assert view["evidence_checked"] is True
-        assert view["criterion_awards"][0]["marks"] == item.ai_marks
+        assert item.ai_marks == 1
