@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from sqlalchemy.orm import Session
 
 from ..models import ReferenceChunk, ReferenceSource
-from ..reference.search import search
+from ..reference.search import retrieve
 
 MIN_PASSAGE = 350  # shorter chunks are headings, figure captions and exercise lists
 
@@ -65,11 +65,12 @@ class Pool:
             self.rng.shuffle(v)
         self.by_source = by_source
         self.used: set[int] = set()
-        # passages matching the teacher's focus topics go first (keyword retrieval over the same scope)
+        # passages matching the teacher's focus topics go first: hybrid retrieval (keywords + local embeddings,
+        # reference/search.retrieve) over the same class and subject
         self.focus: list[Passage] = []
         if topics.strip():
             allowed = set(by_source)
-            for h in search(db, topics, standard, subject, kinds=["TEXTBOOK"], k=30, min_match=0.2):
+            for h in retrieve(db, topics, standard, subject, kinds=["TEXTBOOK"], k=30):
                 src = next((p for ps in by_source.values() for p in ps if p.id == h.chunk_id), None)
                 if src and (not source_ids or src.source_id in allowed):
                     self.focus.append(src)
