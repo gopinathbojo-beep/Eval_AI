@@ -156,9 +156,8 @@ def test_full_workflow(client, auth):
     assert it[qid["1"]]["ai_marks"] == 2 and it[qid["2"]]["ai_marks"] == 0
     assert it[qid["3(b)"]]["status"] == "EVALUATION_ERROR" and it[qid["3(b)"]]["ai_marks"] is None   # AI said 8 of 5
     assert "exceeds" in it[qid["3(b)"]]["error"]
-    # finalize still blocked; issue names the question
-    r = c.post(f"/api/evaluations/{evid}/finalize", headers=h)
-    assert r.status_code == 400 and any(i["question"] == "3(b)" for i in r.json()["issues"])
+    # the review lists the question (if the teacher finalizes anyway, it counts as 0)
+    assert any(i["question"] == "3(b)" for i in j(c.get(f"/api/evaluations/{evid}", headers=h))["issues"])
     # approving an errored item without marks is refused
     r = c.patch(f"/api/evaluations/{evid}/items/{it[qid['3(b)']]['id']}", json={"approve": True}, headers=h)
     assert r.status_code == 400
@@ -177,8 +176,7 @@ def test_full_workflow(client, auth):
     assert c.patch(f"/api/evaluations/{evid}/items/{q2item['id']}", json={"final_marks": 9, "reason": "x"}, headers=h).status_code == 400
     r = j(c.patch(f"/api/evaluations/{evid}/items/{q2item['id']}", json={"final_marks": 1, "reason": "Partial credit for definition"}, headers=h), 200)
     assert r["item"]["final_marks"] == 1 and r["item"]["ai_marks"] == 0 and r["item"]["teacher_overridden"]
-    # items still awaiting approval -> not finalizable; then approve all
-    assert c.post(f"/api/evaluations/{evid}/finalize", headers=h).status_code == 400
+    # approve all
     j(c.patch(f"/api/evaluations/{evid}/items/{q2item['id']}", json={"approve": True}, headers=h), 200)
     j(c.post(f"/api/evaluations/{evid}/items/approve-all", headers=h), 200)
     d = j(c.get(f"/api/evaluations/{evid}", headers=h))

@@ -230,6 +230,62 @@ class StudentPageResult(_Base):
         return self
 
 
+class StudentAnswerCheck(_Base):
+    answer_id: str | None = None
+    status: str = "UNSURE"
+    answer_text: str = ""
+    changes: list[str] = Field(default_factory=list)
+    doubts: list[str] = Field(default_factory=list)
+
+    _q = field_validator("answer_id", mode="before")(lambda cls, v: _str(v))
+    _t = field_validator("answer_text", mode="before")(lambda cls, v: _text(v))
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def _status(cls, v):
+        v = str(v or "").strip().upper()
+        return v if v in {"OK", "CORRECTED", "UNSURE"} else "UNSURE"
+
+    @field_validator("changes", "doubts", mode="before")
+    @classmethod
+    def _strings(cls, v):
+        return [str(x) for x in v if str(x).strip()] if isinstance(v, list) else []
+
+
+class StudentPageCheck(_Base):
+    checks: list[StudentAnswerCheck] = Field(default_factory=list)
+
+    @field_validator("checks", mode="before")
+    @classmethod
+    def _sanitize(cls, v):
+        return [item for item in v if isinstance(item, (dict, StudentAnswerCheck))] if isinstance(v, list) else []
+
+
+class LineStart(_Base):
+    question_number: str | None = None
+    start: str = ""
+    struck: list[str] = Field(default_factory=list)
+
+    _q = field_validator("question_number", mode="before")(lambda cls, v: _str(v))
+    _t = field_validator("start", mode="before")(lambda cls, v: _text(v))
+
+    @field_validator("struck", mode="before")
+    @classmethod
+    def _strings(cls, v):
+        if isinstance(v, str):
+            v = [v]
+        return [str(x) for x in v if str(x).strip()] if isinstance(v, list) else []
+
+
+class PageLineStarts(_Base):
+    rows: list[LineStart] = Field(default_factory=list)
+
+    @field_validator("rows", mode="before")
+    @classmethod
+    def _sanitize(cls, v):
+        return [item for item in v if isinstance(item, (dict, LineStart))] if isinstance(v, list) else []
+
+
 class EvaluationResult(_Base):
     marks_awarded: float
     max_marks: float | None = None

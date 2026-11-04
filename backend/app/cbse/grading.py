@@ -111,11 +111,35 @@ def _to_scheme_step(value, allocation):
     return min(math.floor(value * 2 + .5) / 2, allocation)
 
 
+def _merge_repeated_awards(awards):
+    """The model sometimes splits one criterion into several awards under the same id (one per part it saw):
+    one award per id, marks added and evidence kept. Anything malformed is left for validation to reject."""
+    merged, out = {}, []
+    for award in awards:
+        key_id, value = award.get("id"), award.get("marks")
+        if (not isinstance(key_id, str) or isinstance(value, bool) or not isinstance(value, (int, float))
+                or not math.isfinite(value)):
+            out.append(award)
+            continue
+        if key_id not in merged:
+            merged[key_id] = dict(award)
+            out.append(merged[key_id])
+            continue
+        first = merged[key_id]
+        if "_merged" not in first:
+            first["evidence_quotes"], first["_merged"] = list(_evidence_quotes(first, None, False)), True
+        first["marks"] = first["marks"] + value
+        first["evidence_quotes"] += [x for x in _evidence_quotes(award, None, False) if x not in first["evidence_quotes"]]
+        first["evidence"] = "; ".join(x for x in (first.get("evidence"), award.get("evidence")) if x)
+        first["multiple_answers"] = bool(first.get("multiple_answers")) or award.get("multiple_answers") is True
+    return out
+
+
 def validate_result(result, q, key, options, student=None):
     tree = scoring_tree(q, key, options)
     nodes = {n["id"]: n for n in leaves(tree, options)}
     scores = {}
-    for award in result.criterion_awards:
+    for award in _merge_repeated_awards(result.criterion_awards):
         key_id, value = award.get("id"), award.get("marks")
         if (
             key_id not in nodes

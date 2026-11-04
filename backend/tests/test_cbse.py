@@ -508,6 +508,20 @@ def test_unknown_missing_duplicate_criteria_and_multiple_mcq_answers():
             )
 
 
+def test_one_criterion_split_into_awards_with_the_same_id_is_added_up():
+    # the model graded part I and part II of a one-criterion question as two awards under the same id
+    key = NS(rubric={"cbse_tree": point("q19", 3)})
+    q = NS(max_marks=3)
+    awards = [{"id": "q19", "marks": 1.0, "evidence": "", "evidence_quotes": ["6,30,000 / 90"]},
+              {"id": "q19", "marks": 0.0, "evidence": "", "evidence_quotes": []}]
+    student = "i, Number of debenture = 6,30,000 / 90 = 7000"
+    got = validate_result(EvaluationResult(marks_awarded=1, criterion_awards=awards), q, key, {}, student)
+    assert got.marks_awarded == 1
+    over = [{"id": "q19", "marks": 2, "evidence_quotes": ["6,30,000 / 90"]}] * 2   # added up past the allocation
+    with pytest.raises(EvaluationValidationError):
+        validate_result(EvaluationResult(marks_awarded=3, criterion_awards=over), q, key, {}, student)
+
+
 def test_only_source_defined_deductions_within_their_limit_are_applied():
     tree = point("answer", 5) | {
         "deductions": [

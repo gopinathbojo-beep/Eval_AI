@@ -153,13 +153,13 @@ def resolve_student_answer(db: Session, ev: Evaluation, q: ExamQuestion, snap: E
                 primary_answer=constituent[0],
                 constituent_answers=constituent,
             )
-        else:
-            return ResolvedAnswer(
-                status=STUDENT_ANSWER_GROUPING_ERROR,
-                primary_answer=constituent[0],
-                constituent_answers=constituent,
-                reason=f"Student answer block exists for {q.display_number} but contains no transcribed text.",
-            )
+        # only the question number was written, nothing under it: not answered (0 marks), nothing to review
+        return ResolvedAnswer(
+            status=STUDENT_ANSWER_NOT_ATTEMPTED,
+            primary_answer=constituent[0],
+            constituent_answers=constituent,
+            reason=f"Only the number {q.display_number} was written; no answer under it.",
+        )
 
     # 3. If no verified answer found, resolve exact state
     # Check for mapping review / unresolved mapping for this question
@@ -261,6 +261,18 @@ DRAWING_NOTE = ("\nThe scanned page(s) the student wrote this answer on are atta
                 "diagrams, graphs, structures and their labels that the transcription may describe incompletely; "
                 "the transcription stays the student's answer for everything else.")
 
+# TEMPORARY (2026-11-04): liberal marking on the user's request. Set False to go back to the normal rules.
+LIBERAL_GRADING = True
+LIBERAL_RULES = """LIBERAL MARKING (overrides any stricter rule above):
+1. If the student's answer is partly correct against the key (the main idea, the right fact, the right method or the
+   right final answer is present), award FULL marks for that question or criterion.
+2. Give the benefit of the doubt everywhere: brief, incomplete, unclear or loosely worded answers that point the right
+   way earn full credit; when torn between two marks, always choose the higher.
+3. Do not deduct for missing steps, units, reasons, spelling, grammar, wording, format or presentation.
+4. Award zero only when the answer is blank, entirely wrong, or unrelated to the question. MCQ: credit if the letter
+   OR the option text is correct.
+5. Never exceed the maximum marks; still note what was missing in feedback for the teacher."""
+
 
 def drawing_image(db: Session, ev: Evaluation, q: ExamQuestion, key_text: str, answers: list, text: str):
     """The student's page(s) for a question that asks for or contains a drawing, as one image for the grader.
@@ -353,6 +365,8 @@ def evaluate_item(db: Session, ev: Evaluation, q: ExamQuestion, item: Evaluation
                 rules = fmt.grading_rules(q.question_text, key.answer_text)  # language subjects: by question kind
                 if rules:
                     prompt += "\n" + rules
+                if LIBERAL_GRADING:
+                    prompt += "\n" + LIBERAL_RULES
                 exam_owner = db.get(Exam, ev.exam_id).teacher_id
                 audit(db, exam_id=ev.exam_id, teacher_id=exam_owner, entity_type="evaluation", entity_id=ev.id,
                       action="ai_grading_request")
@@ -408,6 +422,8 @@ def evaluate_item(db: Session, ev: Evaluation, q: ExamQuestion, item: Evaluation
             item.ai_feedback = f"Either/or question {q.choice_group}: this alternative was not answered; only one counts."
         elif q.answer_any and not q.compulsory:
             item.ai_feedback = f"Not answered. The section asks for any {q.answer_any}; the best {q.answer_any} count."
+        elif resolved.constituent_answers:
+            item.ai_feedback = "Not answered: only the question number was written."
         else:
             item.ai_feedback = "Question was not attempted by student."
         item.error = None
@@ -492,6 +508,10 @@ def confirm_not_attempted(db: Session, ev: Evaluation, snap: ExamSnapshot | None
         return
     qs = {q.id: q for q in snap.questions}
     for it in snap.items[ev.id]:
+        if _settled_as_not_answered(db, ev, it, qs, snap):
+            # graded before "only the number written" counted as not answered: settle it the same way now
+            it.status, it.error, it.final_marks = "MISSING", None, 0.0
+            it.ai_feedback = "Not answered: only the question number was written."
         if it.status != "MISSING" or it.not_attempted_confirmed:
             continue
         q = qs.get(it.exam_question_id)
@@ -499,6 +519,14 @@ def confirm_not_attempted(db: Session, ev: Evaluation, snap: ExamSnapshot | None
             it.not_attempted_confirmed = True
             if it.final_marks is None:
                 it.final_marks = 0.0
+
+
+def _settled_as_not_answered(db: Session, ev: Evaluation, it: EvaluationItem, qs: dict, snap: ExamSnapshot) -> bool:
+    """An item left in error only because its answer had a number but no text: now that is simply not answered."""
+    if it.status != "EVALUATION_ERROR" or it.final_marks is not None or "no transcribed text" not in (it.error or ""):
+        return False
+    q = qs.get(it.exam_question_id)
+    return q is not None and resolve_student_answer(db, ev, q, snap).status == STUDENT_ANSWER_NOT_ATTEMPTED
 
 
 def finalize_issues(db: Session, ev: Evaluation, snap: ExamSnapshot | None = None) -> list[dict]:
@@ -525,19 +553,20 @@ def finalize_issues(db: Session, ev: Evaluation, snap: ExamSnapshot | None = Non
             add(label, "Student answer is unmapped" if a.status == "UNMAPPED"
                 else f"Student answer needs mapping review: {a.mapping_note or ''}".strip())
     items = {i.exam_question_id: i for i in snap.items[ev.id]}
+    by_id = {q.id: q for q in qs}
     for q in qs:
         it = items.get(q.id)
         if it is None or it.status == "PENDING":
             add(q.display_number, "Not evaluated yet")
+        elif _settled_as_not_answered(db, ev, it, by_id, snap):
+            pass  # confirm_not_attempted() turns it into "not answered" (0 marks) on the next refresh or finalize
         elif it.status == "EVALUATION_ERROR":
             add(q.display_number, it.error or "AI evaluation failed")
         elif it.status == "MISSING":
             if not getattr(it, "not_attempted_confirmed", False):
                 res = resolve_student_answer(db, ev, q, snap)
                 if res.status == STUDENT_ANSWER_NOT_ATTEMPTED:
-                    # with nothing left to map, confirm_not_attempted() settles this item; only report it otherwise
-                    if has_unresolved:
-                        add(q.display_number, "No student answer found. Map an answer or confirm it was not attempted")
+                    pass  # an unanswered question is 0 marks, not a review
                 elif res.status == STUDENT_ANSWER_MAPPING_REVIEW:
                     add(q.display_number, f"Student answer detected but mapping needs review: {res.reason}")
                 elif res.status == STUDENT_ANSWER_UNMAPPED:
@@ -546,8 +575,6 @@ def finalize_issues(db: Session, ev: Evaluation, snap: ExamSnapshot | None = Non
                     add(q.display_number, f"Answer sheet could not be read: {res.reason}")
                 elif res.status in (STUDENT_ANSWER_RELATIONSHIP_ERROR, DATA_INTEGRITY_ERROR):
                     add(q.display_number, f"Database relationship error: {res.reason}")
-                else:
-                    add(q.display_number, "No student answer found. Map an answer or confirm it was not attempted")
         elif it.status == "EVALUATED":
             add(q.display_number, "Awaiting teacher approval")
         if it and it.final_marks is not None and q.max_marks is not None and it.final_marks > q.max_marks + 1e-9:
@@ -653,24 +680,26 @@ def review_reasons(db: Session, ev: Evaluation, snap: ExamSnapshot) -> list[dict
     """
     doc = snap.docs.get(ev.answer_sheet_id)
     issues = [i for i in finalize_issues(db, ev, snap) if i["reason"] != "Awaiting teacher approval"]
-    if snap.unresolved(ev):
-        # every question reads "Not evaluated yet" until the mapping is fixed; one line says it better
+    items = snap.items[ev.id]
+    check = ((doc.identity or {}).get("roll_check") or {}) if doc is not None else {}
+    nothing_graded = not items or all(i.status == "PENDING" for i in items)
+    if snap.unresolved(ev) or check.get("status") == "MISMATCH" or nothing_graded:
+        # every question reads "Not evaluated yet" until the sheet is graded; one line with the cause says it better
         issues = [i for i in issues if i["reason"] != "Not evaluated yet"]
-        issues.append({"question": "Evaluation", "reason": "Not graded yet. Fix the answer mapping, then run the evaluation."})
+        if check.get("status") == "MISMATCH":
+            reason = (f"Roll number check: typed {check.get('typed')}, the sheet says {check.get('written')}. "
+                      "Choose the right roll number in the answer sheets list; grading starts after that.")
+        elif snap.unresolved(ev):
+            reason = "Not graded yet. Fix the answer mapping, then run the evaluation."
+        else:
+            reason = "Not graded yet. Run the evaluation for this sheet."
+        issues.append({"question": "Roll number" if check.get("status") == "MISMATCH" else "Evaluation", "reason": reason})
     if doc is not None and doc.status == "NEEDS_ATTENTION":
         issues.insert(0, {"question": "Answer sheet", "reason": "Some pages could not be read. Retry them first."})
-    if doc is not None and (empty := pages_without_answers(doc)):
-        issues.insert(0, {"question": "Answer sheet", "reason": f"No answers were read from page(s) "
-                          f"{', '.join(map(str, empty))}. Check the sheet: answers there are not being marked."})
     if ev.run_status == "ERROR":
         issues.insert(0, {"question": "Evaluation", "reason": "The AI evaluation stopped with an error. Run it again."})
-    qs = {q.id: q for q in snap.questions}
-    for it in snap.items[ev.id]:
-        if it.status != "EVALUATED" or it.teacher_overridden:
-            continue
-        if it.ai_confidence is not None and it.ai_confidence < LOW_CONFIDENCE and (q := qs.get(it.exam_question_id)):
-            issues.append({"question": q.display_number,
-                           "reason": f"AI was unsure of these marks ({round(it.ai_confidence * 100)}% confidence). Check them."})
+    # reviews are raised only for an unmapped question or answer and for marks that disagree; empty pages, unanswered
+    # questions and the AI's own confidence in its marks are not reasons to hold a sheet
     return issues
 
 
@@ -678,7 +707,7 @@ def finalize(db: Session, ev: Evaluation) -> None:
     qs = exam_questions(db, ev.exam_id)
     items = {i.exam_question_id: i for i in db.query(EvaluationItem).filter_by(evaluation_id=ev.id).all()}
     counted_qs = choices.counted(qs, {qid: it.final_marks for qid, it in items.items()})
-    ev.total_marks = sum((items[q.id].final_marks or 0.0) for q in counted_qs)
+    ev.total_marks = sum(((items[q.id].final_marks if q.id in items else None) or 0.0) for q in counted_qs)
     ev.maximum_marks = sum((q.max_marks or 0.0) for q in counted_qs)
     ev.percentage = round(100.0 * ev.total_marks / ev.maximum_marks, 2) if ev.maximum_marks else 0.0
     ev.status, ev.finalized_at = "FINALIZED", datetime.now(timezone.utc)

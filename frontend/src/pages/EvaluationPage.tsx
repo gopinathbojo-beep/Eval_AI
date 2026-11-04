@@ -461,7 +461,18 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
                           <span className="rounded-md bg-sunken px-2 py-0.5 text-xs font-medium text-mute">
                             p.{a.page_number}
                           </span>
-                          <span className="rounded-md bg-sunken px-2 py-0.5 text-xs font-medium text-mute">
+                          <span
+                            className={`rounded-md px-2 py-0.5 text-xs font-medium ${
+                              a.ocr_confidence != null && a.ocr_confidence < 0.6
+                                ? "bg-warn-soft text-warn"
+                                : "bg-sunken text-mute"
+                            }`}
+                            title={
+                              a.ocr_confidence != null && a.ocr_confidence < 0.6
+                                ? "The second look at this page read this answer differently: check it against the page"
+                                : undefined
+                            }
+                          >
                             conf. {pct(a.ocr_confidence)}
                           </span>
                           <StatusBadge status={a.status} />
@@ -945,11 +956,6 @@ function MarksTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<vo
                       <span className="text-xs font-semibold text-mute">
                         [{fmt(q.max_marks)} marks]
                       </span>
-                      {q.section && (
-                        <span className="rounded-md bg-pen-soft px-2 py-0.5 text-xs font-semibold text-pen">
-                          {q.section}
-                        </span>
-                      )}
                     </div>
                     <div className="doc-text mt-1.5 line-clamp-2 text-sm text-ink/90">
                       <MathView text={q.question_text} />

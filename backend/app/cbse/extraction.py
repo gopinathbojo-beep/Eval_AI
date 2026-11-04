@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 from typing import Literal
-from pydantic import BaseModel, Field, ConfigDict, field_validator
+from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 import json
 
 
@@ -97,6 +97,8 @@ class Fragment(BaseModel):
         return _box(value)
     continues: bool = False
     issues: list[str] = Field(default_factory=list)
+    # printed Part B option the fragment sits under ('financial'/'computerised'), set from the PDF headings
+    branch: str | None = None
 
 
 class Page(BaseModel):
@@ -105,6 +107,24 @@ class Page(BaseModel):
     instructions: list[str] = Field(default_factory=list)
     fragments: list[Fragment] = Field(default_factory=list)
     issues: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def flatten_nested_fragments(cls, data):
+        # a model sometimes opens the next question's "fragments" inside the previous fragment; keep every question
+        if isinstance(data, dict) and isinstance(data.get("fragments"), list):
+            flat, todo = [], list(data["fragments"])
+            while todo:
+                item = todo.pop(0)
+                if isinstance(item, dict) and isinstance(item.get("fragments"), list):
+                    todo[:0] = item["fragments"]
+                    item = {k: v for k, v in item.items() if k != "fragments"}
+                flat.append(item)
+            # page furniture the model files as a fragment ("root": "Footer", a stray string): not a question
+            flat = [item for item in flat if isinstance(item, Fragment) or isinstance(item, dict) and (
+                isinstance(item.get("root"), int) or str(item.get("root", "")).strip().isdigit())]
+            data = {**data, "fragments": flat}
+        return data
 
 
 SYSTEM = """You read uploaded CBSE examination documents. Return JSON only, based on visible source evidence.
@@ -181,6 +201,9 @@ def merge_nodes(nodes):
             by_id[key] = dict(data, marks=data.get("marks") if data.get("marks") is not None else old.get("marks"),
                               children=[first] + list(data["children"]))
             continue
+        if old.get("kind") != data.get("kind") and not old.get("children") and not data.get("children") \
+                and {old.get("kind"), data.get("kind")} <= {"all", "point"}:
+            data = dict(data, kind=old["kind"])  # a leaf read as "all" on one page and "point" on the next is one leaf
         if old.get("kind") != data.get("kind") and bool(old.get("children")) != bool(data.get("children")):
             # one page shows only the stem (a single item), the next the parts: the piece with parts has the structure
             if data.get("children"):
@@ -224,7 +247,12 @@ def selected(node, options):
         not audience
         or audience == options.get("accessibility")
         or audience == options.get("accountancy_option")
+        # no branch chosen at creation: both Part B branches stay in, tree_total keeps the better one
+        or (audience in _BRANCHES and not options.get("accountancy_option"))
     )
+
+
+_BRANCHES = {"financial", "computerised"}
 
 
 def tree_total(node, options, scores=None):
@@ -242,11 +270,81 @@ def tree_total(node, options, scores=None):
             else node.get("marks") or 0
         )
     else:
-        values = [tree_total(n, options, scores) for n in children]
+        branch = {}  # Part B branches the student may have answered (only when none was chosen): the better one counts
+        for n in [n for n in children if n.get("audience") in _BRANCHES]:
+            branch[n["audience"]] = branch.get(n["audience"], 0.0) + tree_total(n, options, scores)
+        values = [tree_total(n, options, scores) for n in children if n.get("audience") not in _BRANCHES]
         if node["kind"] == "choose":
             values = sorted(values, reverse=True)[: node.get("limit") or 1]
-        value = sum(values)
+        value = sum(values) + max(branch.values(), default=0.0)
     return max(0, value - float((scores or {}).get("deduction:" + node["id"], 0)))
+
+
+def _scored(node):
+    """Whether any selected-or-not leaf below this node carries a printed positive mark."""
+    if node.get("kind") == "context":
+        return False
+    if not [c for c in node.get("children") or [] if c.get("kind") != "context"]:
+        return bool(node.get("marks"))
+    return any(_scored(c) for c in node["children"])
+
+
+def _flatten_text(nodes):
+    lines = []
+    for n in nodes:
+        head = " ".join(x for x in ((n.get("label") or "").strip(), (n.get("text") or "").strip()) if x)
+        if head:
+            lines.append(head)
+        lines += _flatten_text(n.get("children") or [])
+    return lines
+
+
+def settle_marks(node, total=None):
+    """Fit a tree to the printed whole-question marks without inventing a split.
+
+    Accountancy papers and schemes print one total per question (or per OR alternative / Part B option) while the
+    model lists the journal entries or parts under it unmarked. Unmarked parts become one holistic point worth what
+    the printed total leaves for them (the extraction rules allow one holistic point); a leaf with no mark of its
+    own takes the total available to it; each alternative of a one-of choice is worth the choice's marks."""
+    if not isinstance(node, dict) or node.get("kind") == "context":
+        return node
+    marks = node.get("marks") if node.get("marks") is not None else total
+    children = node.get("children") or []
+    scored = [c for c in children if c.get("kind") != "context"]
+    if node.get("kind") == "choose":
+        share = marks / (node.get("limit") or 1) if marks else None
+        for child in scored:
+            settle_marks(child, share)
+        if node.get("marks") is None and marks is not None:
+            node["marks"] = marks
+        return node
+    if not scored:
+        if not node.get("marks") and marks:
+            node["marks"] = marks
+        return node
+    if not marks:
+        for child in scored:
+            settle_marks(child)
+        return node
+    if not any(_scored(c) for c in scored):
+        # nothing below is marked: the printed total is one holistic point over all of it
+        node.update(kind="point", marks=marks, children=[c for c in children if c.get("kind") == "context"],
+                    text="\n".join(x for x in [(node.get("text") or "").strip(), *_flatten_text(scored)] if x))
+        return node
+    for child in scored:
+        if _scored(child):
+            settle_marks(child)
+    unmarked = [c for c in scored if not _scored(c)]
+    rest = marks - sum(tree_total(c, {"accessibility": "standard"}) for c in scored if _scored(c))
+    if unmarked and rest > 1e-7:
+        # the parts printed without marks share what the printed total leaves, as one point
+        merged = {"id": f"{node['id']}.rest", "kind": "point", "label": "", "marks": rest,
+                  "text": "\n".join(_flatten_text(unmarked)), "limit": None, "choice_type": "question",
+                  "audience": None, "response_type": "open", "deductions": [], "children": []}
+        node["children"] = [c for c in children if c not in unmarked] + [merged]
+    if node.get("marks") is None:
+        node["marks"] = marks
+    return node
 
 
 def tree_issues(node, options):

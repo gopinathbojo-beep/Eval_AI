@@ -413,14 +413,26 @@ def finalize_evaluation(ev_id: str, db: Session = Depends(get_db), t: Teacher = 
         db.commit()
     refresh_evaluation_status(db, ev)
     issues = finalize_issues(db, ev)
-    if issues or ev.run_status == "RUNNING":
+    # the exam itself must be ready; anything left on this sheet the teacher has looked at and accepts by finalizing
+    blocking = [i for i in issues if i["question"] == "Exam" or "Answer key" in i["reason"]]
+    graded = db.query(EvaluationItem).filter(EvaluationItem.evaluation_id == ev.id,
+                                             EvaluationItem.status != "PENDING").count()
+    if not graded:  # never graded: finalizing would give 0 for everything
+        blocking += issues or [{"question": "Evaluation", "reason": "Not graded yet"}]
+    if blocking or ev.run_status == "RUNNING":
         if ev.run_status == "RUNNING":
-            issues.insert(0, {"question": "Evaluation", "reason": "Evaluation is still running"})
+            blocking.insert(0, {"question": "Evaluation", "reason": "Evaluation is still running"})
         raise err(400, "EVALUATION_NOT_READY",
-                  f"Evaluation cannot be finalized. {len(issues)} issue(s) still need attention.", issues)
+                  f"Evaluation cannot be finalized. {len(blocking)} issue(s) still need attention.", blocking)
+    approve_clean_items(db, ev)
+    for it in db.query(EvaluationItem).filter_by(evaluation_id=ev.id):
+        if it.final_marks is None:
+            it.final_marks = 0.0  # no marks could be given (AI error, unmapped, not graded): 0, as the teacher accepted
+        it.status = "APPROVED"
     finalize(db, ev)
     audit(db, exam_id=ev.exam_id, teacher_id=t.id, entity_type="evaluation", entity_id=ev.id, action="evaluation_finalized",
-          new={"total": ev.total_marks, "max": ev.maximum_marks, "percentage": ev.percentage})
+          new={"total": ev.total_marks, "max": ev.maximum_marks, "percentage": ev.percentage,
+               "accepted_issues": [f"{i['question']}: {i['reason']}" for i in issues]})
     db.commit()
     return evaluation_view(ev)
 
@@ -470,6 +482,38 @@ def download_evaluation_report(ev_id: str, db: Session = Depends(get_db), t: Tea
         media_type="application/pdf",
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "private, no-cache",
+        },
+    )
+
+
+@router.get("/exams/{exam_id}/student-reports.zip")
+def download_student_reports(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    """Every finalized student's personal report for the exam, one PDF each, in one ZIP."""
+    import io
+    import re
+    import zipfile
+
+    exam = get_exam(db, t, exam_id)
+    evs = (db.query(Evaluation).filter_by(exam_id=exam.id, status="FINALIZED")
+           .order_by(Evaluation.created_at).all())
+    if not evs:
+        raise err(404, "NO_FINALIZED_REPORTS", "No student's evaluation is finalized yet.")
+    buf, used = io.BytesIO(), set()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for ev in evs:
+            pdf_bytes, filename = build_evaluation_pdf_report(db, t, ev.id)
+            name, n = filename, 2
+            while name in used:  # two students' reports must never overwrite each other
+                name = re.sub(r"(\.pdf)?$", f"_{n}.pdf", filename, count=1); n += 1
+            used.add(name)
+            zf.writestr(name, pdf_bytes)
+    safe = re.sub(r"[^A-Za-z0-9_-]+", "_", exam.name).strip("_") or "Exam"
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="StudentReports_{safe}.zip"',
             "Cache-Control": "private, no-cache",
         },
     )
@@ -610,7 +654,7 @@ def finalize_exam(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depe
     audit(db, exam_id=exam.id, teacher_id=t.id, entity_type="exam", entity_id=exam.id, action="exam_finalized")
     db.commit()
     reports = 0
-    if exam.files_purge_at is None:  # finalizing again must not restart the 24-hour clock
+    if exam.files_purge_at is None:  # finalizing again must not restart the one-week clock
         reports = save_reports_and_schedule(db, t, exam)
         db.commit()
     return {"status": exam.status, "reports_saved": reports, "files_purge_at": exam.files_purge_at.isoformat()}
@@ -618,7 +662,7 @@ def finalize_exam(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depe
 
 @router.post("/exams/{exam_id}/purge-files")
 def purge_files_now(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
-    """Delete a finalized exam's uploaded and generated files now instead of waiting for the 24-hour deadline."""
+    """Delete a finalized exam's uploaded and generated files now instead of waiting for the one-week deadline."""
     exam = get_exam(db, t, exam_id)
     if exam.status != "FINALIZED":
         raise err(409, "EXAM_NOT_FINALIZED", "Files can only be deleted after the exam is finalized.")

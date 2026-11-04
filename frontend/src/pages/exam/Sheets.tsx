@@ -364,6 +364,20 @@ export function AnswerSheets() {
       await refresh();
     }
   };
+  // the school types the right roll number (works on any sheet; a held mismatch counts as settled)
+  const [editing, setEditing] = useState<{ rowId: string; value: string } | null>(null);
+  const saveRoll = async (rowId: string, docId: string, roll: string) => {
+    setRemapping(rowId + "edit"); setRemapError(null);
+    try {
+      await api(`/answer-sheets/${docId}/roll-number`, { method: "POST", json: { roll_number: roll } });
+      setEditing(null);
+    } catch (err) {
+      setRemapError(err);
+    } finally {
+      setRemapping(null);
+      await refresh();
+    }
+  };
   // map the answers again with the current rules (no page is re-read), then grade what is not yet approved
   const remap = async (target: string) => {
     setRemapping(target); setRemapError(null); setRemapNote(null);
@@ -444,8 +458,30 @@ export function AnswerSheets() {
               {sheets.data.map((e) => (
                 <tr key={e.id} className="hover:bg-hover">
                   <td className="px-4 py-3">
-                    <p className="font-mono font-medium text-ink">{e.student.roll_number}</p>
-                    {e.document?.roll_check?.status === "MISMATCH" && (
+                    {editing?.rowId === e.id && e.document ? (
+                      <form className="flex items-center gap-1.5"
+                            onSubmit={(ev) => { ev.preventDefault(); if (editing.value) saveRoll(e.id, e.document!.id, editing.value); }}>
+                        <input autoFocus aria-label="Roll number" value={editing.value}
+                               className="w-28 rounded-md border border-line bg-surface px-2 py-1 font-mono text-sm text-ink"
+                               onChange={(ev) => setEditing({ rowId: e.id, value: ev.target.value.toUpperCase().replace(/[^A-Z0-9/-]/g, "").slice(0, 20) })}
+                               onKeyDown={(ev) => { if (ev.key === "Escape") setEditing(null); }} />
+                        <Button small variant="primary" type="submit" busy={remapping === e.id + "edit"}
+                                disabled={!editing.value || !!remapping}>Save</Button>
+                        <Button small variant="ghost" type="button" onClick={() => setEditing(null)}>Cancel</Button>
+                      </form>
+                    ) : (
+                      <div className="flex items-center gap-1.5">
+                        <p className="font-mono font-medium text-ink">{e.student.roll_number}</p>
+                        {e.document && (
+                          <button type="button" className="text-xs text-mute underline hover:text-ink"
+                                  title="Correct the roll number for this sheet"
+                                  onClick={() => setEditing({ rowId: e.id, value: e.student.roll_number })}>
+                            Edit
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    {e.document?.roll_check?.status === "MISMATCH" && editing?.rowId !== e.id && (
                       <div className="mt-1.5 max-w-xs rounded-md border border-warn/40 bg-warn-soft/40 p-2 text-xs">
                         <p className="font-semibold text-ink">
                           Roll number check: typed <span className="font-mono">{e.document.roll_check.typed}</span>, the
@@ -460,6 +496,10 @@ export function AnswerSheets() {
                           <Button small variant="soft" busy={remapping === e.id + "written"} disabled={!!remapping}
                                   onClick={() => settleRoll(e.id, e.document!.id, "written")}>
                             Use {e.document.roll_check.written}
+                          </Button>
+                          <Button small variant="ghost" disabled={!!remapping}
+                                  onClick={() => setEditing({ rowId: e.id, value: "" })}>
+                            Other…
                           </Button>
                         </div>
                       </div>
@@ -685,6 +725,19 @@ export function ExamResults() {
     }
   };
 
+  const [downloadingStudents, setDownloadingStudents] = useState(false);
+  const downloadStudentReports = async () => {
+    setDownloadingStudents(true);
+    setErr(null);
+    try {
+      await downloadFile(`/exams/${exam.id}/student-reports.zip`, `StudentReports_${exam.name.replace(/[^a-zA-Z0-9_-]/g, "_")}.zip`);
+    } catch (e) {
+      setErr(e);
+    } finally {
+      setDownloadingStudents(false);
+    }
+  };
+
   if (loading) return <Loading />;
   const done = (data ?? []).filter((e) => e.status === "FINALIZED");
   const allFinalized = data && data.length > 0 && done.length === data.length;
@@ -715,6 +768,15 @@ export function ExamResults() {
                   title={done.length === 0 ? "Finalize at least one student first" : "Download the exam-wise class report (PDF)"}
                 >
                   Download Exam Report (PDF)
+                </Button>
+                <Button
+                  variant="soft"
+                  busy={downloadingStudents}
+                  disabled={done.length === 0 || downloading}
+                  onClick={downloadStudentReports}
+                  title={done.length === 0 ? "Finalize at least one student first" : "Download every finalized student's personal report (one PDF each, in a ZIP)"}
+                >
+                  Download Student Reports (ZIP)
                 </Button>
                 {exam.status !== "FINALIZED" && (
                   <Button
@@ -813,7 +875,7 @@ export function ExamResults() {
                 This locks all evaluations for this exam. No further student answer sheets can be added.
               </p>
               <p className="text-xs text-mute">
-                Each student's official PDF report is saved. <b className="text-ink">24 hours later</b>, the uploaded files
+                Each student's official PDF report is saved. <b className="text-ink">One week later</b>, the uploaded files
                 (question paper, answer key, answer sheets), page images and raw AI output are permanently deleted from this
                 computer. Marks, results and the marksheet stay available.
               </p>

@@ -87,6 +87,10 @@ def test_a_typed_roll_that_differs_from_the_sheet_is_held_until_the_school_decid
     assert doc.identity["roll_check"] == {"typed": "41", "written": "42", "status": "MISMATCH"}
     assert "typed 41, the sheet says 42" in doc.stage
     assert doc.id not in graded                                     # not graded until the school says which
+    held = j(client.get(f"/api/exams/{eid}/review-summary", headers=auth), 200)["needs_review"]
+    reasons = next(r["reasons"] for r in held if r["student"]["roll_number"] == "41")
+    assert any(r["question"] == "Roll number" for r in reasons)     # the cause, not a "Not evaluated yet" per question
+    assert not any(r["reason"] == "Not evaluated yet" for r in reasons)
     j(client.post(f"/api/answer-sheets/{doc.id}/roll-check", headers=auth, json={"use": "written"}), 202)
     assert _roll(doc.id) == "42" and doc.id in graded               # moved to the written roll, then graded
     assert _sheet(eid, doc.id).identity["roll_check"]["status"] == "CONFIRMED"
@@ -100,6 +104,26 @@ def test_keeping_the_typed_roll_grades_the_sheet(client, auth, monkeypatch):
     assert sheet["id"] not in graded
     j(client.post(f"/api/answer-sheets/{sheet['id']}/roll-check", headers=auth, json={"use": "typed"}), 202)
     assert _roll(sheet["id"]) == "43" and sheet["id"] in graded
+
+
+def test_the_school_can_type_any_roll_number_for_a_sheet(client, auth, monkeypatch):
+    graded = _grading_calls(monkeypatch)
+    up, cls, eid = _uploader(client, auth)
+    held = j(_start(up, "46", {"roll_number": "64"}), 201)          # both the typed and the read roll are wrong
+    j(up.post(f"/api/uploader/sheets/{held['id']}/finish", headers=BROWSER), 202)
+    assert held["id"] not in graded
+    j(client.post(f"/api/answer-sheets/{held['id']}/roll-number", headers=auth, json={"roll_number": " 47a "}), 200)
+    assert _roll(held["id"]) == "47A" and held["id"] in graded      # settled with the typed-in roll, then graded
+    assert _sheet(eid, held["id"]).identity["roll_check"]["status"] == "CONFIRMED"
+    graded.clear()
+    j(client.post(f"/api/answer-sheets/{held['id']}/roll-number", headers=auth, json={"roll_number": "48"}), 200)
+    assert _roll(held["id"]) == "48" and not graded                 # a later fix only moves the sheet
+    other = j(_start(up, "49", {}), 201)
+    j(up.post(f"/api/uploader/sheets/{other['id']}/finish", headers=BROWSER), 202)
+    assert client.post(f"/api/answer-sheets/{other['id']}/roll-number", headers=auth,
+                       json={"roll_number": "48"}).status_code == 409  # roll 48 already has a sheet
+    assert client.post(f"/api/answer-sheets/{other['id']}/roll-number", headers=auth,
+                       json={"roll_number": "4 8!"}).status_code == 400
 
 
 def test_a_matching_or_missing_written_roll_is_graded_at_once(client, auth, monkeypatch):

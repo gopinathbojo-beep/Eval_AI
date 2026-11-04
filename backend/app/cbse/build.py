@@ -2,7 +2,7 @@
 
 import re
 from collections import defaultdict
-from .extraction import merge_nodes, tree_total
+from .extraction import choice_signature, merge_nodes, settle_marks, tree_issues, tree_total
 from ..models import ExamQuestion, AnswerKey, StudentAnswer, EvaluationItem
 from ..services.state import set_state
 from ..documents import cropping
@@ -66,8 +66,12 @@ _TABLE_HEAD = re.compile(r"^\s*(Q\.?\s*No\.?.*?Marks|This section comprises\b.*)
 # "Q. No. ANS HINTS/SOLUTION Marks" can share a line with the first answer
 _TABLE_HEAD_INLINE = re.compile(r"Q\.?\s*No\.?\s+(?:Question|ANS\b[^\n]*?)\s+Marks\s*", re.I)
 _SECTION_LINE = re.compile(r"^\s*section\s*\W{0,3}\s*[A-E]\b(?:\s*\[[^\]]*\])?[^\n]*?(?=\d+\s*[.(]|$)", re.I | re.M)
-_PAPER_HEADER = re.compile(r"^[^\n]*\b(?:marking\s+scheme|sample\s+question\s+paper|subject\s*:|class\s*-\s*x)\b[^\n]*$", re.I | re.M)
-_FOOTER = re.compile(r"^.*\bPage\s+\d+\s+of\s+\d+\s*$", re.I | re.M)
+# a header is a short line; a page read as one run-on line keeps its question text
+_PAPER_HEADER = re.compile(r"^[^\n]{0,120}?\b(?:marking\s+scheme|sample\s+question\s+paper|subject\s*:|class\s*-\s*x)\b[^\n]{0,120}$", re.I | re.M)
+# the footer itself ("Note: ... Page 8 of 13"): on a run-on line it is cut off and the text before it stays
+_FOOTER = re.compile(r"(?:^|[ \t]+)(?:note:[^\n]{0,120}?)?\bPage\s+\d+\s+of\s+\d+\s*$", re.I | re.M)
+# "1^st", "1/4^th": a superscript ordinal, printed as 1st
+_ORDINAL = re.compile(r"(\d)\s*\^\s*\{?(st|nd|rd|th)\}?\b", re.I)
 # CBSE sample papers repeat this note at the foot of every page
 _PAPER_NOTE = re.compile(r"^\W*there is no change in the question paper design[^\n]*(?:\n[^\n]*\d{4}-\d{2}\.?\s*)?$", re.I | re.M)
 # "Question No. 31 to 33 are long answer type questions carrying 5 marks each." is the section's instruction
@@ -128,6 +132,7 @@ def clean_text(text):
     text = _PAPER_NOTE.sub("", text)
     text = _SECTION_RULE.sub("", text)
     text = _drop_axis_labels(text)
+    text = _ORDINAL.sub(r"\1\2", text)
     text = break_lines(text)
     out, run, dropped = [], [], False
     for line in text.split("\n") + [None]:
@@ -295,6 +300,25 @@ def actionable(notes):
             and sum(c.isalpha() for c in x) >= 12 and not _CROP_NOTE.search(x)]
 
 
+_ROMAN_CLASS = {"VI": 6, "VII": 7, "VIII": 8, "IX": 9, "X": 10, "XI": 11, "XII": 12}
+
+
+def _metadata_value(name, value):
+    """Class 'XII' and 12 are the same class; a code printed as 55 is 055."""
+    text = str(value).strip().upper().removeprefix("CLASS").strip()
+    if name == "class_level":
+        return _ROMAN_CLASS.get(text, int(text) if text.isdigit() else value)
+    if name == "subject_code" and text.isdigit():
+        return text.zfill(3)
+    return value
+
+
+def _same_metadata(old, new):
+    """'Accountancy' and 'ACCOUNTANCY 055' name one subject."""
+    a, b = (re.sub(r"[^a-z]", "", str(x).casefold()) for x in (old, new))
+    return str(old) == str(new) or (a and b and (a in b or b in a))
+
+
 def collect(doc, results, kind="question-paper"):
     from .layout import ground_visuals
 
@@ -311,11 +335,14 @@ def collect(doc, results, kind="question-paper"):
         result.fragments = [f for f in result.fragments
                             if (f.text and not _TITLE_ONLY.match(f.text)) or (f.tree and f.tree.children)]
     ground_visuals(doc, results, answers=kind == "answer-key")
+    from .layout import tag_branches
+    tag_branches(doc, results)  # after grounding: a re-grounded piece takes the option its printed row sits under
     for _, result in results:  # rows recovered from the PDF text layer need the same clean-up
         for fragment in result.fragments:
             fragment.text = clean_text(fragment.text or "")
             # "23 The values of…": the printed number is shown by the app already
-            fragment.text = re.sub(rf"^\s*{fragment.root}(?=\s+[A-Z(])\s*", "", fragment.text, count=1)
+            # "32. Under which …" too; "17 A." keeps its choice letter
+            fragment.text = re.sub(rf"^\s*{fragment.root}\s*[.)]?(?=\s+[A-Z(])\s*", "", fragment.text, count=1)
             # notes about one half of a page the app split to re-read it ("cut off at the bottom of the cropped image")
             fragment.issues = [x for x in fragment.issues if not _CROP_NOTE.search(x)]
     if kind == "answer-key":
@@ -333,6 +360,9 @@ def collect(doc, results, kind="question-paper"):
         for name, value in result.metadata.items():
             if value is None:
                 continue
+            value = _metadata_value(name, value)
+            if name in metadata and _same_metadata(metadata[name], value):
+                continue
             if name in metadata and str(metadata[name]) != str(value):
                 issues.append(f"Conflicting {name} on page {page['page_number']}")
             else:
@@ -340,7 +370,9 @@ def collect(doc, results, kind="question-paper"):
         instructions += [x for x in result.instructions if x not in instructions]
         issues += [f"Page {page['page_number']}: {x}" for x in result.issues]
         for fragment in result.fragments:
-            if roots[fragment.root] and not fragment.continues:
+            # the same number under the other Part B option is that option's question, not a repeated label
+            if (roots[fragment.root] and not fragment.continues
+                    and fragment.branch in {f.branch for _, f in roots[fragment.root]}):
                 fragment.issues.append(_ALTERNATIVE)
             if fragment.tree:
 
@@ -364,7 +396,8 @@ def collect(doc, results, kind="question-paper"):
 
 
 # an internal choice starts with its (A)/(B) label; a bare OR also sits between case-study parts, so it is not evidence
-_CHOICE_MARK = re.compile(r"^\s*(?:Q?\s*\d{1,3}\s*\.?\s*)?\(\s*[AB]\s*\)", re.I)
+# "(A)" or "25 A."; uppercase only: "(a) Long term Borrowings" opening a page is a part, not an alternative
+_CHOICE_MARK = re.compile(r"^\s*(?:(?:[Qq]?\s*\d{1,3}\s*\.?\s*)?\(\s*[AB]\s*\)|\d{1,3}\s*[AB]\s*\.)")
 
 
 def _alternatives(fragments, printed_choice=False):
@@ -388,7 +421,8 @@ def _alternatives(fragments, printed_choice=False):
         return None
     # each copy carries the same whole-question marks (a visually impaired version may print none);
     # unmarked pieces are parts of one question
-    marks = {f.marks for f, vi in zip(heads, accessible) if not (vi and f.marks is None)}
+    # an alternative the PDF prints under the same number may show no marks of its own ("OR 25 B." beside one marks cell)
+    marks = {f.marks for f, vi in zip(heads, accessible) if not ((vi or printed_choice) and f.marks is None)}
     if len(marks) != 1 or None in marks:
         return None
     root = heads[0].tree.id
@@ -429,6 +463,8 @@ def _alternatives(fragments, printed_choice=False):
     children = []
     for index, (child, vi) in enumerate(versions):
         child["id"] = f"{root}-alt{index + 1}"
+        if child.get("marks") is None:  # every alternative is worth the question's marks
+            child["marks"] = next(iter(marks), None)
         child["label"] = child.get("label") or f"Alternative {index + 1}"
         if any(vi for _, vi in versions):
             child["audience"] = "accessible" if vi else "standard"
@@ -445,6 +481,10 @@ def _is_vi(node):
     return node.get("audience") == "accessible" or _ACCESSIBLE.match(node.get("text") or "") is not None
 
 
+_OPTION_LABEL = re.compile(r"^\s*\(?\s*[A-Da-d]\s*\)?\s*\.?\s*$")
+_CHOICE_LABEL = re.compile(r"^\s*(?:Q?\s*\d{1,3})?\s*\(?\s*([AB])\s*\)?\s*\.?\s*$", re.I)
+
+
 def shape_choices(node):
     """A visually impaired version read as one more required part is an alternative to the rest, and a
     one-of choice nested directly in another one-of choice is the same choice. Each version is totalled for its own audience."""
@@ -452,6 +492,20 @@ def shape_choices(node):
         return node
     node["children"] = [shape_choices(child) for child in node.get("children") or []]
     children = node["children"]
+    if (node.get("kind") == "all" and len(children) >= 2 and all(
+            _OPTION_LABEL.match(c.get("label") or "") and not c.get("marks") and not c.get("children") for c in children)):
+        # MCQ options (A)-(D) read as parts: they are one answer worth the question's marks
+        options = "\n".join(f"{c.get('label')} {c.get('text') or ''}".strip() for c in children)
+        node.update(kind="point", response_type="mcq", children=[],
+                    text=((node.get("text") or "") + "\n" + options).strip())
+        return node
+    if node.get("kind") == "all" and len(children) == 2:
+        labels = [_CHOICE_LABEL.match(c.get("label") or "") for c in children]
+        marks = {c.get("marks") for c in children}
+        if all(labels) and {m[1].upper() for m in labels} == {"A", "B"} and len(marks) == 1 and None not in marks \
+                and node.get("marks") in (None, *marks):
+            # "31 A ... OR ... 31 B" read as two required parts, each carrying the question's marks: one of them is answered
+            node.update(kind="choose", limit=1, choice_type="question", marks=next(iter(marks)))
     if node.get("kind") == "all" and len(children) > 1:
         vi = [c for c in children if _is_vi(c)]
         rest = [c for c in children if not _is_vi(c) and c.get("kind") != "context"]
@@ -484,14 +538,55 @@ _PAGE_ONLY_NOTE = re.compile(r"(?:next|previous|following|preceding) page|(?:on|
                              r"may continue|continues? (?:on|from)|cut off", re.I)
 
 
+BRANCH_LABELS = {"financial": "Analysis of Financial Statements", "computerised": "Computerised Accounting"}
+
+
+def _branch_versions(fragments, options, printed_choice):
+    """Accountancy Part B: one printed number per option (27-34). Each option is built as its own question and the
+    two become alternatives tagged with their option, so the student's answered option is the one marked."""
+    groups = {}
+    for page, fragment in fragments:
+        groups.setdefault(fragment.branch, []).append((page, fragment))
+    if len(groups) < 2 or None in groups:
+        return None
+    root = fragments[0][1].root
+    # the number is printed twice because of the two options; a choice inside one option shows its own (A)/(B)
+    parts = {name: combined(group, options) for name, group in groups.items()}
+    marks = max((part[3] for part in parts.values() if part[3]), default=None)
+    children, texts, problems = [], [], []
+    for name, (text, tree, issues, part_marks, _section) in parts.items():
+        if tree is None:  # a row read from the PDF text only: one point worth the question's printed marks
+            tree = {"id": f"q{root}", "kind": "point", "label": "", "text": text, "marks": part_marks or marks,
+                    "limit": None, "choice_type": "question", "audience": None, "response_type": "open",
+                    "deductions": [], "children": []}
+            issues = [x for x in issues if x != _ONE_ROOT]
+        tree = dict(tree, id=f"q{root}-{name}", label=BRANCH_LABELS[name], audience=name)
+        if tree.get("marks") is None:
+            tree["marks"] = part_marks or marks
+        children.append(tree)
+        texts.append(f"[Part B - {BRANCH_LABELS[name]}]\n{text}")
+        problems += issues
+    tree = {"id": f"q{root}", "kind": "choose", "label": "", "text": "", "marks": marks, "limit": 1,
+            "choice_type": "question", "audience": None, "response_type": "open", "deductions": [],
+            "children": children}
+    sections = {part[4] for part in parts.values() if part[4]}
+    return "\nOR\n".join(texts), tree, problems, marks, next(iter(sorted(sections)), None)
+
+
+_ONE_ROOT = "Review the whole-question scoring tree; one root is required."
+
+
 def combined(fragments, options=None, printed_choice=False):
+    branched = _branch_versions(fragments, options, printed_choice)
+    if branched:
+        return branched
     alternative = _alternatives(fragments, printed_choice)
     # a continuation's root marks are a part's marks (or a guess where no marks are printed), not the question's
     trees, problems = ([alternative], []) if alternative else merge_nodes(
         [f.tree.model_copy(update={"marks": None}) if f.continues and f.tree is not None else f.tree
          for _, f in fragments])
     if len(trees) != 1:
-        problems.append("Review the whole-question scoring tree; one root is required.")
+        problems.append(_ONE_ROOT)
     tree = shape_choices(trees[0]) if len(trees) == 1 else None
     # "OR" only between printed alternatives; a page-break continuation of the same alternative joins with a newline
     text, seen = "", set()
@@ -543,6 +638,7 @@ def build_questions(db, doc, exam, results):
             fragments, abs_path(doc.original_file).parent, f"q{root}"
         )
         text, tree, issues, marks, section = combined(fragments, exam.standard_options, root in choices)
+        tree = settle_marks(tree, marks)
         db.add(
             ExamQuestion(
                 exam_id=exam.id,
@@ -595,6 +691,22 @@ def use_question_marks(fragments, question):
             fragment.tree.marks = float(question.max_marks)
 
 
+def scheme_tree(tree, question, options):
+    """The scheme's scoring tree, fitted to the question's printed marks. When it still does not fit the paper
+    (another split, or OR alternatives read as parts) the question's own tree scores it: the scheme text is kept
+    as printed and the grader reads it against that tree."""
+    import copy
+
+    q_tree = (question.structure or {}).get("tree") if question is not None else None
+    tree = settle_marks(tree, question.max_marks if question is not None else None)
+    if not q_tree or tree is None:
+        return tree or (copy.deepcopy(q_tree) if q_tree else None)
+    fits = (not tree_issues(tree, options)
+            and abs(tree_total(tree, options) - (question.max_marks or 0)) < 1e-7
+            and sorted(choice_signature(tree, options)) == sorted(choice_signature(q_tree, options)))
+    return tree if fits else copy.deepcopy(q_tree)
+
+
 def build_keys(db, doc, exam, results):
     db.query(AnswerKey).filter_by(exam_id=exam.id).update({AnswerKey.is_active: False})
     db.query(AnswerKey).filter_by(document_id=doc.id).delete()
@@ -612,6 +724,9 @@ def build_keys(db, doc, exam, results):
         q = qs.get(str(root))
         use_question_marks(fragments, q)
         text, tree, issues, marks, _ = combined(fragments, exam.standard_options, root in choices)
+        tree = scheme_tree(tree, q, exam.standard_options or {})
+        # a scheme's section is the question paper's; page-by-page section guesses are not the teacher's concern
+        issues = [x for x in issues if x != "Conflicting section labels across pages"]
         criteria = [x for _, f in fragments for x in f.criteria]
         db.add(
             AnswerKey(

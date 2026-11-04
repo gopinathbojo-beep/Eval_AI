@@ -792,15 +792,6 @@ export default function Questions() {
                                         alt={`${visual.kind} for question ${q.display_number}`}
                                         className="max-h-64 rounded object-contain"
                                       />
-                                      <figcaption className="mt-1 text-xs text-mute">
-                                        <b className="capitalize text-ink">
-                                          {visual.kind}:
-                                        </b>{" "}
-                                        {visual.description}
-                                        {visual.labels.length
-                                          ? ` · Labels: ${visual.labels.join(", ")}`
-                                          : ""}
-                                      </figcaption>
                                     </figure>
                                   ))}
                                 </div>
