@@ -1,4 +1,5 @@
 from __future__ import annotations
+import json
 from sqlalchemy.orm import selectinload
 from .models import (
     AnswerKey,
@@ -163,6 +164,15 @@ def answer_view(a: StudentAnswer) -> dict:
 
 
 def item_view(i: EvaluationItem) -> dict:
+    evidence, checked = [], False
+    try:
+        raw = json.loads(getattr(i, "raw_response", None) or "{}")
+        result = raw.get("evaluation", raw) if isinstance(raw, dict) else {}
+        checked = isinstance(raw, dict) and bool(raw.get("policy_version") and raw.get("audit"))
+        evidence = [{k: award[k] for k in ("id", "marks", "allocation", "counted", "credit_type", "scheme_quote", "evidence", "evidence_quotes") if k in award}
+                    for award in result.get("criterion_awards", []) if isinstance(award, dict)]
+    except (ValueError, TypeError, AttributeError):
+        pass
     return {
         "id": i.id,
         "exam_question_id": i.exam_question_id,
@@ -174,6 +184,8 @@ def item_view(i: EvaluationItem) -> dict:
         "missing_points": i.missing_points,
         "ai_feedback": i.ai_feedback,
         "ai_confidence": i.ai_confidence,
+        "criterion_awards": evidence,
+        "evidence_checked": checked,
         "error": i.error,
         "final_marks": i.final_marks,
         "teacher_overridden": i.teacher_overridden,

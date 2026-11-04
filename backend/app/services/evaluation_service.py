@@ -258,8 +258,10 @@ def _reset_item(item: EvaluationItem) -> None:
 _DRAWING = re.compile(r"\b(?:draw|drawn|diagram|sketch|figure|graph|plot|label(?:l?ed)?|flow\s?chart|circuit|"
                       r"ray\s+diagram|structure)\b|\[diagram", re.I)
 DRAWING_NOTE = ("\nThe scanned page(s) the student wrote this answer on are attached. Use them only to check drawings, "
-                "diagrams, graphs, structures and their labels that the transcription may describe incompletely; "
-                "the transcription stays the student's answer for everything else.")
+                "diagrams, graphs, structures, their labels, and cancellation/replacement of transcribed attempts; "
+                "the transcription stays the student's answer for everything else. Do not attribute writing elsewhere "
+                "on the page to this question. Every positive criterion award still requires an exact quote from the "
+                "transcription; if a diagram is not described there, request review instead of inventing a quote.")
 
 # TEMPORARY (2026-11-04): liberal marking on the user's request. Set False to go back to the normal rules.
 LIBERAL_GRADING = True
@@ -274,11 +276,12 @@ LIBERAL_RULES = """LIBERAL MARKING (overrides any stricter rule above):
 5. Never exceed the maximum marks; still note what was missing in feedback for the teacher."""
 
 
-def drawing_image(db: Session, ev: Evaluation, q: ExamQuestion, key_text: str, answers: list, text: str):
-    """The student's page(s) for a question that asks for or contains a drawing, as one image for the grader.
-
-    Only such questions get an image (it costs more); others are graded on the transcription alone."""
-    if not (_DRAWING.search(q.question_text or "") or _DRAWING.search(key_text or "") or "[Diagram" in (text or "")):
+def drawing_image(db: Session, ev: Evaluation, q: ExamQuestion, key_text: str, answers: list, text: str, force=False):
+    """Source pages for drawings or ambiguous cancellation/replacement, as one grading image."""
+    correction = re.search(r"~~|crossed[- ]out|struck[- ]out|cancelled|corrected answer", text or "", re.I)
+    options = set(re.findall(r"(?:^|[\s,;])\(?([A-D])\)?[.)]\s*", text or "", re.M))
+    multiple_mcq = (getattr(q, "question_type", None) or "").lower() == "mcq" and len(options) > 1
+    if not (force or correction or multiple_mcq or _DRAWING.search(q.question_text or "") or _DRAWING.search(key_text or "") or "[Diagram" in (text or "")):
         return None
     doc = db.get(AnswerSheetDocument, ev.answer_sheet_id)
     numbers = sorted({a.page_number for a in answers if a.page_number})[:3]
@@ -296,7 +299,8 @@ def drawing_image(db: Session, ev: Evaluation, q: ExamQuestion, key_text: str, a
     for im in images:
         sheet.paste(im, (0, y))
         y += im.height
-    out = abs_path(doc.original_file).parent / "grading" / f"{q.id}.jpg"
+    from uuid import uuid4
+    out = abs_path(doc.original_file).parent / "grading" / f"{q.id}-{uuid4().hex}.jpg"
     out.parent.mkdir(parents=True, exist_ok=True)
     sheet.save(out, "JPEG", quality=80)
     return out
@@ -378,17 +382,52 @@ def evaluate_item(db: Session, ev: Evaluation, q: ExamQuestion, item: Evaluation
                     call = chat_structured(system, prompt, EvaluationResult, model=model)
                 item.raw_response = call.raw
                 if getattr(exam_record,"standard_profile_id",None):
-                    res = grading.validate_result(call.parsed,q,key,exam_record.standard_options or {},text)
+                    try:
+                        res = grading.validate_result(call.parsed,q,key,exam_record.standard_options or {},text,require_support=True)
+                    except EvaluationValidationError as validation_error:
+                        retry_prompt = (prompt + "\nYour previous result failed validation: " + str(validation_error)
+                                        + ". Reassess every criterion and quote only exact text from the student answer. "
+                                          "Return a complete corrected result; do not invent evidence.")
+                        call = chat_structured(system, retry_prompt + (DRAWING_NOTE if picture else ""), EvaluationResult,
+                                               image_path=picture, model=model) if picture else chat_structured(
+                                                   system, retry_prompt, EvaluationResult, model=model)
+                        item.raw_response = call.raw
+                        res = grading.validate_result(call.parsed,q,key,exam_record.standard_options or {},text,require_support=True)
+                    proposal_raw = call.raw
+                    proposal_data = call.parsed.model_dump()
+                    evidence_prompt = grading.audit_prompt(prompt, res)
+                    audit_call = chat_structured(grading.AUDIT_SYSTEM, evidence_prompt + (DRAWING_NOTE if picture else ""),
+                                                 EvaluationResult, image_path=picture, model=model) if picture else chat_structured(
+                                                     grading.AUDIT_SYSTEM, evidence_prompt, EvaluationResult, model=model)
+                    try:
+                        res = grading.validate_result(audit_call.parsed,q,key,exam_record.standard_options or {},text,require_support=True)
+                    except EvaluationValidationError as error:
+                        audit_call = chat_structured(grading.AUDIT_SYSTEM,
+                            evidence_prompt + "\nCorrect this validation failure: " + str(error) + (DRAWING_NOTE if picture else ""),
+                            EvaluationResult, image_path=picture, model=model) if picture else chat_structured(
+                                grading.AUDIT_SYSTEM, evidence_prompt + "\nCorrect this validation failure: " + str(error),
+                                EvaluationResult, model=model)
+                        res = grading.validate_result(audit_call.parsed,q,key,exam_record.standard_options or {},text,require_support=True)
+                    item.raw_response = json.dumps({"policy_version": grading.POLICY_VERSION,
+                        "proposal": proposal_data, "audit": audit_call.parsed.model_dump(),
+                        "proposal_raw": proposal_raw, "audit_raw": audit_call.raw,
+                        "evaluation": res.model_dump()}, ensure_ascii=False)
                 else:
                     res = validate_evaluation(call.parsed, q.max_marks)  # type: ignore[arg-type]
                     res = fmt.check_deductions(res, text, key.answer_text, q.max_marks)
-                graded.append((title, res, call.raw))
-            title, res, _ = max(graded, key=lambda g: g[1].marks_awarded)  # the first of equal best
+                graded.append((title, res, item.raw_response if getattr(exam_record,"standard_profile_id",None) else call.raw))
+            title, res, selected_raw = max(graded, key=lambda g: g[1].marks_awarded)  # the first of equal best
+            item.raw_response = selected_raw
             item.ai_marks, item.ai_decision = res.marks_awarded, res.decision
             item.matched_points, item.missing_points = res.matched_points, res.missing_points
             item.ai_feedback, item.ai_confidence = res.feedback, res.confidence
             if len(graded) > 1:
-                item.raw_response = "\n\n".join(f"--- {t} ---\n{raw}" for t, _, raw in graded)
+                if getattr(exam_record,"standard_profile_id",None):
+                    saved = json.loads(selected_raw)
+                    saved["attempts"] = [{"label": t, "marks": r.marks_awarded, "raw": raw} for t, r, raw in graded]
+                    item.raw_response = json.dumps(saved, ensure_ascii=False)
+                else:
+                    item.raw_response = "\n\n".join(f"--- {t} ---\n{raw}" for t, _, raw in graded)
                 scores = "; ".join(f"{t}: {r.marks_awarded:g}/{q.max_marks:g}" for t, r, _ in graded)
                 item.ai_feedback = (f"Asked for one topic; {len(graded)} were answered. Each was graded and the best "
                                     f"counts: {title}. Scores: {scores}.\n{res.feedback or ''}").strip()

@@ -135,10 +135,10 @@ def test_one_mark_answer_with_explanation_stays_on_its_question():
     assert not _chooses_option(q, "2. Chromium has more unpaired electrons than titanium ...")
 
 
-def test_half_mark_steps_and_unnumbered_continuation():
+def test_scheme_mark_precision_and_unnumbered_continuation():
     from app.cbse.grading import _to_scheme_step
     from app.services.mapping_service import _continues
-    assert [_to_scheme_step(v, 1) for v in (0.8, 0.3, 0.2, 1)] == [1, 0.5, 0, 1]
+    assert [_to_scheme_step(v, 1) for v in (0.25, 0.5, 0.75, 1)] == [0.25, 0.5, 0.75, 1]
     before = SimpleNamespace(question_type="", max_marks=2)
     prev = SimpleNamespace(page_number=10, answer_text="17(A) 1. 2MnO4- + ...")
     assert _continues(prev, SimpleNamespace(page_number=10, answer_text="2. Chromium has more unpaired"), before)
@@ -156,6 +156,7 @@ def test_explanation_stays_with_the_numbered_answer_above_it():
                                mapping_note=None, mapping_candidates=[])
     first = answer(1, "6", "6", "6. (i) Second order (ii) First order")
     second = answer(2, "11", "11", "The reaction will depend on reactants, called pseudounimolecular reactions")
+    second.raw_question_number = None
     later = answer(3, "11", "11", "B. 32 min")
     _repair_misread_labels([first, second, later], [q6, q11])
     assert second.exam_question_id == "6" and second.status == "MAPPED"

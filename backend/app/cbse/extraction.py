@@ -121,10 +121,22 @@ class Page(BaseModel):
                     item = {k: v for k, v in item.items() if k != "fragments"}
                 flat.append(item)
             # page furniture the model files as a fragment ("root": "Footer", a stray string): not a question
-            flat = [item for item in flat if isinstance(item, Fragment) or isinstance(item, dict) and (
-                isinstance(item.get("root"), int) or str(item.get("root", "")).strip().isdigit())]
+            # (a stray string is left in: it may be real text, so validation rejects the page and it is read again)
+            flat = [item for item in flat if not (isinstance(item, dict) and "root" in item
+                    and not isinstance(item.get("root"), int) and not str(item.get("root")).strip().isdigit())]
             data = {**data, "fragments": flat}
         return data
+
+    @field_validator("fragments", mode="before")
+    @classmethod
+    def misplaced_diagnostic_placeholders(cls, value):
+        # Some providers append a schema-explanation placeholder as an array
+        # item after valid fragments. It is neither source content nor a row.
+        # Unknown strings still fail validation rather than silently losing text.
+        if isinstance(value, list) and any(isinstance(item, dict) for item in value):
+            return [item for item in value if not (
+                isinstance(item, str) and item.strip().lower().startswith("issues_found_"))]
+        return value
 
 
 SYSTEM = """You read uploaded CBSE examination documents. Return JSON only, based on visible source evidence.
