@@ -369,6 +369,30 @@ def _alternatives(fragments, printed_choice=False):
                          for c in child["children"]]
         else:
             versions.append((child, accessible[index]))
+    # a paper prints its visually impaired versions together under one heading, after the standard ones:
+    # "For Visually Impaired: Q34 (A) ... OR Q34 (B) ..." - every version after the heading is for that audience
+    seen_vi = False
+    for index, (child, vi) in enumerate(versions):
+        seen_vi = seen_vi or vi
+        versions[index] = (child, seen_vi)
+    standard = [c for c, vi in versions if not vi]
+    accessible_versions = [c for c, vi in versions if vi]
+    if len(standard) > 1 and len(accessible_versions) > 1:
+        # each audience has its own internal choice: one version per audience, each a one-of-its-alternatives choice
+        groups = []
+        for key, audience, members in (("std", "standard", standard), ("vi", "accessible", accessible_versions)):
+            for index, child in enumerate(members):
+                child["id"] = f"{root}-{key}-alt{index + 1}"
+                child["label"] = child.get("label") or f"Alternative {index + 1}"
+                child["audience"] = None
+            groups.append({"id": f"{root}-{key}", "kind": "choose", "label": "For Visually Impaired" if key == "vi" else "",
+                           "text": "", "marks": next(iter(marks), None), "limit": 1, "choice_type": "question",
+                           "audience": audience, "response_type": "open", "deductions": [], "children": members})
+        for _, fragment in fragments:
+            fragment.issues = [x for x in fragment.issues if x != _ALTERNATIVE]
+        return {"id": root, "kind": "choose", "label": "", "text": "", "marks": next(iter(marks), None),
+                "limit": 1, "choice_type": "question", "audience": None, "response_type": "open",
+                "deductions": [], "children": groups}
     children = []
     for index, (child, vi) in enumerate(versions):
         child["id"] = f"{root}-alt{index + 1}"
@@ -414,7 +438,8 @@ def shape_choices(node):
         flat = []
         for child in children:
             if (child.get("kind") == "choose" and child.get("limit") == 1
-                    and child.get("choice_type", "question") == "question"):
+                    and child.get("choice_type", "question") == "question"
+                    and not child.get("audience")):  # an audience's own choice (VI version with its OR) stays nested
                 flat += child.get("children") or []
             else:
                 flat.append(child)

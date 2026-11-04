@@ -13,6 +13,8 @@ from .extraction import Fragment, VisualEvidence
 log = logging.getLogger("adem.layout")
 _LABEL = re.compile(r"^(?:Q(?:uestion)?\.?\s*)?(\d{1,3})(?:[.)](?:\(?[A-Za-z]\)?)?|\([A-Za-z]\)[.]?|[A-D])$", re.I)  # "17A": choice A of 17
 _BARE = re.compile(r"\d{1,2}")
+# "Q23" alone: an internal choice prints its "(A)." on the next line (CBSE Mathematics 2026-27)
+_Q_ONLY = re.compile(r"^Q(?:uestion)?\.?\s*(\d{1,3})$", re.I)
 _VISUALLY_IMPAIRED = re.compile(r"^\W*for\s+visually\s+(?:impaired|challenged)", re.I)
 _TEXT_ROOT = re.compile(r"^\s*(?:Q(?:uestion)?\.?\s*)?(\d{1,3})(?=[.):\s])", re.I)
 
@@ -97,7 +99,7 @@ def _anchors(page):
     for word in page.get_text("words"):
         if skip and skip[0] <= word[1] < skip[1]:
             continue
-        match = _LABEL.fullmatch(word[4])
+        match = _LABEL.fullmatch(word[4]) or _Q_ONLY.fullmatch(word[4])
         if match and (word[4].lower().startswith("q") or word[0] < page.rect.width * .2):
             found.append((int(match[1]), float(word[1]), float(word[0])))
         elif (_BARE.fullmatch(word[4]) and word[7] == 0 and word[0] < page.rect.width * .22
