@@ -315,6 +315,20 @@ for _p in PROFILES:
             _s["internal_choices"] = {"B": 2, "C": 1, "E": 3}.get(_s["key"])
 
 
+# Board patterns where each student answers one of two printed branches: the exam must say which one it marks.
+BRANCH_OPTIONS = {
+    "055": {"key": "accountancy_option", "label": "Part B option",
+            "choices": [{"value": "financial", "label": "Analysis of Financial Statements"},
+                        {"value": "computerised", "label": "Computerised Accounting"}]},
+}
+
+
+def profile_options(profile_id: str | None) -> list[dict]:
+    """The choices a profile needs at exam creation (Create Exam shows one select per entry)."""
+    p = get_profile(profile_id)
+    return [BRANCH_OPTIONS[p["code"]]] if p and p["code"] in BRANCH_OPTIONS else []
+
+
 def get_profile(profile_id: str | None):
     return next((deepcopy(p) for p in PROFILES if p["id"] == profile_id), None)
 
@@ -368,16 +382,14 @@ def creation_data(body, school_class, subject):
             "CBSE_SUBJECT_MISMATCH",
             "The profile does not match the selected subject.",
         )
-    options = body.standard_options or {"accessibility": "standard"}
-    if options.get("accessibility") not in {"standard", "accessible"} or (
-        p["code"] == "055"
-        and options.get("accountancy_option") not in {"financial", "computerised"}
-    ):
-        raise err(
-            400,
-            "CBSE_OPTION_REQUIRED",
-            "Select the paper audience and, for Accountancy, the Part B option.",
-        )
+    options = {"accessibility": "standard", **(body.standard_options or {})}
+    if options.get("accessibility") not in {"standard", "accessible"}:
+        raise err(400, "CBSE_OPTION_REQUIRED", "Select the paper audience.")
+    branch = BRANCH_OPTIONS.get(p["code"])
+    if branch and options.get(branch["key"]) not in {c["value"] for c in branch["choices"]}:
+        raise err(400, "CBSE_OPTION_REQUIRED",
+                  f"Choose the {p['name']} {branch['label']}: "
+                  + " or ".join(c["label"] for c in branch["choices"]) + ".")
     if (
         (body.total_marks is not None and body.total_marks != p["total_marks"])
         or (

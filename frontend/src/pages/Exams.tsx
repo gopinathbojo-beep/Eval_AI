@@ -315,6 +315,11 @@ export function ExamNew() {
   const [error, setError] = useState<unknown>(null);
 
   useEffect(() => setSubjectKey(""), [grade]);
+  const subjectOptions = subjects.find((s) => s.key === subjectKey)?.options ?? [];
+  const [standardOptions, setStandardOptions] = useState<Record<string, string>>({});
+  // a new subject starts on each option's first choice (shown, so the school can change it)
+  useEffect(() => setStandardOptions(Object.fromEntries(subjectOptions.map((o) => [o.key, o.choices[0]?.value ?? ""]))),
+            [subjectKey, subjects.length]);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -325,7 +330,8 @@ export function ExamNew() {
     try {
       const exam = await api<Exam>("/exams/simple", {
         method: "POST",
-        json: { name: name.trim(), grade, section: section.trim(), subject_key: subjectKey },
+        json: { name: name.trim(), grade, section: section.trim(), subject_key: subjectKey,
+                standard_options: Object.keys(standardOptions).length ? standardOptions : null },
       });
       if (source === "generate") {
         // the paper and key are written from the textbooks, then read and reviewed like uploaded files
@@ -379,6 +385,16 @@ export function ExamNew() {
               </Select>
             )}
           </Field>
+          {subjectOptions.map((o) => (
+            <Field key={o.key} label={o.label} required hint="Which branch students answer">
+              {(id) => (
+                <Select id={id} value={standardOptions[o.key] ?? ""}
+                        onChange={(e) => setStandardOptions({ ...standardOptions, [o.key]: e.target.value })}>
+                  {o.choices.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+                </Select>
+              )}
+            </Field>
+          ))}
           <div className="space-y-2">
             <p className="text-[13px] font-semibold text-ink">Question paper and answer key</p>
             <div className="inline-flex rounded-full border border-slate-200 bg-slate-50 p-1" role="radiogroup">

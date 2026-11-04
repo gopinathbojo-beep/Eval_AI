@@ -474,6 +474,8 @@ export interface CatalogSubject {
   key: string;
   name: string;
   profiles: string[];
+  /** choices the subject's board pattern needs at creation, e.g. Accountancy's Part B option */
+  options?: { key: string; label: string; choices: { value: string; label: string }[] }[];
 }
 
 export interface UploaderCode {
