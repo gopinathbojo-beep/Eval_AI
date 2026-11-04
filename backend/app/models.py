@@ -433,3 +433,23 @@ class ReferenceChunk(Base):
     embedding: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
     embedding_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
     __table_args__ = (Index("ix_reference_chunks_scope", "standard", "subject", "kind"),)
+
+
+class GeneratedPaper(Base):
+    """A question paper and answer key written by the AI from the reference library (app/generation).
+    Optionally tied to an exam: when it is ready its PDFs are attached to that exam as if uploaded."""
+    __tablename__ = "generated_papers"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+    teacher_id: Mapped[str] = mapped_column(ForeignKey("teachers.id"), index=True)
+    workspace_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    exam_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    standard: Mapped[int] = mapped_column(Integer)
+    subject: Mapped[str] = mapped_column(String(60))  # library subject key, e.g. 10-science
+    title: Mapped[str] = mapped_column(String(300))
+    status: Mapped[str] = mapped_column(String(20), default="QUEUED")  # QUEUED, GENERATING, READY, FAILED
+    stage: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    request: Mapped[dict] = mapped_column(JSON, default=dict)
+    paper: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)

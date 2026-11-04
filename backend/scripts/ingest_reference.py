@@ -1,6 +1,7 @@
 """Load the shared reference library (NCERT textbooks, CBSE marking schemes) into the app database.
 
     python scripts/ingest_reference.py --root "D:\\Eval_AI\\CBSE - Website" [--only 10-science] [--report]
+    python scripts/ingest_reference.py --root "..\CBSE - Website" --retitle   (chapter names only)
     python scripts/ingest_reference.py --query "10-science: why does a copper vessel turn green"
     python scripts/ingest_reference.py --embed    # local vectors for passages that have none (--root does this too)
     python scripts/ingest_reference.py --export   # chunk files in data/reference/chunks/<subject>/<kind>/
@@ -14,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.database import SessionLocal, init_db  # noqa: E402
 from app.models import ReferenceChunk, ReferenceSource  # noqa: E402
-from app.reference.ingest import ingest  # noqa: E402
+from app.reference.ingest import ingest, refresh_titles  # noqa: E402
 from app.reference.search import retrieve  # noqa: E402
 
 
@@ -26,13 +27,16 @@ def main():
     ap.add_argument("--query", help="'<subject>: <text>', e.g. '10-science: rancidity of food'")
     ap.add_argument("--embed", action="store_true", help="embed passages without a vector (local model)")
     ap.add_argument("--export", action="store_true", help="write every passage to data/reference/chunks as JSONL")
+    ap.add_argument("--retitle", action="store_true", help="with --root: re-read chapter names of loaded chapters only")
     ap.add_argument("-k", type=int, default=3)
     args = ap.parse_args()
     for stream in (sys.stdout, sys.stderr):
         stream.reconfigure(encoding="utf-8", errors="replace")
     init_db()
     with SessionLocal() as db:
-        if args.root:
+        if args.root and args.retitle:
+            print(f"Chapter names refreshed for {refresh_titles(db, Path(args.root))} chapters.")
+        elif args.root:
             r = ingest(db, Path(args.root), args.only)
             print(f"Loaded {len(r.loaded)} files ({r.chunks} passages), {r.unchanged} unchanged, "
                   f"{len(r.skipped)} skipped, {len(r.failed)} failed.")

@@ -597,7 +597,20 @@ def get_exam_detail(exam_id: str, db: Session = Depends(get_db), t: Teacher = De
             "question_paper": doc_view(qp, "question-paper"), "answer_key_document": doc_view(ak, "answer-key"),
             "question_count": db.query(ExamQuestion).filter_by(exam_id=e.id).count(),
             "verified_question_count": db.query(ExamQuestion).filter_by(exam_id=e.id, verification_status="VERIFIED").count(),
-            "evaluation_count": len(evs), "finalized_count": sum(x.status == "FINALIZED" for x in evs)}
+            "evaluation_count": len(evs), "finalized_count": sum(x.status == "FINALIZED" for x in evs),
+            "generation": _generation(db, e)}
+
+
+def _generation(db: Session, e) -> dict | None:
+    """The exam's latest AI-generated paper job, so the whole exam page can show its progress."""
+    from ..models import GeneratedPaper
+    from ..generation.generate import expire_stale
+    gp = db.query(GeneratedPaper).filter_by(exam_id=e.id).order_by(GeneratedPaper.created_at.desc()).first()
+    if gp is None:
+        return None
+    expire_stale(db, gp)
+    return {"id": gp.id, "status": gp.status, "stage": gp.stage, "error": gp.error,
+            "question_count": len((gp.paper or {}).get("questions", []))}
 
 
 @router.patch("/exams/{exam_id}")

@@ -31,7 +31,8 @@ export default function ExamWorkspace() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [manageCodes, setManageCodes] = useState(false);
   const { data, error, loading, reload } = useApi<ExamDetail>(`/exams/${id}`, (d) =>
-    [d.question_paper, d.answer_key_document].some((x) => x && BUSY_DOC.includes(x.status)) ? 2000 : null
+    [d.question_paper, d.answer_key_document].some((x) => x && BUSY_DOC.includes(x.status)) ||
+    ["QUEUED", "GENERATING"].includes(d.generation?.status ?? "") ? 2000 : null
   );
   useCrumbName(id, data?.name);
 
@@ -214,7 +215,7 @@ function FinalizeBanner({ exam, onDone, onReload }: {
     const doc = kind === "question-paper" ? exam.question_paper : exam.answer_key_document;
     return (
       <label className={`inline-flex min-h-[36px] cursor-pointer items-center gap-1.5 rounded-md border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink transition-ui hover:bg-hover ${
-        uploading || (doc && BUSY_DOC.includes(doc.status)) ? "pointer-events-none opacity-50" : ""}`}>
+        uploading || generating || (doc && BUSY_DOC.includes(doc.status)) ? "pointer-events-none opacity-50" : ""}`}>
         <IconUpload size={14} />
         {uploading === kind ? "Uploading..." : `${doc ? "Re-upload" : "Upload"} ${label}`}
         <input type="file" accept=".pdf,.png,.jpg,.jpeg,.docx" className="sr-only"
@@ -223,8 +224,9 @@ function FinalizeBanner({ exam, onDone, onReload }: {
     );
   };
   const docs = [exam.question_paper, exam.answer_key_document];
-  const reading = docs.some((d) => d && BUSY_DOC.includes(d.status));
-  const missing = docs.some((d) => !d);
+  const generating = ["QUEUED", "GENERATING"].includes(exam.generation?.status ?? "");
+  const reading = generating || docs.some((d) => d && BUSY_DOC.includes(d.status));
+  const missing = !generating && docs.some((d) => !d);
   const finalize = async () => {
     setBusy(true);
     setError(null);
@@ -242,11 +244,15 @@ function FinalizeBanner({ exam, onDone, onReload }: {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-sm font-semibold text-ink">
-            {missing ? "Upload the question paper and answer key" : reading ? "Reading the question paper and answer key..." : "Check the questions and answer key, then finalize"}
+            {generating ? "Generating the question paper and answer key with AI..."
+              : missing ? "Upload the question paper and answer key, or generate them with AI"
+              : reading ? "Reading the question paper and answer key..." : "Check the questions and answer key, then finalize"}
           </p>
           <p className="mt-1 text-sm text-mute">
-            {missing
-              ? "Both files are needed before the exam can be finalized."
+            {generating
+              ? `${exam.generation?.stage || "Starting"}. The questions and answer key appear in the Questions tab when they are ready; a full paper takes about 3-5 minutes.`
+              : missing
+              ? "Both files are needed before the exam can be finalized. To have the AI write them, use \"Generate with AI\" in the Questions tab."
               : reading
                 ? "Both are read at the same time. This page updates by itself."
                 : `${exam.question_count} questions found. Check the questions and the answer key below and fix anything that looks wrong, then finalize to continue to answer sheets.`}

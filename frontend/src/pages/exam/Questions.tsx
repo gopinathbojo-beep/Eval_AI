@@ -2,7 +2,7 @@ import { Fragment, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, downloadFile } from "../../api/client";
 import { useApi } from "../../hooks/useApi";
-import type { Question, QuestionsResponse } from "../../types";
+import type { Question, QuestionsResponse, SectionSummary } from "../../types";
 import { BUSY_DOC, fmt, pct } from "../../utils/format";
 import {
   Badge,
@@ -30,6 +30,19 @@ type Dlg = {
   kind: "edit" | "delete" | "review" | "add";
   q?: Question;
 } | null;
+
+/** Sections read from the questions themselves (a generated paper has no printed-structure file). */
+function sectionsOf(list: Question[]): SectionSummary[] {
+  const out: SectionSummary[] = [];
+  for (const q of countedOnce(list)) {
+    const name = !q.section ? "Questions" : /^section\b/i.test(q.section) ? q.section : `Section ${q.section}`;
+    let row = out.find((r) => r.section === name);
+    if (!row) out.push((row = { section: name, count: 0, marks: 0 }));
+    row.count += 1;
+    row.marks += q.max_marks ?? 0;
+  }
+  return out;
+}
 
 // Either/or alternatives share choice_group; a choice counts once in marks and question counts
 const countedOnce = (list: Question[]) =>
@@ -467,19 +480,7 @@ export default function Questions() {
           </span>
           {(data.sections_summary && data.sections_summary.length > 0
             ? data.sections_summary
-            : [
-                { section: "Section A: Reading Skills", marks: 20, count: 2 },
-                {
-                  section: "Section B: Writing Skills & Grammar",
-                  marks: 20,
-                  count: 3,
-                },
-                {
-                  section: "Section C: Language through Literature",
-                  marks: 40,
-                  count: 6,
-                },
-              ]
+            : sectionsOf(qs)
           ).map((s, idx) => (
             <div
               key={idx}
