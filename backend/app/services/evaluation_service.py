@@ -314,6 +314,13 @@ def textbook_references(db: Session, exam, q: ExamQuestion, key) -> list:
     return _references[cache_key]
 
 
+REGRADE_HINT = ("\n\nIMPORTANT: your previous reply was rejected: {problem}. Reply again. Give an award for each "
+                "criterion of the scheme you can judge, and for every mark above 0 copy evidence_quotes character for "
+                "character from the student's answer above (same symbols, numbers and spacing); never describe or "
+                "paraphrase the answer inside a quote.")
+UNVERIFIED_CONFIDENCE = 0.4  # below LOW_CONFIDENCE: the teacher is told before a bulk finalize
+
+
 def evaluate_item(db: Session, ev: Evaluation, q: ExamQuestion, item: EvaluationItem, model: str | None = None) -> None:
     """Evaluate one question. Raises AIUnavailable only; every other failure is recorded on the item."""
     _reset_item(item)
@@ -358,13 +365,29 @@ def evaluate_item(db: Session, ev: Evaluation, q: ExamQuestion, item: Evaluation
                       action="ai_grading_request")
                 db.commit()
                 picture = drawing_image(db, ev, q, key.answer_text, resolved.constituent_answers, text)
-                if picture:  # only drawing questions carry the sheet picture (and its extra cost)
-                    call = chat_structured(system, prompt + DRAWING_NOTE, EvaluationResult, image_path=picture, model=model)
-                else:
-                    call = chat_structured(system, prompt, EvaluationResult, model=model)
+
+                def ask(user):
+                    if picture:  # only drawing questions carry the sheet picture (and its extra cost)
+                        return chat_structured(system, user + DRAWING_NOTE, EvaluationResult, image_path=picture, model=model)
+                    return chat_structured(system, user, EvaluationResult, model=model)
+
+                call = ask(prompt)
                 item.raw_response = call.raw
                 if getattr(exam_record,"standard_profile_id",None):
-                    res = grading.validate_result(call.parsed,q,key,exam_record.standard_options or {},text)
+                    options = exam_record.standard_options or {}
+                    try:
+                        res = grading.validate_result(call.parsed, q, key, options, text)
+                    except EvaluationValidationError as first:
+                        # one more reading, told what was wrong; evidence it still cannot match is left to the teacher
+                        log.info("Q%s grading reply rejected (%s); asking again", q.display_number, first)
+                        call = ask(prompt + REGRADE_HINT.format(problem=first))
+                        item.raw_response = call.raw
+                        unverified: list[str] = []
+                        res = grading.validate_result(call.parsed, q, key, options, text, unverified=unverified)
+                        if unverified:
+                            res.confidence = min(res.confidence if res.confidence is not None else 1.0, UNVERIFIED_CONFIDENCE)
+                            res.feedback = (f"Check this mark: the AI's quoted evidence for {', '.join(unverified)} was not "
+                                            f"found word for word in the transcription.\n{res.feedback or ''}").strip()
                 else:
                     res = validate_evaluation(call.parsed, q.max_marks)  # type: ignore[arg-type]
                     res = fmt.check_deductions(res, text, key.answer_text, q.max_marks)

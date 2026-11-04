@@ -151,9 +151,15 @@ def _evidenced(quotes, student):
     return all(_quoted(quote, student) for quote in quotes)
 
 
-def validate_result(result, q, key, options, student=None):
+def validate_result(result, q, key, options, student=None, unverified=None):
+    """Check the grader's reply against the scheme and total it. A criterion it gave no award is 0 (an alternative or
+    part the student did not attempt: leaving it out can only lower the total). Evidence that cannot be found in the
+    transcription rejects the reply, unless a list is passed as unverified: the criterion ids are collected there
+    and the reply is kept, for the teacher to check."""
     tree = scoring_tree(q, key, options)
     nodes = {n["id"]: n for n in leaves(tree, options)}
+    if not result.criterion_awards:
+        raise EvaluationValidationError("The reply awards no criterion of the marking scheme")
     scores = {}
     for award in result.criterion_awards:
         key_id, value = award.get("id"), award.get("marks")
@@ -188,9 +194,11 @@ def validate_result(result, q, key, options, student=None):
             and student is not None
             and not _evidenced(quotes, student)
         ):
-            raise EvaluationValidationError(
-                f"Criterion {key_id} quotes evidence absent from the student transcription"
-            )
+            if unverified is None:
+                raise EvaluationValidationError(
+                    f"Criterion {key_id} quotes evidence absent from the student transcription"
+                )
+            unverified.append(key_id)
         if "multiple_answers" in award and not isinstance(
             award["multiple_answers"], bool
         ):
@@ -198,10 +206,8 @@ def validate_result(result, q, key, options, student=None):
                 "MCQ multiple-answer flag must be true or false"
             )
         scores[key_id] = 0 if award.get("multiple_answers") is True else _to_scheme_step(value, nodes[key_id]["marks"])
-    if set(scores) != set(nodes):
-        raise EvaluationValidationError(
-            "Every reviewed criterion must have an award, including unattempted parts"
-        )
+    for node_id in nodes:
+        scores.setdefault(node_id, 0)  # not awarded: not attempted, or an alternative the student did not choose
     rules = deduction_rules(tree, options)
     used = set()
     for deduction in result.deductions:
