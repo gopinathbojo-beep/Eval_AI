@@ -21,7 +21,8 @@ _TEXT_ROOT = re.compile(r"^\s*(?:Q(?:uestion)?\.?\s*)?(\d{1,3})(?=[.):\s])", re.
 
 # the heading can share a text block with "Time: 3 hours ... Max. Marks", so it is searched, not anchored
 _INSTRUCTIONS = re.compile(r"general\s+instructions|read\s+the\s+following\s+instructions", re.I)
-_SECTION = re.compile(r"^\s*section\b", re.I)
+# the instructions end at the first SECTION heading, or a "Part - A" / "PART B" heading (Accountancy, Economics)
+_SECTION = re.compile(r"^\s*(?:section\b|part\s*[-–:]?\s*[A-E]\b)", re.I)
 
 
 def _instruction_span(page):
@@ -106,7 +107,44 @@ def printed_by_page(doc):
         return {index + 1: {root for root, _y, _x in _anchors(page)} for index, page in enumerate(pdf)}
 
 
+_COLUMN_SLACK = 15  # points: a question number sits in the paper's number column; list/table numbers are indented
+_by_doc: dict = {}
+
+
+def _paper_anchors(doc):
+    """Question numbers for every page, read with the whole paper in view.
+
+    A numbered list inside a question ("1. Goodwill is valued...", a Notes to Accounts table) prints small numbers
+    indented from the paper's question-number column, after the paper has already passed those question numbers.
+    Such a number is dropped; a number in the column itself is kept even when it goes back (Accountancy Part B
+    restarts at 27 for its second option), and an indented number that moves forward is kept (some papers indent
+    their numbers on some pages)."""
+    raw = [_raw_anchors(p) for p in doc]
+    xs = [round(x / 5) * 5 for page in raw for _root, _y, x in page]
+    # the column is the leftmost position used often (an indented list never outnumbers the questions)
+    common = sorted({x for x in xs if xs.count(x) >= max(2, len(xs) // 10)})
+    column = common[0] if common else None
+    out, seen = [], 0
+    for page in raw:
+        kept = [(root, y, x) for root, y, x in page
+                if column is None or x <= column + _COLUMN_SLACK or root >= seen]
+        out.append(kept)
+        seen = max([seen] + [root for root, _y, _x in kept])
+    return out
+
+
 def _anchors(page):
+    doc = page.parent
+    if doc is None or len(doc) < 2:
+        return _raw_anchors(page)
+    key = (id(doc), getattr(doc, "name", ""), len(doc))
+    if key not in _by_doc:
+        _by_doc.clear()  # one paper at a time
+        _by_doc[key] = _paper_anchors(doc)
+    return _by_doc[key][page.number]
+
+
+def _raw_anchors(page):
     found, bare = [], []
     skip = _instruction_span(page)
     for word in page.get_text("words"):
