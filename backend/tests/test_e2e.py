@@ -154,14 +154,12 @@ def test_full_workflow(client, auth):
     it = {i["exam_question_id"]: i for i in d["items"]}
     assert d["evaluation"]["run_status"] == "DONE"
     assert it[qid["1"]]["ai_marks"] == 2 and it[qid["2"]]["ai_marks"] == 0
-    assert it[qid["3(b)"]]["status"] == "EVALUATION_ERROR" and it[qid["3(b)"]]["ai_marks"] is None   # AI said 8 of 5
-    assert "exceeds" in it[qid["3(b)"]]["error"]
-    # finalize still blocked; issue names the question
-    r = c.post(f"/api/evaluations/{evid}/finalize", headers=h)
-    assert r.status_code == 400 and any(i["question"] == "3(b)" for i in r.json()["issues"])
-    # approving an errored item without marks is refused
-    r = c.patch(f"/api/evaluations/{evid}/items/{it[qid['3(b)']]['id']}", json={"approve": True}, headers=h)
-    assert r.status_code == 400
+    # AI said 8 of 5 on every try: a mark still comes out, capped at the maximum and flagged for a look
+    q3b = it[qid["3(b)"]]
+    assert q3b["status"] == "EVALUATED" and q3b["ai_marks"] == 5
+    assert "Check this mark" in q3b["ai_feedback"] and q3b["ai_confidence"] <= 0.4
+    # finalize still blocked until the marks are approved
+    assert c.post(f"/api/evaluations/{evid}/finalize", headers=h).status_code == 400
     # teacher fixes the OCR text -> evaluation of just that question re-runs
     a3b = st["3(b)"]["id"]
     j(c.patch(f"/api/evaluations/{evid}/mapping/{a3b}", json={"answer_text": "Leaf diagram with labels", "reason": "OCR typo"}, headers=h), 200)

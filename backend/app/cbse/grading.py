@@ -151,14 +151,28 @@ def _evidenced(quotes, student):
     return all(_quoted(quote, student) for quote in quotes)
 
 
-def validate_result(result, q, key, options, student=None, unverified=None):
+def validate_result(result, q, key, options, student=None, unverified=None, lenient=False):
     """Check the grader's reply against the scheme and total it. A criterion it gave no award is 0 (an alternative or
     part the student did not attempt: leaving it out can only lower the total). Evidence that cannot be found in the
     transcription rejects the reply, unless a list is passed as unverified: the criterion ids are collected there
-    and the reply is kept, for the teacher to check."""
+    and the reply is kept, for the teacher to check.
+
+    lenient (the last resort after the grader was asked again): nothing is rejected. An award above its allocation
+    is capped, an MCQ part mark is rounded to 0 or full, unknown entries are skipped, and a reply with no usable
+    criterion falls back to its own total (capped at the maximum). Every correction is listed in unverified."""
     tree = scoring_tree(q, key, options)
     nodes = {n["id"]: n for n in leaves(tree, options)}
+    notes = unverified if unverified is not None else ([] if lenient else None)
+
+    def fail(message, criterion=None):
+        if not lenient:
+            raise EvaluationValidationError(message)
+        notes.append(criterion or message)
+
     if not result.criterion_awards:
+        if lenient and isinstance(result.marks_awarded, (int, float)) and math.isfinite(result.marks_awarded):
+            notes.append("overall")
+            return _finish(result, q, _to_scheme_step(min(max(result.marks_awarded, 0), q.max_marks), q.max_marks))
         raise EvaluationValidationError("The reply awards no criterion of the marking scheme")
     scores = {}
     for award in result.criterion_awards:
@@ -170,42 +184,40 @@ def validate_result(result, q, key, options, student=None, unverified=None):
             or not isinstance(value, (int, float))
             or not math.isfinite(value)
         ):
-            raise EvaluationValidationError(
-                "Missing, duplicated or invalid criterion award"
-            )
-        if value < 0 or value > nodes[key_id]["marks"] + 1e-7:
-            raise EvaluationValidationError(
-                f"Criterion {key_id} exceeds its printed allocation"
-            )
+            fail("Missing, duplicated or invalid criterion award")
+            continue
+        allocation = nodes[key_id]["marks"]
+        if value < 0 or value > allocation + 1e-7:
+            fail(f"Criterion {key_id} exceeds its printed allocation", key_id)
+            value = min(max(value, 0), allocation)
         is_mcq = (
             nodes[key_id].get("response_type") == "mcq"
             or getattr(q, "question_type", None) == "mcq"
             and len(nodes) == 1
         )
-        if is_mcq and value not in (0, nodes[key_id]["marks"]):
-            raise EvaluationValidationError("MCQ criteria do not receive partial marks")
+        if is_mcq and value not in (0, allocation):
+            fail("MCQ criteria do not receive partial marks", key_id)
+            value = allocation if value >= allocation / 2 else 0
         quotes = _evidence_quotes(award, student, is_mcq)
         if value > 0 and (not quotes or any(not quote.strip() for quote in quotes)):
-            raise EvaluationValidationError(
-                f"Criterion {key_id} has no student evidence"
-            )
-        if (
+            fail(f"Criterion {key_id} has no student evidence", key_id)
+        elif (
             value > 0
             and student is not None
             and not _evidenced(quotes, student)
         ):
-            if unverified is None:
+            if notes is None:
                 raise EvaluationValidationError(
                     f"Criterion {key_id} quotes evidence absent from the student transcription"
                 )
-            unverified.append(key_id)
+            notes.append(key_id)
         if "multiple_answers" in award and not isinstance(
             award["multiple_answers"], bool
         ):
-            raise EvaluationValidationError(
-                "MCQ multiple-answer flag must be true or false"
-            )
-        scores[key_id] = 0 if award.get("multiple_answers") is True else _to_scheme_step(value, nodes[key_id]["marks"])
+            fail("MCQ multiple-answer flag must be true or false", key_id)
+        scores[key_id] = 0 if award.get("multiple_answers") is True else _to_scheme_step(value, allocation)
+    if lenient and not scores and isinstance(result.marks_awarded, (int, float)):
+        return _finish(result, q, _to_scheme_step(min(max(result.marks_awarded, 0), q.max_marks), q.max_marks))
     for node_id in nodes:
         scores.setdefault(node_id, 0)  # not awarded: not attempted, or an alternative the student did not choose
     rules = deduction_rules(tree, options)
@@ -221,17 +233,22 @@ def validate_result(result, q, key, options, student=None, unverified=None):
             or value < 0
             or value > rules[rule_id]["maximum"]
         ):
-            raise EvaluationValidationError(
-                "A deduction exceeds its reviewed limit or has no source rule"
-            )
+            fail("A deduction exceeds its reviewed limit or has no source rule")
+            continue
         if value > 0 and not str(deduction.get("reason") or "").strip():
-            raise EvaluationValidationError("A deduction requires a specific reason")
+            fail("A deduction requires a specific reason")
+            continue
         used.add(rule_id)
         node_id = "deduction:" + rules[rule_id]["node_id"]
         scores[node_id] = scores.get(node_id, 0) + value
     total = tree_total(tree, options, scores)
     if total > q.max_marks + 1e-7:
-        raise EvaluationValidationError("Criterion total exceeds the question maximum")
+        fail("Criterion total exceeds the question maximum")
+        total = q.max_marks
+    return _finish(result, q, total)
+
+
+def _finish(result, q, total):
     result.marks_awarded = round(total, 8)
     result.max_marks = q.max_marks
     result.decision = (

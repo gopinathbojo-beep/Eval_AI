@@ -37,10 +37,23 @@ def _instruction_span(page):
     return (start, end if end is not None else page.rect.height) if start is not None else None
 
 
-_SECTION_HEADING = re.compile(r"^\s*section\s*\W{0,3}\s*([A-E])\b(?:.*?\(\s*\d+\s*\S\s*(\d+(?:\.\d+)?)\s*=\s*\d+)?", re.I | re.S)
+# "SECTION C (8x3=24)": the two factors of the section total, printed in either order (questions x marks or
+# marks x questions); printed_sections tells them apart by counting the section's questions
+_SECTION_HEADING = re.compile(r"^\s*section\s*\W{0,3}\s*([A-E])\b"
+                              r"(?:.*?\(\s*(\d+(?:\.\d+)?)\s*\S\s*(\d+(?:\.\d+)?)\s*=\s*\d+)?", re.I | re.S)
 
 
 _SECTION_MARKS = re.compile(r"section\s*[-\u2013]?\s*([A-E])\b[^.\n]*?\b(?:carrying|of)\s+0?(\d+)\s+marks?\s+each", re.I)
+
+
+def _marks_each(first, second, questions):
+    """Marks per question from a heading's "first x second = total": the factor that is not the number of
+    questions printed under it ("(21x1=21)" over 21 questions is 1; "(8x3=24)" over 3 questions is 8)."""
+    if first is None or second is None:
+        return None
+    if questions == second and questions != first:
+        return first
+    return second
 
 
 def printed_sections(doc):
@@ -55,7 +68,7 @@ def printed_sections(doc):
         pdf = pymupdf.open(abs_path(source))
     except (OSError, RuntimeError, ValueError):
         return {}
-    found, current = {}, None
+    found, current, headings = {}, None, []
     with pdf:
         # "SECTION B consists of 5 ... carrying 2 marks each": per-question marks when a heading prints none
         each = {letter.upper(): float(marks) for page in list(pdf)[:2]
@@ -66,15 +79,24 @@ def printed_sections(doc):
             for block in page.get_text("blocks"):
                 match = _SECTION_HEADING.match(block[4])
                 if match and not (skip and skip[0] <= block[1] < skip[1]):
-                    letter = match[1].upper()
-                    events.append((block[1], 0, (letter, float(match[2]) if match[2] else each.get(letter))))
+                    factors = (float(match[2]), float(match[3])) if match[3] else (None, None)
+                    headings.append((match[1].upper(), *factors))
+                    events.append((block[1], 0, len(headings) - 1))
             events += [(y, 1, root) for root, y, _x in _anchors(page)]
             for _y, kind, value in sorted(events, key=lambda e: (e[0], e[1])):
                 if kind == 0:
                     current = value
-                elif current and value not in found:
+                elif current is not None and value not in found:
                     found[value] = current
-    return found
+    counts = {}
+    for heading in found.values():
+        counts[heading] = counts.get(heading, 0) + 1
+    out = {}
+    for root, heading in found.items():
+        letter, first, second = headings[heading]
+        marks = _marks_each(first, second, counts[heading])
+        out[root] = (letter, marks if marks is not None else each.get(letter))
+    return out
 
 
 def printed_twice(doc):
@@ -271,6 +293,30 @@ def _reconcile_fragments(page, meta, result, anchors, lead=None):
 _HEADING_ONLY = re.compile(r"^\s*(?:SECTION|PART)\s*[-\u2013:]?\s*[A-E]\b[^\n]*$", re.I)
 
 
+def _only_transcribed_tables(page, candidates, owner, fragment):
+    """This question's printed area holds no image or drawing other than tables, and each table's words are in
+    the text the model read for it."""
+    if len(fragment.text or "") < 40:
+        return False
+    read = set(re.findall(r"[a-z0-9]{3,}", fragment.text.casefold()))
+    for kind, rect in candidates:
+        if owner(rect) != fragment.root:
+            continue
+        if kind != "table":
+            return False
+        words = set(re.findall(r"[a-z0-9]{3,}", page.get_textbox(rect).casefold()))
+        if len(words & read) < .7 * max(1, len(words)):
+            return False
+    return True
+
+
+_INSTRUCTION_START = re.compile(
+    r"^\s*(?:directions?|instructions?|note)\s*[:\-]"
+    r"|\bquestions?\s+(?:no\.?|numbers?)\s*\d+\s*(?:and|to|-|–)\s*\d+"
+    r"|\bassertion\s*[-–]?\s*(?:and\s+)?reason\s+(?:based|type)"
+    r"|^\s*(?:this|the following)\s+section\b", re.I)
+
+
 def _recover_page_top(page, meta, result, bands, lead, present, sy):
     """The printed text above a page's first question number continues the previous question (lead). When the AI
     read none of it, it is recovered from the PDF text layer, as omitted numbered rows are. Lines the previous page
@@ -293,7 +339,9 @@ def _recover_page_top(page, meta, result, bands, lead, present, sy):
     lines = [line.strip() for line in above.splitlines()
              if line.strip() and _squash(line) not in repeated and not _HEADING_ONLY.match(line)
              and not re.fullmatch(r"\d{1,2}(?:\.\d)?", line.strip())]  # a stray marks-column value
-    text = "\n".join(lines)
+    # instructions leading into the next questions ("Assertion-Reason Based Questions / Directions: ...") end it
+    cut = next((i for i, line in enumerate(lines) if _INSTRUCTION_START.search(line)), len(lines))
+    text = "\n".join(lines[:cut])
     if len(_squash(text)) < 30:
         return
     read = _squash(" ".join(fragment.text or "" for fragment in result.fragments))
@@ -305,8 +353,9 @@ def _recover_page_top(page, meta, result, bands, lead, present, sy):
         text=text,
         continues=True,
         bbox={"x": 0, "y": 0, "width": meta["ocr_width"], "height": max(0, first_top - 2) * sy},
-        issues=[f"The AI omitted the text continuing question {lead} at the top of source page {meta['page_number']}; "
-                "it was recovered from the PDF source. Review its parts and marks."],
+        # the PDF's own text, past the checks above: a record of what was added, not a question to review
+        notes=[f"Text continuing question {lead} at the top of source page {meta['page_number']} was added from the "
+               "PDF text (the AI reading skipped it)."],
     ))
     present.add(lead)
 
@@ -528,6 +577,10 @@ def ground_visuals(doc, results, answers=False):
                         target.visuals.append(visual)
                         used.add(index)
                         continue
+                if _only_transcribed_tables(page, candidates, owner, fragment):
+                    # no picture in this question's printed area, only text or a ruled table the model has already
+                    # transcribed (a match-the-columns block it called a diagram): nothing is missing
+                    continue
                 issue = f"Visual ownership or bounds could not be confirmed on page {meta['page_number']}; review source layout."
                 fragment.issues.append(issue)
                 if not normalise_bbox(visual.bbox, meta["ocr_width"], meta["ocr_height"], page.rect.width, page.rect.height):

@@ -431,6 +431,24 @@ def finalize_evaluation(ev_id: str, db: Session = Depends(get_db), t: Teacher = 
     return evaluation_view(ev)
 
 
+@router.post("/evaluations/{ev_id}/reopen")
+def reopen_evaluation(ev_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    """Open a finalized result again so a teacher can change a mark (results finalized by the autopilot, mostly).
+    The autopilot never finalizes a reopened result again; the teacher finalizes it."""
+    from ..services.autopilot import REOPENED
+    ev = get_evaluation(db, t, ev_id)
+    if ev.status != "FINALIZED":
+        raise err(409, "EVALUATION_NOT_FINALIZED", "Only a finalized evaluation can be reopened.")
+    if db.get(Exam, ev.exam_id).status == "FINALIZED":
+        raise err(409, "EXAM_FINALIZED", "The exam is finalized; its results can no longer be changed.")
+    old = {"total": ev.total_marks, "max": ev.maximum_marks, "percentage": ev.percentage}
+    ev.status, ev.finalized_at = "TEACHER_REVIEW", None
+    audit(db, exam_id=ev.exam_id, teacher_id=t.id, entity_type="evaluation", entity_id=ev.id, action=REOPENED, old=old)
+    db.commit()
+    refresh_evaluation_status(db, ev)
+    return evaluation_view(ev)
+
+
 @router.get("/evaluations/{ev_id}/result")
 def result(ev_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     ev = get_evaluation(db, t, ev_id)

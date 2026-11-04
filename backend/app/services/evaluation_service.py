@@ -319,6 +319,45 @@ REGRADE_HINT = ("\n\nIMPORTANT: your previous reply was rejected: {problem}. Rep
                 "character from the student's answer above (same symbols, numbers and spacing); never describe or "
                 "paraphrase the answer inside a quote.")
 UNVERIFIED_CONFIDENCE = 0.4  # below LOW_CONFIDENCE: the teacher is told before a bulk finalize
+GRADING_TRIES = 3  # the first reading and two more, each told what was wrong with the last
+
+
+def _grade_until_valid(ask, prompt, check, number):
+    """A mark always comes out of grading. The grader is asked up to GRADING_TRIES times, each time told what was
+    wrong with its last reply; evidence it still cannot quote word for word is kept with low confidence; and when
+    every reply is still off, the last one is read leniently (awards capped at their allocation, its own total as a
+    last resort). Only a grader that never returns a readable reply leaves the question ungraded."""
+    problem, last = None, None
+    for attempt in range(GRADING_TRIES):
+        try:
+            call = ask(prompt if problem is None else prompt + REGRADE_HINT.format(problem=problem))
+        except AIResponseError as e:
+            problem = f"the reply was not valid JSON ({e.detail[:120]})"
+            if attempt == GRADING_TRIES - 1 and last is None:
+                raise
+            continue
+        last = call
+        unverified: list[str] = []
+        try:
+            res = check(call.parsed, unverified=None if attempt == 0 else unverified)
+        except EvaluationValidationError as e:
+            problem = str(e)
+            log.info("Q%s grading reply %d rejected (%s); asking again", number, attempt + 1, e)
+            continue
+        if unverified:
+            _flag(res, f"the AI's quoted evidence for {', '.join(dict.fromkeys(unverified))} was not found word for "
+                       "word in the transcription")
+        return res, call.raw
+    corrections: list[str] = []
+    res = check(last.parsed, unverified=corrections, lenient=True)
+    _flag(res, "the AI's marking needed correcting (" + "; ".join(dict.fromkeys(corrections))[:200] + ")"
+          if corrections else "the AI's marking needed correcting")
+    return res, last.raw
+
+
+def _flag(res, why):
+    res.confidence = min(res.confidence if res.confidence is not None else 1.0, UNVERIFIED_CONFIDENCE)
+    res.feedback = f"Check this mark: {why}.\n{res.feedback or ''}".strip()
 
 
 def evaluate_item(db: Session, ev: Evaluation, q: ExamQuestion, item: EvaluationItem, model: str | None = None) -> None:
@@ -371,27 +410,22 @@ def evaluate_item(db: Session, ev: Evaluation, q: ExamQuestion, item: Evaluation
                         return chat_structured(system, user + DRAWING_NOTE, EvaluationResult, image_path=picture, model=model)
                     return chat_structured(system, user, EvaluationResult, model=model)
 
-                call = ask(prompt)
-                item.raw_response = call.raw
                 if getattr(exam_record,"standard_profile_id",None):
                     options = exam_record.standard_options or {}
-                    try:
-                        res = grading.validate_result(call.parsed, q, key, options, text)
-                    except EvaluationValidationError as first:
-                        # one more reading, told what was wrong; evidence it still cannot match is left to the teacher
-                        log.info("Q%s grading reply rejected (%s); asking again", q.display_number, first)
-                        call = ask(prompt + REGRADE_HINT.format(problem=first))
-                        item.raw_response = call.raw
-                        unverified: list[str] = []
-                        res = grading.validate_result(call.parsed, q, key, options, text, unverified=unverified)
-                        if unverified:
-                            res.confidence = min(res.confidence if res.confidence is not None else 1.0, UNVERIFIED_CONFIDENCE)
-                            res.feedback = (f"Check this mark: the AI's quoted evidence for {', '.join(unverified)} was not "
-                                            f"found word for word in the transcription.\n{res.feedback or ''}").strip()
+
+                    def check(parsed, unverified=None, lenient=False):
+                        return grading.validate_result(parsed, q, key, options, text, unverified=unverified,
+                                                       lenient=lenient)
                 else:
-                    res = validate_evaluation(call.parsed, q.max_marks)  # type: ignore[arg-type]
-                    res = fmt.check_deductions(res, text, key.answer_text, q.max_marks)
-                graded.append((title, res, call.raw))
+                    def check(parsed, unverified=None, lenient=False):
+                        if lenient:  # the reply's own total, kept within 0..maximum
+                            parsed.marks_awarded = min(max(parsed.marks_awarded or 0.0, 0.0), q.max_marks)
+                            parsed.max_marks = q.max_marks
+                        res = validate_evaluation(parsed, q.max_marks)  # type: ignore[arg-type]
+                        return fmt.check_deductions(res, text, key.answer_text, q.max_marks)
+                res, raw = _grade_until_valid(ask, prompt, check, q.display_number)
+                item.raw_response = raw
+                graded.append((title, res, raw))
             title, res, _ = max(graded, key=lambda g: g[1].marks_awarded)  # the first of equal best
             item.ai_marks, item.ai_decision = res.marks_awarded, res.decision
             item.matched_points, item.missing_points = res.matched_points, res.missing_points
@@ -447,6 +481,9 @@ def evaluate_item(db: Session, ev: Evaluation, q: ExamQuestion, item: Evaluation
 def run_evaluation(ev_id: str, only_question_ids: list[str] | None = None) -> None:
     with keyed_lock(f"evaluation:{ev_id}"):  # jobs run in parallel; one grading run per sheet at a time
         _run_evaluation(ev_id, only_question_ids)
+        if not only_question_ids:  # a whole-sheet run; a teacher re-grading one question finishes it themselves
+            from . import autopilot
+            autopilot.after_grading(ev_id)
 
 
 def _run_evaluation(ev_id: str, only_question_ids: list[str] | None) -> None:
@@ -631,14 +668,34 @@ def auto_evaluate_sheet(doc_id: str) -> None:
     Sheets with unread pages or unmapped answers are left for the teacher; review_reasons() lists why. Grading is
     queued as its own OpenRouter job, using the same Gemini model for every language.
     """
+    from . import autopilot
     db = SessionLocal()
     try:
         ev = db.query(Evaluation).filter_by(answer_sheet_id=doc_id).first()
         doc = db.get(AnswerSheetDocument, doc_id)
-        if ev is None or doc is None or ev.status == "FINALIZED" or ev.run_status == "RUNNING" or doc.status != "READY":
+        if ev is None or doc is None or ev.status == "FINALIZED" or ev.run_status == "RUNNING":
+            return
+        if doc.status == "NEEDS_ATTENTION" and autopilot.enabled():
+            identity = dict(doc.identity or {})
+            if not identity.get("autopilot_reread"):  # one more reading of the pages that failed, then grade
+                identity["autopilot_reread"] = True
+                doc.identity = identity
+                db.commit()
+                from .student_identity import run_sheet
+                submit(ev.exam_id, run_sheet, doc_id)
+                return
+            doc.status, doc.stage = "READY", "Ready (some pages could not be read)"
+            db.commit()
+        if doc.status != "READY":
             return
         if db.get(Exam, ev.exam_id).status not in _EVALUATABLE_EXAM:
             return
+        try:
+            autopilot.settle_answers(db, ev)  # answers the rules could not place, settled by the AI
+        except AIUnavailable:
+            pass
+        except Exception:
+            log.exception("Autopilot could not settle the answers of sheet %s", doc_id)
         if any(a.status in ("UNMAPPED", "NEEDS_REVIEW") for a in db.query(StudentAnswer).filter_by(evaluation_id=ev.id)):
             return
         ev.run_status, ev.run_progress = "RUNNING", 0

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 from typing import Literal
-from pydantic import BaseModel, Field, ConfigDict, field_validator
+from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 import json
+import re
 
 
 class Deduction(BaseModel):
@@ -97,10 +98,26 @@ class Fragment(BaseModel):
         return _box(value)
     continues: bool = False
     issues: list[str] = Field(default_factory=list)
+    # what the app did that a teacher may want to know but need not check (text completed from the PDF itself)
+    notes: list[str] = Field(default_factory=list)
 
 
 PARTLY_READ = ("Text is missing: the AI reply for this source page was partly invalid, so some of it could not be "
                "read. Check this question against the printed paper, or reprocess the page.")
+
+
+# root of a piece read with no question number at the top of a page: build.collect gives it the previous page's last
+# question (a visually impaired version or the rest of a question printed on over the page break)
+CARRIED = 10**6
+
+
+def _root_number(value) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)) and value == int(value):
+        return int(value) if value > 0 else None
+    match = re.fullmatch(r"\s*(?:Q(?:uestion)?\.?\s*)?(\d{1,3})\s*[.)]?\s*", str(value or ""), re.I)
+    return int(match[1]) if match and int(match[1]) > 0 else None
 
 
 class Page(BaseModel):
@@ -109,6 +126,26 @@ class Page(BaseModel):
     instructions: list[str] = Field(default_factory=list)
     fragments: list[Fragment] = Field(default_factory=list)
     issues: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def number_unnumbered(cls, obj):
+        """A piece the model read with no usable question number (root 0, null, "Q12") is not thrown away: a
+        printed number is read from it, else it continues the piece above it, else (first on the page) the
+        previous page's last question (CARRIED)."""
+        if not isinstance(obj, dict) or not isinstance(obj.get("fragments"), list):
+            return obj
+        fragments, above = [], None
+        for item in obj["fragments"]:
+            if isinstance(item, dict) and isinstance(item.get("text"), str):
+                root = _root_number(item.get("root"))
+                if root is None:
+                    item = {**item, "root": above or CARRIED, "continues": True, "marks": None}
+                else:
+                    item = {**item, "root": root}
+                above = item["root"]
+            fragments.append(item)
+        return {**obj, "fragments": fragments}
 
     @classmethod
     def salvage(cls, obj):
@@ -215,6 +252,10 @@ def merge_nodes(nodes):
             # one page shows only the stem (a single item), the next the parts: the piece with parts has the structure
             if data.get("children"):
                 old["kind"] = data.get("kind")
+            data = dict(data, kind=old["kind"])
+        if (not old.get("children") and not data.get("children")
+                and {old.get("kind"), data.get("kind")} <= {"point", "all"}):
+            # with no parts, "all of nothing" and a single point are the same thing: not a conflict
             data = dict(data, kind=old["kind"])
         for field in ("kind", "marks", "limit", "audience"):
             if (

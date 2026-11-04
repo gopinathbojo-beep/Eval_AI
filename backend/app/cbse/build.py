@@ -247,9 +247,10 @@ def fix_false_continuations(results):
         for index, fragment in enumerate(result.fragments):
             # a piece continues what comes just before it: the previous page's last question for the first piece,
             # the piece above it on the same page otherwise; never one that opens with its own choice label
-            # or a visually impaired heading
+            # or a visually impaired heading. Choice labels are capitals: "(a) Long term Borrowings" opening a page
+            # is a part of the balance sheet carried over, not alternative (A)
             before = kept[-1].root if kept else last
-            if fragment.continues and (fragment.root != before or _CHOICE_MARK.match(fragment.text or "")
+            if fragment.continues and (fragment.root != before or _CHOICE_LABEL.match(fragment.text or "")
                                        or _ACCESSIBLE.match(fragment.text or "")):
                 fragment.continues = False
                 fragment.issues = [x for x in fragment.issues if "continu" not in x.lower()]
@@ -349,9 +350,96 @@ def share_assertion_reason_options(results):
         last[root].text = f"{last[root].text}\n{options}".strip()
 
 
+def _meta_key(value):
+    """Metadata read on two pages agrees when it differs only in case, spacing or a printed code: "MATHEMATICS"
+    on the cover and "Mathematics" in a running header, "Mathematics (041)" and "Mathematics"."""
+    text = re.sub(r"\(\s*\d+\s*\)", "", str(value)).casefold()
+    return re.sub(r"[^a-z0-9ऀ-෿]+", "", text)
+
+
+_ROMAN_CLASS = {"x": 10, "xi": 11, "xii": 12, "ix": 9}
+
+
+def _meta_value(name, value):
+    """One spelling per printed fact: class "XII" is 12, subject code 41 is "041"."""
+    if name == "class_level":
+        text = re.sub(r"(?i)^\s*class\s*[-:]?\s*", "", str(value)).strip().casefold()
+        if text in _ROMAN_CLASS:
+            return _ROMAN_CLASS[text]
+        return int(text) if text.isdigit() else value
+    if name == "subject_code" and re.fullmatch(r"\s*\d{1,3}\s*", str(value)):
+        return str(value).strip().zfill(3)
+    return value
+
+
+def merge_metadata(results):
+    """The paper's details as most pages print them. The cover and the running header repeat one fact; a single
+    page read differently (the "1" of "Page 1 of 10" read as the page count) is outvoted, not a conflict. Only
+    a tie between different readings is reported."""
+    from collections import Counter
+
+    seen = defaultdict(list)  # name -> [(value, page)]
+    for page, result in results:
+        for name, value in result.metadata.items():
+            if value is not None and str(value).strip():
+                seen[name].append((_meta_value(name, value), page["page_number"]))
+    metadata, issues = {}, []
+    for name, readings in seen.items():
+        votes = Counter(_meta_key(value) for value, _ in readings)
+        (best, top), *rest = votes.most_common()
+        metadata[name] = next(value for value, _ in readings if _meta_key(value) == best)
+        if rest and rest[0][1] == top:
+            pages = sorted({page for value, page in readings if _meta_key(value) != best})
+            issues.append(f"Conflicting {name} on page {', '.join(map(str, pages))}")
+    return metadata, issues
+
+
+def carry_unnumbered(results):
+    """A piece read with no question number at the top of a page (extraction.CARRIED) belongs to the last
+    question of the page before; with no question before it, it is not a question piece."""
+    from .extraction import CARRIED
+    from .layout import _keep_with
+
+    last = None
+    for page, result in results:
+        kept = []
+        for fragment in result.fragments:
+            if fragment.root == CARRIED:
+                if last is None:
+                    continue
+                _keep_with(fragment, last, f"p{page['page_number']}-top")
+            kept.append(fragment)
+            last = fragment.root
+        result.fragments = kept
+
+
+def _canonical_ids(node, root):
+    """Name a question's scoring nodes q<root>...: the model writes "37" on one page and "q37" on the next, and
+    pieces of one question only merge under one name."""
+    node.id = re.sub(rf"^[qQ]?\s*{root}(?=$|[.\-_(])", f"q{root}", node.id)
+    for child in node.children:
+        _canonical_ids(child, root)
+
+
+def give_every_question_a_tree(results):
+    """Every question piece gets a scoring tree. A piece the model read without one (a plain question: "tree":
+    null) is one point worth its printed marks; a continuation without one only adds text."""
+    from .extraction import Node
+
+    for _, result in results:
+        for fragment in result.fragments:
+            if fragment.tree is not None:
+                _canonical_ids(fragment.tree, fragment.root)
+            elif not fragment.continues:
+                first = next((line.strip() for line in (fragment.text or "").splitlines() if line.strip()), "")
+                fragment.tree = Node(id=f"q{fragment.root}", kind="point", label=str(fragment.root),
+                                     text=first[:200], marks=fragment.marks)
+
+
 def collect(doc, results, kind="question-paper"):
     from .layout import ground_visuals
 
+    carry_unnumbered(results)
     # clean first: the printed number of a fragment is read from its text when grounding it
     for _, result in results:
         # only the model's notes are filtered here; the app's own checks add their notes after this point
@@ -383,16 +471,11 @@ def collect(doc, results, kind="question-paper"):
     fix_false_continuations(results)
     apply_printed_sections(doc, results)
     drop_borrowed_alternatives(results)
+    give_every_question_a_tree(results)
     roots = defaultdict(list)
-    metadata, instructions, issues = {}, [], []
+    instructions = []
+    metadata, issues = merge_metadata(results)
     for page, result in results:
-        for name, value in result.metadata.items():
-            if value is None:
-                continue
-            if name in metadata and str(metadata[name]) != str(value):
-                issues.append(f"Conflicting {name} on page {page['page_number']}")
-            else:
-                metadata[name] = value
         instructions += [x for x in result.instructions if x not in instructions]
         issues += [f"Page {page['page_number']}: {x}" for x in result.issues]
         for fragment in result.fragments:
@@ -421,6 +504,7 @@ def collect(doc, results, kind="question-paper"):
 
 # an internal choice starts with its (A)/(B) label; a bare OR also sits between case-study parts, so it is not evidence
 _CHOICE_MARK = re.compile(r"^\s*(?:Q?\s*\d{1,3}\s*\.?\s*)?\(\s*[AB]\s*\)", re.I)
+_CHOICE_LABEL = re.compile(r"^\s*(?:Q?\s*\d{1,3}\s*\.?\s*)?\(\s*[AB]\s*\)")  # printed alternatives: capitals only
 
 
 def _alternatives(fragments, printed_choice=False):
@@ -617,6 +701,7 @@ def build_questions(db, doc, exam, results):
                     "root": root,
                     "tree": tree,
                     "issues": issues,
+                    "notes": [n for _, f in fragments for n in f.notes],
                     "source_pages": [p["page_number"] for p, _ in fragments],
                     "visuals": visuals,
                 },

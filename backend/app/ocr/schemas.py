@@ -244,6 +244,36 @@ class EvaluationResult(_Base):
     _n = field_validator("marks_awarded", "max_marks", mode="before")(lambda cls, v: _num(v))
     _c = field_validator("confidence", mode="before")(lambda cls, v: _conf(v))
 
+    @model_validator(mode="before")
+    @classmethod
+    def _spelling(cls, obj):
+        """The grader misspells field names ("criterions_awards", "criteria_awards", "marks") and sends evidence as
+        a list: read what it meant instead of losing a sound marking."""
+        if not isinstance(obj, dict):
+            return obj
+        obj = dict(obj)
+        if "criterion_awards" not in obj:
+            alias = next((k for k in obj if re.fullmatch(r"criteri\w*_?awards?|awards", k, re.I)), None)
+            if alias:
+                obj["criterion_awards"] = obj.pop(alias)
+        if "marks_awarded" not in obj:
+            alias = next((k for k in obj if k in ("marks", "score", "total_marks", "awarded_marks")), None)
+            if alias:
+                obj["marks_awarded"] = obj.pop(alias)
+        awards = obj.get("criterion_awards")
+        if isinstance(awards, list):
+            fixed = []
+            for award in awards:
+                if isinstance(award, dict):
+                    award = dict(award)
+                    if isinstance(award.get("evidence"), list) and "evidence_quotes" not in award:
+                        award["evidence_quotes"] = [str(x) for x in award.pop("evidence") if str(x).strip()]
+                    if "marks" not in award and "marks_awarded" in award:
+                        award["marks"] = award.pop("marks_awarded")
+                fixed.append(award)
+            obj["criterion_awards"] = fixed
+        return obj
+
     @field_validator("matched_points", "missing_points", mode="before")
     @classmethod
     def _lst(cls, v):

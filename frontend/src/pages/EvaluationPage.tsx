@@ -60,6 +60,7 @@ export default function EvaluationPage() {
   const [deleting, setDeleting] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [downloadErr, setDownloadErr] = useState<unknown>(null);
+  const [reopening, setReopening] = useState(false);
   const nav = useNavigate();
   useCrumbName(id, data?.evaluation.student.name);
 
@@ -68,6 +69,20 @@ export default function EvaluationPage() {
 
   const ev = data.evaluation;
   const reading = BUSY_DOC.includes(data.document.status);
+
+  const reopen = async () => {
+    setReopening(true);
+    setDownloadErr(null);
+    try {
+      await api(`/evaluations/${ev.id}/reopen`, { method: "POST" });
+      await reload();
+      setTab("marks");
+    } catch (e) {
+      setDownloadErr(e);
+    } finally {
+      setReopening(false);
+    }
+  };
 
   const download = async () => {
     setDownloading(true);
@@ -114,6 +129,18 @@ export default function EvaluationPage() {
         actions={
           <div className="flex items-center gap-2">
             <StatusBadge status={ev.status} />
+            {ev.status === "FINALIZED" && data.exam.status !== "FINALIZED" && (
+              <Button
+                small
+                variant="secondary"
+                busy={reopening}
+                onClick={reopen}
+                icon={<IconRotateCcw size={15} />}
+                title="Open this result again to change a mark; finalize it again when done"
+              >
+                Reopen to change marks
+              </Button>
+            )}
             <Button
               small
               variant="ghost"

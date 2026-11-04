@@ -64,12 +64,16 @@
   {
    "key": "12-biotechnology",
    "name": "Biotechnology",
-   "profiles": []
+   "profiles": [
+    "cbse-12-045"
+   ]
   },
   {
    "key": "12-business-studies",
    "name": "Business Studies",
-   "profiles": []
+   "profiles": [
+    "cbse-12-054"
+   ]
   },
   {
    "key": "12-chemistry",
@@ -88,7 +92,9 @@
   {
    "key": "12-economics",
    "name": "Economics",
-   "profiles": []
+   "profiles": [
+    "cbse-12-030"
+   ]
   },
   {
    "key": "12-fine-arts",
@@ -98,27 +104,38 @@
   {
    "key": "12-geography",
    "name": "Geography",
-   "profiles": []
+   "profiles": [
+    "cbse-12-029"
+   ]
   },
   {
    "key": "12-history",
    "name": "History",
-   "profiles": []
+   "profiles": [
+    "cbse-12-027"
+   ]
   },
   {
    "key": "12-home-science",
    "name": "Home Science",
-   "profiles": []
+   "profiles": [
+    "cbse-12-064"
+   ]
   },
   {
    "key": "12-informatics-practices",
    "name": "Informatics Practices",
-   "profiles": []
+   "profiles": [
+    "cbse-12-065"
+   ]
   },
   {
    "key": "12-mathematics",
    "name": "Mathematics",
-   "profiles": []
+   "profiles": [
+    "cbse-12-041",
+    "cbse-12-241"
+   ]
   },
   {
    "key": "12-physics",
@@ -137,12 +154,16 @@
   {
    "key": "12-psychology",
    "name": "Psychology",
-   "profiles": []
+   "profiles": [
+    "cbse-12-037"
+   ]
   },
   {
    "key": "12-sociology",
    "name": "Sociology",
-   "profiles": []
+   "profiles": [
+    "cbse-12-039"
+   ]
   },
   {
    "key": "12-tamil",

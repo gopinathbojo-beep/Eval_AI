@@ -240,6 +240,8 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
     else:
         doc.status, doc.stage, doc.error_message = "READY", "Ready for review", None
     db.commit()
+    from . import autopilot
+    autopilot.after_document(kind, exam.id, doc.id)  # settle the review with the AI and move the exam on
 
 
 
@@ -323,7 +325,7 @@ def _build_questions(db: Session, doc, exam: Exam, wd: Path, results) -> None:
         db.query(ExamQuestion).filter_by(exam_id=exam.id).delete()
     struct = parse_question_paper_structure(results)
     apply_pdf_question_text(struct.questions, [p.get("page_text") or "" for p, _ in results])
-    labeler_model = get_settings().ai_model
+    labeler_model = get_settings().small_model  # labelling is a small text job
     if labeler_model:
         label_question_types(struct.questions, labeler_model)
 
@@ -461,7 +463,7 @@ def _build_answer_key(db: Session, doc, exam: Exam, wd: Path, results) -> None:
     pages_by_num = {p["page_number"]: p for p, _ in results}
     canonical_qs = db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all()
     keys = segment_answer_keys(results, canonical_questions=canonical_qs)
-    labeler_model = get_settings().ai_model
+    labeler_model = get_settings().small_model  # labelling is a small text job
     if labeler_model:
         label_key_criteria(keys, canonical_qs, labeler_model)
     n = 0

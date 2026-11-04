@@ -30,6 +30,13 @@ class Settings(BaseSettings):
     storage_timeout: int = 120
     openrouter_api_key: str = ""
     openrouter_model: str = "google/gemini-3.5-flash-lite"
+    # Two tiers, so each job pays only for what it needs (empty = OPENROUTER_MODEL):
+    # medium: reading pages and handwriting, grading, and the AI reviewer that settles flagged items
+    ai_medium_model: str = "google/gemini-3.1-flash-lite"
+    # small: short text-only decisions (question types, which question an answer belongs to, details box)
+    ai_small_model: str = "deepseek/deepseek-v4.1-flash"
+    # settle every review step with the AI and move each document on without waiting for the school
+    autopilot: bool = True
     openrouter_base_url: str = "https://openrouter.ai/api"
     ai_request_logprobs: bool = False
     # OCR transcribes source evidence; reserve output tokens for the document.
@@ -64,6 +71,14 @@ class Settings(BaseSettings):
     @property
     def ai_model(self) -> str:
         return self.openrouter_model
+
+    @property
+    def medium_model(self) -> str:
+        return self.ai_medium_model or self.openrouter_model
+
+    @property
+    def small_model(self) -> str:
+        return self.ai_small_model or self.medium_model
 
     @property
     def ai_provider(self) -> str:

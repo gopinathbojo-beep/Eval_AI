@@ -31,7 +31,7 @@ def test_subject_catalog_joins_textbook_subjects(client, auth):
     assert ten["Hindi"]["profiles"] == ["cbse-10-002", "cbse-10-085"]          # usual variant first
     assert ten["Mathematics"]["profiles"][0] == "cbse-10-041"
     twelve = {s["name"]: s for s in j(client.get("/api/subjects/catalog?grade=12", headers=auth), 200)["12"]}
-    assert twelve["Economics"]["profiles"] == [] and twelve["Tamil"]["profiles"] == ["cbse-12-106"]
+    assert twelve["Fine Arts"]["profiles"] == [] and twelve["Mathematics"]["profiles"] == ["cbse-12-041", "cbse-12-241"] and twelve["Tamil"]["profiles"] == ["cbse-12-106"]
 
 
 def test_simple_exam_creates_class_and_subject(client, auth):
@@ -41,7 +41,7 @@ def test_simple_exam_creates_class_and_subject(client, auth):
     classes = {c["name"] for c in j(client.get("/api/classes", headers=auth), 200)}
     assert "10-B" in classes
     generic = j(client.post("/api/exams/simple", headers=auth, json={"name": "Unit", "grade": "12", "section": "A",
-                                                                  "subject_key": "12-economics"}), 201)
+                                                                  "subject_key": "12-fine-arts"}), 201)
     assert generic["standard_profile_id"] is None and generic["total_marks"] == 80
     assert client.post("/api/exams/simple", headers=auth, json={"name": "X", "grade": "10",
                                                                "subject_key": "10-biology"}).status_code == 400
