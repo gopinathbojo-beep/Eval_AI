@@ -588,7 +588,17 @@ def test_cross_page_parts_derive_total_from_source_and_duplicate_roots_are_flagg
     roots = collect(NS(), [({"page_number": 1}, first), ({"page_number": 2}, second)])
     _, _, issues, marks, _ = combined(roots[1])
     assert not issues and marks == 3
+    # a page-top piece under the previous page's last number is that question carried over, even when the model
+    # did not say so (CBSE papers print the marks only where a question starts)
     second.fragments[0].continues = False
+    roots = collect(NS(), [({"page_number": 1}, first), ({"page_number": 2}, second)])
+    _, _, issues, marks, _ = combined(roots[1])
+    assert not issues and marks == 3
+    # the same number again after another question is a genuine duplicate and is flagged
+    second.fragments = [
+        Fragment(root=2, text="Question two", tree=Node.model_validate({"id": "q2", "kind": "all", "children": [point("c", 1)]})),
+        Fragment(root=1, text="Part b", tree=Node.model_validate({"id": "q1", "kind": "all", "children": [point("b", 2)]})),
+    ]
     roots = collect(NS(), [({"page_number": 1}, first), ({"page_number": 2}, second)])
     assert combined(roots[1])[2]
     full_issues = ["source conflict " + ("x" * 200), "another " + ("y" * 200)]
