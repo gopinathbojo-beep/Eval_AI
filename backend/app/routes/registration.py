@@ -196,8 +196,8 @@ def complete_profile(
         body.address = format_address(body)
     if user.role not in {"UNASSIGNED", role}:
         raise err(409, "ROLE_FIXED", "Account role cannot be changed.")
-    if role == "MANAGEMENT" and not body.principal_name.strip():
-        raise err(400, "PRINCIPAL_REQUIRED", "Enter the name of your school's Principal or Head.")
+    # the principal's name is optional (the sign-up chat lets it be skipped): report cards print "Principal" alone
+    # until it is added in School Settings
     if role == "MANAGEMENT" and not all(
         (
             body.school_name.strip(),
