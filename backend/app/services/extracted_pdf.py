@@ -140,9 +140,8 @@ def _visuals(structure: dict | None):
             continue
         image = Image(str(path))
         image._restrictSize(165 * mm, 70 * mm)
-        yield image
-        yield Paragraph(_markup(item.get("description")), _style("caption", item.get("description", ""), size=8, leading=10,
-                                                                 color=colors.HexColor("#62706A"), space_after=5))
+        yield image  # the printed table or figure itself; the AI's own description of it is not printed text
+        yield Spacer(1, 5)
 
 
 def _header(story, exam, title: str, count: int):

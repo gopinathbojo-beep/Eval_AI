@@ -27,6 +27,8 @@ SUBJECTS: dict[str, tuple[str, ...]] = {
     "maths": ("math", "கணிதம்"),
     "physics": ("physics", "இயற்பியல்"),
     "chemistry": ("chemistry", "வேதியியல்"),
+    "accountancy": ("accountancy",),
+    "science": ("science",),
 }
 
 _subject: ContextVar[str | None] = ContextVar("formatter_subject", default=None)
@@ -38,6 +40,8 @@ def for_subject(subject_name: str | None) -> str | None:
     if not subject_name:
         return None
     name = subject_name.casefold()
+    if "social" in name:  # Social Science is not Science
+        return COMMON
     return next((key for key, words in SUBJECTS.items() if any(w in name for w in words)), COMMON)
 
 

@@ -325,8 +325,7 @@ BRANCH_OPTIONS = {
 
 def profile_options(profile_id: str | None) -> list[dict]:
     """The choices a profile needs at exam creation (Create Exam shows one select per entry)."""
-    p = get_profile(profile_id)
-    return [BRANCH_OPTIONS[p["code"]]] if p and p["code"] in BRANCH_OPTIONS else []
+    return []  # Create Exam asks for the subject only; Part B branches are settled by the answer sheet
 
 
 def get_profile(profile_id: str | None):
@@ -386,7 +385,7 @@ def creation_data(body, school_class, subject):
     if options.get("accessibility") not in {"standard", "accessible"}:
         raise err(400, "CBSE_OPTION_REQUIRED", "Select the paper audience.")
     branch = BRANCH_OPTIONS.get(p["code"])
-    if branch and options.get(branch["key"]) not in {c["value"] for c in branch["choices"]}:
+    if branch and options.get(branch["key"]) not in {None, *(c["value"] for c in branch["choices"])}:
         raise err(400, "CBSE_OPTION_REQUIRED",
                   f"Choose the {p['name']} {branch['label']}: "
                   + " or ".join(c["label"] for c in branch["choices"]) + ".")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 from pathlib import Path
 import uuid
+import re
 from fastapi import (
     APIRouter,
     BackgroundTasks,
@@ -633,6 +634,66 @@ def retry_identify(
     return _unassigned_view(db, doc)
 
 
+ROLL_RE = re.compile(r"^[A-Z0-9/-]{1,20}$")  # same rule as the uploader app
+
+
+def _move_sheet_to_roll(db: Session, exam, doc: AnswerSheetDocument, roll: str) -> None:
+    """Link the sheet (and its evaluation) to the student with this roll number, adding the roll if it is new."""
+    from ..services.student_io import split_class_name
+
+    ev = db.query(Evaluation).filter_by(answer_sheet_id=doc.id).first()
+    student = db.query(Student).filter_by(class_id=exam.class_id, roll_number=roll).first()
+    if student is None:
+        section = split_class_name(exam.school_class.name)[1] if exam.school_class else None
+        student = Student(class_id=exam.class_id, roll_number=roll, section=section, name=f"Roll {roll}")
+        db.add(student)
+        db.flush()
+    other = db.query(Evaluation).filter_by(exam_id=exam.id, student_id=student.id).first()
+    if other is not None and other.id != (ev.id if ev else None):
+        raise err(409, "ANSWER_SHEET_EXISTS", f"Roll number {roll} already has an answer sheet in this exam.")
+    doc.student_id = student.id
+    if ev is not None:
+        ev.student_id = student.id
+
+
+class RollNumberBody(BaseModel):
+    roll_number: str
+
+
+@router.post("/answer-sheets/{doc_id}/roll-number")
+def edit_roll_number(doc_id: str, body: RollNumberBody, bg: BackgroundTasks,
+                     db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    """The school types the right roll number for a sheet (the typed or the read one was wrong).
+
+    Works on any linked sheet. A sheet held on a roll number mismatch counts as settled and goes for grading."""
+    from ..services.evaluation_service import auto_evaluate_sheet
+
+    doc = db.get(AnswerSheetDocument, doc_id)
+    if doc is None or not doc.is_active or doc.student_id is None:
+        raise err(404, "NOT_FOUND", "Answer sheet not found.")
+    exam = get_exam(db, t, doc.exam_id)
+    roll = re.sub(r"\s+", "", body.roll_number or "").upper()
+    if not ROLL_RE.match(roll):
+        raise err(400, "INVALID_ROLL_NUMBER", "Enter a roll number (letters, digits, / or -, up to 20).")
+    old = db.get(Student, doc.student_id).roll_number
+    _move_sheet_to_roll(db, exam, doc, roll)
+    identity = dict(doc.identity or {})
+    check = dict(identity.get("roll_check") or {})
+    was_held = check.get("status") == "MISMATCH"
+    if check:
+        check["status"], check["chosen"], check["edited"] = "CONFIRMED", "edited", roll
+        identity["roll_check"] = check
+        doc.identity = identity
+    if was_held:
+        doc.stage = "Ready for review" if doc.status == "READY" else doc.stage
+    audit(db, exam_id=exam.id, teacher_id=t.id, entity_type="answer_sheet", entity_id=doc.id,
+          action="roll_number_edited", old={"roll_number": old}, new={"roll_number": roll})
+    db.commit()
+    if was_held:
+        bg.add_task(submit, exam.id, auto_evaluate_sheet, doc.id)
+    return {"roll_number": roll}
+
+
 class RollCheckBody(BaseModel):
     use: str  # "typed": the uploader's roll number is right; "written": the roll number on the sheet is right
 
@@ -642,7 +703,6 @@ def settle_roll_check(doc_id: str, body: RollCheckBody, bg: BackgroundTasks,
                       db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     """The typed and the written roll number differ: the school says which is right, then the sheet is graded."""
     from ..services.evaluation_service import auto_evaluate_sheet
-    from ..services.student_io import split_class_name
 
     doc = db.get(AnswerSheetDocument, doc_id)
     if doc is None or not doc.is_active:
@@ -654,21 +714,8 @@ def settle_roll_check(doc_id: str, body: RollCheckBody, bg: BackgroundTasks,
         raise err(409, "NO_ROLL_MISMATCH", "This sheet has no roll number to check.")
     if body.use not in ("typed", "written"):
         raise err(400, "INVALID_CHOICE", "Choose the typed or the written roll number.")
-    ev = db.query(Evaluation).filter_by(answer_sheet_id=doc.id).first()
     if body.use == "written":
-        roll = check["written"]
-        student = db.query(Student).filter_by(class_id=exam.class_id, roll_number=roll).first()
-        if student is None:
-            section = split_class_name(exam.school_class.name)[1] if exam.school_class else None
-            student = Student(class_id=exam.class_id, roll_number=roll, section=section, name=f"Roll {roll}")
-            db.add(student)
-            db.flush()
-        other = db.query(Evaluation).filter_by(exam_id=exam.id, student_id=student.id).first()
-        if other is not None and other.id != (ev.id if ev else None):
-            raise err(409, "ANSWER_SHEET_EXISTS", f"Roll number {roll} already has an answer sheet in this exam.")
-        doc.student_id = student.id
-        if ev is not None:
-            ev.student_id = student.id
+        _move_sheet_to_roll(db, exam, doc, check["written"])
     check["status"], check["chosen"] = "CONFIRMED", body.use
     identity["roll_check"] = check
     doc.identity = identity

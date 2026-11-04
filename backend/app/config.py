@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     openrouter_model: str = "google/gemini-3.5-flash-lite"
     openrouter_base_url: str = "https://openrouter.ai/api"
     ai_request_logprobs: bool = False
+    # read each answer-sheet page twice: the second call checks the first reading against the image
+    ai_check_sheet_reads: bool = True
     # OCR transcribes source evidence; reserve output tokens for the document.
     # Text-only grading retains the model's own reasoning defaults.
     ai_ocr_reasoning_effort: Literal["minimal", "low", "medium", "high"] = "minimal"

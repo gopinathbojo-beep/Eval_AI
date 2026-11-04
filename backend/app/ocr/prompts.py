@@ -97,6 +97,28 @@ Under NO circumstances should the question text or outside knowledge be used to 
 
 You are the STUDENT ANSWER SHEET OCR, HANDWRITING UNDERSTANDING, ANSWER GROUPING, and QUESTION MAPPING engine for Eval AI.
 
+STRUCK-OUT WRITING (CHECK EVERY WORD BEFORE YOU COPY IT): a word, number, equation or line with a pen line drawn
+through its middle (horizontally or slanting), crossed with X marks, or scribbled over is CANCELLED by the student.
+Do NOT copy it at all, not even partly, and do not mention it. A crossed-out equation followed by a rewritten one:
+copy only the rewritten one. A crossed-out answer with nothing written after it: leave that part out.
+A struck-out option followed by another option ("A) cat one" struck through, then "B) Soap is acidic..."): copy
+only the option that is not struck through, starting with its letter.
+
+COPY WHAT THE STUDENT WROTE, NOT WHAT IS CORRECT (a wrong answer must stay wrong, a misspelling stays misspelt):
+- OPTION LETTERS: an objective answer starts with the letter the student wrote (a) b) c) d), A) B) C) D), (c), c.).
+  Copy that letter exactly and never leave it out. A handwritten "c)" or "C)" is an open curve, not "Q", "a" or
+  "D"; "d)" has a tall stem; "a)" is a closed loop. Never choose or change a letter by matching the option text
+  to the question paper: "c) R" stays "c) R" even if R is printed as option (d).
+- WORDS: never swap a word for the one the question expects. "Covex lens" stays "Covex lens" (do not write
+  "Concave" or "Convex"); a wrong scientific claim stays exactly as the student wrote it.
+- ROMAN NUMERALS AND LISTS: copy "II and IV", "i, iii & iv" with the option letter written before them.
+- STRUCTURAL FORMULAS: count the C atoms in each drawn chain one by one and write exactly that many, e.g. a drawn
+  five-carbon chain is "H-C-C-C-C-C-H" (never fewer or more C than drawn), then add
+  "[Diagram: straight chain of 5 carbon atoms, each bonded to H above and below]". Do this for every formula.
+- DIAGRAMS: describe what is drawn, not what the answer should be. A lens drawn thinner in the middle with
+  edges flaring out )( is CONCAVE; thicker in the middle () is CONVEX. If the drawing and the words disagree
+  (words say convex, drawing shows concave), keep both exactly as they are.
+
 VISION MODEL:
 Gemini through OpenRouter
 
@@ -227,7 +249,7 @@ Text continuing across page breaks without a new label belongs to the active ans
 ==================================================
 11. HANDWRITTEN CORRECTIONS & CROSSED-OUT TEXT
 ==================================================
-Completely omit crossed-out, struck-through, or scribbled-out lines. Transcribe ONLY the student's visible final intended writing. Never transcribe struck-through words, and never invent corrected text.
+Completely omit crossed-out, struck-through, or scribbled-out words and lines: leave them out entirely, never mark them with ~~ ~~, [crossed out], or any other note. Transcribe ONLY the student's visible final intended writing. Never transcribe struck-through words, and never invent corrected text.
 
 ==================================================
 12. MATHEMATICAL & SCIENTIFIC ANSWERS
@@ -314,8 +336,60 @@ Return ONLY valid JSON in exactly this structure (include a separate entry in "a
 }}"""
 
 
+def student_answer_check_prompt(page_number: int, answers: list[dict]) -> str:
+    """Second look at a page of a student's sheet: each first reading is checked against the image, word by word."""
+    import json as _json
+    listing = _json.dumps(answers, ensure_ascii=False, indent=1)
+    return f"""This image is page {page_number} of a student's handwritten answer sheet. Another reader transcribed
+it as below. Check EVERY answer against the handwriting in the image, word by word, symbol by symbol.
+
+FIRST READING:
+{listing}
+
+Check in particular:
+- The option letter at the start of an objective answer (a/b/c/d, A/B/C/D): is it the letter actually written?
+  Is a written letter missing from the reading? A "c)" is often misread as "Q", "a" or "D".
+- Struck-through, crossed-out or scribbled-over words: they must NOT be in the reading. Only the student's final,
+  not-struck writing counts (a struck-out option followed by another option: keep only the second one). NEVER
+  add words to the reading without first checking that no pen line runs through them: if the first reading
+  left out words that are struck through, it was right to.
+- Words the reader changed to the "correct" one: the reading must keep the student's own words and spelling
+  ("Covex" stays "Covex"; it must not become "Concave").
+- Numbers, units, signs, subscripts, chemical formulas and equations: character by character.
+- Structural formulas: count the C atoms drawn in each chain; the reading must have the same number.
+- Diagrams: does the [Diagram: ...] describe what is drawn (a lens thinner in the middle is concave, thicker in
+  the middle is convex)?
+- Words or lines in the image that the reading left out, or words in the reading that are not in the image.
+
+Rules: do not change question numbers and do not add the question number to answer_text (sub-part labels such as
+a), i), ii) do belong in it); do not move text between answers; do not complete, correct or improve the student's
+answer. Capital/small letters and punctuation are not misreadings: do not report them. Use [unclear] for writing
+you cannot read.
+
+For each answer_id return one check:
+- "status": "OK" when the reading matches the image exactly; "CORRECTED" when you found a misreading (give the
+  whole corrected answer_text and list each change in "changes", e.g. "D) R -> c) R"); "UNSURE" when part of the
+  handwriting cannot be read with certainty (name the doubtful words in "doubts").
+
+Return ONLY valid JSON:
+{{"checks": [{{"answer_id": "ans_001", "status": "OK", "answer_text": "", "changes": [], "doubts": []}},
+{{"answer_id": "ans_002", "status": "CORRECTED", "answer_text": "c) R.", "changes": ["D) R. -> c) R."], "doubts": []}}]}}"""
+
+
+def student_line_start_prompt() -> str:
+    """A zoomed crop of the left side of a sheet page: question numbers, option letters and struck-out words."""
+    return """This is a zoomed part of a student's handwritten answer sheet (the left side of the lines). For every
+answer line that starts with a question number, copy the question number and the first 25 characters written
+after it EXACTLY as written, including the option letter and its bracket (a) b) c) d) A) B) C) D)). A "c)" is an
+open curve, a "d)" has a tall stem, an "a)" is a closed loop; no option is called "Q". In "struck" list the words
+on that line that have a pen line through them or are scribbled over ([] if none); leave struck words out of
+"start". Copy only what is written; do not correct anything.
+Return ONLY valid JSON: {"rows": [{"question_number": "18", "start": "c) II and IV", "struck": []},
+{"question_number": "19", "start": "B) soap is acidic", "struck": ["A) cat one"]}]}"""
+
+
 EVAL_SYSTEM = (
-    "You are a strict, fair examiner's assistant. Evaluate the student's answer ONLY against the official "
+    "You are a fair, generous examiner's assistant. Evaluate the student's answer ONLY against the official "
     "answer key and marking criteria provided. Do not reward information that is not in the student's answer. "
     "Do not use outside knowledge to award marks the key does not support. Do not penalise spelling or "
     "grammar unless the criteria say language accuracy matters. Never award more than the maximum marks.\n"

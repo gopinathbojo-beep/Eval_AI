@@ -98,7 +98,35 @@ def apply_student_mapping(db: Session, ev: Evaluation) -> None:
         elif a.status == "NEEDS_REVIEW" and (a.mapping_note or "").startswith("DUPLICATE_MAPPING"):
             a.status, a.mapping_note = "MAPPED", None
     _confirm_content_mappings(live, qs, suggested)
+    _accept_confident_suggestions(live, qs)
     db.flush()
+
+
+SURE_SUGGESTION = 0.7  # a suggested question this sure is taken without asking the teacher
+
+
+def _accept_confident_suggestions(answers, qs) -> None:
+    """Only an answer that fits no question is left for the teacher. A written number that matches a question but was
+    read with low confidence, an answer placed on a question already answered, and a suggestion the content supports
+    with at least SURE_SUGGESTION are mapped as suggested."""
+    from ..formatter.common.recovery import find_recovery_candidates
+    for a in answers:
+        if a.status != "NEEDS_REVIEW" or a.mapping_confirmed:
+            continue
+        note = a.mapping_note or ""
+        target = a.exam_question_id
+        if not target:
+            found = find_recovery_candidates(a.raw_question_number, a.answer_text, qs)
+            if found and found[0].score >= SURE_SUGGESTION:
+                target = next((q.id for q in qs if q.normalized_number == found[0].normalized_number), None)
+        elif not (note.startswith("Exact label match") or note.startswith("DUPLICATE_MAPPING")):
+            found = find_recovery_candidates(a.raw_question_number, a.answer_text, qs)
+            top = next((q.id for q in qs if found and q.normalized_number == found[0].normalized_number), None)
+            if not (found and found[0].score >= SURE_SUGGESTION) and top != target:
+                # the content does not back the suggestion strongly: the best supported question, when sure enough
+                target = top if found and found[0].score >= SURE_SUGGESTION else target
+        if target:
+            a.exam_question_id, a.status, a.mapping_note, a.mapping_candidates = target, "MAPPED", None, []
 
 
 _OPTION_FIRST = re.compile(r"^\s*(?:Q?\s*\d{1,3}\s*[.):]?\s*)?\(?([A-Da-d])\)?(?=[.):\s]|$)")

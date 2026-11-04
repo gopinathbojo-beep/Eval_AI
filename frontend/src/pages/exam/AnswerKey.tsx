@@ -561,15 +561,6 @@ export default function AnswerKey() {
                               alt={`${visual.kind} for marking-scheme row ${r.raw_question_number ?? ""}`}
                               className="max-h-64 rounded object-contain"
                             />
-                            <figcaption className="mt-1 text-xs text-mute">
-                              <b className="capitalize text-ink">
-                                {visual.kind}:
-                              </b>{" "}
-                              {visual.description}
-                              {visual.labels.length
-                                ? ` · Labels: ${visual.labels.join(", ")}`
-                                : ""}
-                            </figcaption>
                           </figure>
                         ))}
                       </div>

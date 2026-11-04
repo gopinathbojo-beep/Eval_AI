@@ -158,6 +158,35 @@ def _docx_to_pdf(src: Path, out_dir: Path) -> Path:
         return dest
 
 
+def _ruled_strength(values) -> float:
+    import numpy as np
+    smooth = np.convolve(values, np.ones(9) / 9, "same")
+    return float(np.std((values - smooth)[20:-20])) if len(values) > 60 else 0.0
+
+
+def page_turn(img: Image.Image) -> int:
+    """+1 when a notebook page lies sideways (its ruled lines run up the page), -1 when they run across it as written,
+    0 when the page shows no clear ruling (printed pages, drawn tables, blank pages)."""
+    import numpy as np
+    small = np.asarray(img.convert("L").resize((600, max(1, round(600 * img.height / img.width)))), float)
+    across, down = _ruled_strength(small.mean(0)), _ruled_strength(small.mean(1))
+    if across > 1.5 and across > 1.6 * down:
+        return 1
+    if down > 1.5 and down > 1.6 * across:
+        return -1
+    return 0
+
+
+def upright(img: Image.Image, sideways: bool | None = None) -> Image.Image:
+    """A scanned or photographed page lying sideways turned upright. sideways=None decides from this page alone.
+
+    Like the roll-number reader, a clockwise turn is undone (PIL turns counter-clockwise)."""
+    turn = page_turn(img)
+    if turn == 1 or (turn == 0 and sideways):
+        return img.rotate(90, expand=True)
+    return img
+
+
 def render_document(src: Path, ext: str, work_dir: Path) -> list[dict]:
     """Returns page metadata list. `src` is the untouched original."""
     s = get_settings()
@@ -197,10 +226,18 @@ def render_document(src: Path, ext: str, work_dir: Path) -> list[dict]:
         if doc.page_count == 0:
             raise RenderError("PDF has no pages.")
         zoom = s.pdf_render_dpi / 72.0
+        # the pages of one scanned sheet lie the same way: a page with no clear ruling follows the others
+        votes = []
+        for page in doc:
+            if not page_text(page).strip():
+                pix = page.get_pixmap(matrix=pymupdf.Matrix(.5, .5), alpha=False)
+                votes.append(page_turn(Image.frombytes("RGB", (pix.width, pix.height), pix.samples)))
+        sideways = sum(v == 1 for v in votes) > max(1, len(votes)) / 2
         for i, page in enumerate(doc, start=1):
             pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False)
             img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-            finish(i, img, page_text=page_text(page))
+            text = page_text(page)
+            finish(i, img if text.strip() else upright(img, sideways), page_text=text)
         doc.close()
     elif ext in ("png", "jpg"):
         try:
@@ -208,7 +245,7 @@ def render_document(src: Path, ext: str, work_dir: Path) -> list[dict]:
             img = ImageOps.exif_transpose(img).convert("RGB")  # honours camera orientation only
         except Exception as e:
             raise RenderError(f"Cannot open image: {e}") from e
-        finish(1, img)
+        finish(1, upright(img))
     else:
         raise RenderError(f"Unsupported type {ext}")
     return meta

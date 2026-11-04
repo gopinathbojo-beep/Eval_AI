@@ -181,8 +181,13 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
             system = SYSTEM
         try:
             call = chat_structured(system, prompt_str, schema, img)
+            if system is not prompts.OCR_SYSTEM:  # a CBSE paper or scheme page: every printed question must come back
+                call = _reread_missed_rows(doc, p["page_number"], call, system, prompt_str, schema, img)
+            check = (_check_sheet_page(call, p["page_number"], img, system, abs_path(p["source_file"]), wd / "ocr")
+                     if kind == "answer-sheet" else None)
             out.write_text(json.dumps({"status": "OK", "raw": call.raw, "parsed": call.parsed.model_dump(),
-                                       "attempts": call.attempts, "engine": "internvl"},
+                                       "attempts": call.attempts, "engine": "internvl",
+                                       **({"check": check} if check else {})},
                                       ensure_ascii=False, indent=1), encoding="utf-8")
             _set_pages(db, doc, i, ocr_status="OK", ocr_error=None, ocr_file=rel(out))
         except AIUnavailable as e:
@@ -239,6 +244,45 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
         doc.status, doc.stage, doc.error_message = "READY", "Ready for review", None
     db.commit()
 
+
+
+def _check_sheet_page(call, page_number, img, system, source, out_dir):
+    """Check a sheet page's first reading against the image (see ocr.check); the first reading stays when the
+    check itself fails."""
+    s = get_settings()
+    if not s.ai_check_sheet_reads:
+        return None
+    from ..ocr.check import check_page
+    try:
+        return check_page(call.parsed, page_number, img, system, chat_structured, s.ai_request_logprobs,
+                          zoom_source=source if Path(source).exists() else None, zoom_dir=out_dir)
+    except AIResponseError as e:
+        log.warning("Page %s: reading check failed, first reading kept: %s", page_number, e.detail)
+        return {"error": e.detail}
+
+
+def _reread_missed_rows(doc, page_number, call, system, prompt_str, schema, img):
+    """Read a page once more when the model left out question numbers the PDF prints on it (a truncated or
+    malformed reply keeps only the first questions); the read that returns more of them is kept."""
+    from ..cbse.layout import printed_by_page
+
+    printed = (printed_by_page(doc) or {}).get(page_number) or set()
+
+    def missed(result):
+        return sorted(printed - {f.root for f in result.fragments})
+
+    first = missed(call.parsed)
+    if not first:
+        return call
+    log.warning("Page %s: questions %s printed but not read; reading the page again", page_number, first)
+    try:
+        retry = chat_structured(system, prompt_str + (
+            f"\nA previous read of this page left out printed question(s) {', '.join(map(str, first))}. Return EVERY "
+            "printed question on this page as its own fragment in the top-level fragments list; never nest one "
+            "fragment inside another."), schema, img)
+    except AIResponseError:
+        return call
+    return retry if len(missed(retry.parsed)) < len(first) else call
 
 
 def _load_results(doc, schema):
@@ -465,17 +509,64 @@ def _build_answer_key(db: Session, doc, exam: Exam, wd: Path, results) -> None:
     db.commit()
 
 
+import re as _re
+# what the model writes for crossed-out ink: ~~text~~, <s>/<del>/<strike>, [crossed out ...], [struck-through ...]
+_STRUCK = _re.compile(r"~~.*?~~|<(s|del|strike)>.*?</\1>|\[\s*(?:crossed[\s-]*out|struck[\s-]*(?:through|out)|strike[\s-]*through|scribbled[\s-]*out|cancelled)[^\]]*\]", _re.I | _re.S)
+
+
+def drop_struck(text: str | None) -> str:
+    """The answer without anything the student struck out, and without lines that held only struck words."""
+    if not text:
+        return text or ""
+    kept = []
+    for line in text.split("\n"):
+        cleaned = _re.sub(r"[ \t]{2,}", " ", _STRUCK.sub("", line)).rstrip()
+        if cleaned.strip() or not line.strip():
+            kept.append(cleaned)
+    return _re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip()
+
+def _answer_crop(pages_by_num: dict, pieces, wd: Path, name: str) -> str | None:
+    """One picture of an answer from its band on each page it covers, top to bottom in page order."""
+    from PIL import Image
+    images = []
+    for page_number, band in pieces:
+        p = pages_by_num.get(page_number)
+        nb = cropping.normalise_bbox(band, p["ocr_width"], p["ocr_height"], p["width"], p["height"]) if p and band else None
+        if nb is None:
+            continue
+        with Image.open(abs_path(p["source_file"])) as im:
+            images.append(im.crop((int(nb["x"]), int(nb["y"]), int(nb["x"] + nb["width"]), int(nb["y"] + nb["height"])))
+                          .convert("RGB"))
+    if not images:
+        return None
+    width = max(i.width for i in images)
+    sheet = Image.new("RGB", (width, sum(i.height for i in images) + 8 * (len(images) - 1)), "white")
+    y = 0
+    for image in images:
+        sheet.paste(image, (0, y))
+        y += image.height + 8
+    dest = wd / "crops" / f"{name}.png"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    sheet.save(dest, "PNG")
+    return rel(dest)
+
+
 def _build_student_answers(db: Session, doc, exam: Exam, wd: Path, results) -> None:
     ev = db.query(Evaluation).filter_by(answer_sheet_id=doc.id).one()
     db.query(StudentAnswer).filter_by(evaluation_id=ev.id).delete()
     pages_by_num = {p["page_number"]: p for p, _ in results}
     canonical_qs = db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all()
     answers = segment_student_answers(results, canonical_questions=canonical_qs)
+    for a in answers:  # struck-out writing is not the student's answer
+        a.answer_text, a.raw_ocr_text = drop_struck(a.answer_text), drop_struck(a.raw_ocr_text)
+    answers = [a for a in answers if a.answer_text.strip()]
     n = 0
     for a in answers:
         n += 1
         p = pages_by_num.get(a.page_number) or results[0][0]
         nb, crop = _bbox_and_crop(p, a.bbox, wd, f"a{n:03d}")
+        if getattr(a, "pieces", None):  # a formatter giving the answer's band on each page: one stitched crop
+            crop = _answer_crop(pages_by_num, a.pieces, wd, f"a{n:03d}") or crop
         db.add(StudentAnswer(
             evaluation_id=ev.id,
             raw_question_number=a.raw_question_number,

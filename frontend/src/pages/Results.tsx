@@ -349,6 +349,19 @@ function ExamWiseResults({ data }: { data: Evaluation[] }) {
     }
   };
 
+  const downloadStudents = async (x: ExamSummary) => {
+    setBusy(x.examId + "students");
+    setDownloadError(null);
+    try {
+      await downloadFile(`/exams/${x.examId}/student-reports.zip`,
+        `StudentReports_${x.name.replace(/[^a-zA-Z0-9_-]/g, "_")}.zip`);
+    } catch (err: any) {
+      setDownloadError(err?.message || "Failed to download student reports.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
   return (
     <>
       <TableToolbar
@@ -435,9 +448,16 @@ function ExamWiseResults({ data }: { data: Evaluation[] }) {
                     {x.passed} / {x.students}
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-right">
-                    <Button busy={busy === x.examId} onClick={() => download(x)} title="Download exam-wise class report (PDF)">
-                      Download PDF
-                    </Button>
+                    <div className="flex items-center justify-end gap-2">
+                      <Button busy={busy === x.examId} onClick={() => download(x)} title="Download exam-wise class report (PDF)">
+                        Download PDF
+                      </Button>
+                      <Button variant="soft" busy={busy === x.examId + "students"} disabled={!!busy}
+                              onClick={() => downloadStudents(x)}
+                              title="Download every student's personal report (one PDF each, in a ZIP)">
+                        All student reports
+                      </Button>
+                    </div>
                   </td>
                 </tr>
               ))}

@@ -74,6 +74,7 @@ def validate(db, exam, phase="evaluation"):
     if options.get("accessibility") not in {"standard", "accessible"}:
         add("AUDIENCE_REQUIRED", "Select the standard or accessible paper version.")
     if p["code"] == "055" and options.get("accountancy_option") not in {
+        None,
         "financial",
         "computerised",
     }:

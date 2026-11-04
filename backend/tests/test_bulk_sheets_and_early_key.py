@@ -113,25 +113,19 @@ def test_bulk_sheets_are_graded_in_turn_and_finalized_together(client, auth):
 
     summ = j(c.get(f"/api/exams/{eid}/review-summary", headers=h), 200)
     assert summ["processing"] == 0 and summ["total"] == 3 and summ["unassigned"] == 0
-    assert [r["student"]["id"] for r in summ["ready"]] == [clean["id"]]
+    # an unsure AI mark is not a review (only unmapped answers and marks mismatches are): that sheet is ready too
+    assert sorted(r["student"]["id"] for r in summ["ready"]) == sorted([clean["id"], unsure["id"]])
     review = {r["student"]["id"]: r["reasons"] for r in summ["needs_review"]}
-    assert set(review) == {messy["id"], unsure["id"]}
+    assert set(review) == {messy["id"]}
     assert any("Fix the answer mapping" in x["reason"] for x in review[messy["id"]])
     assert not any(x["reason"] == "Not evaluated yet" for x in review[messy["id"]])
-    assert [x["question"] for x in review[unsure["id"]]] == ["3(b)"] and "30% confidence" in review[unsure["id"]][0]["reason"]
 
     done = j(c.post(f"/api/exams/{eid}/finalize-ready", headers=h), 200)
-    assert done["finalized_now"] == 1 and done["finalized"] == 1 and done["ready"] == [] and len(done["needs_review"]) == 2
+    assert done["finalized_now"] == 2 and done["finalized"] == 2 and done["ready"] == [] and len(done["needs_review"]) == 1
     res = j(c.get(f"/api/evaluations/{sheets[clean['id']]['id']}/result", headers=h))
     assert res["finalized"] and res["total_marks"] == res["maximum_marks"]
     r = c.post(f"/api/exams/{eid}/finalize-ready", headers=h)
     assert r.status_code == 400 and r.json()["code"] == "NOTHING_READY"
-
-    # once the teacher checks the unsure mark, that sheet joins the next bulk finalize
-    ev = j(c.get(f"/api/evaluations/{sheets[unsure['id']]['id']}", headers=h))
-    it = next(i for i in ev["items"] if i["ai_confidence"] is not None and i["ai_confidence"] < 0.5)
-    j(c.patch(f"/api/evaluations/{ev['evaluation']['id']}/items/{it['id']}", headers=h, json={"final_marks": 2, "approve": True, "reason": "Checked"}), 200)
-    assert j(c.post(f"/api/exams/{eid}/finalize-ready", headers=h), 200)["finalized_now"] == 1
 
 
 def test_student_import_export(client, auth):

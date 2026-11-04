@@ -18,7 +18,7 @@ from ..models import Evaluation, Exam, Teacher
 from .audit import audit
 
 log = logging.getLogger("adem.exam_files")
-GRACE = timedelta(hours=24)
+GRACE = timedelta(days=7)
 CHECK_EVERY_SECONDS = 15 * 60
 REPORTS = "reports"
 
@@ -37,7 +37,7 @@ def exam_dir(exam_id: str) -> Path:
 
 
 def save_reports_and_schedule(db: Session, teacher: Teacher, exam: Exam) -> int:
-    """Called right after the exam is finalized: keep every student's PDF report, then start the 24-hour clock."""
+    """Called right after the exam is finalized: keep every student's PDF report, then start the one-week clock."""
     from .school_reports import build_evaluation_pdf_report
     out = exam_dir(exam.id) / REPORTS
     out.mkdir(parents=True, exist_ok=True)
