@@ -135,10 +135,10 @@ def test_one_mark_answer_with_explanation_stays_on_its_question():
     assert not _chooses_option(q, "2. Chromium has more unpaired electrons than titanium ...")
 
 
-def test_scheme_mark_precision_and_unnumbered_continuation():
+def test_half_mark_steps_and_unnumbered_continuation():
     from app.cbse.grading import _to_scheme_step
     from app.services.mapping_service import _continues
-    assert [_to_scheme_step(v, 1) for v in (0.25, 0.5, 0.75, 1)] == [0.25, 0.5, 0.75, 1]
+    assert [_to_scheme_step(v, 1) for v in (0.8, 0.3, 0.2, 1)] == [1, 0.5, 0, 1]
     before = SimpleNamespace(question_type="", max_marks=2)
     prev = SimpleNamespace(page_number=10, answer_text="17(A) 1. 2MnO4- + ...")
     assert _continues(prev, SimpleNamespace(page_number=10, answer_text="2. Chromium has more unpaired"), before)
