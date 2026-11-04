@@ -9,6 +9,7 @@ from pathlib import Path
 import pymupdf
 from PIL import Image, ImageOps
 from ..config import get_settings
+from .orientation import upright_turns
 from .preprocessing import make_ocr_copy
 from .storage import rel
 
@@ -158,6 +159,15 @@ def _docx_to_pdf(src: Path, out_dir: Path) -> Path:
         return dest
 
 
+def _thumbnail(page) -> Image.Image | None:
+    """A small image of a scanned page, to check its orientation; None for a page with its own text layer
+    (a digital page is already the right way up)."""
+    if page.get_text().strip():
+        return None
+    pix = page.get_pixmap(matrix=pymupdf.Matrix(1.4, 1.4), alpha=False)  # ~100 dpi: thin pen strokes stay dark
+    return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+
+
 def render_document(src: Path, ext: str, work_dir: Path) -> list[dict]:
     """Returns page metadata list. `src` is the untouched original."""
     s = get_settings()
@@ -167,7 +177,9 @@ def render_document(src: Path, ext: str, work_dir: Path) -> list[dict]:
     proc_dir.mkdir(parents=True, exist_ok=True)
     meta: list[dict] = []
 
-    def finish(n: int, img: Image.Image, page_text: str | None = None):
+    def finish(n: int, img: Image.Image, page_text: str | None = None, turn: int = 0):
+        if turn:  # scanned sideways: stored and read upright (bboxes and crops refer to the upright page)
+            img = img.rotate(turn, expand=True)
         name = f"page-{n:03d}.png"
         page_path = pages_dir / name
         img.save(page_path, "PNG")
@@ -182,6 +194,8 @@ def render_document(src: Path, ext: str, work_dir: Path) -> list[dict]:
         }
         if page_text:
             entry["page_text"] = page_text
+        if turn:
+            entry["turned"] = turn
         meta.append(entry)
 
     if ext == "docx":
@@ -197,10 +211,11 @@ def render_document(src: Path, ext: str, work_dir: Path) -> list[dict]:
         if doc.page_count == 0:
             raise RenderError("PDF has no pages.")
         zoom = s.pdf_render_dpi / 72.0
+        turns = upright_turns([_thumbnail(page) for page in doc])
         for i, page in enumerate(doc, start=1):
             pix = page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False)
             img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
-            finish(i, img, page_text=page_text(page))
+            finish(i, img, page_text=page_text(page), turn=turns[i - 1])
         doc.close()
     elif ext in ("png", "jpg"):
         try:
@@ -208,7 +223,7 @@ def render_document(src: Path, ext: str, work_dir: Path) -> list[dict]:
             img = ImageOps.exif_transpose(img).convert("RGB")  # honours camera orientation only
         except Exception as e:
             raise RenderError(f"Cannot open image: {e}") from e
-        finish(1, img)
+        finish(1, img)  # one page cannot tell which way it was turned (see orientation.py)
     else:
         raise RenderError(f"Unsupported type {ext}")
     return meta

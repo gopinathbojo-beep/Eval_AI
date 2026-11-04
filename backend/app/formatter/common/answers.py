@@ -146,6 +146,51 @@ def _merge_bboxes(bb1: dict | None, bb2: dict | None) -> dict | None:
         return bb1
 
 
+# Printed answer-sheet furniture the model sometimes transcribes as an answer, or tacks onto one: the details box
+# repeated on every continuation sheet, headings the student copies from the paper, the page count.
+_SHEET_FIELD = re.compile(
+    r"\b(?:roll\s*no|name\s*[:.\-]|class\s*(?:&|and)\s*sec|exam\s*[:.\-]|subject\s*[:.\-]|date\s*[:.\-]|"
+    r"sign(?:ature)?\s+of\s+(?:the\s+)?invigilator|reg(?:ister|istration)?\.?\s*no|admission\s*no)", re.I)
+_ALWAYS_HEADER = re.compile(r"\b(?:roll\s*no|invigilator)\b", re.I)
+_SCHOOL_LINE = re.compile(r"^[^a-z]*\b(?:SCHOOL|VIDYALAYA|VIDYALAYAM|ACADEMY|CBSE)\b[^a-z]*$")
+_SECTION_ONLY = re.compile(r"^\s*sec(?:tion|\.)?\s*[-–:.]?\s*(?:[A-E]|I{1,3}|IV|V)\s*[-.:]?\s*$", re.I)
+_PAGE_COUNT = re.compile(r"^\s*total\s+(?:no\.?\s+of\s+)?pages?\b.{0,20}$", re.I)
+
+
+def _strip_sheet_furniture(text: str) -> str:
+    """The answer text without the sheet's details box, copied section headings and page counts."""
+    lines = text.splitlines()
+    header = any(len(_SHEET_FIELD.findall(line)) >= 2 or _ALWAYS_HEADER.search(line) for line in lines)
+    kept = [line for line in lines
+            if not (_SECTION_ONLY.match(line) or _PAGE_COUNT.match(line)
+                    or len(_SHEET_FIELD.findall(line)) >= 2 or _ALWAYS_HEADER.search(line)
+                    or (header and (_SCHOOL_LINE.match(line.strip()) or _SHEET_FIELD.match(line.strip()))))]
+    return "\n".join(kept).strip() if len(kept) != len(lines) else text
+
+
+# Handwritten part markers that read as numbers: roman II and III (straight strokes: "11", "111") and a capital
+# B ("13"). A plain "1" is left alone: it is just as often the start of a numbered list.
+_MARKER_LOOKALIKES = {"11": "ii", "111": "iii", "13": "b"}
+
+
+def _misread_part_marker(raw_lbl: str | None, current: str | None, answered: set[str],
+                         exam_norms: set[str | None]) -> str | None:
+    """The part token a label really is ("(ii)"), when a number written inside the current answer points back to
+    a question already answered and looks like a part marker: II read as 11 inside Q16, B read as 13 inside Q28."""
+    if not raw_lbl or not current:
+        return None
+    core = re.sub(r"^\s*(?:q(?:uestion|n)?\s*\.?\s*)", "", raw_lbl.strip(), flags=re.I)
+    core = re.sub(r"[\s.)\]:,>\-–→]+$", "", core).lower()
+    token = _MARKER_LOOKALIKES.get(core)
+    parent = parent_number(current)
+    if not token or not parent.isdigit() or int(core) >= int(parent) or core not in answered:
+        return None
+    has_parts = any(n and n.startswith(f"{parent}(") for n in exam_norms)
+    if has_parts and f"{parent}({token})" not in exam_norms:
+        return None  # the exam scores other parts of this question: no such part to read it as
+    return f"({token})"
+
+
 def _split_swallowed_answers(
     raw_lbl: str | None,
     text: str,
@@ -392,7 +437,7 @@ def _segment_invented_labels(
             g["confs"].append(a.ocr_confidence)
 
     for page, a in blocks:
-        text = (a.answer_text or "").strip()
+        text = _strip_sheet_furniture((a.answer_text or "").strip())
         if not text:
             continue
         if page == blocks[0][0] and _IDENTITY_BLOCK.match(text) and re.search(r"\broll\b", text, re.I):
@@ -486,7 +531,12 @@ def segment_student_answers(
                 if cb_texts:
                     a_text = f"{a_text}\n" + "\n".join(cb_texts)
                     a_text = a_text.strip()
+            a_text = _strip_sheet_furniture(a_text)
             a_lbl = (a.question_number or "").strip() or None
+            if a_lbl and _SECTION_ONLY.match(a_lbl):
+                a_lbl = None  # "Section-B" read as the label: a heading, not a question number
+            if not a_text and not (a_lbl and normalize_question_number(a_lbl)):
+                continue  # only sheet furniture
             a_bb = a.bbox.model_dump() if getattr(a, "bbox", None) else None
             a_conf = getattr(a, "ocr_confidence", None)
             splits = _split_swallowed_answers(a_lbl, a_text, canonical_questions)
@@ -495,6 +545,9 @@ def segment_student_answers(
                     expanded_items.append((p_lbl, p_txt, a_bb, a_conf))
 
         for raw_lbl, text, bb, conf in expanded_items:
+            answered = {parent_number(g.normalized_number) for g in grouped if g.normalized_number}
+            if marker := _misread_part_marker(raw_lbl, curr_norm_num, answered, exam_norms):
+                raw_lbl = marker
             # An unnumbered block whose content clearly answers another question is that question's answer with
             # its number missed by OCR ("4)" lost, leaving "(a) ... (b) ..."), not a bullet of the current answer
             content_q = _content_question(text, canonical_questions) if not raw_lbl and canonical_questions and text else None
@@ -532,6 +585,12 @@ def segment_student_answers(
                 if m_lbl and raw_lbl[m_lbl.end():].strip():
                     text = f"{raw_lbl[m_lbl.end():].strip()}\n{text}".strip()
                     raw_lbl = f"({m_lbl.group(1).lower()})"
+
+            # An unlabelled block opening with a part marker ("B. F1 ...") on the page of a numbered answer is that
+            # question's next part, not an unnumbered answer of its own
+            if ((raw_lbl is None or raw_lbl.lower() in ("null", "none", "?", "unknown", "[unclear]"))
+                    and curr_norm_num and page_num == curr_page and (m_next := _PART_MARKER.match(text or ""))):
+                raw_lbl = f"({m_next.group(1).lower()})"
 
             # Case: Label is null/empty or 'none'/'unclear'
             if raw_lbl is None or raw_lbl.lower() in ("null", "none", "?", "unknown", "[unclear]"):
