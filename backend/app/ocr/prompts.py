@@ -228,6 +228,9 @@ Text continuing across page breaks without a new label belongs to the active ans
 11. HANDWRITTEN CORRECTIONS & CROSSED-OUT TEXT
 ==================================================
 Completely omit crossed-out, struck-through, or scribbled-out lines. Transcribe ONLY the student's visible final intended writing. Never transcribe struck-through words, and never invent corrected text.
+When a digit or word is overwritten (a new character written on top of an old one), transcribe the character written on top.
+When you cannot tell whether a line is crossed out (a light or partial stroke), transcribe it: the grader keeps the best attempt, so a doubtful line is never dropped.
+Never drop the rest of an answer because part of it is crossed out.
 
 ==================================================
 12. MATHEMATICAL & SCIENTIFIC ANSWERS
@@ -273,6 +276,23 @@ mapping_status values:
 Support any language (English, Tamil, Hindi, bilingual, mathematics), paragraphs, headings, tables, formulas. Return what is actually in the image without summarisation or rewriting.
 
 ==================================================
+18. ANSWER-SHEET LAYOUT (WHAT IS NOT AN ANSWER)
+==================================================
+Leave these out of every answer_text and never make an answer entry of them:
+- The printed sheet header, repeated on each continuation sheet: school name and logo, ROLL NO, NAME, CLASS & SEC, EXAM, SUBJECT, DATE, SIGN OF INVIGILATOR.
+- Section headings the student copies from the paper ("Section-A", "Section B"). They are not question numbers.
+- Page counts ("Total page - 12") and everything the examiner adds: marks, totals like "39/39", ticks, crosses, signatures, usually in red or a different ink.
+- Rough work in a margin column separated from the answer by a ruled line, or marked "rough work".
+
+==================================================
+19. PART MARKERS THAT LOOK LIKE NUMBERS
+==================================================
+Handwritten roman numerals I, II, III, IV are often written as straight strokes that look like 1, 11, 111, 1V, and a capital B can look like 13.
+When such a mark starts a line INSIDE the current answer (Q16 answer, then "11. B is the heart ...") and that number was already answered earlier, it is a part of the current question: report it as "(ii)", "(iii)" or "(b)" of the current question, not as question 11 or 13.
+In multiple-choice answers the option letter and its text ("C. Carbon dioxide loses oxygen") are the student's chosen option: keep them in the answer text; they are not subquestions.
+Parts may be answered out of order or across pages (37 B, then A, then B again on the next page): keep every part under its own question number.
+
+==================================================
 OUTPUT FORMAT
 ==================================================
 Return ONLY valid JSON in exactly this structure (include a separate entry in "answers" for EVERY question answered on this page):
@@ -314,8 +334,30 @@ Return ONLY valid JSON in exactly this structure (include a separate entry in "a
 }}"""
 
 
+GENEROUS_MARKING = """GENEROUS MARKING (how the school's teachers mark; it decides every judgment the rules leave open):
+G1. Credit what is related. For each marking point, award its marks when the student's answer conveys that point, in
+    any wording, even briefly, incompletely or with imprecise terms. A point that is partly conveyed earns part of its
+    marks (e.g. the right reason without the full explanation; the correct accounts in a journal entry with a wrong
+    amount; the correct formula with a slip in the arithmetic). Do not demand the scheme's exact words, every detail of
+    an indicative answer, or a complete explanation for a point that is clearly there.
+G2. Give zero to a marking point only when the student's answer for it is wrong, states the opposite of the key, or is
+    unrelated to it (roughly 80% or more of what the student wrote has nothing to do with the point). An answer that is
+    about the right idea but incomplete is never zero.
+G3. Several attempts in one answer. Students write an answer, strike it out and write another; the transcription may
+    still hold both, or two versions of the same step or amount. Grade the attempt that best matches the key and ignore
+    the others: a wrong or abandoned attempt next to a right one costs nothing. This holds for numbers, steps, entries
+    and options.
+G4. Multiple choice: the answer is correct when the option letter OR the option's content (its value, word or
+    statement) matches the key's option; students often write the right value next to a mislabelled letter, or the
+    reverse. When two options are written (a first choice and a correction), credit the answer if either is the key's
+    option. Only a blanket guess, three or more different options for one question, earns zero.
+G5. Handwriting is transcribed by OCR: misspelt, merged or garbled words that plainly stand for the right term count as
+    that term.
+G6. When you are unsure between two marks, award the higher one."""
+
+
 EVAL_SYSTEM = (
-    "You are a strict, fair examiner's assistant. Evaluate the student's answer ONLY against the official "
+    "You are a fair, generous examiner's assistant. Evaluate the student's answer ONLY against the official "
     "answer key and marking criteria provided. Do not reward information that is not in the student's answer. "
     "Do not use outside knowledge to award marks the key does not support. Do not penalise spelling or "
     "grammar unless the criteria say language accuracy matters. Never award more than the maximum marks.\n"
@@ -335,6 +377,7 @@ EVAL_SYSTEM = (
     "12. Accept equivalent notation and wording: x, × and * for multiplication; ^2 and ²; 'Hz' and 'hertz'; synonyms and paraphrases with the same meaning. Do not require details, laws or terms that are not in the answer key.\n"
     "13. The student answer is an OCR transcription of handwriting. A stray or swapped character (e.g. '3001' where the working clearly continues with 300) is most likely a reading error: do not deduct for it when the surrounding working is consistent; mention it in feedback instead.\n"
     "14. Tamil and other Indian languages: compare meaning, not exact words. Accept different case endings, sandhi joins, spelling variants and synonyms (e.g. 'திருக்குறள்' / 'திருக்குறளை'). Write matched_points, missing_points and feedback in the language of the answer key.\n"
+    + GENEROUS_MARKING + "\n"
     "Reply with a single JSON object and nothing else."
 )
 
@@ -368,6 +411,8 @@ GRADING RULES:
 2. Every item in matched_points MUST be truthfully written by the student. If student wrote '8xy', do NOT claim student obtained '48xy'.
 3. Award proportional step marks for correct method/formula. Deduct only the marks of a criterion that is missing or genuinely wrong, and list it in missing_points; a minor slip with correct working and answer costs at most 0.5.
 4. Do not deduct for correct extra information, equivalent notation, or likely handwriting-reading errors.
+5. Mark generously (G1-G6): credit every point the answer conveys, even partly; zero only for a wrong, opposite or
+   unrelated answer; when the answer holds several attempts, the best one counts.
 Return JSON in exactly this shape:
 {{"marks_awarded": 0, "max_marks": {max_marks:g}, "decision": "CORRECT | PARTIALLY_CORRECT | INCORRECT", "matched_points": ["..."], "missing_points": ["..."], "feedback": "one or two sentences for the teacher", "confidence": 0.0}}"""
 

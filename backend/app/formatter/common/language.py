@@ -25,11 +25,16 @@ def language_rules(question_text: str | None, key_text: str | None) -> str:
 
 THEORY_RULES = """UNDERSTANDING-BASED MARKING RULES. First decide which kind each scheme point is, then mark it so:
 1. EXPLANATION (explain, why, describe, give reasons, distinguish, state the importance): split each scheme point into
-   its ideas. For each idea: full credit when the student's answer clearly means it, in any wording; partial credit when
-   the idea is only implied or could be read another way; zero when it is missing or wrong.
+   its ideas. For each idea: full credit when the student's answer clearly means it, in any wording, even briefly;
+   partial credit when the idea is only implied, incomplete or loosely worded; zero only when it is absent, wrong or
+   the opposite of the key.
 2. FACT (a definition, law, named term, date, place, person, formula, chemical name, label of a diagram): it must be
-   correct as the textbook and scheme give it. A wrong or different fact earns nothing; wording around it may differ.
-3. NUMERICAL OR DERIVATION WORKING: mark by the scheme's steps exactly as given; these rules change nothing there.
+   correct as the textbook and scheme give it. A wrong or opposite fact earns nothing; wording around it may differ, and
+   a definition that gets the essential idea right earns its marks.
+3. NUMERICAL, JOURNAL OR DERIVATION WORKING: mark by the scheme's steps; each step or entry that is right, or partly
+   right (correct accounts with a wrong amount, a correct formula with an arithmetic slip), earns its share.
+4. Several attempts or struck-out versions in one answer: the attempt that best matches the key counts; the others are
+   ignored.
 Do not deduct for spelling or grammar slips unless the scheme says so, or unless a misspelling changes the term
 (e.g. a different chemical or person). When you give partial credit for an implied idea, or you are unsure, set
 confidence to 0.5 or lower so the teacher checks it, and say why in feedback."""
