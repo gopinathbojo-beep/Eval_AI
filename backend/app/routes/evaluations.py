@@ -64,11 +64,15 @@ def evaluation_detail(ev_id: str, db: Session = Depends(get_db), t: Teacher = De
 
 
 @router.get("/evaluations/{ev_id}/extraction-report.pdf")
-def evaluation_extraction_report(ev_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
-    """The student's sheet as read, how each answer was mapped, and the AI's grading notes."""
+def evaluation_extraction_report(ev_id: str, part: str = "all", db: Session = Depends(get_db),
+                                 t: Teacher = Depends(current_teacher)):
+    """The student's sheet as read, how each answer was mapped, and the AI's grading notes. part=mapping or
+    part=marks gives one review tab's download (the marks one works before the evaluation is finalized)."""
     import re
-    from ..services.extracted_pdf import sheet_extraction_report_pdf
+    from ..services.extracted_pdf import SHEET_REPORT_PARTS, sheet_extraction_report_pdf
 
+    if part not in SHEET_REPORT_PARTS:
+        raise err(400, "INVALID_PART", "part must be all, mapping or marks.")
     ev = get_evaluation(db, t, ev_id)
     exam = get_exam(db, t, ev.exam_id)
     sheet = db.get(AnswerSheetDocument, ev.answer_sheet_id)
@@ -76,8 +80,10 @@ def evaluation_extraction_report(ev_id: str, db: Session = Depends(get_db), t: T
     items = db.query(EvaluationItem).filter_by(evaluation_id=ev.id).all()
     questions = db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all()
     name = re.sub(r"[^A-Za-z0-9_-]+", "_", f"{ev.student.roll_number}_{ev.student.name}" if ev.student else ev.id)
-    return Response(sheet_extraction_report_pdf(exam, ev, sheet, answers, items, questions), media_type="application/pdf",
-                    headers={"Content-Disposition": f'attachment; filename="{name.strip("_")}_Sheet_Report.pdf"'})
+    suffix = {"all": "Sheet_Report", "mapping": "Mapping_Review", "marks": "Marks_Review"}[part]
+    return Response(sheet_extraction_report_pdf(exam, ev, sheet, answers, items, questions, part),
+                    media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{name.strip("_")}_{suffix}.pdf"'})
 
 
 # ---------- mapping ----------

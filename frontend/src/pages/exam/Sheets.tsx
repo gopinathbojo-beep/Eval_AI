@@ -6,6 +6,8 @@ import type { Evaluation, IdentityRead, QuestionSummary, ReviewSummary, Student,
 import { BUSY_DOC, date, fmt, label, nameIsRoll } from "../../utils/format";
 import { Badge, Button, Card, Confirm, Empty, ErrorPanel, LinkButton, Loading, Modal, Select, StatusBadge, Table } from "../../components/ui";
 import { useExam } from "../ExamWorkspace";
+import { DeleteSheetConfirm } from "../../components/DeleteSheetConfirm";
+import { IconTrash } from "../../components/Icons";
 
 function IdentityDetails({ read }: { read?: Partial<IdentityRead> }) {
   const parts: [string, string | null | undefined][] = [
@@ -512,19 +514,18 @@ export function AnswerSheets() {
                           Re-map &amp; evaluate
                         </Button>
                       )}
-                      {e.status !== "FINALIZED" && (
-                        <Button
-                          small
-                          variant="ghost"
-                          className="text-mark hover:bg-mark-soft hover:text-mark"
-                          onClick={() => setDel(e)}
-                          title="Delete sheet"
-                        >
-                          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                          </svg>
-                        </Button>
-                      )}
+                      <Button
+                        small
+                        variant="ghost"
+                        className="text-mark hover:bg-mark-soft hover:text-mark"
+                        disabled={e.run_status === "RUNNING" || (!!e.document && BUSY_DOC.includes(e.document.status))}
+                        onClick={() => setDel(e)}
+                        title={e.run_status === "RUNNING" || (!!e.document && BUSY_DOC.includes(e.document.status))
+                          ? "Wait for reading or grading to finish" : "Delete this answer sheet"}
+                        icon={<IconTrash size={14} />}
+                      >
+                        Delete
+                      </Button>
                     </div>
                   </td>
                 </tr>
@@ -534,28 +535,7 @@ export function AnswerSheets() {
         </Card>
       )}
 
-      {del && (
-        <Confirm
-          title="Delete Answer Sheet"
-          danger
-          confirmLabel="Delete Sheet"
-          body={
-            <div className="space-y-2 text-sm text-ink">
-              <p>
-                Remove <b>{del.student.name}</b>'s answer sheet and all extracted evaluation marks?
-              </p>
-              <p className="text-xs text-mute">
-                The original file is kept and the deletion is logged.
-              </p>
-            </div>
-          }
-          onConfirm={async () => {
-            await api(`/evaluations/${del.id}`, { method: "DELETE" });
-            await refresh();
-          }}
-          onClose={() => setDel(null)}
-        />
-      )}
+      {del && <DeleteSheetConfirm ev={del} onDeleted={refresh} onClose={() => setDel(null)} />}
     </div>
   );
 }

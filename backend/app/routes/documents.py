@@ -743,18 +743,26 @@ def list_answer_sheets(
 
 @router.delete("/evaluations/{ev_id}")
 def delete_answer_sheet(
-    ev_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)
+    ev_id: str,
+    confirm_finalized: bool = False,
+    db: Session = Depends(get_db),
+    t: Teacher = Depends(current_teacher),
 ):
+    """Remove a student's answer sheet with its answers and marks. A finalized one only when the teacher confirms
+    it (confirm_finalized): its locked marks leave the results and reports."""
     from ..deps import get_evaluation
 
     ev = get_evaluation(db, t, ev_id)
-    if ev.status == "FINALIZED":
+    if ev.status == "FINALIZED" and not confirm_finalized:
         raise err(
-            409, "EVALUATION_FINALIZED", "A finalized evaluation cannot be deleted."
+            409,
+            "EVALUATION_FINALIZED",
+            "This evaluation is finalized. Confirm to delete it and remove its marks from the results.",
         )
-    if (
+    if ev.run_status == "RUNNING" or (
         db.query(AnswerSheetDocument)
-        .filter_by(id=ev.answer_sheet_id, status="OCR_PROCESSING")
+        .filter(AnswerSheetDocument.id == ev.answer_sheet_id,
+                AnswerSheetDocument.status.in_(("RENDERING", "OCR_PROCESSING", "EXTRACTING", "IDENTIFYING")))
         .first()
     ):
         raise err(
@@ -769,7 +777,7 @@ def delete_answer_sheet(
         entity_type="evaluation",
         entity_id=ev.id,
         action="answer_sheet_deleted",
-        old={"student": ev.student.name, "status": ev.status},
+        old={"student": ev.student.name, "status": ev.status, "total_marks": ev.total_marks},
     )
     db.query(EvaluationItem).filter_by(evaluation_id=ev.id).delete()
     db.query(StudentAnswer).filter_by(evaluation_id=ev.id).delete()
