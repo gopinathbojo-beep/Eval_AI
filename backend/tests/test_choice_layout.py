@@ -58,3 +58,14 @@ def test_a_single_visually_impaired_version_stays_a_flat_alternative():
                  (page, _fragment("For Visually Impaired: Q12 (B). Describe the graph of y = x^2.", "12b", "(B)"))]
     tree = _alternatives(fragments, printed_choice=True)
     assert [c["audience"] for c in tree["children"]] == ["standard", "accessible"]
+
+
+def test_only_actionable_model_notes_reach_the_school():
+    from app.cbse.build import actionable
+    noise = ["Option (C) denominator printed as '-6' in the source; retained as visible.",
+             "Q35 not explicitly given a total mark on this page; subpart marks not individually printed.",
+             "BD; bbox2; width; height; 400; 10",
+             "Q34(A) is labelled for visually impaired; Q34(B) is the OR alternative printed in the main paper."]
+    real = ["Part (iii) text is cut off at the bottom of the page.", "The handwriting in option (b) is illegible.",
+            "Question number is not visible.", "Diagram is missing from the scan."]
+    assert actionable(noise) == [] and actionable(real) == real

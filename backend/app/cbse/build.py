@@ -267,17 +267,38 @@ _UNSPLIT_MARKS = re.compile(
 _LAYOUT_NOTE = re.compile(r"section[- ]?[A-E]?\s+heading|heading and (?:its )?instructions|instructions? (?:is|are) printed", re.I)
 
 
+# A model note reaches the school only when it says something the school must act on: content that cannot be read,
+# is missing or is cut off, or a question number / marks that cannot be read. Transcription remarks ("printed as
+# '-6'; retained as visible"), mark-splitting remarks, layout remarks and stray fragments ("BD; bbox2; width") are
+# the reader's own business: they never make a question "Needs review".
+_ACTIONABLE_NOTE = re.compile(
+    r"illegible|unreadable|(?:cannot|can't|could not|couldn't|unable to) (?:be )?(?:read|see|make out|decipher)"
+    r"|not (?:legible|readable|clear(?:ly)? visible)|blurr|smudge|faded|obscured|torn|damaged"
+    r"|(?:text|question|part|option|options|answer|page|line|figure|diagram|table) (?:is |are )?(?:missing|cut off|truncated|incomplete)"
+    r"|(?:missing|cut off|truncated|incomplete) (?:text|question|part|option|options|answer|page|line|figure|diagram|table)"
+    r"|question number (?:is )?(?:missing|unclear|unreadable|not visible)"
+    r"|marks? (?:is |are )?(?:unreadable|illegible|not legible)", re.I)
+
+
+def actionable(notes):
+    """The model's notes worth showing a teacher; see _ACTIONABLE_NOTE."""
+    return [x for x in notes or [] if isinstance(x, str) and _ACTIONABLE_NOTE.search(x)
+            and sum(c.isalpha() for c in x) >= 12 and not _CROP_NOTE.search(x)]
+
+
 def collect(doc, results, kind="question-paper"):
     from .layout import ground_visuals
 
     # clean first: the printed number of a fragment is read from its text when grounding it
     for _, result in results:
+        # only the model's notes are filtered here; the app's own checks add their notes after this point
+        result.issues = actionable(result.issues)
         for fragment in result.fragments:
             fragment.text = clean_text(fragment.text or "")
             if kind == "question-paper":
                 # a paper printing one mark for several subparts is normal: the marking scheme gives the split
                 fragment.issues = [x for x in fragment.issues if not _UNSPLIT_MARKS.search(x)]
-            fragment.issues = [x for x in fragment.issues if not _LAYOUT_NOTE.search(x)]
+            fragment.issues = actionable([x for x in fragment.issues if not _LAYOUT_NOTE.search(x)])
         result.fragments = [f for f in result.fragments
                             if (f.text and not _TITLE_ONLY.match(f.text)) or (f.tree and f.tree.children)]
     ground_visuals(doc, results, answers=kind == "answer-key")
