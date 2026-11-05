@@ -12,6 +12,41 @@ class BBox(BaseModel):
     height: float
 
 
+def _first(d: dict, *keys):
+    for k in keys:
+        if d.get(k) is not None:
+            return d[k]
+    return None
+
+
+def _box(v: Any) -> dict | None:
+    """Read a box however the model wrote it — {x,y,width,height}, {bbox_width,..}, {x1,y1,x2,y2}, [x1,y1,x2,y2].
+    The box is optional, so one that cannot be read is dropped instead of failing the whole page."""
+    try:
+        if isinstance(v, (list, tuple)) and len(v) >= 4:
+            v = dict(zip(("x1", "y1", "x2", "y2"), v[:4]))
+        if not isinstance(v, dict):
+            return None
+        x = _first(v, "x", "x1", "left", "x_min", "xmin")
+        y = _first(v, "y", "y1", "top", "y_min", "ymin")
+        w = _first(v, "width", "w", "bbox_width")
+        h = _first(v, "height", "h", "bbox_height")
+        x2 = _first(v, "x2", "right", "x_max", "xmax")
+        y2 = _first(v, "y2", "bottom", "y_max", "ymax")
+        if x is None or y is None:
+            return None
+        x, y = float(x), float(y)
+        if w is None and x2 is not None:
+            w = float(x2) - x if float(x2) >= x else float(x2)
+        if h is None and y2 is not None:
+            h = float(y2) - y if float(y2) >= y else float(y2)
+        if w is None or h is None:
+            return None
+        return {"x": x, "y": y, "width": max(0.0, float(w)), "height": max(0.0, float(h))}
+    except (TypeError, ValueError):
+        return None
+
+
 def _num(v: Any) -> float | None:
     if v is None or v == "":
         return None
@@ -67,7 +102,7 @@ class QuestionItem(_Base):
     @field_validator("bbox", mode="before")
     @classmethod
     def _bb(cls, v):
-        return v if isinstance(v, dict) else None
+        return _box(v)
 
 
 class QuestionPageResult(_Base):
@@ -109,7 +144,7 @@ class AnswerKeyItem(_Base):
     @field_validator("bbox", mode="before")
     @classmethod
     def _bb(cls, v):
-        return v if isinstance(v, dict) else None
+        return _box(v)
 
 
 class AnswerKeyPageResult(_Base):
@@ -175,14 +210,7 @@ class StudentAnswerItem(_Base):
     @field_validator("bbox", mode="before")
     @classmethod
     def _bb(cls, v):
-        if isinstance(v, dict):
-            return v
-        if isinstance(v, (list, tuple)) and len(v) >= 4:
-            x1, y1, x2, y2 = [float(x) for x in v[:4]]
-            w = max(0.0, x2 - x1) if x2 >= x1 else x2
-            h = max(0.0, y2 - y1) if y2 >= y1 else y2
-            return {"x": x1, "y": y1, "width": w, "height": h}
-        return None
+        return _box(v)
 
     @model_validator(mode="after")
     def _populate_defaults(self):
