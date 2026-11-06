@@ -1,6 +1,7 @@
 """DB-aware wrappers around the pure mapping rules."""
 from __future__ import annotations
 from typing import Any
+import logging
 import re
 from sqlalchemy.orm import Session
 from .. import formatter
@@ -9,6 +10,7 @@ from ..models import AnswerKey, Evaluation, ExamQuestion, StudentAnswer
 from ..formatter.common.mapping import MAPPED, NEEDS_REVIEW, UNMAPPED, flag_duplicates, map_label, detect_mapping_anomalies
 from ..formatter.common.numbering import part_labels, normalize_question_number, parent_number
 
+log = logging.getLogger("adem.mapping")
 DUP_NOTE = "DUPLICATE_MAPPING: another answer also maps to this question"
 _RECOMPUTABLE = {"UNMAPPED", "NEEDS_REVIEW", "MAPPED"}
 

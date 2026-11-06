@@ -245,6 +245,24 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
 
   return (
     <div className="space-y-4">
+      {d.coverage && d.coverage.required > 0 && (
+        <div
+          className={`rounded-lg border px-4 py-3 text-sm ${
+            d.coverage.missing.length ? "border-warn/30 bg-warn-soft text-ink" : "border-ok/30 bg-ok-soft text-ink"
+          }`}
+        >
+          <b>
+            {d.coverage.answered} of {d.coverage.required} questions answered on this sheet.
+          </b>{" "}
+          {d.coverage.missing.length ? (
+            <span className="text-mute">
+              Not found: {d.coverage.missing.join(", ")}. Check the sheet: skipped by the student, or not read.
+            </span>
+          ) : (
+            <span className="text-mute">Every question has an answer.</span>
+          )}
+        </div>
+      )}
       {/* Question Mapping Metrics */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
         <Stat label="Total Questions" value={d.summary.total_questions} />

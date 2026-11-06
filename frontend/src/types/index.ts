@@ -389,6 +389,8 @@ export interface EvaluationDetail {
     missing: number;
     ignored: number;
   };
+  /** questions the student had to answer vs answers found on the sheet */
+  coverage?: { required: number; answered: number; missing: string[] };
   issues: Issue[];
 }
 export interface ResultRow {

@@ -37,3 +37,22 @@ def test_a_page_read_as_empty_answers_is_not_a_good_read():
     assert _blank_answers(StudentPageResult(answers=[{"answer_text": ""}, {"answer_text": "  "}]))
     assert not _blank_answers(StudentPageResult(answers=[{"answer_text": ""}, {"answer_text": "1. (c) 27000"}]))
     assert not _blank_answers(StudentPageResult(answers=[]))  # a blank page with no answers is just blank
+
+
+def test_questions_not_found_and_an_empty_page_send_that_page_to_be_read_again(monkeypatch):
+    from types import SimpleNamespace as N
+    from app.ocr.schemas import StudentPageResult
+    from app.services import pipeline
+    from app.services import coverage
+    monkeypatch.setattr(coverage, "coverage", lambda db, ev, qs: {"required": 34, "answered": 27,
+                                                                   "missing": [f"Q{n}" for n in range(1, 8)]})
+    doc = N(id="d", identity={}, pages=[{"page_number": 1, "ocr_status": "OK"}, {"page_number": 2, "ocr_status": "OK"}])
+    results = [({"page_number": 1}, StudentPageResult(answers=[])),
+               ({"page_number": 2}, StudentPageResult(answers=[{"question_number": "8", "answer_text": "(d) ..."}]))]
+    pipeline._check_coverage(None, doc, None, [], results)
+    assert doc.identity["coverage"]["missing"] == [f"Q{n}" for n in range(1, 8)]
+    assert doc.pages[0]["ocr_status"] == "FAILED_PARSE" and doc.pages[0]["coverage_reread"]
+    assert doc.pages[1]["ocr_status"] == "OK"
+    doc.pages[0]["ocr_status"] = "OK"  # read again and still empty (a blank page): not sent a second time
+    pipeline._check_coverage(None, doc, None, [], results)
+    assert doc.pages[0]["ocr_status"] == "OK"

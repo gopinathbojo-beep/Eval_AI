@@ -49,7 +49,8 @@ def _headers(key: str) -> dict:
     return {"Authorization": "Bearer " + key} if key else {}
 
 
-def call(system: str, user: str, image: Path | None, structured: bool, model: str | None = None):
+def call(system: str, user: str, image: Path | None, structured: bool, model: str | None = None,
+         _retry: bool = False):
     s = get_settings()
     base, key, selected = connection()
     content: str | list = user
@@ -66,7 +67,7 @@ def call(system: str, user: str, image: Path | None, structured: bool, model: st
         payload["logprobs"] = True
     # thinking models otherwise spend the whole output budget reasoning about a page;
     # DeepSeek ignores effort "minimal" (all 8192 tokens on one page), so page reads turn thinking off
-    payload["reasoning"] = ({"enabled": False} if image and s.ai_ocr_reasoning_effort == "minimal"
+    payload["reasoning"] = ({"enabled": False} if _retry or (image and s.ai_ocr_reasoning_effort == "minimal")
                             else {"effort": s.ai_ocr_reasoning_effort if image else s.ai_text_reasoning_effort,
                                   "exclude": True})
     headers = _headers(key)
@@ -92,6 +93,11 @@ def call(system: str, user: str, image: Path | None, structured: bool, model: st
     log.info("AI completion model=%s finish=%s completion_tokens=%s reasoning_tokens=%s visible_characters=%d",
              model or selected, choice.get("finish_reason"), completion_tokens, reasoning_tokens, len(text))
     if choice.get("finish_reason") == "length":
+        if not text.strip() and payload["reasoning"].get("enabled") is not False and not _retry:
+            # the whole budget went on thinking and nothing came back (long sheets, long answers):
+            # ask once more with thinking off, as page reads already do
+            log.info("AI spent its output budget reasoning; asking again without reasoning")
+            return call(system, user, image, structured, model, _retry=True)
         raise CompletionLimitError(text, completion_tokens, reasoning_tokens)
     return text, (choice.get("logprobs") or {}).get("content")
 

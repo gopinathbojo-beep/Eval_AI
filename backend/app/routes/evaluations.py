@@ -22,6 +22,7 @@ from ..services.state import set_state
 from ..services.student_identity import in_flight
 from ..config import get_settings
 from ..workspaces import exams_query
+from ..services.coverage import coverage
 
 router = APIRouter(prefix="/api")
 
@@ -59,6 +60,7 @@ def evaluation_detail(ev_id: str, db: Session = Depends(get_db), t: Teacher = De
         "answers": [answer_view(a) for a in answers],
         "items": [item_view(i) for i in items],
         "summary": mapping_summary(db, ev),
+        "coverage": coverage(db, ev, qs),  # questions the student had to answer vs answers found on the sheet
         "issues": [] if ev.status == "FINALIZED" else finalize_issues(db, ev),
     }
 

@@ -342,6 +342,32 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
 
 
 
+def _check_coverage(db: Session, doc, ev, canonical_qs, results) -> None:
+    """After mapping: questions with no answer while a page of the sheet came back with nothing transcribed means
+    that page was probably not read. Such a page is read once more (the page retry picks it up); the questions not
+    found are kept on the sheet for the teacher to see."""
+    from .coverage import coverage
+    found = coverage(db, ev, canonical_qs)
+    missing = found["missing"]
+    identity = dict(doc.identity or {})
+    identity["coverage"] = found
+    doc.identity = identity
+    if not missing:
+        return
+    read = {p["page_number"] for p, _ in results}
+    by_page = {p["page_number"]: r for p, r in results}
+    pages = copy.deepcopy(doc.pages)
+    suspects = []
+    for page in pages:
+        n = page.get("page_number")
+        if n in read and page.get("ocr_status") == "OK" and not page.get("coverage_reread")                 and _transcribed(by_page[n]) == 0:
+            page.update(ocr_status="FAILED_PARSE", coverage_reread=True,
+                        ocr_error=f"Nothing was read here while {len(missing)} question(s) have no answer: read again")
+            suspects.append(n)
+    if suspects:
+        doc.pages = pages
+        log.warning("Sheet %s: %s not found; re-reading empty page(s) %s", doc.id, missing[:12], suspects)
+
 def _transcribed(parsed) -> int:
     return sum(1 for a in getattr(parsed, "answers", None) or [] if (getattr(a, "answer_text", "") or "").strip())
 
@@ -736,6 +762,10 @@ def _build_student_answers(db: Session, doc, exam: Exam, wd: Path, results) -> N
         ))
     db.flush()
     apply_student_mapping(db, ev)
+    from .coverage import split_merged
+    if split_merged(db, ev, canonical_qs):  # two answers read as one: split where the missing number starts
+        apply_student_mapping(db, ev)
+    _check_coverage(db, doc, ev, canonical_qs, results)
     ev.status = "OCR_REVIEW"
     db.commit()
     from .evaluation_service import refresh_evaluation_status
