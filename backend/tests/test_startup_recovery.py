@@ -21,6 +21,7 @@ def test_restart_releases_documents_stuck_mid_processing(client):
 
     db = SessionLocal()
     doc = db.get(QuestionPaperDocument, doc_id)
-    assert doc.status == "FAILED" and doc.error_message == INTERRUPTED
+    # it is resumed, not left "Interrupted": here the resumed run then fails on the missing test file
+    assert doc.status == "FAILED" and doc.error_message != INTERRUPTED and "Cannot open" in (doc.error_message or "")
     assert db.get(Exam, exam_id).status == "REVIEW_REQUIRED"
     db.close()

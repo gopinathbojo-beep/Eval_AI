@@ -55,3 +55,11 @@ def grading_rules(question_text: str | None, key_text: str | None) -> str:
     """Language marking rules (evaluation only): comprehension by meaning, literature exact, grammar exact."""
     from ..common.language import language_rules
     return language_rules(question_text, key_text)
+
+
+def answer_sheet_format() -> str:
+    """How this subject's answer sheets are laid out (common/answers.py)."""
+    return """Tamil sheets: the student's name and register number box at the top right of page 1 (not an answer). Each
+answer starts with its number at the left margin ("1)", "2)"), often alone on its line. Parts are written with Tamil
+letters அ), ஆ), இ), ஈ) under the number; they belong to that question. Bullet lists ("• உயர்வு - தாழ்வு") belong to
+the part above them. Essays, letters and poems run for many lines and onto later pages and stay one answer."""

@@ -9,6 +9,9 @@ from ..documents import cropping
 from ..documents.storage import abs_path, rel
 
 
+from .issues import split as split_issues
+
+
 def review_reason(issues):
     """Keep the summary within the legacy column; full issues remain in structure."""
     value = "; ".join(issues)
@@ -60,6 +63,7 @@ def crop_visuals(fragments, wd, prefix):
 
 _ALTERNATIVE = "Repeated whole-question label without a confirmed continuation; review source numbering."
 _ACCESSIBLE = re.compile(r"^\W*for\s+visually\s+(?:impaired|challenged)", re.I)
+_MENTIONS_VI = re.compile(r"visually\s+(?:impaired|challenged)", re.I)
 
 
 _TABLE_HEAD = re.compile(r"^\s*(Q\.?\s*No\.?.*?Marks|This section comprises\b.*)\s*$", re.I | re.M)
@@ -319,6 +323,37 @@ def _same_metadata(old, new):
     return str(old) == str(new) or (a and b and (a in b or b in a))
 
 
+# the reader's own remarks sometimes come back as text ("No further numbered questions are visible on this page.")
+_READER_REMARK = re.compile(r"^\s*(?:no (?:further|more|other) (?:numbered )?questions?\b|(?:the )?(?:rest|remainder) of "
+                            r"(?:this|the) page\b|this page (?:has|contains) no\b)[^\n]*$", re.I | re.M)
+
+
+def _drop_page_furniture(results):
+    """Leave out what is not the question: a line printed on most pages (a running note or footer such as "Note: There
+    is no change in the Question Paper Design ...", "Page 3 of 13") and the reader's remarks about the page. A piece left
+    with no text and no parts is dropped."""
+    def key(line):
+        return re.sub(r"\d+", "#", re.sub(r"\s+", " ", line.strip().casefold()))
+    pages_with = defaultdict(set)
+    for page, result in results:
+        # the PDF's own text layer shows a running note on every page even where the reader skipped it
+        for line in (page.get("page_text") or "").splitlines():
+            if len(line.strip()) >= 12:
+                pages_with[key(line)].add(page["page_number"])
+        for fragment in result.fragments:
+            for line in (fragment.text or "").splitlines():
+                if len(line.strip()) >= 12:
+                    pages_with[key(line)].add(page["page_number"])
+    # printed on (nearly) every page: a running header or footer. An instruction repeated in a few questions
+    # ("Attempt either option A or B") is on far fewer pages and stays
+    furniture = {k for k, pages in pages_with.items() if len(pages) >= max(3, round(0.8 * len(results)))}
+    for _, result in results:
+        for fragment in result.fragments:
+            lines = [x for x in (fragment.text or "").splitlines() if key(x) not in furniture]
+            fragment.text = _READER_REMARK.sub("", "\n".join(lines)).strip()
+        result.fragments = [f for f in result.fragments if f.text or (f.tree and f.tree.children)]
+
+
 def collect(doc, results, kind="question-paper"):
     from .layout import ground_visuals
 
@@ -345,6 +380,7 @@ def collect(doc, results, kind="question-paper"):
             fragment.text = re.sub(rf"^\s*{fragment.root}\s*[.)]?(?=\s+[A-Z(])\s*", "", fragment.text, count=1)
             # notes about one half of a page the app split to re-read it ("cut off at the bottom of the cropped image")
             fragment.issues = [x for x in fragment.issues if not _CROP_NOTE.search(x)]
+    _drop_page_furniture(results)
     if kind == "answer-key":
         mark_answer_continuations(results)
     else:
@@ -371,8 +407,10 @@ def collect(doc, results, kind="question-paper"):
         issues += [f"Page {page['page_number']}: {x}" for x in result.issues]
         for fragment in result.fragments:
             # the same number under the other Part B option is that option's question, not a repeated label
+            # a question printed again for visually impaired students repeats its number by design
             if (roots[fragment.root] and not fragment.continues
-                    and fragment.branch in {f.branch for _, f in roots[fragment.root]}):
+                    and fragment.branch in {f.branch for _, f in roots[fragment.root]}
+                    and not any(_MENTIONS_VI.search(f.text or "") for f in [fragment] + [x for _, x in roots[fragment.root]])):
                 fragment.issues.append(_ALTERNATIVE)
             if fragment.tree:
 
@@ -398,6 +436,11 @@ def collect(doc, results, kind="question-paper"):
 # an internal choice starts with its (A)/(B) label; a bare OR also sits between case-study parts, so it is not evidence
 # "(A)", "OR (B)" or "25 A."; uppercase only: "(a) Long term Borrowings" opening a page is a part, not an alternative
 _CHOICE_MARK = re.compile(r"^\s*(?:[Oo][Rr]\s+)?(?:(?:[Qq]?\s*\d{1,3}\s*\.?\s*)?\(\s*[AB]\s*\)|\d{1,3}\s*[AB]\s*\.)")
+# a bare "A." / "B." (the number cut off when the text was cleaned) is a choice only next to a printed OR
+_BARE_CHOICE = re.compile(r"^\s*[AB]\s*[.)]\s")
+_OR_LINE_END = re.compile(r"(?m)^\s*OR\s*\Z")
+_OR_LINE_START = re.compile(r"\A\s*OR\b")
+_B_START = re.compile(r"^\s*(?:OR\s+)?(?:\d{1,3}\s*)?\(?\s*B\s*\)?\s*[.)]?\s+\S")  # "B. ...", "OR 31 B. ...", "(B) ..."
 
 _METHOD_HEADING = re.compile(r"^\s*(?:alternative|alternate|another)\s+(?:solution|method|approach)\b", re.I | re.M)
 _BRANCH_LABEL = re.compile(r"^\s*(?:Q\.?\s*)?(?:\d+\s*)?\(?([A-D])\)?[.)]?\s*$", re.I)
@@ -431,7 +474,11 @@ def _alternatives(fragments, printed_choice=False):
         return None
     groups = []
     for page, fragment in fragments:
-        if fragment.continues and groups:
+        # a page showing a one-way choice ("A ... OR" with nothing after it) and a next piece opening with "B." or
+        # "OR B.": that piece is alternative B, even when the reader flagged it as a continuation
+        opens_b = (groups and _B_START.match(fragment.text or "") and groups[-1][0][1].tree is not None
+                   and groups[-1][0][1].tree.kind == "choose" and len(groups[-1][0][1].tree.children) == 1)
+        if fragment.continues and groups and not opens_b:
             groups[-1].append((page, fragment))
         else:
             groups.append([(page, fragment)])
@@ -440,12 +487,15 @@ def _alternatives(fragments, printed_choice=False):
     heads = [group[0][1] for group in groups]
     accessible = [_ACCESSIBLE.match(f.text or "") is not None for f in heads]
     # printed evidence of a choice: an (A)/(B) label, an OR line, or a visually impaired version
-    if not (printed_choice or any(accessible) or any(_CHOICE_MARK.match(f.text or "") for f in heads)):
+    bare_or = (len(heads) == 2 and _BARE_CHOICE.match(heads[0].text or "") and _B_START.match(heads[1].text or "")
+               and (_OR_LINE_END.search((groups[0][-1][1].text or "").rstrip()) or _OR_LINE_START.match(heads[1].text or "")
+                    or (heads[0].tree is not None and heads[0].tree.kind == "choose")))
+    if not (printed_choice or bare_or or any(accessible) or any(_CHOICE_MARK.match(f.text or "") for f in heads)):
         return None
     # each copy carries the same whole-question marks (a visually impaired version may print none);
     # unmarked pieces are parts of one question
     # an alternative the PDF prints under the same number may show no marks of its own ("OR 25 B." beside one marks cell)
-    marks = {f.marks for f, vi in zip(heads, accessible) if not ((vi or printed_choice) and f.marks is None)}
+    marks = {f.marks for f, vi in zip(heads, accessible) if not ((vi or printed_choice or bare_or) and f.marks is None)}
     if len(marks) != 1 or None in marks:
         return None
     root = heads[0].tree.id
@@ -453,6 +503,12 @@ def _alternatives(fragments, printed_choice=False):
     for index, group in enumerate(groups):
         merged, _ = merge_nodes([f.tree for _, f in group])
         child = dict(merged[0]) if len(merged) == 1 else heads[index].tree.model_dump()
+        if (child.get("kind") == "choose" and len(child.get("children") or []) == 1
+                and not (child["children"][0].get("children") and child["children"][0].get("kind") == "choose")):
+            # "A ... OR" with B on the next page: this page's one-way choice is just alternative A
+            only = dict(child["children"][0])
+            only["marks"] = only.get("marks") if only.get("marks") is not None else child.get("marks")
+            child = only
         if (child.get("kind") == "choose" and child.get("limit") == 1
                 and child.get("choice_type", "question") == "question" and len(child.get("children") or []) > 1):
             # one page read "VI version OR (B)" as its own choice: those are further alternatives, not one nested version
@@ -682,12 +738,19 @@ def build_questions(db, doc, exam, results):
     from .layout import printed_twice
 
     choices = printed_twice(doc)
+    last_section = None
     for root, fragments in sorted(collect(doc, results).items()):
         visuals = crop_visuals(
             fragments, abs_path(doc.original_file).parent, f"q{root}"
         )
         text, tree, issues, marks, section = combined(fragments, exam.standard_options, root in choices)
         tree = settle_marks(tree, marks)
+        issues, notes = split_issues(issues)  # settled ones are kept as notes, never a review
+        # sections run in order through the paper (A, B, C ...): a question with none, or one read as an earlier
+        # section after a later one has started, belongs to the section it is printed in
+        if last_section and (not section or (len(section) == 1 == len(last_section) and section < last_section)):
+            section = last_section
+        last_section = section or last_section
         db.add(
             ExamQuestion(
                 exam_id=exam.id,
@@ -706,6 +769,7 @@ def build_questions(db, doc, exam, results):
                     "root": root,
                     "tree": tree,
                     "issues": issues,
+                    "notes": notes,
                     "source_pages": [p["page_number"] for p, _ in fragments],
                     "visuals": visuals,
                 },
@@ -780,7 +844,7 @@ def build_keys(db, doc, exam, results, changed_pages=None):
         text, tree, issues, marks, _ = combined(fragments, exam.standard_options, root in choices)
         tree = scheme_tree(tree, q, exam.standard_options or {})
         # a scheme's section is the question paper's; page-by-page section guesses are not the teacher's concern
-        issues = [x for x in issues if x != "Conflicting section labels across pages"]
+        issues, notes = split_issues(issues)  # settled ones are kept as notes, never a review
         criteria = [x for _, f in fragments for x in f.criteria]
         db.add(
             AnswerKey(
@@ -807,7 +871,7 @@ def build_keys(db, doc, exam, results, changed_pages=None):
                     "kind": "cbse",
                     "points": [],
                     "deductions": [],
-                    "notes": [],
+                    "notes": notes,
                     "stated_total": marks,
                     "total": marks,
                     "source_pages": [p["page_number"] for p, _ in fragments],

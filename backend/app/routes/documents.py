@@ -405,6 +405,8 @@ async def upload_answer_sheet(
         file.filename or "upload",
         student_id=st.id,
     )
+    # the roll number given at upload is checked against the one written on the sheet once it is read
+    doc.identity = {**(doc.identity or {}), "typed_roll": st.roll_number}
     db.flush()
     ev = Evaluation(
         exam_id=exam.id, student_id=st.id, answer_sheet_id=doc.id, status="DRAFT"
@@ -421,7 +423,7 @@ async def upload_answer_sheet(
         new={"student": st.name, "roll": st.roll_number},
     )
     db.commit()
-    bg.add_task(submit, exam.id, process_document, "answer-sheet", doc.id)
+    bg.add_task(submit, exam.id, run_sheet, doc.id)  # read, check the roll number, then grade
     db.refresh(ev)
     return {**evaluation_view(ev), "document": doc_view(doc, "answer-sheet")}
 
@@ -943,16 +945,21 @@ def reprocess(
         raise err(409, "ANSWER_KEY_LOCKED", "The answer key is already verified.")
     if kind == "answer-sheet":
         ev = db.query(Evaluation).filter_by(answer_sheet_id=doc.id).first()
-        if (
-            ev is None
-            or ev.status == "FINALIZED"
-            or db.query(EvaluationItem).filter_by(evaluation_id=ev.id).first()
-        ):
+        if ev is not None and (ev.status == "FINALIZED" or ev.run_status == "RUNNING"):
             raise err(
                 409,
                 "EVALUATION_LOCKED",
-                "Evaluation has started for this answer sheet. Delete it and upload again.",
+                "This answer sheet is finalized or being graded. It cannot be read again now.",
             )
+        if ev is not None:
+            # read again and graded again: earlier marks of this sheet were based on the old reading
+            db.query(EvaluationItem).filter_by(evaluation_id=ev.id).delete()
+            ev.status, ev.run_status, ev.total_marks, ev.percentage = "OCR_REVIEW", "IDLE", None, None
+        identity = dict(doc.identity or {})
+        if (identity.get("roll_check") or {}).get("status") == "NOT_WRITTEN":
+            identity.pop("roll_check")  # look for the written roll number again
+        identity.pop("excluded_pages", None)
+        doc.identity = identity
     only_failed = bool(doc.pages) and all("ocr_status" in p for p in doc.pages)
     if kind == "question-paper" and exam.status == "QUESTIONS_EXTRACTED":
         set_state(exam, "QUESTION_PAPER_UPLOADED")
@@ -962,7 +969,10 @@ def reprocess(
     doc.status, doc.stage = "UPLOADED", "Queued"
     doc.error_message = None
     db.commit()
-    bg.add_task(submit, exam.id, process_document, kind, doc.id, only_failed)
+    if kind == "answer-sheet" and doc.student_id:
+        bg.add_task(submit, exam.id, run_sheet, doc.id)  # read, check the roll number, then grade
+    else:
+        bg.add_task(submit, exam.id, process_document, kind, doc.id, only_failed)
     return doc_view(doc, kind)
 
 

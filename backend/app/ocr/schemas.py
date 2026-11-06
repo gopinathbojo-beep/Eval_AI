@@ -124,33 +124,6 @@ class AnswerKeyPageResult(_Base):
         return [item for item in v if isinstance(item, (dict, AnswerKeyItem))]
 
 
-class GeneratedAnswerItem(_Base):
-    exam_question_id: str | None = None
-    question_number: str | None = None
-    answer_text: str = ""
-    marks: float | None = None
-    criteria: list[str] = Field(default_factory=list)
-    keywords: list[str] = Field(default_factory=list)
-    accepted_answers: list[str] = Field(default_factory=list)
-
-    _m = field_validator("marks", mode="before")(lambda cls, v: _num(v))
-    _q = field_validator("question_number", "exam_question_id", mode="before")(lambda cls, v: _str(v))
-    _t = field_validator("answer_text", mode="before")(lambda cls, v: _text(v))
-
-    @field_validator("criteria", "accepted_answers", "keywords", mode="before")
-    @classmethod
-    def _lst(cls, v):
-        if v is None:
-            return []
-        if isinstance(v, str):
-            return [v]
-        return [str(x) for x in v]
-
-
-class GeneratedAnswerKeyResult(_Base):
-    answers: list[GeneratedAnswerItem] = Field(default_factory=list)
-
-
 class StudentAnswerItem(_Base):
     label_origin: str = "unknown"  # written, inferred, continuation or unknown
     question_number: str | None = None
@@ -217,8 +190,18 @@ class StudentAnswerItem(_Base):
 class StudentPageResult(_Base):
     page_number: int | None = None
     page: int | None = None
+    page_header: dict | None = None  # roll_number / subject / class_name written in the page's header, if any
     answers: list[StudentAnswerItem] = Field(default_factory=list)
     unresolved: list[Any] = Field(default_factory=list)
+
+    @field_validator("page_header", mode="before")
+    @classmethod
+    def _header(cls, v):
+        if not isinstance(v, dict):
+            return None
+        out = {k: str(v[k]).strip() for k in ("roll_number", "subject", "class_name")
+               if v.get(k) not in (None, "") and str(v[k]).strip().lower() not in ("null", "none", "...")}
+        return out or None
 
     @field_validator("answers", mode="before")
     @classmethod
@@ -374,3 +357,19 @@ class KeyCriteriaLabel(_Base):
 
 class KeyCriteriaLabels(_Base):
     keys: list[KeyCriteriaLabel] = Field(default_factory=list)
+
+
+class AnswerSpan(_Base):
+    """One answer on a student sheet: the exam question it answers and its first and last line ids."""
+    question_number: str | None = None
+    start_line: int | None = None
+    end_line: int | None = None
+
+
+class AnswerSpans(_Base):
+    answers: list[AnswerSpan] = Field(default_factory=list)
+
+    @field_validator("answers", mode="before")
+    @classmethod
+    def _sanitize(cls, v):
+        return [item for item in v if isinstance(item, (dict, AnswerSpan))] if isinstance(v, list) else []

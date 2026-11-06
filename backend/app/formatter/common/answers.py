@@ -9,6 +9,7 @@ Solves:
 - Reconstructs semantic answer groups with merged text, bounding boxes, and confidence.
 """
 from __future__ import annotations
+import logging
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -477,11 +478,121 @@ def _working_continues_previous(text: str, previous, claimed, prior_parts: list[
     return len(prior_words - competing_words) >= 4 and len(competing_words) <= 1
 
 
+# --- The model decides where each answer starts and ends ----------------------------------------------
+# The sheet's OCR blocks become numbered lines (reading order, across pages), sent with the question list and the
+# subject's answer_sheet_format(); the model returns each answer's question and first/last line. The reply is checked
+# (known numbers, ranges inside the sheet, in order, no overlap); anything unusable returns None and the rules below run.
+
+log = logging.getLogger("adem.segmenter")
+_MAX_LINES = 1500
+
+
+def _sheet_lines(page_results: list[tuple[dict, Any]]) -> list[dict]:
+    """Every written line of the sheet with its page, block box and confidence."""
+    out: list[dict] = []
+    for page_info, res in page_results:
+        page = page_info["page_number"]
+        for a in getattr(res, "answers", []):
+            text = (a.answer_text or "").strip()
+            for cb in getattr(a, "content_blocks", None) or []:
+                if isinstance(cb, dict) and not cancelled_block(cb):
+                    t = (cb.get("text") or cb.get("raw_text") or "").strip()
+                    if t and t not in text:
+                        text = f"{text}\n{t}".strip()
+            text = active_student_text(text).strip()
+            if not text:
+                continue
+            label = (getattr(a, "raw_question_label", None) or "").strip()
+            if getattr(a, "label_origin", "unknown") == "written" and label and not text.startswith(label):
+                text = f"{label} {text}"  # the written number is evidence the model should see
+            bbox = a.bbox.model_dump() if getattr(a, "bbox", None) else None
+            for line in text.splitlines():
+                if line.strip():
+                    out.append({"page": page, "text": line.rstrip(), "bbox": bbox,
+                                "conf": getattr(a, "ocr_confidence", None)})
+    return out
+
+
+def _resolve_number(number: str | None, known: dict[str, str]) -> str | None:
+    """The exam's own number for what the model returned; the parent when only the parent is scored."""
+    norm = normalize_question_number(number) if number else None
+    if not norm:
+        return None
+    if norm in known:
+        return norm
+    p = parent_number(norm)
+    return p if p in known else None
+
+
+def _model_segment(page_results: list[tuple[dict, Any]], canonical_questions: list[Any], model: str | None):
+    """Answers with model-decided boundaries, or None to fall back to the rules."""
+    from ...ocr import prompts
+    from ...ocr.internvl import AIResponseError, AIUnavailable, chat_structured
+    from ...ocr.schemas import AnswerSpans
+
+    if not model or not canonical_questions:
+        return None
+    lines = _sheet_lines(page_results)
+    if not lines or len(lines) > _MAX_LINES:
+        return None
+    known = {q.normalized_number: q.normalized_number for q in canonical_questions if q.normalized_number}
+    questions = [{"number": getattr(q, "display_number", None) or q.normalized_number,
+                  "marks": getattr(q, "max_marks", None), "text": (q.question_text or "")[:300].replace("\n", " ")}
+                 for q in canonical_questions]
+    from ... import formatter
+    sheet_format = getattr(formatter.current(), "answer_sheet_format", lambda: "")()
+    prompt = prompts.answer_spans_prompt(questions, [(i, ln["page"], ln["text"]) for i, ln in enumerate(lines)],
+                                         sheet_format)
+    try:
+        call = chat_structured(prompts.LABELER_SYSTEM, prompt, AnswerSpans, model=model)
+    except (AIUnavailable, AIResponseError) as e:
+        log.warning("Model answer boundaries skipped (%s): %s", model, getattr(e, "detail", e))
+        return None
+
+    spans = sorted((s for s in call.parsed.answers if s.start_line is not None and s.end_line is not None),
+                   key=lambda s: s.start_line)
+    last_end = -1
+    for s in spans:
+        if not (0 <= s.start_line <= s.end_line < len(lines)) or s.start_line <= last_end:
+            log.warning("Model answer boundaries rejected: bad or overlapping range %s-%s", s.start_line, s.end_line)
+            return None
+        last_end = s.end_line
+    if not spans:
+        return None
+
+    out: list[SegmentedAnswer] = []
+    for s in spans:
+        chunk = lines[s.start_line:s.end_line + 1]
+        norm = _resolve_number(s.question_number, known)
+        pieces: dict[int, dict | None] = {}
+        for ln in chunk:
+            pieces[ln["page"]] = _merge_bboxes(pieces.get(ln["page"]), ln["bbox"])
+        confs = [ln["conf"] for ln in chunk if ln["conf"] is not None]
+        text = "\n".join(ln["text"] for ln in chunk).strip()
+        first_page = chunk[0]["page"]
+        ans = SegmentedAnswer(
+            raw_question_number=f"Q{norm}" if norm else None, normalized_number=norm,
+            answer_text=text, raw_ocr_text=text, page_number=first_page, bbox=pieces[first_page],
+            ocr_confidence=round(sum(confs) / len(confs), 2) if confs else None, position=len(out) + 1,
+            mapping_note="Answer start and end decided by the model",
+        )
+        if len(pieces) > 1:
+            ans.pieces = list(pieces.items())  # one stitched crop across the pages it covers (pipeline)
+        out.append(ans)
+    return out
+
+
 def segment_student_answers(
     page_results: list[tuple[dict, Any]],
     canonical_questions: list[Any] | None = None,
 ) -> list[SegmentedAnswer]:
     """Segment and group raw OCR blocks into coherent student answers across pages."""
+    if canonical_questions:
+        # every subject: the model decides where each answer starts and ends; the rules below are the fallback
+        from ...config import get_settings
+        by_model = _model_segment(page_results, canonical_questions, get_settings().ai_model)
+        if by_model is not None:
+            return by_model
     own = formatter.current().segment_answers(page_results, canonical_questions)  # see app/formatter
     if own is not None:
         return own

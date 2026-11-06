@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 __all__ = ["parse_paper", "segment_keys", "segment_answers", "grading_attempts", "grading_rules", "check_deductions",
-           "uses_pdf_text", "build_rubric"]
+           "uses_pdf_text", "build_rubric", "answer_sheet_format"]
 
 
 def parse_paper(page_results: list[tuple[dict, Any]]) -> Any | None:
@@ -56,3 +56,11 @@ def build_rubric(question_text: str | None, key_text: str | None, key_criteria: 
     and the problems the teacher should look at once."""
     from .rubric import build_rubric as build
     return build(question_text, key_text, key_criteria, max_marks)
+
+
+def answer_sheet_format() -> str:
+    """How this subject's student answer sheets are laid out, told to the model that decides where each answer
+    starts and ends (common/answers.py). Shared default: plain handwritten sheets."""
+    return ("Plain ruled sheets, handwritten. Each answer opens with its question number at the left margin "
+            "(\"1)\", \"1.\", \"Q1\", \"Ans 1\"), and parts are written under it as a), b) or (i), (ii). "
+            "Answers follow one another down the page and run onto the next page without a new number.")

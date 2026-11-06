@@ -206,6 +206,20 @@ def merge_nodes(nodes):
             if data.get("text") and data["text"] not in (last.get("text") or ""):
                 last["text"] = ((last.get("text") or "") + "\n" + data["text"]).strip()
             continue
+        if (old.get("kind") != "choose" and data.get("kind") == "choose" and data.get("children")
+                and all(c.get("kind") == "context" or (c.get("marks") is None and not c.get("children"))
+                        for c in old.get("children") or [])
+                and (old.get("children") or old.get("text"))):
+            # a case-study opening (context, or an unmarked line read as a part) on one page and "(A) ... OR (B)" on
+            # the next: the opening belongs to the first alternative, it is not an alternative of its own
+            first = dict(data["children"][0])
+            opening = [dict(c, kind="context") for c in old.get("children") or []]
+            first["children"] = opening + list(first.get("children") or [])
+            if old.get("text") and old["text"] not in (first.get("text") or ""):
+                first["text"] = (old["text"] + "\n" + (first.get("text") or "")).strip()
+            by_id[key] = dict(data, marks=data.get("marks") if data.get("marks") is not None else old.get("marks"),
+                              children=[first] + list(data["children"][1:]))
+            continue
         if (old.get("kind") != "choose" and data.get("kind") == "choose" and data.get("limit") == 1
                 and data.get("choice_type", "question") == "question" and data.get("children")):
             # (A) on one page, "OR (B)" on the next: what was read first is the first alternative
@@ -213,9 +227,10 @@ def merge_nodes(nodes):
             by_id[key] = dict(data, marks=data.get("marks") if data.get("marks") is not None else old.get("marks"),
                               children=[first] + list(data["children"]))
             continue
-        if old.get("kind") != data.get("kind") and not old.get("children") and not data.get("children") \
-                and {old.get("kind"), data.get("kind")} <= {"all", "point"}:
-            data = dict(data, kind=old["kind"])  # a leaf read as "all" on one page and "point" on the next is one leaf
+        if old.get("kind") != data.get("kind") and not old.get("children") and not data.get("children"):
+            # neither page shows any parts: whatever kind each page was read as, it is one leaf (e.g. "all" on one
+            # page and "point" or a part-less "choose" on the next); the first reading stands
+            data = dict(data, kind=old["kind"])
         if old.get("kind") != data.get("kind") and bool(old.get("children")) != bool(data.get("children")):
             # one page shows only the stem (a single item), the next the parts: the piece with parts has the structure
             if data.get("children"):
@@ -337,6 +352,18 @@ def settle_marks(node, total=None):
     if not marks:
         for child in scored:
             settle_marks(child)
+        return node
+    mcqs = [c for c in scored if c.get("response_type") == "mcq" and not c.get("children") and not _scored(c)]
+    stems = [c for c in scored if c not in mcqs]
+    if (len(mcqs) > 1 and all(not c.get("children") and c.get("response_type") != "mcq"
+                              and c.get("marks") in (None, marks) for c in stems)):
+        # unmarked MCQs under one total ("6x1 = 6"): each MCQ is worth an equal share. A part beside them carrying
+        # no marks, or only the whole question's marks again, is the case study they are asked on: context
+        for child in stems:
+            child.update(kind="context", marks=None)
+        for child in mcqs:
+            child["marks"] = marks / len(mcqs)
+        node["kind"] = "all" if node.get("kind") == "point" else node.get("kind")
         return node
     if not any(_scored(c) for c in scored):
         # nothing below is marked: the printed total is one holistic point over all of it

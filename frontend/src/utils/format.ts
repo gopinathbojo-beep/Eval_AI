@@ -25,14 +25,6 @@ export const fmt = (n: number | null | undefined) => (n === null || n === undefi
 export const pct = (c: number | null) => (c === null ? "–" : `${Math.round(c * 100)}%`);
 export const date = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : "–");
 
-export const EXAM_STEPS: { key: string; label: string }[] = [
-  { key: "DRAFT", label: "Draft" }, { key: "QUESTION_PAPER_UPLOADED", label: "Paper uploaded" },
-  { key: "QUESTIONS_EXTRACTED", label: "Questions read" }, { key: "QUESTIONS_VERIFIED", label: "Questions verified" },
-  { key: "ANSWER_KEY_UPLOADED", label: "Key uploaded" }, { key: "ANSWER_KEY_VERIFIED", label: "Key verified" },
-  { key: "READY_FOR_EVALUATION", label: "Ready" }, { key: "EVALUATING", label: "Evaluating" },
-  { key: "REVIEW_REQUIRED", label: "In review" }, { key: "FINALIZED", label: "Finalized" },
-];
-
 /** A sheet from the uploader is named "Roll 1021" when no name was given: then the name already is the roll number. */
 export const nameIsRoll = (s: { name: string; roll_number: string }) =>
   !s.name || s.name.trim() === `Roll ${s.roll_number}`;

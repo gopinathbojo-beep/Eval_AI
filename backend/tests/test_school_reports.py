@@ -153,7 +153,7 @@ def test_exam_wise_report(client, auth):
     r = c.get(f"/api/exams/{ex_id}/report.pdf", headers=h)
     assert r.status_code == 200 and "ExamReport_Maths_Unit_Test_EX-9B" in r.headers["content-disposition"]
     text, _ = _text(r.content)
-    assert "Exam Result Analysis" in text and "Maths Unit Test" in text and "2 evaluated, 1 pending" in text
-    assert "Meena" in text and "Arjun" in text and "Kavya" in text and "Not evaluated" in text
+    assert "Exam Result Analysis" in text and "Maths Unit Test" in text and "2 evaluated" in text and "pending" not in text and "Not evaluated" not in text
+    assert "Meena" in text and "Arjun" in text and "Kavya" not in text
     assert "55%" in text and "1 / 2" in text and "50%" in text                  # average, passed, pass %
     assert "Question-wise Analysis" in text and "Knowledge Level" not in text and "K Level" not in text

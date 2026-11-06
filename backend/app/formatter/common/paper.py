@@ -890,7 +890,9 @@ def _rebuild_from_question_starts(
     out: list[StructuredQuestion] = []
     for tq in qs:
         reasons = []
-        if tq.num in inferred:
+        # one question without printed marks gets exactly what the paper total leaves: settled. Several share the
+        # rest equally, which is a guess: the teacher checks those
+        if tq.num in inferred and len(inferred) > 1:
             reasons.append("Marks inferred from the paper total; please check")
         elif tq.num not in marks:
             reasons.append("Marks not found")

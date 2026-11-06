@@ -16,7 +16,11 @@ LANGUAGE_RULES = """LANGUAGE MARKING RULES (this is a language paper). First dec
    expression) as given.
 Do not deduct for spelling or grammar slips in a content answer (comprehension or literature) unless the scheme says so.
 When you give partial credit for an implied idea, or you are unsure which kind the question is, set confidence to 0.5 or
-lower so the teacher checks it, and say why in feedback. Start feedback with the kind, e.g. "[Comprehension] ..."."""
+lower so the teacher checks it, and say why in feedback. Start feedback with the kind, e.g. "[Comprehension] ...".
+EVIDENCE: marking by meaning never changes how you quote. Every mark you give needs evidence_quotes copied
+EXACTLY, character for character, from the student's answer: the student's own words that carry the idea, never your
+paraphrase, a corrected spelling or the scheme's wording. For an implied idea, quote the words it is implied by. If
+there are no such words in the student's answer, that idea earns nothing."""
 
 
 def language_rules(question_text: str | None, key_text: str | None) -> str:
@@ -32,7 +36,11 @@ THEORY_RULES = """UNDERSTANDING-BASED MARKING RULES. First decide which kind eac
 3. NUMERICAL OR DERIVATION WORKING: mark by the scheme's steps exactly as given; these rules change nothing there.
 Do not deduct for spelling or grammar slips unless the scheme says so, or unless a misspelling changes the term
 (e.g. a different chemical or person). When you give partial credit for an implied idea, or you are unsure, set
-confidence to 0.5 or lower so the teacher checks it, and say why in feedback."""
+confidence to 0.5 or lower so the teacher checks it, and say why in feedback.
+EVIDENCE: marking by meaning never changes how you quote. Every mark you give needs evidence_quotes copied
+EXACTLY, character for character, from the student's answer: the student's own words that carry the idea, never your
+paraphrase, a corrected spelling or the scheme's wording. For an implied idea, quote the words it is implied by. If
+there are no such words in the student's answer, that idea earns nothing."""
 
 
 def theory_rules(question_text: str | None, key_text: str | None) -> str:

@@ -510,7 +510,7 @@ export function ResultPage() {
       const studentName = (data.evaluation.student.name || "Student").replace(/[^a-zA-Z0-9_-]/g, "_");
       const rollNumber = (data.evaluation.student.roll_number || "").replace(/[^a-zA-Z0-9_-]/g, "_");
       const examName = (data.exam.name || "Exam").replace(/[^a-zA-Z0-9_-]/g, "_");
-      const fallbackFilename = `EvalAI_Report_${studentName}_${rollNumber}_${examName}.pdf`;
+      const fallbackFilename = `${rollNumber || studentName}-${examName}.pdf`;
       await downloadFile(`/evaluations/${id}/report.pdf`, fallbackFilename);
     } catch (err: any) {
       setDownloadError(err?.message || "Failed to download evaluation report.");

@@ -113,32 +113,69 @@ def apply_student_mapping(db: Session, ev: Evaluation) -> None:
             a.status, a.mapping_note = "MAPPED", None
     _confirm_content_mappings(live, qs, suggested)
     _accept_confident_suggestions(live, qs)
+    _attach_subpart_runs(live, qs)
     db.flush()
 
 
-SURE_SUGGESTION = 0.7  # a suggested question this sure is taken without asking the teacher
+_SUBPART = re.compile(r"^\s*\(?\s*(x|ix|iv|v?i{0,3}|[a-h])\s*[.)]\s+", re.I)
+_ROMAN_ORDER = ["i", "ii", "iii", "iv", "v", "vi", "vii", "viii", "ix", "x"]
+
+
+def _subpart(text: str | None):
+    """("roman", 4) for "iv. ...", ("letter", 2) for "b) ..."; None when the answer does not open with a part label."""
+    m = _SUBPART.match(text or "")
+    if not m or not m.group(1):
+        return None
+    label = m.group(1).casefold()
+    if label in _ROMAN_ORDER:
+        return ("roman", _ROMAN_ORDER.index(label) + 1, label)
+    return ("letter", ord(label) - ord("a") + 1, label)
+
+
+def _attach_subpart_runs(answers, qs) -> None:
+    """Parts written one after another with no question number ("i. ...", "ii. ...", "iii. ..."): a part too short to
+    match by content ("iv. d. 30000") continues the question its previous part is on, when that question prints the
+    same part label (Q24 "IV."). A mapping the teacher set is never changed."""
+    by_id = {q.id: q for q in qs}
+    ordered = sorted(answers, key=lambda a: a.position or 0)
+    for prev, a in zip(ordered, ordered[1:]):
+        if a.status not in ("UNMAPPED", "NEEDS_REVIEW") or a.mapping_confirmed or a.raw_question_number:
+            continue
+        q = by_id.get(prev.exam_question_id) if prev.status == "MAPPED" else None
+        mine, theirs = _subpart(a.answer_text), _subpart(prev.answer_text)
+        if not (q and mine and theirs and mine[0] == theirs[0] and mine[1] == theirs[1] + 1):
+            continue
+        if not re.search(rf"(?im)^\s*\(?\s*{re.escape(mine[2])}\s*[.)]", q.question_text or ""):
+            continue  # the question prints no such part
+        a.exam_question_id, a.status, a.mapping_candidates = q.id, "MAPPED", []
+        a.mapping_note = f"Part {mine[2]} written after part {theirs[2]} of Q{q.normalized_number}"
+
+
+SURE_SUGGESTION = 0.6  # a suggested question this sure is taken without asking the teacher
 
 
 def _accept_confident_suggestions(answers, qs) -> None:
-    """Only an answer that fits no question is left for the teacher. A written number that matches a question but was
-    read with low confidence, an answer placed on a question already answered, and a suggestion the content supports
-    with at least SURE_SUGGESTION are mapped as suggested."""
+    """Only an answer that fits no question well enough is left for the teacher. A written number that matches a
+    question but was read with low confidence, an answer with no
+    number, and a suggestion the content supports with at least SURE_SUGGESTION are mapped as suggested.
+    A mapping the teacher set is never changed."""
     from ..formatter.common.recovery import find_recovery_candidates
     for a in answers:
-        if a.status != "NEEDS_REVIEW" or a.mapping_confirmed:
+        if a.status not in ("NEEDS_REVIEW", "UNMAPPED") or a.mapping_confirmed:
             continue
         note = a.mapping_note or ""
-        target = a.exam_question_id
+        if note.startswith("DUPLICATE_MAPPING"):
+            continue  # two answers on one question: the teacher decides which one counts
+        target = a.exam_question_id if a.status == "NEEDS_REVIEW" else None
         if not target:
             found = find_recovery_candidates(a.raw_question_number, a.answer_text, qs)
             if found and found[0].score >= SURE_SUGGESTION:
                 target = next((q.id for q in qs if q.normalized_number == found[0].normalized_number), None)
-        elif not (note.startswith("Exact label match") or note.startswith("DUPLICATE_MAPPING")):
+        elif not note.startswith("Exact label match"):
             found = find_recovery_candidates(a.raw_question_number, a.answer_text, qs)
             top = next((q.id for q in qs if found and q.normalized_number == found[0].normalized_number), None)
-            if not (found and found[0].score >= SURE_SUGGESTION) and top != target:
-                # the content does not back the suggestion strongly: the best supported question, when sure enough
-                target = top if found and found[0].score >= SURE_SUGGESTION else target
+            if top and top != target and found[0].score >= SURE_SUGGESTION:
+                target = top  # the content backs another question strongly: follow the content
         if target:
             a.exam_question_id, a.status, a.mapping_note, a.mapping_candidates = target, "MAPPED", None, []
 
@@ -258,8 +295,8 @@ def _repair_misread_labels(answers: list, qs: list) -> None:
             a.mapping_candidates = [d["id"] for d in details[:3]]
 
 
-AUTO_MIN_SCORE = 0.75
-AUTO_MARGIN = 0.15
+AUTO_MIN_SCORE = 0.6  # content match from which an answer is mapped without review
+AUTO_MARGIN = 0.1    # ...when it beats the next question by this much
 
 
 def _confirm_content_mappings(answers: list, qs: list, suggested: list[tuple[Any, list[dict]]]) -> None:

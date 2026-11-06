@@ -7,7 +7,6 @@ from ..database import SessionLocal
 from dataclasses import dataclass, field
 from ..models import AnswerKey, AnswerSheetDocument, Evaluation, Exam, ExamQuestion, EvaluationItem, StudentAnswer
 from ..ocr import prompts
-import json
 from ..documents.storage import abs_path
 from ..ocr.internvl import AIResponseError, AIUnavailable, chat_structured, check_model
 from ..config import ai_bad_response_message
@@ -262,7 +261,7 @@ DRAWING_NOTE = ("\nThe scanned page(s) the student wrote this answer on are atta
                 "the transcription stays the student's answer for everything else.")
 
 # TEMPORARY (2026-11-04): liberal marking on the user's request. Set False to go back to the normal rules.
-LIBERAL_GRADING = True
+LIBERAL_GRADING = False
 LIBERAL_RULES = """LIBERAL MARKING (overrides any stricter rule above):
 1. If the student's answer is partly correct against the key (the main idea, the right fact, the right method or the
    right final answer is present), award FULL marks for that question or criterion.
@@ -344,44 +343,67 @@ def evaluate_item(db: Session, ev: Evaluation, q: ExamQuestion, item: Evaluation
         fmt = formatter.current()  # the subject's own grading rules, see app/formatter
         # "write on any one topic" answered on several: each graded, the best counts
         attempts = fmt.grading_attempts(q.question_text, resolved.combined_text) or [(None, resolved.combined_text)]
+        from ..cbse import grading
+        exam_record = db.get(Exam, ev.exam_id)
+        cbse = bool(getattr(exam_record, "standard_profile_id", None))
+        options = getattr(exam_record, "standard_options", None) or {}
+        if cbse:
+            # Accountancy Part B: a student attempts one option only; mark this sheet against the option it answered
+            from ..cbse.branch import MIXED, sheet_option
+            option = sheet_option(db, ev, exam_record)
+            if option and option != MIXED:
+                options = {**options, "accountancy_option": option}
+        references = textbook_references(db, exam_record, q, key)  # with an answer key too: reference only
+        instructions = []
+        if cbse:
+            from ..cbse.validation import active_doc
+            from ..models import AnswerKeyDocument
+            scheme_doc = active_doc(db, AnswerKeyDocument, exam_record.id)
+            instructions = ((scheme_doc.extraction if scheme_doc else None) or {}).get("instructions", [])
+        rules = fmt.grading_rules(q.question_text, key.answer_text)  # language subjects: by question kind
         try:
             graded = []
             for title, text in attempts:
-                prompt = prompts.evaluation_prompt(q.display_number, q.question_text, key.answer_text, rubric_criteria(key),
-                                                   key.accepted_answers, key.keywords, q.max_marks, text)
-                system = prompts.EVAL_SYSTEM
-                exam_record = db.get(Exam,ev.exam_id)
-                from ..cbse import grading
-                references = textbook_references(db, exam_record, q, key)  # with an answer key too: reference only
-                if getattr(exam_record,"standard_profile_id",None):
-                    from ..cbse.validation import active_doc
-                    from ..models import AnswerKeyDocument
-                    scheme_doc = active_doc(db,AnswerKeyDocument,exam_record.id)
-                    prompt = grading.prompt(q,key,text,exam_record.standard_options or {},(scheme_doc.extraction or {}).get("instructions",[]),
-                                            references)
+                if cbse:
+                    prompt = grading.prompt(q, key, text, options, instructions, references)
                     system = grading.SYSTEM
                 else:
+                    prompt = prompts.evaluation_prompt(q.display_number, q.question_text, key.answer_text, rubric_criteria(key),
+                                                       key.accepted_answers, key.keywords, q.max_marks, text)
                     prompt += "\n" + grading.textbook_block(references)
-                rules = fmt.grading_rules(q.question_text, key.answer_text)  # language subjects: by question kind
+                    system = prompts.EVAL_SYSTEM
                 if rules:
                     prompt += "\n" + rules
                 if LIBERAL_GRADING:
                     prompt += "\n" + LIBERAL_RULES
-                exam_owner = db.get(Exam, ev.exam_id).teacher_id
-                audit(db, exam_id=ev.exam_id, teacher_id=exam_owner, entity_type="evaluation", entity_id=ev.id,
+                audit(db, exam_id=ev.exam_id, teacher_id=exam_record.teacher_id, entity_type="evaluation", entity_id=ev.id,
                       action="ai_grading_request")
                 db.commit()
-                picture = drawing_image(db, ev, q, key.answer_text, resolved.constituent_answers, text)
+                try:
+                    picture = drawing_image(db, ev, q, key.answer_text, resolved.constituent_answers, text)
+                except Exception:  # a page image that cannot be read: grade on the transcription alone
+                    log.exception("Could not build the drawing image for question %s", q.id)
+                    picture = None
                 if picture:  # only drawing questions carry the sheet picture (and its extra cost)
-                    call = chat_structured(system, prompt + DRAWING_NOTE, EvaluationResult, image_path=picture, model=model)
-                else:
-                    call = chat_structured(system, prompt, EvaluationResult, model=model)
-                item.raw_response = call.raw
-                if getattr(exam_record,"standard_profile_id",None):
-                    res = grading.validate_result(call.parsed,q,key,exam_record.standard_options or {},text)
-                else:
-                    res = validate_evaluation(call.parsed, q.max_marks)  # type: ignore[arg-type]
-                    res = fmt.check_deductions(res, text, key.answer_text, q.max_marks)
+                    prompt += DRAWING_NOTE
+                # a reply that breaks the marking rules is sent back once with the reason, before asking the teacher
+                for retry in (False, True):
+                    call = (chat_structured(system, prompt, EvaluationResult, image_path=picture, model=model) if picture
+                            else chat_structured(system, prompt, EvaluationResult, model=model))
+                    item.raw_response = call.raw
+                    try:
+                        if cbse:
+                            res = grading.validate_result(call.parsed, q, key, options, text)
+                        else:
+                            res = validate_evaluation(call.parsed, q.max_marks)  # type: ignore[arg-type]
+                            res = fmt.check_deductions(res, text, key.answer_text, q.max_marks)
+                        break
+                    except EvaluationValidationError as e:
+                        if retry:
+                            raise
+                        log.info("Grading reply for question %s rejected (%s); asking once more", q.display_number, e)
+                        prompt += (f"\n\nYOUR PREVIOUS REPLY WAS REJECTED: {e}. Reply again following every rule above; "
+                                   "quote evidence exactly as the student wrote it.")
                 graded.append((title, res, call.raw))
             title, res, _ = max(graded, key=lambda g: g[1].marks_awarded)  # the first of equal best
             item.ai_marks, item.ai_decision = res.marks_awarded, res.decision
@@ -411,6 +433,12 @@ def evaluate_item(db: Session, ev: Evaluation, q: ExamQuestion, item: Evaluation
                 a.status = "MAPPED"
             db.commit()
             raise
+        except Exception as e:  # never leave answers stuck in EVALUATING: record the failure on this question
+            log.exception("Grading failed for question %s", q.display_number)
+            db.rollback()
+            item.status, item.error = "EVALUATION_ERROR", f"Grading failed: {e}"
+            for a in resolved.constituent_answers:
+                a.status = "MAPPED"
         db.commit()
         return
 
@@ -437,6 +465,26 @@ def evaluate_item(db: Session, ev: Evaluation, q: ExamQuestion, item: Evaluation
         return
 
 
+# A run stopped because the AI service was down is started again by itself, waiting longer each time.
+RUN_RETRY_DELAYS = (60, 180, 600, 1800)  # seconds
+_run_retries: dict[str, int] = {}
+
+
+def _schedule_run_retry(ev_id: str, exam_id: str, only_question_ids: list[str] | None) -> None:
+    import threading
+    from ..config import get_settings
+    from .job_queue import submit
+    tries = _run_retries.get(ev_id, 0)
+    if get_settings().job_queue_inline or tries >= len(RUN_RETRY_DELAYS):
+        _run_retries.pop(ev_id, None)
+        return  # the teacher runs it again (review_reasons says so)
+    _run_retries[ev_id] = tries + 1
+    timer = threading.Timer(RUN_RETRY_DELAYS[tries], submit, (exam_id, run_evaluation, ev_id, only_question_ids))
+    timer.daemon = True
+    timer.start()
+    log.info("Evaluation %s: AI unavailable, running again in %ss (try %s)", ev_id, RUN_RETRY_DELAYS[tries], tries + 1)
+
+
 def run_evaluation(ev_id: str, only_question_ids: list[str] | None = None) -> None:
     with keyed_lock(f"evaluation:{ev_id}"):  # jobs run in parallel; one grading run per sheet at a time
         _run_evaluation(ev_id, only_question_ids)
@@ -454,13 +502,16 @@ def _run_evaluation(ev_id: str, only_question_ids: list[str] | None) -> None:
             set_state(exam, "EVALUATING")
         db.commit()
         try:
-            model = None  # the single configured OpenRouter Gemini model grades every language
+            model = None  # the configured grading model grades every language
             check_model()
             qs = [q for q in exam_questions(db, ev.exam_id) if not only_question_ids or q.id in only_question_ids]
             ev.run_total, ev.run_progress = len(qs), 0
             db.commit()
+            existing = {}
+            for it in db.query(EvaluationItem).filter_by(evaluation_id=ev.id).all():
+                existing.setdefault(it.exam_question_id, it)
             for q in qs:
-                item = db.query(EvaluationItem).filter_by(evaluation_id=ev.id, exam_question_id=q.id).first()
+                item = existing.get(q.id)
                 if item is None:
                     item = EvaluationItem(evaluation_id=ev.id, exam_question_id=q.id)
                     db.add(item)
@@ -477,6 +528,9 @@ def _run_evaluation(ev_id: str, only_question_ids: list[str] | None) -> None:
         except AIUnavailable as e:
             log.error("AI unavailable during evaluation: %s", e.detail)
             ev.run_status = "ERROR"
+            _schedule_run_retry(ev.id, exam.id, only_question_ids)
+        else:
+            _run_retries.pop(ev.id, None)
         db.refresh(exam)
         others_running = db.query(Evaluation).filter(Evaluation.exam_id == exam.id, Evaluation.id != ev.id,
                                                      Evaluation.run_status == "RUNNING").first()
@@ -533,7 +587,6 @@ def finalize_issues(db: Session, ev: Evaluation, snap: ExamSnapshot | None = Non
     """Read-only: lists what still blocks finalizing. Call confirm_not_attempted() first to settle unanswered items."""
     snap = snap or ExamSnapshot(db, ev.exam_id, [ev])
     qs = snap.questions
-    has_unresolved = snap.unresolved(ev)
     issues: list[dict] = []
 
     def add(question: str, reason: str):
@@ -624,8 +677,6 @@ def approve_clean_items(db: Session, ev: Evaluation) -> int:
     return n
 
 
-# AI marks below this confidence are pointed out to the teacher before a bulk finalize
-LOW_CONFIDENCE = 0.6
 _EVALUATABLE_EXAM = ("READY_FOR_EVALUATION", "EVALUATING", "REVIEW_REQUIRED")
 
 
@@ -653,26 +704,6 @@ def auto_evaluate_sheet(doc_id: str) -> None:
     submit(exam_id, run_evaluation, ev_id, grading=True)
 
 
-_empty_pages: dict = {}
-
-
-def pages_without_answers(doc) -> list[int]:
-    """Sheet pages read as OK with nothing on them: a blank page, or written answers the AI silently skipped."""
-    if doc.id not in _empty_pages:
-        empty = []
-        for page in doc.pages or []:
-            if page.get("ocr_status") != "OK" or not page.get("ocr_file"):
-                continue
-            try:
-                parsed = json.loads(abs_path(page["ocr_file"]).read_text(encoding="utf-8")).get("parsed") or {}
-            except (OSError, ValueError):
-                continue
-            if not parsed.get("answers") and not parsed.get("unresolved"):
-                empty.append(page["page_number"])
-        _empty_pages[doc.id] = empty
-    return _empty_pages[doc.id]
-
-
 def review_reasons(db: Session, ev: Evaluation, snap: ExamSnapshot) -> list[dict]:
     """Why this sheet cannot be finalized together with the others.
 
@@ -694,6 +725,26 @@ def review_reasons(db: Session, ev: Evaluation, snap: ExamSnapshot) -> list[dict
         else:
             reason = "Not graded yet. Run the evaluation for this sheet."
         issues.append({"question": "Roll number" if check.get("status") == "MISMATCH" else "Evaluation", "reason": reason})
+    exam = snap.exam if hasattr(snap, "exam") else db.get(Exam, ev.exam_id)
+    if exam is not None and getattr(exam, "standard_profile_id", None):
+        from ..cbse.branch import MIXED, sheet_option
+        if sheet_option(db, ev, exam) == MIXED:
+            issues.insert(0, {"question": "Part B", "reason": "Answers from both Part B options (Analysis of Financial "
+                              "Statements and Computerised Accounting). A student attempts one option: check which one counts."})
+    other = ((doc.identity or {}).get("other_roll_pages") or []) if doc is not None else []
+    if other:
+        # an additional sheet carries the student's own roll number, often misread ("16202" for 12B02): only a roll
+        # number of ANOTHER student of this class means another student's page
+        from .sheet_pages import roll_key
+        from ..models import Student
+        exam_row = db.get(Exam, ev.exam_id)
+        others = {roll_key(s.roll_number) for s in db.query(Student).filter(Student.class_id == exam_row.class_id,
+                                                                            Student.id != ev.student_id)}
+        other = [o for o in other if roll_key(o.get("roll_number")) in others]
+    if other:
+        listed = ", ".join(f"page {o['page']} ({o['roll_number']})" for o in other)
+        issues.insert(0, {"question": "Answer sheet", "reason": f"Some pages show another roll number: {listed}. "
+                                                               "Check they belong to this student."})
     if doc is not None and doc.status == "NEEDS_ATTENTION":
         issues.insert(0, {"question": "Answer sheet", "reason": "Some pages could not be read. Retry them first."})
     if ev.run_status == "ERROR":

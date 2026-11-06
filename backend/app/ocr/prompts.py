@@ -192,6 +192,9 @@ writing and printed header before reading; follow the page's natural top-to-bott
 the original supplied image coordinates, even when the page is rotated. If the orientation or writing is unclear,
 retain the uncertainty rather than guessing. Printed school headers, roll numbers, page totals and section headings
 are not answers or question labels.
+If the page has a header box or labelled lines (Roll No, Subject, Class & Sec), copy what is written there into
+"page_header" exactly as written: {{"roll_number": "...", "subject": "...", "class_name": "..."}}; a field that is not
+written is null. A page with no such header has "page_header": null.
 For every answer region determine:
 - handwritten question label
 - handwriting text
@@ -333,6 +336,7 @@ OUTPUT FORMAT
 Return ONLY valid JSON in exactly this structure (include a separate entry in "answers" for EVERY question answered on this page):
 {{
   "page_number": {page_number},
+  "page_header": null,
   "answers": [
     {{
       "answer_id": "ans_001",
@@ -480,43 +484,6 @@ Return JSON in exactly this shape:
 {{"marks_awarded": 0, "max_marks": {max_marks:g}, "decision": "CORRECT | PARTIALLY_CORRECT | INCORRECT", "matched_points": ["..."], "missing_points": ["..."], "feedback": "one or two sentences for the teacher", "confidence": 0.0}}"""
 
 
-GEN_ANSWER_KEY_SYSTEM = (
-    "You are an academic examiner and curriculum specialist for Eval AI. "
-    "MODEL: Gemini through OpenRouter. "
-    "Read the verified questions from the examination question paper and generate suggested answers for each question. "
-    "Never invent questions or extra subquestions. For every question provided, generate a comprehensive model answer, "
-    "marking criteria, essential keywords, and accepted alternative answers. Reply with a single JSON object and nothing else."
-)
-
-
-def generate_answer_key_prompt(exam_name: str, questions: list[dict]) -> str:
-    lines = []
-    for q in questions:
-        lines.append(
-            f"QUESTION {q['display_number']} (ID: {q['id']}, max marks: {q['max_marks']})\n"
-            f"Type: {q.get('question_type') or 'descriptive'}\n"
-            f"Question text: {q['question_text']}"
-        )
-    formatted = "\n\n".join(lines)
-    return f"""Generating reference answer key and generate suggested answers for exam: {exam_name}
-For each verified question from the question paper listed below, generate:
-1. "answer_text": An authoritative, accurate model answer appropriate for the question type and marks.
-2. "marks": Allocated marks equal to the question's maximum marks.
-3. "criteria": List of distinct step or point marking criteria.
-4. "keywords": Key technical/academic terms.
-5. "accepted_answers": Acceptable alternative answers or phrasings.
-
-VERIFIED QUESTIONS:
-{formatted}
-
-RULES:
-- Do not invent new questions or answers.
-- Preserve the exact question numbers and IDs.
-- Return an answer for EVERY verified question listed above.
-
-Return JSON in exactly this shape:
-{{"answers": [{{"exam_question_id": "...", "question_number": "1", "answer_text": "...", "marks": 2.0, "criteria": ["..."], "keywords": ["..."], "accepted_answers": ["..."]}}]}}"""
-
 
 
 IDENTITY_SYSTEM = (
@@ -607,3 +574,33 @@ ANSWERS:
 
 Return JSON in exactly this shape, one entry per ID:
 {{"keys": [{{"id": "...", "criteria": [{{"point": "...", "marks": 1}}]}}]}}"""
+
+
+def answer_spans_prompt(questions: list[dict], lines: list[tuple[int, int, str]], sheet_format: str = "") -> str:
+    """The whole sheet as numbered lines; the model says where each answer starts and ends."""
+    qs = "\n".join(f"- {q['number']} ({q['marks'] if q['marks'] is not None else '?'} marks): {q['text']}" for q in questions)
+    body = "\n".join(f"[{i}] (p{page}) {text}" for i, page, text in lines)
+    return f"""Below is a student's handwritten answer sheet, already transcribed, one numbered line per row, in the
+order written. Split it into answers: for each answer give the exam question it answers and the ids of its first
+and last line.
+
+Decide where an answer starts and ends from what is written, not only from the numbers the student wrote:
+- A number written by the student is strong evidence, but it may be misread or missing; use the content.
+- Numbered points (1), 2), (i), (ii)) inside an answer are part of that answer, not new questions.
+- An answer can continue onto the next page with no number at the top.
+- Parts like (a), (b) belong to the question they are written under; use the part's own number
+  (e.g. "5(a)") only if it is in the question list.
+- Every line belongs to at most one answer. Ranges must not overlap and must follow line order.
+- Lines that are not an answer (name, roll number, rough work with no answer) are left out.
+- Use only question numbers from the list. If an answer's question cannot be told, use null.
+
+HOW THIS SUBJECT'S ANSWER SHEETS ARE WRITTEN (follow this layout):
+{sheet_format or "Plain handwritten sheets; each answer opens with its question number."}
+
+EXAM QUESTIONS:
+{qs}
+
+SHEET LINES:
+{body}
+
+Reply with JSON: {{"answers": [{{"question_number": "1", "start_line": 0, "end_line": 4}}, ...]}}"""

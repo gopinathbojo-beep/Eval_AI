@@ -392,7 +392,10 @@ def build_evaluation_pdf_report(db: Session, teacher: Teacher, evaluation_id: st
                   f"Reports can only be generated for finalized evaluations. Current status is {ev.status}.")
     profile = db.query(SchoolProfile).filter_by(teacher_id=owner_id(db, teacher)).first()
     pdf = render_report(report_data(db, teacher, ev), active_config(db, teacher, "report"), _school(profile))
-    return pdf, f"Report_{_clean_name(ev.student.name, ev.student.roll_number, ev.exam.name)}.pdf"
+    cls = ev.exam.school_class.name if ev.exam.school_class else ""
+    section = ev.student.section or (cls.rsplit("-", 1)[1] if "-" in cls else "")
+    subject = ev.exam.subject.name if ev.exam.subject else ev.exam.name
+    return pdf, "-".join(re.sub(r"[^\w]+", "_", p.strip()).strip("_") for p in (ev.student.roll_number, section, subject) if p and p.strip()) + ".pdf"
 
 
 # ---------------------------------------------------------------- exam-wise class report
@@ -457,7 +460,7 @@ def render_exam_report(data: dict, cfg: dict, school: dict) -> bytes:
     story += d.details([("Examination", e["name"]), ("Subject", e["subject"]), ("Class", e["class"]),
                         ("Exam Type", e["type"]), ("Academic Year", e["year"]), ("Exam Date", e["date"]),
                         ("Maximum Marks", _m(e["maximum"])),
-                        ("Students", f"{len(students)} evaluated" + (f", {len(data['pending'])} pending" if data["pending"] else ""))])
+                        ("Students", f"{len(students)} evaluated")])
     story += d.summary([("Class Average", f"{round(mean, 2):g}%"), ("Highest", _m(max(scores))), ("Lowest", _m(min(scores))),
                         ("Passed", f"{passed} / {len(students)}"), ("Pass %", f"{round(100 * passed / len(students), 2):g}%")])
 
@@ -475,8 +478,6 @@ def render_exam_report(data: dict, cfg: dict, school: dict) -> bytes:
     rows = [[d.p(_esc(s["roll"])), d.p(_esc(s["name"])), d.p(f"<b>{_m(s['obtained'])}</b> / {_m(s['maximum'])}", align=TA_RIGHT),
              d.p(f"{s['percentage']:g}", align=TA_RIGHT), d.p(f"<b>{assigned[str(i)]}</b>", align=TA_CENTER),
              d.p(str(s["rank"]), align=TA_CENTER)] for i, s in enumerate(students)]
-    rows += [[d.p(_esc(s["roll"])), d.p(_esc(s["name"]), color=MUTE), d.p("Not evaluated", color=MUTE, align=TA_RIGHT),
-              d.p("–", align=TA_RIGHT), d.p("–", align=TA_CENTER), d.p("–", align=TA_CENTER)] for s in data["pending"]]
     widths = [d.width * x for x in (0.12, 0.40, 0.18, 0.10, 0.10, 0.10)]
     story += d.section_title("Student-wise Results")
     story += [d.table(["Roll No.", "Student", "Marks", "%", "Grade", "Rank"], rows, widths,

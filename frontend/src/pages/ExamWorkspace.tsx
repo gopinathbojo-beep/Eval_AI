@@ -3,10 +3,10 @@ import { Navigate, NavLink, Outlet, useLocation, useNavigate, useOutletContext, 
 import { api, downloadFile } from "../api/client";
 import { useApi } from "../hooks/useApi";
 import { useCrumbName } from "../context/Crumbs";
-import type { ExamDetail, UploaderCode } from "../types";
+import type { ExamDetail, SchoolProfile, UploaderCode } from "../types";
 import { BUSY_DOC } from "../utils/format";
-import { Button, Card, Confirm, ErrorPanel, Loading, PageCanvas, PageHeader, StatusBadge } from "../components/ui";
-import { IconCheckCircle, IconDownload, IconPlus, IconTrash, IconUpload } from "../components/Icons";
+import { Button, Card, Confirm, ErrorPanel, Field, Input, Loading, Modal, PageCanvas, PageHeader, StatusBadge } from "../components/ui";
+import { IconCheckCircle, IconDownload, IconEdit, IconPlus, IconTrash, IconUpload } from "../components/Icons";
 import { UploaderCodesModal } from "./exam/Codes";
 
 export interface ExamCtx { exam: ExamDetail; reload: () => Promise<void> }
@@ -30,6 +30,7 @@ export default function ExamWorkspace() {
   const navigate = useNavigate();
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [manageCodes, setManageCodes] = useState(false);
+  const [editing, setEditing] = useState(false);
   const { data, error, loading, reload } = useApi<ExamDetail>(`/exams/${id}`, (d) =>
     [d.question_paper, d.answer_key_document].some((x) => x && BUSY_DOC.includes(x.status)) ||
     ["QUEUED", "GENERATING"].includes(d.generation?.status ?? "") ? 2000 : null
@@ -87,10 +88,15 @@ export default function ExamWorkspace() {
         sub={[data.class_name && `Class ${data.class_name}`, data.subject_name, data.academic_year,
               `${data.total_marks} marks`].filter(Boolean).join(" · ")}
         actions={
+          <>
+          <Button small variant="ghost" onClick={() => setEditing(true)} icon={<IconEdit size={15} />}>
+            Edit
+          </Button>
           <Button small variant="ghost" className="text-mark hover:bg-mark-soft hover:text-mark"
                   onClick={() => setConfirmDelete(true)} icon={<IconTrash size={15} />}>
             Delete
           </Button>
+          </>
         }
       />
 
@@ -136,6 +142,9 @@ export default function ExamWorkspace() {
           }}
         />
       )}
+
+      {editing && <EditExamModal exam={data} onClose={() => setEditing(false)}
+                                 onSaved={async () => { setEditing(false); await reload(); }} />}
 
       {confirmDelete && (
         <Confirm
@@ -282,5 +291,58 @@ function FinalizeBanner({ exam, onDone, onReload }: {
       </div>
       {error ? <div className="mt-4"><ErrorPanel error={error} /></div> : null}
     </Card>
+  );
+}
+
+/** Edit the details printed on reports: exam name, type, date and the school's principal. */
+function EditExamModal({ exam, onClose, onSaved }: { exam: ExamDetail; onClose: () => void; onSaved: () => Promise<void> }) {
+  const school = useApi<SchoolProfile>("/school-profile");
+  const [form, setForm] = useState({ name: exam.name, exam_type: exam.exam_type, exam_date: exam.exam_date ?? "" });
+  const [principal, setPrincipal] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const principalValue = principal ?? school.data?.principal_name ?? "";
+
+  const save = async (ev: React.FormEvent) => {
+    ev.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await api(`/exams/${exam.id}`, { method: "PATCH", json: {
+        name: form.name.trim(), exam_type: form.exam_type.trim(), exam_date: form.exam_date || null } });
+      const p = school.data;
+      if (p && principal !== null && principal.trim() !== p.principal_name) {
+        await api("/school-profile", { method: "PUT", json: { name: p.name, address: p.address, principal_name: principal.trim() } });
+      }
+      await onSaved();
+    } catch (e) {
+      setError(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal title="Edit exam details" onClose={onClose}>
+      <form onSubmit={save} className="space-y-4">
+        <Field label="Exam name" required>
+          {(id) => <Input id={id} required maxLength={200} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />}
+        </Field>
+        <Field label="Examination" hint="e.g. MODEL EXAM">
+          {(id) => <Input id={id} required maxLength={60} value={form.exam_type} onChange={(e) => setForm({ ...form, exam_type: e.target.value })} />}
+        </Field>
+        <Field label="Exam date">
+          {(id) => <Input id={id} type="date" value={form.exam_date} onChange={(e) => setForm({ ...form, exam_date: e.target.value })} />}
+        </Field>
+        <Field label="Principal's name" hint="Shown on all of the school's reports">
+          {(id) => <Input id={id} maxLength={200} disabled={!school.data} value={principalValue} onChange={(e) => setPrincipal(e.target.value)} />}
+        </Field>
+        {error ? <ErrorPanel error={error} /> : null}
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button type="submit" disabled={busy}>{busy ? "Saving..." : "Save"}</Button>
+        </div>
+      </form>
+    </Modal>
   );
 }

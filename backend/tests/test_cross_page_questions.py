@@ -129,3 +129,79 @@ def test_cross_page_alternative_with_different_ids_retains_nested_solution_metho
     assert tree_total(tree, {}) == 3
     assert tree_total(tree, {}, {"a1": 1, "a2": 2, "b1": 1, "b2": 2, "method1": 3}) == 3
     assert tree_total(tree, {}, {"b1": 1, "method1": 1.5}) == 1.5
+
+
+def test_part_less_question_read_as_different_kinds_on_two_pages_is_one_leaf():
+    """A whole question over two pages, read as "point" on one and a part-less "choose" on the next: no conflict."""
+    trees, problems = merge_nodes([{"id": "q28", "kind": "point", "marks": 4, "children": []},
+                                   {"id": "q28", "kind": "choose", "marks": 4, "children": []}])
+    assert problems == []
+    assert len(trees) == 1 and trees[0]["kind"] == "point" and trees[0]["marks"] == 4
+
+
+def test_settled_extraction_issues_are_notes_not_reviews():
+    from app.cbse.issues import split
+    needs, notes = split(["Conflicting kind for q28", "Page 3: Conflicting section labels across pages",
+                          "Model root 7 was corrected to printed question 8 from the source row boundary.",
+                          "Missing positive allocation for q4.b", "Allocated marks do not match the printed total for q5"])
+    assert notes == ["Conflicting kind for q28", "Page 3: Conflicting section labels across pages",
+                     "Model root 7 was corrected to printed question 8 from the source row boundary."]
+    assert needs == ["Missing positive allocation for q4.b", "Allocated marks do not match the printed total for q5"]
+
+
+def test_repeated_question_label_is_a_note():
+    from app.cbse.issues import split
+    msg = "Repeated whole-question label without a confirmed continuation; review source numbering."
+    assert split([msg]) == ([], [msg])
+
+
+def test_unmarked_mcqs_under_one_total_share_it_equally():
+    """Q24-style "6x1 = 6": six MCQs with no marks of their own are 1 mark each, not one 6-mark answer."""
+    from app.cbse.extraction import settle_marks
+    tree = {"id": "q24", "kind": "point", "marks": 6, "children": [
+        {"id": f"q24.{i}", "kind": "point", "marks": None, "response_type": "mcq", "children": []} for i in range(6)]}
+    settled = settle_marks(tree, 6)
+    assert settled["kind"] == "all" and [c["marks"] for c in settled["children"]] == [1] * 6
+
+
+def test_case_study_opening_joins_the_first_alternative():
+    """Q22-style: the opening (context only) on one page, "A ... OR B" on the next: two alternatives, not three."""
+    trees, problems = merge_nodes([
+        {"id": "q22", "kind": "all", "marks": 4, "children": [{"id": "q22.ctx", "kind": "context", "children": []}]},
+        {"id": "q22", "kind": "choose", "limit": 1, "children": [leaf("q22.A", 4), leaf("q22.B", 4)]}])
+    assert problems == [] and [c["id"] for c in trees[0]["children"]] == ["q22.A", "q22.B"]
+    assert trees[0]["children"][0]["children"][0]["id"] == "q22.ctx"
+
+
+def test_page_footer_and_reader_remarks_are_not_question_text():
+    from types import SimpleNamespace as NS2
+    from app.cbse.build import _drop_page_furniture
+    footer = "Note: There is no change in the Question Paper Design and Assessment Pattern."
+    results = [({"page_number": n, "page_text": f"{footer}\nPage {n} of 4"},
+                NS2(fragments=[NS2(text=t, tree=None)])) for n, t in enumerate(
+                   ["Journal entries", "Question 2 text", "Attempt either option A or B.\nRatios", "Cash flow"], 1)]
+    results[3][1].fragments[0].text = "Attempt either option A or B.\nCash flow"
+    results[1][1].fragments[0].text = f"Question 2 text\n{footer}\nNo further numbered questions are visible on this page."
+    _drop_page_furniture(results)
+    assert results[1][1].fragments[0].text == "Question 2 text"
+    assert results[2][1].fragments[0].text.startswith("Attempt either option A or B.")  # an instruction stays
+
+
+def test_mcqs_beside_a_stem_repeating_the_whole_marks():
+    """Another reading of Q24: a 6-mark "main" part next to the six unmarked MCQs is the case study, not a 7th part."""
+    from app.cbse.extraction import settle_marks
+    tree = {"id": "q24", "kind": "all", "marks": 6, "children": [
+        {"id": "q24.main", "kind": "point", "marks": 6, "response_type": "open", "children": []}] + [
+        {"id": f"q24.{i}", "kind": "point", "marks": None, "response_type": "mcq", "children": []} for i in range(6)]}
+    settled = settle_marks(tree, 6)
+    assert settled["children"][0]["kind"] == "context"
+    assert [c["marks"] for c in settled["children"][1:]] == [1] * 6
+
+
+def test_unmarked_opening_line_joins_the_first_alternative():
+    trees, problems = merge_nodes([
+        {"id": "q22", "kind": "all", "marks": 4, "children": [{"id": "q22.cap", "kind": "point", "marks": None,
+                                                              "children": []}]},
+        {"id": "q22", "kind": "choose", "limit": 1, "children": [leaf("q22.A", 4), leaf("q22.B", 4)]}])
+    assert problems == [] and [c["id"] for c in trees[0]["children"]] == ["q22.A", "q22.B"]
+    assert trees[0]["children"][0]["children"][0]["kind"] == "context"

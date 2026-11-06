@@ -306,6 +306,7 @@ export function ExamNew() {
   const subjects = catalog.data?.[grade] ?? [];
   const [name, setName] = useState("");
   const [section, setSection] = useState("");
+  const [examDate, setExamDate] = useState("");
   const [subjectKey, setSubjectKey] = useState("");
   const [paper, setPaper] = useState<File | null>(null);
   const [key, setKey] = useState<File | null>(null);
@@ -325,7 +326,8 @@ export function ExamNew() {
     try {
       const exam = await api<Exam>("/exams/simple", {
         method: "POST",
-        json: { name: name.trim(), grade, section: section.trim(), subject_key: subjectKey },
+        json: { name: name.trim(), grade, section: section.trim(), subject_key: subjectKey,
+                exam_date: examDate || null },
       });
       if (source === "generate") {
         // the paper and key are written from the textbooks, then read and reviewed like uploaded files
@@ -370,6 +372,9 @@ export function ExamNew() {
                               onChange={(e) => setSection(e.target.value.toUpperCase())} />}
             </Field>
           </div>
+          <Field label="Exam date">
+            {(id) => <Input id={id} type="date" value={examDate} onChange={(e) => setExamDate(e.target.value)} />}
+          </Field>
           <Field label="Subject" required>
             {(id) => (
               <Select id={id} required value={subjectKey} onChange={(e) => setSubjectKey(e.target.value)}

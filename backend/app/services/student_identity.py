@@ -22,6 +22,7 @@ from .audit import audit
 from .evaluation_service import auto_evaluate_sheet
 from .job_queue import keyed_lock, submit
 from .pipeline import process_document
+from .sheet_pages import class_number, other_class
 
 log = logging.getLogger("adem.identity")
 
@@ -37,6 +38,26 @@ MIN_NAME_SIMILARITY = 0.5
 
 def norm_id(v: str | None) -> str:
     return re.sub(r"[^A-Z0-9]", "", (v or "").upper())
+
+
+# characters a handwritten roll number is most often misread as: B/8, O/0, I/l/1, S/5, Z/2
+_LOOK_ALIKE = str.maketrans("boilsz", "801152")
+
+
+def _look_alike(v: str | None) -> str:
+    return re.sub(r"[^0-9a-z]", "", (v or "").casefold()).translate(_LOOK_ALIKE).lstrip("0")
+
+
+def _known_roll(db: Session, doc, written: str) -> str:
+    """The roll number read from the sheet, spelled as in the class list when it differs only by look-alike
+    characters ("12806" -> "12B06"); unchanged when no student, or more than one, matches."""
+    exam = db.get(Exam, doc.exam_id)
+    if exam is None or not written:
+        return written
+    key = _look_alike(written)
+    rolls = {s.roll_number for s in db.query(Student).filter_by(class_id=exam.class_id)
+             if s.roll_number and _look_alike(s.roll_number) == key}
+    return next(iter(rolls)) if len(rolls) == 1 else written
 
 
 def _roll_key(v: str | None) -> str:
@@ -183,11 +204,24 @@ def _read_page(page, read_fn=_gemini_identity) -> dict:
 def _read_header(doc: AnswerSheetDocument, read_fn=_gemini_identity) -> dict:
     """Read the details from the first IDENTITY_PAGES pages, stopping at the first page that gives an ID."""
     read: dict = {}
+    want_class = _exam_class(doc)
     for page in _identity_pages(doc):
-        read = _merge(read, _read_page(page, read_fn))
+        found = _read_page(page, read_fn)
+        if other_class(class_number(found.get("class_name")), want_class):
+            continue  # a page of another class's paper (scanned into this sheet) never names the student
+        read = _merge(read, found)
         if _has_id(read):
             break
     return read
+
+
+def _exam_class(doc) -> int | None:
+    try:
+        with SessionLocal() as db:
+            exam = db.get(Exam, doc.exam_id)
+            return class_number(exam.school_class.name) if exam and exam.school_class else None
+    except Exception:
+        return None
 
 
 # Phone photos are often taken sideways; PIL rotates counter-clockwise, so 90 undoes a clockwise turn.
@@ -293,14 +327,17 @@ def _roll_label_identity(image) -> dict:
 def check_typed_roll(doc_id: str, read_fn=_roll_label_identity) -> bool:
     """Second check on the roll number an uploader typed: compare it with the roll number written on the sheet.
 
+    Applies to every sheet uploaded with a typed roll number: by an uploader code or by a teacher.
     Written and the same, or not written at all: go on and grade. Written and different: hold the sheet for the
     school to say which is right (grading waits). Returns True when grading may go ahead."""
     db = SessionLocal()
     try:
         doc = db.get(AnswerSheetDocument, doc_id)
-        if doc is None or not doc.uploaded_by_code or doc.student_id is None:
-            return True  # only sheets sent by an uploader, with a typed roll, are checked
+        if doc is None or doc.student_id is None:
+            return True
         identity = dict(doc.identity or {})
+        if not doc.uploaded_by_code and not identity.get("typed_roll"):
+            return True  # only sheets with a roll number typed at upload (uploader or teacher) are checked
         if (identity.get("roll_check") or {}).get("status") in ("MATCH", "NOT_WRITTEN", "CONFIRMED"):
             return True  # checked before, or the school already decided
         typed = identity.get("typed_roll") or db.get(Student, doc.student_id).roll_number
@@ -308,9 +345,11 @@ def check_typed_roll(doc_id: str, read_fn=_roll_label_identity) -> bool:
             written = clean_id(_read_header(doc, read_fn).get("roll_number"))
         except (AIUnavailable, AIResponseError):
             return True  # the check is a safeguard; an unreadable header never blocks grading
+        if written:
+            written = _known_roll(db, doc, written)  # "12806" read for 12B06: the class list's own spelling
         if not written:
             status = "NOT_WRITTEN"
-        elif _roll_key(written) == _roll_key(typed):
+        elif _roll_key(written) == _roll_key(typed) or _look_alike(written) == _look_alike(typed):
             status = "MATCH"
         else:
             status = "MISMATCH"

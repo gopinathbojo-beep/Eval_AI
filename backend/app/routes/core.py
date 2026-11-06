@@ -621,12 +621,15 @@ def _generation(db: Session, e) -> dict | None:
 @router.patch("/exams/{exam_id}")
 def patch_exam(exam_id: str, body: ExamPatch, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     e = get_exam(db, t, exam_id)
+    # labels printed on reports stay editable after finalizing; anything affecting marks does not
     if e.status == "FINALIZED":
-        raise err(409, "EXAM_FINALIZED", "A finalized exam cannot be edited.")
+        for field in ("total_marks", "duration_minutes", "academic_year"):
+            if field in body.model_fields_set and getattr(body, field) != getattr(e, field):
+                raise err(409, "EXAM_FINALIZED", "A finalized exam's marks, duration and academic year cannot be edited.")
     if e.standard_profile_id:
-        for field in ("total_marks","duration_minutes","exam_type","academic_year"):
+        for field in ("total_marks","duration_minutes","academic_year"):
             if field in body.model_fields_set and getattr(body,field) != getattr(e,field):
-                raise err(400,"CBSE_FIXED_PATTERN","Board-pattern totals, duration, type and academic year are fixed.")
+                raise err(400,"CBSE_FIXED_PATTERN","Board-pattern totals, duration and academic year are fixed.")
     for k, v in body.model_dump(exclude_unset=True).items():
         old = getattr(e, k)
         if v != old:

@@ -32,7 +32,6 @@ KINDS = {
     "answer-key": (AnswerKeyDocument, prompts.answer_key_prompt, AnswerKeyPageResult),
     "answer-sheet": (AnswerSheetDocument, prompts.student_answer_prompt, StudentPageResult),
 }
-LOW_CONF = 0.6
 
 
 def recover_failed_page(page, schema):
@@ -201,6 +200,12 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
                     compatible = "fragments" in cached.get("parsed", {})
                 except (KeyError, ValueError, OSError):
                     compatible = False
+            if kind == "answer-sheet":
+                try:  # saved before empty readings were caught: a page of blank answers is read again
+                    cached = json.loads(abs_path(p["ocr_file"]).read_text(encoding="utf-8"))
+                    compatible = not _blank_answers(schema.model_validate(cached.get("parsed") or {}))
+                except (KeyError, ValueError, OSError):
+                    compatible = False
             if compatible:
                 continue
         recovered = recover_failed_page(p, schema) if only_failed else None
@@ -250,6 +255,15 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
             system = SYSTEM
         try:
             call = chat_structured(system, prompt_str, schema, img)
+            if kind == "answer-sheet" and _empty_numbered(call.parsed):
+                # a numbered answer with no text ("Q9": ""): part of the page was not read. Ask once more and keep the
+                # reading with more transcribed answers; a page where nothing at all was transcribed is unreadable,
+                # so the automatic page retry reads it again (never a silently empty page)
+                again = chat_structured(system, prompt_str, schema, img)
+                if _transcribed(again.parsed) > _transcribed(call.parsed):
+                    call = again
+                if _blank_answers(call.parsed):
+                    raise AIResponseError("FAILED_PARSE", "answers were listed but none was transcribed", call.raw)
             if system is not prompts.OCR_SYSTEM:  # a CBSE paper or scheme page: every printed question must come back
                 call = _reread_missed_rows(doc, p["page_number"], call, system, prompt_str, schema, img)
             check = (_check_sheet_page(call, p["page_number"], img, system, abs_path(p["source_file"]), wd / "ocr")
@@ -307,6 +321,8 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
             _build_student_answers(db, doc, exam, wd, results)
 
     failed = [p["page_number"] for p in doc.pages if p.get("ocr_status") != "OK"]
+    if failed and kind == "answer-sheet" and schedule_page_retry(db, doc, failed):
+        return
     if failed:
         doc.status = "NEEDS_ATTENTION"
         doc.error_message = f"{bad_response_msg} Page(s) affected: {', '.join(map(str, failed))}."
@@ -324,6 +340,53 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
             db.commit()
             submit(exam.id, process_document, "answer-key", key_doc.id, False)
 
+
+
+def _transcribed(parsed) -> int:
+    return sum(1 for a in getattr(parsed, "answers", None) or [] if (getattr(a, "answer_text", "") or "").strip())
+
+
+def _empty_numbered(parsed) -> bool:
+    """Some answer has a question number but no text: that part of the page was skipped."""
+    return any(not (getattr(a, "answer_text", "") or "").strip() and getattr(a, "question_number", None)
+               for a in getattr(parsed, "answers", None) or []) or _blank_answers(parsed)
+
+
+def _blank_answers(parsed) -> bool:
+    """A sheet page read as answers with no text at all (e.g. ten empty entries): the reading failed."""
+    answers = getattr(parsed, "answers", None) or []
+    return bool(answers) and not any((getattr(a, "answer_text", "") or "").strip() for a in answers)
+
+# A sheet page the AI could not read is read again by itself, waiting longer each time, before the teacher is asked.
+PAGE_RETRY_DELAYS = (60, 120, 300, 600, 1200, 1800)  # seconds: six more tries over about an hour
+AUTO_RETRY_STAGE = "Re-reading unreadable page(s) automatically"
+
+
+def schedule_page_retry(db: Session, doc, failed: list[int]) -> bool:
+    """Queue the failed pages of an answer sheet to be read again later. False once the tries are used up."""
+    import threading
+    from ..config import get_settings
+    from .job_queue import submit
+    from .student_identity import run_sheet
+    if get_settings().job_queue_inline:
+        return False  # tests run jobs inline: no delayed retries there
+    pages = copy.deepcopy(doc.pages)
+    tries = max((p.get("auto_retries") or 0) for p in pages if p.get("page_number") in failed)
+    if tries >= len(PAGE_RETRY_DELAYS):
+        return False
+    for p in pages:
+        if p.get("page_number") in failed:
+            p["auto_retries"] = tries + 1
+    doc.pages = pages
+    doc.status, doc.error_message = "UPLOADED", None
+    doc.stage = f"{AUTO_RETRY_STAGE} (try {tries + 1} of {len(PAGE_RETRY_DELAYS)}): page(s) {', '.join(map(str, failed))}"
+    db.commit()
+    exam_id, doc_id = doc.exam_id, doc.id
+    timer = threading.Timer(PAGE_RETRY_DELAYS[tries], submit, (exam_id, run_sheet, doc_id))
+    timer.daemon = True
+    timer.start()
+    log.info("Sheet %s: page(s) %s unreadable, re-reading in %ss (try %s)", doc_id, failed, PAGE_RETRY_DELAYS[tries], tries + 1)
+    return True
 
 
 def _check_sheet_page(call, page_number, img, system, source, out_dir):
@@ -634,6 +697,16 @@ def _answer_crop(pages_by_num: dict, pieces, wd: Path, name: str) -> str | None:
 def _build_student_answers(db: Session, doc, exam: Exam, wd: Path, results) -> None:
     ev = db.query(Evaluation).filter_by(answer_sheet_id=doc.id).one()
     db.query(StudentAnswer).filter_by(evaluation_id=ev.id).delete()
+    # pages of another student's paper (another subject or class) are left out before answers are built
+    from .sheet_pages import check_pages
+    excluded, notes, other_rolls = check_pages(results, exam)
+    doc.identity = {**(doc.identity or {}), "excluded_pages": notes, "other_roll_pages": other_rolls}
+    if excluded:
+        log.warning("Sheet %s: left out page(s) %s from another paper", doc.id, sorted(excluded))
+        results = [(p, r) for p, r in results if p["page_number"] not in excluded]
+    if not results:
+        db.commit()
+        return
     pages_by_num = {p["page_number"]: p for p, _ in results}
     canonical_qs = db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all()
     answers = segment_student_answers(results, canonical_questions=canonical_qs)
