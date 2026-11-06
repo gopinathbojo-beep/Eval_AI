@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Literal
 from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 import json
+import re
 
 
 class Deduction(BaseModel):
@@ -65,7 +66,7 @@ class VisualEvidence(BaseModel):
         value = str(value or "other").lower()
         return names.get(value, value if value in {"diagram", "image", "graph", "map", "table", "formula"} else "other")
     labels: list[str] = Field(default_factory=list)
-    bbox: dict
+    bbox: dict = Field(default_factory=dict)  # described but not located: kept, and the page is not rejected
 
     @field_validator("bbox", mode="before")
     @classmethod
@@ -96,9 +97,28 @@ class Fragment(BaseModel):
     def any_box(cls, value):
         return _box(value)
     continues: bool = False
+    branch: str | None = None  # the Part B option this piece is printed under (set by the app, cbse/build.py)
     issues: list[str] = Field(default_factory=list)
-    # printed Part B option the fragment sits under ('financial'/'computerised'), set from the PDF headings
-    branch: str | None = None
+    # what the app did that a teacher may want to know but need not check (text completed from the PDF itself)
+    notes: list[str] = Field(default_factory=list)
+
+
+PARTLY_READ = ("Text is missing: the AI reply for this source page was partly invalid, so some of it could not be "
+               "read. Check this question against the printed paper, or reprocess the page.")
+
+
+# root of a piece read with no question number at the top of a page: build.collect gives it the previous page's last
+# question (a visually impaired version or the rest of a question printed on over the page break)
+CARRIED = 10**6
+
+
+def _root_number(value) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)) and value == int(value):
+        return int(value) if value > 0 else None
+    match = re.fullmatch(r"\s*(?:Q(?:uestion)?\.?\s*)?(\d{1,3})\s*[.)]?\s*", str(value or ""), re.I)
+    return int(match[1]) if match and int(match[1]) > 0 else None
 
 
 class Page(BaseModel):
@@ -127,6 +147,26 @@ class Page(BaseModel):
             data = {**data, "fragments": flat}
         return data
 
+    @model_validator(mode="before")
+    @classmethod
+    def number_unnumbered(cls, obj):
+        """A piece the model read with no usable question number (root 0, null, "Q12") is not thrown away: a
+        printed number is read from it, else it continues the piece above it, else (first on the page) the
+        previous page's last question (CARRIED)."""
+        if not isinstance(obj, dict) or not isinstance(obj.get("fragments"), list):
+            return obj
+        fragments, above = [], None
+        for item in obj["fragments"]:
+            if isinstance(item, dict) and isinstance(item.get("text"), str):
+                root = _root_number(item.get("root"))
+                if root is None:
+                    item = {**item, "root": above or CARRIED, "continues": True, "marks": None}
+                else:
+                    item = {**item, "root": root}
+                above = item["root"]
+            fragments.append(item)
+        return {**obj, "fragments": fragments}
+
     @field_validator("fragments", mode="before")
     @classmethod
     def misplaced_diagnostic_placeholders(cls, value):
@@ -137,6 +177,32 @@ class Page(BaseModel):
             return [item for item in value if not (
                 isinstance(item, str) and item.strip().lower().startswith("issues_found_"))]
         return value
+
+    @classmethod
+    def salvage(cls, obj):
+        """The page from a reply that failed validation only in some of its question pieces (e.g. the model ran on
+        into junk strings after the first piece): the valid pieces are kept, never the whole page dropped, and the
+        page and its pieces say that something is missing. None when nothing usable is left."""
+        if not isinstance(obj, dict) or not isinstance(obj.get("fragments"), list):
+            return None
+        kept = []
+        for item in obj["fragments"]:
+            try:
+                kept.append(Fragment.model_validate(item))
+            except ValueError:
+                continue
+        if not kept or len(kept) == len(obj["fragments"]):
+            return None
+        for fragment in kept:
+            fragment.issues.append(PARTLY_READ)
+        rest = {k: obj[k] for k in ("page_number", "metadata", "instructions", "issues") if k in obj}
+        try:
+            page = cls.model_validate({**rest, "fragments": []})
+        except ValueError:
+            page = cls.model_validate({"page_number": obj.get("page_number") or 0, "fragments": []})
+        page.fragments = kept
+        page.issues.append(PARTLY_READ)
+        return page
 
 
 SYSTEM = """You read uploaded CBSE examination documents. Return JSON only, based on visible source evidence.
@@ -171,7 +237,8 @@ For explicitly capped deductions attach deductions:[{{"id":"q1.accuracy","maximu
 OR alternatives: choose with limit=1. Answer any N: choose with limit=N, inside its parent question (never apply to an entire unrelated section).
 Every choose node MUST include an explicit numeric limit when printed instructions establish it; include "limit":1 for a printed OR, including a choice nested within a subpart. Never leave that field null for an explicit OR.
 For alternative SOLUTION METHODS of the same required question use choice_type='method'; question/section alternatives use choice_type='question'. Do not confuse accepted equivalent answers with additional required parts.
-Use audience tags 'standard'/'accessible' for visually impaired alternatives and 'financial'/'computerised' for Accountancy Part B branches. These are alternative versions, never additional marks.
+Use audience tags 'standard'/'accessible' for visually impaired alternatives. These are alternative versions, never additional marks.
+Accountancy Part B prints two options, each numbered from the same question: read both, and on the root tree of every Part B fragment set audience 'financial' under "Analysis of Financial Statements" (Option I) or 'computerised' under "Computerised Accounting" (Option II). Never merge the two options.
 For a marking scheme, point marks must come from its explicit allocations. If only a whole-question total is given, one holistic point with that printed total is acceptable; NEVER invent finer allocations.
 For a paper, points represent the smallest independently marked parts, not MCQ options. Include printed branch labels and choice instructions in text.
 For a paper, when one printed mark covers several subparts (e.g. (II) a) and b) together worth 2), make that group one point with the printed mark. Do not report the missing split as an issue: the marking scheme gives it.
@@ -236,6 +303,10 @@ def merge_nodes(nodes):
             if data.get("children"):
                 old["kind"] = data.get("kind")
             data = dict(data, kind=old["kind"])
+        if (not old.get("children") and not data.get("children")
+                and {old.get("kind"), data.get("kind")} <= {"point", "all"}):
+            # with no parts, "all of nothing" and a single point are the same thing: not a conflict
+            data = dict(data, kind=old["kind"])
         for field in ("kind", "marks", "limit", "audience"):
             if (
                 old.get(field) is not None
@@ -268,15 +339,35 @@ def merge_nodes(nodes):
     return list(by_id.values()), problems
 
 
+BRANCHES = ("financial", "computerised")
+BRANCH_TITLES = {"financial": "Analysis of Financial Statements", "computerised": "Computerised Accounting"}
+_OPTION_LINE = re.compile(r"(?m)^Option (?:I|II): (Analysis of Financial Statements|Computerised Accounting)[ \t]*$")
+
+
 def selected(node, options):
     audience = node.get("audience")
-    return (
-        not audience
-        or audience == options.get("accessibility")
-        or audience == options.get("accountancy_option")
-        # no branch chosen at creation: both Part B branches stay in, tree_total keeps the better one
-        or (audience in _BRANCHES and not options.get("accountancy_option"))
-    )
+    if audience in BRANCHES:  # each student answers one option: no option chosen yet keeps both
+        return options.get("accountancy_option") in (None, audience)
+    return not audience or audience == options.get("accessibility")
+
+
+def has_branches(tree):
+    return bool(tree) and any(c.get("audience") in BRANCHES for c in tree.get("children") or [])
+
+
+def only_selected(node, options):
+    """The tree without the branches and versions this student does not answer."""
+    return {**node, "children": [only_selected(c, options) for c in node.get("children") or [] if selected(c, options)]}
+
+
+def option_text(text, branch):
+    """One option's part of a question or scheme printed as "Option I: ... OR Option II: ..."; other text unchanged."""
+    marks = list(_OPTION_LINE.finditer(text or ""))
+    for i, m in enumerate(marks):
+        if m[1] == BRANCH_TITLES.get(branch):
+            end = marks[i + 1].start() if i + 1 < len(marks) else len(text)
+            return re.sub(r"\s*\bOR\s*$", "", text[m.end():end]).strip()
+    return text
 
 
 _BRANCHES = {"financial", "computerised"}

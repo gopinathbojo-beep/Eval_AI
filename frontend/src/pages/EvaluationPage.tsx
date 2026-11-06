@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api, ApiError } from "../api/client";
+import { api, ApiError, downloadFile } from "../api/client";
 import { useApi } from "../hooks/useApi";
 import { useCrumbName } from "../context/Crumbs";
 import type { EvalItem, EvalQuestion, EvaluationDetail, StudentAnswer } from "../types";
@@ -30,6 +30,7 @@ import {
 import { PageViewer } from "../components/PageViewer";
 import { AuthImage } from "../components/AuthImage";
 import { DocProgress } from "../components/DocPanel";
+import { DeleteSheetConfirm } from "../components/DeleteSheetConfirm";
 import {
   IconCheck,
   IconCheckCircle,
@@ -42,6 +43,8 @@ import {
   IconEye,
   IconChevronDown,
   IconChevronRight,
+  IconDownload,
+  IconTrash,
   IconX,
 } from "../components/Icons";
 
@@ -55,6 +58,11 @@ export default function EvaluationPage() {
     (d) => (d.evaluation.run_status === "RUNNING" || BUSY_DOC.includes(d.document.status) ? 1500 : null)
   );
   const [tab, setTab] = useState<Tab>("mapping");
+  const [deleting, setDeleting] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadErr, setDownloadErr] = useState<unknown>(null);
+  const [reopening, setReopening] = useState(false);
+  const nav = useNavigate();
   useCrumbName(id, data?.evaluation.student.name);
 
   if (loading) return <Loading text="Loading evaluation workspace..." />;
@@ -62,6 +70,36 @@ export default function EvaluationPage() {
 
   const ev = data.evaluation;
   const reading = BUSY_DOC.includes(data.document.status);
+
+  const reopen = async () => {
+    setReopening(true);
+    setDownloadErr(null);
+    try {
+      await api(`/evaluations/${ev.id}/reopen`, { method: "POST" });
+      await reload();
+      setTab("marks");
+    } catch (e) {
+      setDownloadErr(e);
+    } finally {
+      setReopening(false);
+    }
+  };
+
+  const download = async () => {
+    setDownloading(true);
+    setDownloadErr(null);
+    try {
+      const roll = (ev.student.roll_number || "sheet").replace(/[^A-Za-z0-9_-]/g, "_");
+      await downloadFile(
+        `/evaluations/${ev.id}/extraction-report.pdf?part=${tab}`,
+        `${roll}_${tab === "mapping" ? "Mapping_Review" : "Marks_Review"}.pdf`
+      );
+    } catch (e) {
+      setDownloadErr(e);
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   return (
     <div className="space-y-5">
@@ -85,16 +123,53 @@ export default function EvaluationPage() {
               className="text-pen font-medium hover:underline flex items-center gap-1"
               to={`/exams/${ev.exam_id}/answer-sheets`}
             >
-              <span>Back to answer sheets</span>
+              <span>Back to students</span>
             </Link>
           </div>
         }
         actions={
           <div className="flex items-center gap-2">
             <StatusBadge status={ev.status} />
+            {ev.status === "FINALIZED" && data.exam.status !== "FINALIZED" && (
+              <Button
+                small
+                variant="secondary"
+                busy={reopening}
+                onClick={reopen}
+                icon={<IconRotateCcw size={15} />}
+                title="Open this result again to change a mark; finalize it again when done"
+              >
+                Reopen to change marks
+              </Button>
+            )}
+            {ev.part_b_option && (
+              <span className="rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700"
+                    title="The AI read this from the answer sheet. Part B is marked against this option only.">
+                Part B: {ev.part_b_option === "computerised" ? "Option II, Computerised Accounting" : "Option I, Analysis of Financial Statements"}
+              </span>
+            )}
+            <Button
+              small
+              variant="ghost"
+              className="text-mark hover:bg-mark-soft hover:text-mark"
+              disabled={reading || ev.run_status === "RUNNING"}
+              onClick={() => setDeleting(true)}
+              icon={<IconTrash size={15} />}
+              title={reading || ev.run_status === "RUNNING" ? "Wait for reading or grading to finish" : "Delete this answer sheet"}
+            >
+              Delete sheet
+            </Button>
           </div>
         }
       />
+
+      {deleting && (
+        <DeleteSheetConfirm
+          ev={ev}
+          onDeleted={() => nav(`/exams/${ev.exam_id}/answer-sheets`)}
+          onClose={() => setDeleting(false)}
+        />
+      )}
 
       {/* OCR Ingestion Progress if document is still processing */}
       {(reading || data.document.status !== "READY") && (
@@ -143,7 +218,21 @@ export default function EvaluationPage() {
                 </span>
               )}
             </button>
+            <Button
+              small
+              variant="secondary"
+              className="ml-auto"
+              busy={downloading}
+              onClick={download}
+              icon={<IconDownload size={15} />}
+              title={tab === "mapping"
+                ? "PDF of every answer as read and the question it is mapped to"
+                : "PDF of the marks per question, the current total and the AI's grading notes"}
+            >
+              {tab === "mapping" ? "Download mapping" : "Download marks"}
+            </Button>
           </div>
+          <ErrorPanel error={downloadErr} />
 
           {tab === "mapping" ? (
             <MappingTab d={data} reload={reload} />

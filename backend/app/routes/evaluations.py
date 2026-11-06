@@ -66,11 +66,15 @@ def evaluation_detail(ev_id: str, db: Session = Depends(get_db), t: Teacher = De
 
 
 @router.get("/evaluations/{ev_id}/extraction-report.pdf")
-def evaluation_extraction_report(ev_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
-    """The student's sheet as read, how each answer was mapped, and the AI's grading notes."""
+def evaluation_extraction_report(ev_id: str, part: str = "all", db: Session = Depends(get_db),
+                                 t: Teacher = Depends(current_teacher)):
+    """The student's sheet as read, how each answer was mapped, and the AI's grading notes. part=mapping or
+    part=marks gives one review tab's download (the marks one works before the evaluation is finalized)."""
     import re
-    from ..services.extracted_pdf import sheet_extraction_report_pdf
+    from ..services.extracted_pdf import SHEET_REPORT_PARTS, sheet_extraction_report_pdf
 
+    if part not in SHEET_REPORT_PARTS:
+        raise err(400, "INVALID_PART", "part must be all, mapping or marks.")
     ev = get_evaluation(db, t, ev_id)
     exam = get_exam(db, t, ev.exam_id)
     sheet = db.get(AnswerSheetDocument, ev.answer_sheet_id)
@@ -78,8 +82,10 @@ def evaluation_extraction_report(ev_id: str, db: Session = Depends(get_db), t: T
     items = db.query(EvaluationItem).filter_by(evaluation_id=ev.id).all()
     questions = db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all()
     name = re.sub(r"[^A-Za-z0-9_-]+", "_", f"{ev.student.roll_number}_{ev.student.name}" if ev.student else ev.id)
-    return Response(sheet_extraction_report_pdf(exam, ev, sheet, answers, items, questions), media_type="application/pdf",
-                    headers={"Content-Disposition": f'attachment; filename="{name.strip("_")}_Sheet_Report.pdf"'})
+    suffix = {"all": "Sheet_Report", "mapping": "Mapping_Review", "marks": "Marks_Review"}[part]
+    return Response(sheet_extraction_report_pdf(exam, ev, sheet, answers, items, questions, part),
+                    media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{name.strip("_")}_{suffix}.pdf"'})
 
 
 # ---------- mapping ----------
@@ -439,6 +445,24 @@ def finalize_evaluation(ev_id: str, db: Session = Depends(get_db), t: Teacher = 
     return evaluation_view(ev)
 
 
+@router.post("/evaluations/{ev_id}/reopen")
+def reopen_evaluation(ev_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    """Open a finalized result again so a teacher can change a mark (results finalized by the autopilot, mostly).
+    The autopilot never finalizes a reopened result again; the teacher finalizes it."""
+    from ..services.autopilot import REOPENED
+    ev = get_evaluation(db, t, ev_id)
+    if ev.status != "FINALIZED":
+        raise err(409, "EVALUATION_NOT_FINALIZED", "Only a finalized evaluation can be reopened.")
+    if db.get(Exam, ev.exam_id).status == "FINALIZED":
+        raise err(409, "EXAM_FINALIZED", "The exam is finalized; its results can no longer be changed.")
+    old = {"total": ev.total_marks, "max": ev.maximum_marks, "percentage": ev.percentage}
+    ev.status, ev.finalized_at = "TEACHER_REVIEW", None
+    audit(db, exam_id=ev.exam_id, teacher_id=t.id, entity_type="evaluation", entity_id=ev.id, action=REOPENED, old=old)
+    db.commit()
+    refresh_evaluation_status(db, ev)
+    return evaluation_view(ev)
+
+
 @router.get("/evaluations/{ev_id}/result")
 def result(ev_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     ev = get_evaluation(db, t, ev_id)
@@ -489,38 +513,6 @@ def download_evaluation_report(ev_id: str, db: Session = Depends(get_db), t: Tea
     )
 
 
-@router.get("/exams/{exam_id}/student-reports.zip")
-def download_student_reports(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
-    """Every finalized student's personal report for the exam, one PDF each, in one ZIP."""
-    import io
-    import re
-    import zipfile
-
-    exam = get_exam(db, t, exam_id)
-    evs = (db.query(Evaluation).filter_by(exam_id=exam.id, status="FINALIZED")
-           .order_by(Evaluation.created_at).all())
-    if not evs:
-        raise err(404, "NO_FINALIZED_REPORTS", "No student's evaluation is finalized yet.")
-    buf, used = io.BytesIO(), set()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for ev in evs:
-            pdf_bytes, filename = build_evaluation_pdf_report(db, t, ev.id)
-            name, n = filename, 2
-            while name in used:  # two students' reports must never overwrite each other
-                name = re.sub(r"(\.pdf)?$", f"_{n}.pdf", filename, count=1); n += 1
-            used.add(name)
-            zf.writestr(name, pdf_bytes)
-    safe = re.sub(r"[^A-Za-z0-9_-]+", "_", exam.name).strip("_") or "Exam"
-    return Response(
-        content=buf.getvalue(),
-        media_type="application/zip",
-        headers={
-            "Content-Disposition": f'attachment; filename="StudentReports_{safe}.zip"',
-            "Cache-Control": "private, no-cache",
-        },
-    )
-
-
 @router.get("/exams/{exam_id}/report.pdf")
 def download_exam_report(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     pdf_bytes, filename = build_exam_pdf_report(db, t, exam_id)
@@ -532,6 +524,31 @@ def download_exam_report(exam_id: str, db: Session = Depends(get_db), t: Teacher
             "Cache-Control": "private, no-cache",
         },
     )
+
+
+@router.get("/exams/{exam_id}/student-reports.zip")
+def download_student_reports(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    """Every finalized student's report of the exam in one ZIP, the same PDF each "View Report" gives."""
+    import io
+    import re
+    import zipfile
+    exam = get_exam(db, t, exam_id)
+    evs = db.query(Evaluation).filter_by(exam_id=exam.id, status="FINALIZED").all()
+    if not evs:
+        raise err(400, "NO_FINALIZED_STUDENTS", "Finalize at least one student before downloading their reports.")
+    buf, used = io.BytesIO(), set()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for ev in sorted(evs, key=lambda e: (e.student.roll_number or "", e.student.name or "")):
+            pdf, name = build_evaluation_pdf_report(db, t, ev.id)
+            base, n = name, 2
+            while name in used:   # two students whose names and rolls make the same file name
+                name, n = base.replace(".pdf", f"_{n}.pdf"), n + 1
+            used.add(name)
+            z.writestr(name, pdf)
+    filename = f"StudentReports_{re.sub(r'[^A-Za-z0-9_-]+', '_', exam.name).strip('_') or 'exam'}.zip"
+    return Response(content=buf.getvalue(), media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"',
+                             "Cache-Control": "private, no-cache"})
 
 
 @router.get("/results")

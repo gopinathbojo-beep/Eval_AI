@@ -4,10 +4,11 @@ import copy
 import json
 import logging
 from uuid import uuid4
+import time
 from pathlib import Path
 from sqlalchemy.orm import Session
 from ..config import get_settings, ai_unavailable_message, ai_bad_response_message
-from ..database import SessionLocal
+from ..database import SessionLocal, is_locked
 from ..documents import cropping
 from ..documents.renderer import RenderError, page_text as pdf_page_text, render_document
 from ..documents.storage import abs_path, rel
@@ -107,21 +108,42 @@ def _handle_cancel(db: Session, doc, doc_id: str) -> None:
     db.commit()
 
 
+LOCK_RETRIES = 4
+
+
 def process_document(kind: str, doc_id: str, only_failed: bool = False) -> None:
+    for attempt in range(1, LOCK_RETRIES + 1):
+        if _process_once(kind, doc_id, only_failed, last=attempt == LOCK_RETRIES):
+            return
+        # another job held the database: run again; pages already read are kept, so only the rest costs AI calls
+        log.warning("Database busy while processing %s %s; retrying (%d/%d)", kind, doc_id, attempt, LOCK_RETRIES)
+        time.sleep(3 * attempt)
+        only_failed = True
+
+
+def _process_once(kind: str, doc_id: str, only_failed: bool, last: bool) -> bool:
+    """False when the run hit a busy database and should simply be run again."""
     db = SessionLocal()
     try:
         _run(db, kind, doc_id, only_failed)
     except Exception as e:  # never leak a trace to the teacher; keep it in the developer log
+        if is_locked(e) and not last:
+            db.rollback()
+            return False
         log.exception("Pipeline crashed for %s %s", kind, doc_id)
         db.rollback()
         model_cls = KINDS[kind][0]
         doc = db.get(model_cls, doc_id)
         if doc and doc.status != "CANCELLED":
-            err_detail = f": {type(e).__name__} - {e}" if str(e) else f": {type(e).__name__}"
-            doc.status, doc.error_message = "FAILED", f"Processing failed unexpectedly{err_detail}. See the server log for details."
+            if is_locked(e):  # never a database message on the teacher's screen
+                doc.status, doc.error_message = "FAILED", "The server was busy with other sheets. Press Retry to read the rest."
+            else:
+                err_detail = f": {type(e).__name__} - {e}" if str(e) else f": {type(e).__name__}"
+                doc.status, doc.error_message = "FAILED", f"Processing failed unexpectedly{err_detail}. See the server log for details."
             db.commit()
     finally:
         db.close()
+    return True
 
 
 def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
@@ -255,6 +277,8 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
             system = SYSTEM
         try:
             call = chat_structured(system, prompt_str, schema, img)
+            if kind == "answer-sheet":
+                call = _reread_empty_page(call, system, prompt_str, schema, img)
             if kind == "answer-sheet" and _empty_numbered(call.parsed):
                 # a numbered answer with no text ("Q9": ""): part of the page was not read. Ask once more and keep the
                 # reading with more transcribed answers; a page where nothing at all was transcribed is unreadable,
@@ -330,6 +354,8 @@ def _run(db: Session, kind: str, doc_id: str, only_failed: bool) -> None:
     else:
         doc.status, doc.stage, doc.error_message = "READY", "Ready for review", None
     db.commit()
+    from . import autopilot
+    autopilot.after_document(kind, exam.id, doc.id)  # settle the review with the AI and move the exam on
 
     if adopted_profile:
         # Legacy marking-scheme rows have the same alternative/step-total
@@ -454,6 +480,28 @@ def _reread_missed_rows(doc, page_number, call, system, prompt_str, schema, img)
     return retry if len(missed(retry.parsed)) < len(first) else call
 
 
+EMPTY_PAGE_HINT = ("\n\nIMPORTANT: your previous reply for this page listed no answers at all. Look at the page again: "
+                   "if anything is handwritten on it, transcribe every answer and every line continuing an answer from "
+                   "the page before. Return an empty answers list only for a page with no handwriting at all.")
+
+
+def _reread_empty_page(call, system, prompt_str, schema, img):
+    """An answer page read as holding nothing is read once more: a model sometimes returns an empty list for a page
+    full of writing (a whole question lost), while a truly blank page reads empty again at the cost of one call."""
+    if getattr(call.parsed, "answers", None) or getattr(call.parsed, "unresolved", None):
+        return call
+    try:
+        again = chat_structured(system, prompt_str + EMPTY_PAGE_HINT, schema, img)
+    except AIResponseError as e:
+        log.warning("Re-reading an empty answer page failed: %s", e.detail)
+        return call
+    if not getattr(again.parsed, "answers", None):
+        return call
+    log.info("Answer page %s was read empty; the second reading found %d answers", img, len(again.parsed.answers))
+    again.attempts += call.attempts
+    return again
+
+
 def _load_results(doc, schema):
     out = []
     pdf_doc = None
@@ -504,17 +552,18 @@ def _build_questions(db: Session, doc, exam: Exam, wd: Path, results) -> None:
     if exam.standard_profile_id:
         from ..cbse.build import build_questions
         return build_questions(db,doc,exam,results)
+    # the AI labelling runs before any write: a write holds SQLite's lock until commit, blocking parallel jobs
+    struct = parse_question_paper_structure(results)
+    apply_pdf_question_text(struct.questions, [p.get("page_text") or "" for p, _ in results])
+    labeler_model = get_settings().small_model  # labelling is a small text job
+    if labeler_model:
+        label_question_types(struct.questions, labeler_model)
     existing_q_ids = [q.id for q in db.query(ExamQuestion).filter_by(exam_id=exam.id).all()]
     if existing_q_ids:
         db.query(AnswerKey).filter_by(exam_id=exam.id).update({AnswerKey.exam_question_id: None})
         db.query(StudentAnswer).filter(StudentAnswer.exam_question_id.in_(existing_q_ids)).update({StudentAnswer.exam_question_id: None}, synchronize_session=False)
         db.query(EvaluationItem).filter(EvaluationItem.exam_question_id.in_(existing_q_ids)).delete(synchronize_session=False)
         db.query(ExamQuestion).filter_by(exam_id=exam.id).delete()
-    struct = parse_question_paper_structure(results)
-    apply_pdf_question_text(struct.questions, [p.get("page_text") or "" for p, _ in results])
-    labeler_model = get_settings().ai_model
-    if labeler_model:
-        label_question_types(struct.questions, labeler_model)
 
     # Safety Net: If 0 questions were parsed, check if OCR captured any non-empty text blocks (excluding instructions)
     if not struct.questions:
@@ -644,15 +693,16 @@ def _build_questions(db: Session, doc, exam: Exam, wd: Path, results) -> None:
 def _build_answer_key(db: Session, doc, exam: Exam, wd: Path, results, changed_pages=None) -> None:
     if exam.standard_profile_id:
         from ..cbse.build import build_keys
-        return build_keys(db,doc,exam,results,changed_pages=changed_pages)
-    db.query(AnswerKey).filter(AnswerKey.exam_id == exam.id, AnswerKey.document_id != doc.id).update({AnswerKey.is_active: False})
-    db.query(AnswerKey).filter_by(document_id=doc.id).delete()
+        return build_keys(db,doc,exam,results)
+    # the AI labelling runs before any write: a write holds SQLite's lock until commit, blocking parallel jobs
     pages_by_num = {p["page_number"]: p for p, _ in results}
     canonical_qs = db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all()
     keys = segment_answer_keys(results, canonical_questions=canonical_qs)
-    labeler_model = get_settings().ai_model
+    labeler_model = get_settings().small_model  # labelling is a small text job
     if labeler_model:
         label_key_criteria(keys, canonical_qs, labeler_model)
+    db.query(AnswerKey).filter(AnswerKey.exam_id == exam.id, AnswerKey.document_id != doc.id).update({AnswerKey.is_active: False})
+    db.query(AnswerKey).filter_by(document_id=doc.id).delete()
     n = 0
     for k in keys:
         n += 1
@@ -722,11 +772,10 @@ def _answer_crop(pages_by_num: dict, pieces, wd: Path, name: str) -> str | None:
 
 def _build_student_answers(db: Session, doc, exam: Exam, wd: Path, results) -> None:
     ev = db.query(Evaluation).filter_by(answer_sheet_id=doc.id).one()
-    db.query(StudentAnswer).filter_by(evaluation_id=ev.id).delete()
     # pages of another student's paper (another subject or class) are left out before answers are built
     from .sheet_pages import check_pages
     excluded, notes, other_rolls = check_pages(results, exam)
-    doc.identity = {**(doc.identity or {}), "excluded_pages": notes, "other_roll_pages": other_rolls}
+    doc.identity = {**(getattr(doc, "identity", None) or {}), "excluded_pages": notes, "other_roll_pages": other_rolls}
     if excluded:
         log.warning("Sheet %s: left out page(s) %s from another paper", doc.id, sorted(excluded))
         results = [(p, r) for p, r in results if p["page_number"] not in excluded]
@@ -735,19 +784,27 @@ def _build_student_answers(db: Session, doc, exam: Exam, wd: Path, results) -> N
         return
     pages_by_num = {p["page_number"]: p for p, _ in results}
     canonical_qs = db.query(ExamQuestion).filter_by(exam_id=exam.id).order_by(ExamQuestion.position).all()
-    answers = segment_student_answers(results, canonical_questions=canonical_qs)
+    # 1. the AI joins and matches the whole sheet in one text-only call; 2. the rules when that is not usable.
+    # Both run before any write, so the AI call holds no database lock. A subject with its own segmenter keeps it.
+    joined = None
+    if formatter.current().segment_answers(results, canonical_qs) is None:
+        from . import ai_joiner
+        joined = ai_joiner.join(results, canonical_qs)
+    if joined is not None:
+        answers = [j.answer for j in joined]
+    else:
+        answers = segment_student_answers(results, canonical_questions=canonical_qs)
+        joined = [None] * len(answers)
     for a in answers:  # struck-out writing is not the student's answer
         a.answer_text, a.raw_ocr_text = drop_struck(a.answer_text), drop_struck(a.raw_ocr_text)
-    answers = [a for a in answers if a.answer_text.strip()]
+    db.query(StudentAnswer).filter_by(evaluation_id=ev.id).delete()
+    ev.part_b_option = None  # read from the new answers when the sheet is graded
     n = 0
-    crop_run = uuid4().hex[:8]
-    for a in answers:
+    for a, j in zip(answers, joined):
         n += 1
         p = pages_by_num.get(a.page_number) or results[0][0]
-        nb, crop = _bbox_and_crop(p, a.bbox, wd, f"a{n:03d}-{crop_run}")
-        if getattr(a, "pieces", None):  # a formatter giving the answer's band on each page: one stitched crop
-            crop = _answer_crop(pages_by_num, a.pieces, wd, f"a{n:03d}-{crop_run}") or crop
-        db.add(StudentAnswer(
+        nb, crop = _bbox_and_crop(p, a.bbox, wd, f"a{n:03d}")
+        row = StudentAnswer(
             evaluation_id=ev.id,
             raw_question_number=a.raw_question_number,
             normalized_number=a.normalized_number,
@@ -758,8 +815,14 @@ def _build_student_answers(db: Session, doc, exam: Exam, wd: Path, results) -> N
             crop_file=crop,
             ocr_confidence=a.ocr_confidence,
             position=a.position or n,
-            mapping_note=a.mapping_note,
-        ))
+        )
+        if j is not None and j.ignored:
+            row.status, row.mapping_note = "IGNORED", "Not an answer to any question (AI: rough work, details or heading)."
+        elif j is not None and j.question is not None:
+            row.normalized_number, row.exam_question_id = j.question.normalized_number, j.question.id
+            row.status, row.mapping_confirmed = "MAPPED", True
+            row.mapping_note = "Joined across pages and matched by AI."
+        db.add(row)
     db.flush()
     apply_student_mapping(db, ev)
     from .coverage import split_merged

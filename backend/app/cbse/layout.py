@@ -21,8 +21,8 @@ _TEXT_ROOT = re.compile(r"^\s*(?:Q(?:uestion)?\.?\s*)?(\d{1,3})(?=[.):\s])", re.
 
 # the heading can share a text block with "Time: 3 hours ... Max. Marks", so it is searched, not anchored
 _INSTRUCTIONS = re.compile(r"general\s+instructions|read\s+the\s+following\s+instructions", re.I)
-# Accountancy prints "Part - A" / "Part A :- ..." where other papers print SECTION A
-_SECTION = re.compile(r"^\s*(?:section\b|part\s*[-–:]?\s*[A-D]\b)", re.I)
+# the instructions end at the first SECTION heading, or a "Part - A" / "PART B" heading (Accountancy, Economics)
+_SECTION = re.compile(r"^\s*(?:section\b|part\s*[-–:]?\s*[A-E]\b)", re.I)
 
 
 def _instruction_span(page):
@@ -37,10 +37,23 @@ def _instruction_span(page):
     return (start, end if end is not None else page.rect.height) if start is not None else None
 
 
-_SECTION_HEADING = re.compile(r"^\s*section\s*\W{0,3}\s*([A-E])\b(?:.*?\(\s*\d+\s*\S\s*(\d+(?:\.\d+)?)\s*=\s*\d+)?", re.I | re.S)
+# "SECTION C (8x3=24)": the two factors of the section total, printed in either order (questions x marks or
+# marks x questions); printed_sections tells them apart by counting the section's questions
+_SECTION_HEADING = re.compile(r"^\s*section\s*\W{0,3}\s*([A-E])\b"
+                              r"(?:.*?\(\s*(\d+(?:\.\d+)?)\s*\S\s*(\d+(?:\.\d+)?)\s*=\s*\d+)?", re.I | re.S)
 
 
 _SECTION_MARKS = re.compile(r"section\s*[-\u2013]?\s*([A-E])\b[^.\n]*?\b(?:carrying|of)\s+0?(\d+)\s+marks?\s+each", re.I)
+
+
+def _marks_each(first, second, questions):
+    """Marks per question from a heading's "first x second = total": the factor that is not the number of
+    questions printed under it ("(21x1=21)" over 21 questions is 1; "(8x3=24)" over 3 questions is 8)."""
+    if first is None or second is None:
+        return None
+    if questions == second and questions != first:
+        return first
+    return second
 
 
 def printed_sections(doc):
@@ -55,7 +68,7 @@ def printed_sections(doc):
         pdf = pymupdf.open(abs_path(source))
     except (OSError, RuntimeError, ValueError):
         return {}
-    found, current = {}, None
+    found, current, headings = {}, None, []
     with pdf:
         # "SECTION B consists of 5 ... carrying 2 marks each": per-question marks when a heading prints none
         each = {letter.upper(): float(marks) for page in list(pdf)[:2]
@@ -66,57 +79,24 @@ def printed_sections(doc):
             for block in page.get_text("blocks"):
                 match = _SECTION_HEADING.match(block[4])
                 if match and not (skip and skip[0] <= block[1] < skip[1]):
-                    letter = match[1].upper()
-                    events.append((block[1], 0, (letter, float(match[2]) if match[2] else each.get(letter))))
+                    factors = (float(match[2]), float(match[3])) if match[3] else (None, None)
+                    headings.append((match[1].upper(), *factors))
+                    events.append((block[1], 0, len(headings) - 1))
             events += [(y, 1, root) for root, y, _x in _anchors(page)]
             for _y, kind, value in sorted(events, key=lambda e: (e[0], e[1])):
                 if kind == 0:
                     current = value
-                elif current and value not in found:
+                elif current is not None and value not in found:
                     found[value] = current
-    return found
-
-
-# Accountancy Part B: "Part B :- Analysis of Financial Statements (Option - I)" / "Computerised Accounting (Option - II)"
-_BRANCH_HEADINGS = (
-    ("financial", re.compile(r"part\s*[-–]?\s*B\s*\W{0,3}\s*analysis\s+of\s+financial\s+statements", re.I)),
-    ("computerised", re.compile(r"part\s*[-–]?\s*B\s*\W{0,3}\s*computeri[sz]ed\s+accounting", re.I)),
-)
-
-
-def printed_branches(doc):
-    """{page number: (branch at the top of the page, {question root printed on the page: its branch})}.
-
-    Accountancy Part B prints questions 27-34 twice, once under each option heading. Each printed question takes
-    its option from the last heading above it; {} when the PDF prints no option headings."""
-    source = getattr(doc, "original_file", None)
-    if not source or not str(source).lower().endswith(".pdf"):
-        return {}
-    try:
-        pdf = pymupdf.open(abs_path(source))
-    except (OSError, RuntimeError, ValueError):
-        return {}
-    out, current = {}, None
-    with pdf:
-        for index, page in enumerate(pdf):
-            top = current
-            heads = sorted((float(block[1]), branch) for block in page.get_text("blocks")
-                           for branch, pattern in _BRANCH_HEADINGS if pattern.search(" ".join(block[4].split())))
-            roots = {}
-            for root, y, _x in _anchors(page):
-                roots.setdefault(root, next((name for head_y, name in reversed(heads) if head_y <= y), top))
-            current = heads[-1][1] if heads else current
-            out[index + 1] = (top, roots)
-    return out if current else {}
-
-
-def tag_branches(doc, results):
-    """fragment.branch from the printed option headings; a continuation takes the option at its page top."""
-    printed = printed_branches(doc)
-    for page, result in results:
-        top, roots = printed.get(page["page_number"], (None, {}))
-        for fragment in result.fragments:
-            fragment.branch = top if fragment.continues and fragment.root not in roots else roots.get(fragment.root, top)
+    counts = {}
+    for heading in found.values():
+        counts[heading] = counts.get(heading, 0) + 1
+    out = {}
+    for root, heading in found.items():
+        letter, first, second = headings[heading]
+        marks = _marks_each(first, second, counts[heading])
+        out[root] = (letter, marks if marks is not None else each.get(letter))
+    return out
 
 
 def printed_twice(doc):
@@ -149,16 +129,48 @@ def printed_by_page(doc):
         return {index + 1: {root for root, _y, _x in _anchors(page)} for index, page in enumerate(pdf)}
 
 
-def _page_anchors(page, floor=0, restart=None):
-    """Numbers below floor (the last question printed before this page) are lists inside a question, except below
-    restart, a Part B option heading where the numbering begins again."""
+_COLUMN_SLACK = 15  # points: a question number sits in the paper's number column; list/table numbers are indented
+_by_doc: dict = {}
+
+
+def _paper_anchors(doc):
+    """Question numbers for every page, read with the whole paper in view.
+
+    A numbered list inside a question ("1. Goodwill is valued...", a Notes to Accounts table) prints small numbers
+    indented from the paper's question-number column, after the paper has already passed those question numbers.
+    Such a number is dropped; a number in the column itself is kept even when it goes back (Accountancy Part B
+    restarts at 27 for its second option), and an indented number that moves forward is kept (some papers indent
+    their numbers on some pages)."""
+    raw = [_raw_anchors(p) for p in doc]
+    xs = [round(x / 5) * 5 for page in raw for _root, _y, x in page]
+    # the column is the leftmost position used often (an indented list never outnumbers the questions)
+    common = sorted({x for x in xs if xs.count(x) >= max(2, len(xs) // 10)})
+    column = common[0] if common else None
+    out, seen = [], 0
+    for page in raw:
+        kept = [(root, y, x) for root, y, x in page
+                if column is None or x <= column + _COLUMN_SLACK or root >= seen]
+        out.append(kept)
+        seen = max([seen] + [root for root, _y, _x in kept])
+    return out
+
+
+def _anchors(page):
+    doc = page.parent
+    if doc is None or len(doc) < 2:
+        return _raw_anchors(page)
+    key = (id(doc), getattr(doc, "name", ""), len(doc))
+    if key not in _by_doc:
+        _by_doc.clear()  # one paper at a time
+        _by_doc[key] = _paper_anchors(doc)
+    return _by_doc[key][page.number]
+
+
+def _raw_anchors(page):
     found, bare = [], []
     skip = _instruction_span(page)
     for word in page.get_text("words"):
         if skip and skip[0] <= word[1] < skip[1]:
-            continue
-        if word[4][:1].isdigit() and int(re.match(r"\d+", word[4])[0]) < (
-                0 if restart is not None and word[1] >= restart else floor):
             continue
         match = _LABEL.fullmatch(word[4]) or _Q_ONLY.fullmatch(word[4])
         if match and (word[4].lower().startswith("q") or word[0] < page.rect.width * .2):
@@ -179,29 +191,6 @@ def _page_anchors(page, floor=0, restart=None):
         if labelled or last is None or root in (last, last + 1):
             kept.append((root, y, x))
     return kept
-
-
-def _anchors(page):
-    """Printed question numbers on a page, in reading order, checked against the whole document: question numbers
-    never go back, so a "1." "2." list inside a later question (Additional Information, a journal's S.No.) is not a
-    question. They restart only under a Part B option heading (Accountancy prints 27-34 once per option)."""
-    doc = page.parent
-    cached = getattr(doc, "_adem_anchors", None)
-    if cached is None:
-        cached, highest = [], 0
-        for each in doc:
-            heads = sorted(float(block[1]) for block in each.get_text("blocks")
-                           if any(pattern.search(" ".join(block[4].split())) for _name, pattern in _BRANCH_HEADINGS))
-            kept = []
-            for root, y, x in _page_anchors(each, highest, heads[0] if heads else None):
-                if heads and heads[0] <= y:
-                    highest, heads = 0, []  # the first number under a new option heading starts its own run
-                if root >= highest:
-                    kept.append((root, y, x))
-                    highest = root
-            cached.append(kept)
-        doc._adem_anchors = cached
-    return cached[page.number]
 
 
 def _bands(page, anchors):
@@ -309,7 +298,7 @@ def _reconcile_fragments(page, meta, result, anchors, lead=None):
             _rename_root(misfiled.tree, old, root)
             present.add(root)
             continue
-        tree = _recovered_parts(page, root, top, bottom)
+        tree = _recovered_parts(page, root, top, bottom)  # clearly printed (i), (ii)... parts with their marks
         result.fragments.append(Fragment(
             root=root,
             text=text,
@@ -322,10 +311,81 @@ def _reconcile_fragments(page, meta, result, anchors, lead=None):
             ],
         ))
         present.add(root)
+    _recover_page_top(page, meta, result, bands, lead, present, sy)
     # a question continued from the previous page (lead) is printed above this page's first number
     result.fragments.sort(key=lambda fragment: (-1 if fragment.root == lead and fragment.root not in printed else next(
         (top for candidate, top, _bottom in bands if candidate == fragment.root), page.rect.height
     ), fragment.root))
+
+
+_HEADING_ONLY = re.compile(r"^\s*(?:SECTION|PART)\s*[-\u2013:]?\s*[A-E]\b[^\n]*$", re.I)
+
+
+def _only_transcribed_tables(page, candidates, owner, fragment):
+    """This question's printed area holds no image or drawing other than tables, and each table's words are in
+    the text the model read for it."""
+    if len(fragment.text or "") < 40:
+        return False
+    read = set(re.findall(r"[a-z0-9]{3,}", fragment.text.casefold()))
+    for kind, rect in candidates:
+        if owner(rect) != fragment.root:
+            continue
+        if kind != "table":
+            return False
+        words = set(re.findall(r"[a-z0-9]{3,}", page.get_textbox(rect).casefold()))
+        if len(words & read) < .7 * max(1, len(words)):
+            return False
+    return True
+
+
+_INSTRUCTION_START = re.compile(
+    r"^\s*(?:directions?|instructions?|note)\s*[:\-]"
+    r"|\bquestions?\s+(?:no\.?|numbers?)\s*\d+\s*(?:and|to|-|–)\s*\d+"
+    r"|\bassertion\s*[-–]?\s*(?:and\s+)?reason\s+(?:based|type)"
+    r"|^\s*(?:this|the following)\s+section\b", re.I)
+
+
+def _recover_page_top(page, meta, result, bands, lead, present, sy):
+    """The printed text above a page's first question number continues the previous question (lead). When the AI
+    read none of it, it is recovered from the PDF text layer, as omitted numbered rows are. Lines the previous page
+    also prints (a running header or footer) and lone section headings are not question text. Text the AI read on
+    this page under any number (e.g. instructions leading into the next question) is left where the AI put it."""
+    if not bands or not page.number:
+        return
+    previous = page.parent[page.number - 1]
+    # the question this text continues is the last one the previous source page prints: when an earlier page failed
+    # to read, the last number among the pages that were read (lead) is not it
+    printed_before = _anchors(previous)
+    carry = printed_before[-1][0] if printed_before else lead
+    if carry is None or carry in present or carry in {root for root, _t, _b in bands}:
+        return
+    first_top = bands[0][1]
+    if first_top <= 0:
+        return
+    above = page.get_textbox(pymupdf.Rect(0, 0, page.rect.width, max(0, first_top - 2)))
+    repeated = {_squash(line) for line in previous.get_text().splitlines() if _squash(line)}
+    lines = [line.strip() for line in above.splitlines()
+             if line.strip() and _squash(line) not in repeated and not _HEADING_ONLY.match(line)
+             and not re.fullmatch(r"\d{1,2}(?:\.\d)?", line.strip())]  # a stray marks-column value
+    # instructions leading into the next questions ("Assertion-Reason Based Questions / Directions: ...") end it
+    cut = next((i for i, line in enumerate(lines) if _INSTRUCTION_START.search(line)), len(lines))
+    text = "\n".join(lines[:cut])
+    if len(_squash(text)) < 30:
+        return
+    read = _squash(" ".join(fragment.text or "" for fragment in result.fragments))
+    if _squash(text)[:40] in read:
+        return
+    lead = carry
+    result.fragments.append(Fragment(
+        root=lead,
+        text=text,
+        continues=True,
+        bbox={"x": 0, "y": 0, "width": meta["ocr_width"], "height": max(0, first_top - 2) * sy},
+        # the PDF's own text, past the checks above: a record of what was added, not a question to review
+        notes=[f"Text continuing question {lead} at the top of source page {meta['page_number']} was added from the "
+               "PDF text (the AI reading skipped it)."],
+    ))
+    present.add(lead)
 
 
 def _keep_with(fragment, root, tag):
@@ -367,16 +427,6 @@ def _carry_page_top(page, result, anchors, previous):
         fragment.root, fragment.continues = carry, True
         _rename_root(fragment.tree, old, carry)
         fragment.issues.append(f"Text above printed question {anchors[0][0]} continues question {carry} from the previous page.")
-
-
-def _table_extent(page, rect):
-    """A table whose ruled grid is drawn only in part (open sides, a column without lines) is wider than its lines:
-    every printed word on its rows belongs in the picture, so no column is cut off."""
-    words = [pymupdf.Rect(w[:4]) for w in page.get_text("words")
-             if rect.y0 - 1 <= (w[1] + w[3]) / 2 <= rect.y1 + 1 and w[0] > page.rect.width * .08]
-    for word in words:
-        rect = rect | word
-    return rect
 
 
 def _tokens(text):
@@ -466,30 +516,8 @@ def ground_visuals(doc, results, answers=False):
                         _keep_with(fragment, last_printed, f"p{meta['page_number']}-{index + 1}")
                         # a visually impaired version starts its own alternative; every other piece continues
                         fragment.continues = not _VISUALLY_IMPAIRED.match(fragment.text or "")
-                sx, sy = meta["ocr_width"] / page.rect.width, meta["ocr_height"] / page.rect.height
-                for fragment in result.fragments:
-                    for visual in fragment.visuals:
-                        b = normalise_bbox(visual.bbox, meta["ocr_width"], meta["ocr_height"],
-                                           page.rect.width, page.rect.height) if visual.kind == "table" else None
-                        if b:  # the model's rough box: the table's printed rows decide its width
-                            r = _table_extent(page, pymupdf.Rect(b["x"], b["y"], b["x"] + b["width"], b["y"] + b["height"]))
-                            visual.bbox = {"x": r.x0 * sx, "y": r.y0 * sy, "width": r.width * sx, "height": r.height * sy}
                 continue
             lead, last_printed = last_printed, anchors[-1][0]
-            printed_roots = {root for root, _y, _x in anchors}
-            for fragment in result.fragments:
-                # "Part B :- Computerised Accounting (Option - II)" then "27 ...": the piece starts that option's question
-                lines = (fragment.text or "").split("\n")
-                if not any(p.search(" ".join(lines[:2])) for _n, p in _BRANCH_HEADINGS):
-                    continue
-                pattern = next(p for _n, p in _BRANCH_HEADINGS if p.search(" ".join(lines[:2])))
-                rest = pattern.sub("", "\n".join(lines), count=1)
-                rest = re.sub(r"^[\s:\-–]*\(?\s*Option\s*[-–]\s*I+\s*\)?\s*", "", rest, flags=re.I).lstrip()
-                head = _TEXT_ROOT.match(rest)
-                # the heading is shown by the app; left in, it reads as text above the page's first number
-                if head and int(head[1]) in printed_roots:
-                    old, fragment.root, fragment.continues, fragment.text = fragment.root, int(head[1]), False, rest
-                    _rename_root(fragment.tree, old, fragment.root)
             if lead is not None:
                 printed_here = {root for root, _y, _x in anchors}
                 for index, fragment in enumerate(result.fragments):
@@ -568,8 +596,6 @@ def ground_visuals(doc, results, answers=False):
                     matches = [min(own, key=lambda m: (m[3].y0, m[3].x0))]
                 if matches and (len(matches) == 1 or matches[0][0] - matches[1][0] > .15):
                     _, index, root, rect = matches[0]
-                    if visual.kind == "table":
-                        rect = _table_extent(page, rect)
                     target = next((f for f in result.fragments if f.root == root), None)
                     if target is not None:
                         visual.bbox = {"x": rect.x0 * meta["ocr_width"] / page.rect.width,
@@ -579,15 +605,10 @@ def ground_visuals(doc, results, answers=False):
                         target.visuals.append(visual)
                         used.add(index)
                         continue
-                if visual.kind == "table" and labels:
-                    # a table printed as text (no ruled grid of its own, or inside the paper's row grid): its cells are
-                    # in the question's PDF text and its transcription, so there is no picture to place
-                    # its own printed rows, or the page top it may continue onto
-                    bands = [(0, anchors[0][1])] if fragment.continues or fragment.root not in printed else []
-                    bands += [(top, bottom) for root, top, bottom in _bands(page, anchors) if root == fragment.root]
-                    if any(len(labels & _tokens(page.get_textbox(pymupdf.Rect(0, top - 2, page.rect.width, bottom))))
-                           >= .8 * len(labels) for top, bottom in bands):
-                        continue
+                if _only_transcribed_tables(page, candidates, owner, fragment):
+                    # no picture in this question's printed area, only text or a ruled table the model has already
+                    # transcribed (a match-the-columns block it called a diagram): nothing is missing
+                    continue
                 issue = f"Visual ownership or bounds could not be confirmed on page {meta['page_number']}; review source layout."
                 fragment.issues.append(issue)
                 if not normalise_bbox(visual.bbox, meta["ocr_width"], meta["ocr_height"], page.rect.width, page.rect.height):

@@ -69,3 +69,47 @@ def test_only_actionable_model_notes_reach_the_school():
     real = ["Part (iii) text is cut off at the bottom of the page.", "The handwriting in option (b) is illegible.",
             "Question number is not visible.", "Diagram is missing from the scan."]
     assert actionable(noise) == [] and actionable(real) == real
+
+
+def _paper(pages):
+    """pages: list of [(x, text), ...] lines, one list per page."""
+    doc = fitz.open()
+    for lines in pages:
+        page = doc.new_page()
+        for i, (x, text) in enumerate(lines):
+            page.insert_text((x, 80 + 26 * i), text, fontsize=11)
+    return doc
+
+
+def test_part_heading_ends_the_instructions():
+    """Accountancy prints "Part - A", not "SECTION A": its first questions are not instruction items."""
+    doc = _paper([[(30, "GENERAL INSTRUCTIONS:"), (30, "1. This question paper contains 34 questions."),
+                   (30, "2. All questions are compulsory."), (30, "Part - A"),
+                   (27, "1. A, B and C are partners sharing profits in the ratio of 4:3:2."),
+                   (27, "2. Aman and Suman are partners sharing profits and losses.")],
+                  [(27, "3. Assertion: Issue price more than face value ..."), (27, "4. A Ltd. invited applications")]])
+    from app.cbse.layout import _anchors
+    assert [[r for r, _y, _x in _anchors(p)] for p in doc] == [[1, 2], [3, 4]]
+
+
+def test_indented_numbered_lists_inside_questions_are_not_question_numbers():
+    from app.cbse.layout import _anchors
+    doc = _paper([
+        [(27, "17. Calculate the interest on drawings."), (27, "18. Pass the journal entries.")],
+        # a case inside Q19: its additional information is a numbered list, indented
+        [(101, "1. Goodwill of the firm is valued at 1,50,000."), (101, "2. Land & Building is revalued."),
+         (27, "19. Drum Ltd. agreed to purchase ..."), (27, "20. Calculate the ratio.")],
+        # a page holding only such a list (no question starts here)
+        [(70, "1. Goodwill of the firm is valued at 1,50,000."), (70, "2. A provision for doubtful debts.")],
+        # Part B's second option restarts its numbers in the question column: kept
+        [(27, "19. Option II: Computerised Accounting ..."), (27, "20. Explain ...")],
+    ])
+    assert [[r for r, _y, _x in _anchors(p)] for p in doc] == [[17, 18], [19, 20], [], [19, 20]]
+
+
+def test_numbers_indented_on_some_pages_still_count_when_they_move_forward():
+    from app.cbse.layout import _anchors
+    doc = _paper([[(60, "1. First question"), (60, "2. Second question")],
+                  [(27, "3. Third question"), (27, "4. Fourth question")],
+                  [(27, "5. Fifth question"), (27, "6. Sixth question")]])
+    assert [[r for r, _y, _x in _anchors(p)] for p in doc] == [[1, 2], [3, 4], [5, 6]]

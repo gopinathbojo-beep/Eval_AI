@@ -117,7 +117,7 @@ def test_signed_upload_completion_is_authorized_validated_and_idempotent(client,
 def test_remote_ai_transport_and_unmeasured_confidence(monkeypatch, tmp_path):
     settings = get_settings()
     monkeypatch.setattr(settings,"openrouter_api_key","private-ai-key")
-    monkeypatch.setattr(settings,"openrouter_model","google/gemini-3.5-flash-lite")
+    monkeypatch.setattr(settings,"openrouter_model","deepseek/deepseek-v4.1-flash-1017")
     image=tmp_path/"page.png";image.write_bytes(b"test image")
     captured={}
     raw='{"questions":[{"raw_question_number":"1","question_text":"A question","marks":2,"confidence":0.99}]}'
@@ -165,7 +165,7 @@ def test_versioned_migrations_are_repeatable(tmp_path):
         assert set(Base.metadata.tables) <= set(inspect(connection).get_table_names())
         for name,table in Base.metadata.tables.items():
             assert {column.name for column in table.columns} <= {column["name"] for column in inspect(connection).get_columns(name)}
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar() == "20261104_generated_papers"
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar() == "20261106_exam_report_details"
 
 
 def test_durable_queue_deduplicates_recovers_queued_and_flags_interrupted(client, auth, monkeypatch):

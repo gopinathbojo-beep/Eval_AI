@@ -1,3 +1,5 @@
+export type ReportDetailKey = "name" | "class_name" | "subject" | "exam_type" | "academic_year" | "exam_date";
+
 export interface Teacher {
   id: string;
   name: string;
@@ -143,6 +145,7 @@ export interface Exam {
   duration_minutes: number | null;
   total_marks: number;
   instructions: string | null;
+  report_details?: Partial<Record<ReportDetailKey, string>>;
   status: ExamStatus;
   created_at: string;
   files_purge_at?: string | null;
@@ -296,6 +299,7 @@ export interface GeneratedAnswerItem {
 }
 export interface Evaluation {
   id: string;
+  part_b_option?: "financial" | "computerised" | null;
   exam_id: string;
   student: Student;
   status: string;

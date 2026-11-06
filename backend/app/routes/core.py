@@ -481,6 +481,16 @@ class ExamIn(BaseModel):
     instructions: str | None = None
 
 
+class ReportDetails(BaseModel):
+    """What the exam's printed reports say. Blank goes back to the exam's own value."""
+    name: str | None = Field(None, max_length=200)
+    class_name: str | None = Field(None, max_length=100)
+    subject: str | None = Field(None, max_length=200)
+    exam_type: str | None = Field(None, max_length=50)
+    academic_year: str | None = Field(None, max_length=20)
+    exam_date: str | None = Field(None, max_length=20)
+
+
 class ExamPatch(BaseModel):
     name: str | None = None
     academic_year: str | None = None
@@ -499,7 +509,8 @@ def exam_view(e: Exam) -> dict:
             "files_purge_at": e.files_purge_at.isoformat() if e.files_purge_at else None,
             "files_purged_at": e.files_purged_at.isoformat() if e.files_purged_at else None,
             "created_at": e.created_at.isoformat(), "standard_profile_id":e.standard_profile_id,
-            "standard_version":e.standard_version,"standard_options":e.standard_options}
+            "standard_version":e.standard_version,"standard_options":e.standard_options,
+            "report_details":e.report_details or {}}
 
 
 @router.get("/exams")
@@ -636,6 +647,21 @@ def patch_exam(exam_id: str, body: ExamPatch, db: Session = Depends(get_db), t: 
             audit(db, exam_id=e.id, teacher_id=t.id, entity_type="exam", entity_id=e.id,
                   action=f"exam_{k}_changed", old=old, new=v)
             setattr(e, k, v)
+    db.commit()
+    return exam_view(e)
+
+
+@router.put("/exams/{exam_id}/report-details")
+def put_report_details(exam_id: str, body: ReportDetails, db: Session = Depends(get_db),
+                       t: Teacher = Depends(current_teacher)):
+    """Only the wording on the printed reports changes, so this stays open after finalization: the exam's own subject
+    and class still choose its grading rules, and marks are untouched."""
+    e = get_exam(db, t, exam_id)
+    new = {k: v.strip() for k, v in body.model_dump().items() if v and v.strip()}
+    if new != (e.report_details or {}):
+        audit(db, exam_id=e.id, teacher_id=t.id, entity_type="exam", entity_id=e.id,
+              action="exam_report_details_changed", old=e.report_details, new=new)
+        e.report_details = new
     db.commit()
     return exam_view(e)
 

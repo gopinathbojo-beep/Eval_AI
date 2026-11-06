@@ -7,8 +7,12 @@ _tmp = tempfile.mkdtemp(prefix="adem-test-")
 os.environ["DATA_DIR"] = _tmp
 os.environ["DATABASE_URL"] = ""
 os.environ["OPENROUTER_API_KEY"] = "test-openrouter-key"
-os.environ["OPENROUTER_MODEL"] = "google/gemini-3.5-flash-lite"
+os.environ["OPENROUTER_MODEL"] = "deepseek/deepseek-v4.1-flash-1017"
+os.environ["AI_MEDIUM_MODEL"] = ""  # tests use the single OPENROUTER_MODEL
+os.environ["AI_SMALL_MODEL"] = ""
+os.environ["AUTOPILOT"] = "false"  # existing tests drive the manual steps; autopilot tests switch it on
 os.environ["AI_PARALLEL_JOBS"] = "1"
+os.environ["AI_JOIN_ANSWERS"] = "false"  # existing tests drive the rule segmenter; the joiner's tests switch it on
 os.environ["STORAGE_PROVIDER"] = "local"
 os.environ["DURABLE_JOBS"] = "false"
 os.environ["AUTO_MIGRATE"] = "false"
@@ -23,7 +27,7 @@ import fitz  # noqa: E402  (pymupdf)
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-MODEL = "google/gemini-3.5-flash-lite"
+MODEL = "deepseek/deepseek-v4.1-flash-1017"
 BEHAVIOUR = {"garbage_pages": set(), "sheet": "main", "identities": []}   # tweakable per test
 
 
@@ -33,6 +37,14 @@ def _page(prompt: str) -> int:
 
 
 def _reply(system: str, user: str) -> str:
+    if "ANSWERS TO MATCH" in user:  # autopilot: settle the answers a sheet's mapping left open
+        rows = []
+        for line in user.split("ANSWERS TO MATCH", 1)[1].splitlines():
+            m = re.match(r"id=(\S+) .*written number=(\S+): (.*)", line)
+            if m:
+                written = m[2].lstrip("Qq")
+                rows.append({"id": m[1], "question": None if written == "-" else ("3(a)" if written == "3" else written)})
+        return json.dumps({"rows": rows})
     if system.startswith("You read the student details box"):   # answer-sheet header; one queued reply per call
         return json.dumps(BEHAVIOUR["identities"].pop(0) if BEHAVIOUR["identities"] else {})
     if "Generating reference answer key" in user or "generate suggested answers" in user:

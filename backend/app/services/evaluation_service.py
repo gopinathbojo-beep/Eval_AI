@@ -1,9 +1,10 @@
 from __future__ import annotations
 import logging
 import re
+import time
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
-from ..database import SessionLocal
+from ..database import SessionLocal, is_locked
 from dataclasses import dataclass, field
 from ..models import AnswerKey, AnswerSheetDocument, Evaluation, Exam, ExamQuestion, EvaluationItem, StudentAnswer
 from ..ocr import prompts
@@ -325,6 +326,43 @@ def textbook_references(db: Session, exam, q: ExamQuestion, key) -> list:
     return _references[cache_key]
 
 
+REGRADE_HINT = ("\n\nIMPORTANT: your previous reply was rejected: {problem}. Reply again. Give an award for each "
+                "criterion of the scheme you can judge, and for every mark above 0 copy evidence_quotes character for "
+                "character from the student's answer above (same symbols, numbers and spacing); never describe or "
+                "paraphrase the answer inside a quote.")
+UNVERIFIED_CONFIDENCE = 0.4  # below LOW_CONFIDENCE: the teacher is told before a bulk finalize
+GRADING_TRIES = 2  # the first reply and one retry told what was wrong (strict marking)
+
+
+def _grade_until_valid(ask, prompt, check, number):
+    """Strict marking: the grader's reply must pass the marking-scheme check. A rejected reply is asked for once more
+    (GRADING_TRIES in all), told exactly what was wrong; a reply still rejected raises EvaluationValidationError, so the
+    question shows an error for the teacher instead of a mark the check could not confirm. Quoted evidence must be
+    found in the student's transcription; there is no lenient fallback."""
+    problem = None
+    for attempt in range(GRADING_TRIES):
+        try:
+            call = ask(prompt if problem is None else prompt + REGRADE_HINT.format(problem=problem))
+        except AIResponseError as e:
+            problem = f"the reply was not valid JSON ({e.detail[:120]})"
+            if attempt == GRADING_TRIES - 1:
+                raise
+            continue
+        try:
+            return check(call.parsed), call.raw
+        except EvaluationValidationError as e:
+            problem = str(e)
+            log.info("Q%s grading reply %d rejected (%s)", number, attempt + 1, e)
+            if attempt == GRADING_TRIES - 1:
+                raise
+    raise EvaluationValidationError(problem or "no usable grading reply")
+
+
+def _flag(res, why):
+    res.confidence = min(res.confidence if res.confidence is not None else 1.0, UNVERIFIED_CONFIDENCE)
+    res.feedback = f"Check this mark: {why}.\n{res.feedback or ''}".strip()
+
+
 def evaluate_item(db: Session, ev: Evaluation, q: ExamQuestion, item: EvaluationItem, model: str | None = None) -> None:
     """Evaluate one question. Raises AIUnavailable only; every other failure is recorded on the item."""
     _reset_item(item)
@@ -346,13 +384,7 @@ def evaluate_item(db: Session, ev: Evaluation, q: ExamQuestion, item: Evaluation
         from ..cbse import grading
         exam_record = db.get(Exam, ev.exam_id)
         cbse = bool(getattr(exam_record, "standard_profile_id", None))
-        options = getattr(exam_record, "standard_options", None) or {}
-        if cbse:
-            # Accountancy Part B: a student attempts one option only; mark this sheet against the option it answered
-            from ..cbse.branch import MIXED, sheet_option
-            option = sheet_option(db, ev, exam_record)
-            if option and option != MIXED:
-                options = {**options, "accountancy_option": option}
+        options = _grading_options(exam_record, ev) if cbse else {}  # with the Part B option this student answered
         references = textbook_references(db, exam_record, q, key)  # with an answer key too: reference only
         instructions = []
         if cbse:
@@ -384,27 +416,21 @@ def evaluate_item(db: Session, ev: Evaluation, q: ExamQuestion, item: Evaluation
                 except Exception:  # a page image that cannot be read: grade on the transcription alone
                     log.exception("Could not build the drawing image for question %s", q.id)
                     picture = None
-                if picture:  # only drawing questions carry the sheet picture (and its extra cost)
-                    prompt += DRAWING_NOTE
-                # a reply that breaks the marking rules is sent back once with the reason, before asking the teacher
-                for retry in (False, True):
-                    call = (chat_structured(system, prompt, EvaluationResult, image_path=picture, model=model) if picture
-                            else chat_structured(system, prompt, EvaluationResult, model=model))
-                    item.raw_response = call.raw
-                    try:
-                        if cbse:
-                            res = grading.validate_result(call.parsed, q, key, options, text)
-                        else:
-                            res = validate_evaluation(call.parsed, q.max_marks)  # type: ignore[arg-type]
-                            res = fmt.check_deductions(res, text, key.answer_text, q.max_marks)
-                        break
-                    except EvaluationValidationError as e:
-                        if retry:
-                            raise
-                        log.info("Grading reply for question %s rejected (%s); asking once more", q.display_number, e)
-                        prompt += (f"\n\nYOUR PREVIOUS REPLY WAS REJECTED: {e}. Reply again following every rule above; "
-                                   "quote evidence exactly as the student wrote it.")
-                graded.append((title, res, call.raw))
+
+                def ask(user, picture=picture, system=system):
+                    if picture:  # only drawing questions carry the sheet picture (and its extra cost)
+                        return chat_structured(system, user + DRAWING_NOTE, EvaluationResult, image_path=picture, model=model)
+                    return chat_structured(system, user, EvaluationResult, model=model)
+
+                def check(parsed, text=text):
+                    if cbse:
+                        return grading.validate_result(parsed, q, key, options, text)
+                    res = validate_evaluation(parsed, q.max_marks)  # type: ignore[arg-type]
+                    return fmt.check_deductions(res, text, key.answer_text, q.max_marks)
+
+                res, raw = _grade_until_valid(ask, prompt, check, q.display_number)
+                item.raw_response = raw
+                graded.append((title, res, raw))
             title, res, _ = max(graded, key=lambda g: g[1].marks_awarded)  # the first of equal best
             item.ai_marks, item.ai_decision = res.marks_awarded, res.decision
             item.matched_points, item.missing_points = res.matched_points, res.missing_points
@@ -483,14 +509,47 @@ def _schedule_run_retry(ev_id: str, exam_id: str, only_question_ids: list[str] |
     timer.daemon = True
     timer.start()
     log.info("Evaluation %s: AI unavailable, running again in %ss (try %s)", ev_id, RUN_RETRY_DELAYS[tries], tries + 1)
+LOCK_RETRIES = 4
+
+
+def _still_to_grade(ev_id: str) -> list[str]:
+    """Questions of the sheet without a mark yet (a run interrupted by a busy database resumes with only these)."""
+    db = SessionLocal()
+    try:
+        ev = db.get(Evaluation, ev_id)
+        done = {it.exam_question_id for it in db.query(EvaluationItem).filter_by(evaluation_id=ev_id)
+                if it.status in ("EVALUATED", "APPROVED") or it.teacher_overridden}
+        return [q.id for q in exam_questions(db, ev.exam_id) if q.id not in done]
+    finally:
+        db.close()
+
+
+def _grading_options(exam: Exam, ev: Evaluation) -> dict:
+    """The exam's version choices, with the Part B option this student answered."""
+    options = dict(exam.standard_options or {})
+    if ev.part_b_option and not options.get("accountancy_option"):
+        options["accountancy_option"] = ev.part_b_option
+    return options
 
 
 def run_evaluation(ev_id: str, only_question_ids: list[str] | None = None) -> None:
     with keyed_lock(f"evaluation:{ev_id}"):  # jobs run in parallel; one grading run per sheet at a time
-        _run_evaluation(ev_id, only_question_ids)
+        todo = only_question_ids
+        for attempt in range(1, LOCK_RETRIES + 1):
+            if _run_evaluation(ev_id, todo, last=attempt == LOCK_RETRIES):
+                break
+            log.warning("Database busy while grading %s; retrying (%d/%d)", ev_id, attempt, LOCK_RETRIES)
+            time.sleep(3 * attempt)
+            todo = [q for q in _still_to_grade(ev_id) if not only_question_ids or q in only_question_ids]
+            if not todo:
+                break
+        if not only_question_ids:  # a whole-sheet run; a teacher re-grading one question finishes it themselves
+            from . import autopilot
+            autopilot.after_grading(ev_id)
 
 
-def _run_evaluation(ev_id: str, only_question_ids: list[str] | None) -> None:
+def _run_evaluation(ev_id: str, only_question_ids: list[str] | None, last: bool = True) -> bool:
+    """False when the run hit a busy database and should be run again for the questions still unmarked."""
     db = SessionLocal()
     try:
         ev = db.get(Evaluation, ev_id)
@@ -507,6 +566,10 @@ def _run_evaluation(ev_id: str, only_question_ids: list[str] | None) -> None:
             qs = [q for q in exam_questions(db, ev.exam_id) if not only_question_ids or q.id in only_question_ids]
             ev.run_total, ev.run_progress = len(qs), 0
             db.commit()
+            if not ev.part_b_option:
+                from .part_b import student_option
+                ev.part_b_option = student_option(db, ev)
+                db.commit()
             existing = {}
             for it in db.query(EvaluationItem).filter_by(evaluation_id=ev.id).all():
                 existing.setdefault(it.exam_question_id, it)
@@ -541,9 +604,11 @@ def _run_evaluation(ev_id: str, only_question_ids: list[str] | None) -> None:
         audit(db, exam_id=exam.id, teacher_id=exam.teacher_id, entity_type="evaluation", entity_id=ev.id,
               action="ai_evaluation_failed" if ev.run_status == "ERROR" else "ai_evaluation_completed")
         db.commit()
-    except Exception:
-        log.exception("Evaluation run crashed")
+    except Exception as e:
         db.rollback()
+        if is_locked(e) and not last:
+            return False
+        log.exception("Evaluation run crashed")
         ev = db.get(Evaluation, ev_id)
         if ev:
             ev.run_status = "ERROR"
@@ -553,6 +618,7 @@ def _run_evaluation(ev_id: str, only_question_ids: list[str] | None) -> None:
             db.commit()
     finally:
         db.close()
+    return True
 
 
 def confirm_not_attempted(db: Session, ev: Evaluation, snap: ExamSnapshot | None = None) -> None:
@@ -686,14 +752,34 @@ def auto_evaluate_sheet(doc_id: str) -> None:
     Sheets with unread pages or unmapped answers are left for the teacher; review_reasons() lists why. Grading is
     queued as its own OpenRouter job, using the same Gemini model for every language.
     """
+    from . import autopilot
     db = SessionLocal()
     try:
         ev = db.query(Evaluation).filter_by(answer_sheet_id=doc_id).first()
         doc = db.get(AnswerSheetDocument, doc_id)
-        if ev is None or doc is None or ev.status == "FINALIZED" or ev.run_status == "RUNNING" or doc.status != "READY":
+        if ev is None or doc is None or ev.status == "FINALIZED" or ev.run_status == "RUNNING":
+            return
+        if doc.status == "NEEDS_ATTENTION" and autopilot.enabled():
+            identity = dict(doc.identity or {})
+            if not identity.get("autopilot_reread"):  # one more reading of the pages that failed, then grade
+                identity["autopilot_reread"] = True
+                doc.identity = identity
+                db.commit()
+                from .student_identity import run_sheet
+                submit(ev.exam_id, run_sheet, doc_id)
+                return
+            doc.status, doc.stage = "READY", "Ready (some pages could not be read)"
+            db.commit()
+        if doc.status != "READY":
             return
         if db.get(Exam, ev.exam_id).status not in _EVALUATABLE_EXAM:
             return
+        try:
+            autopilot.settle_answers(db, ev)  # answers the rules could not place, settled by the AI
+        except AIUnavailable:
+            pass
+        except Exception:
+            log.exception("Autopilot could not settle the answers of sheet %s", doc_id)
         if any(a.status in ("UNMAPPED", "NEEDS_REVIEW") for a in db.query(StudentAnswer).filter_by(evaluation_id=ev.id)):
             return
         ev.run_status, ev.run_progress = "RUNNING", 0
@@ -725,12 +811,6 @@ def review_reasons(db: Session, ev: Evaluation, snap: ExamSnapshot) -> list[dict
         else:
             reason = "Not graded yet. Run the evaluation for this sheet."
         issues.append({"question": "Roll number" if check.get("status") == "MISMATCH" else "Evaluation", "reason": reason})
-    exam = snap.exam if hasattr(snap, "exam") else db.get(Exam, ev.exam_id)
-    if exam is not None and getattr(exam, "standard_profile_id", None):
-        from ..cbse.branch import MIXED, sheet_option
-        if sheet_option(db, ev, exam) == MIXED:
-            issues.insert(0, {"question": "Part B", "reason": "Answers from both Part B options (Analysis of Financial "
-                              "Statements and Computerised Accounting). A student attempts one option: check which one counts."})
     other = ((doc.identity or {}).get("other_roll_pages") or []) if doc is not None else []
     if other:
         # an additional sheet carries the student's own roll number, often misread ("16202" for 12B02): only a roll

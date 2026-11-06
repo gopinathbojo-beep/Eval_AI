@@ -42,7 +42,7 @@ class CompletionLimitError(ValueError):
 
 def connection():
     s = get_settings()
-    return s.openrouter_base_url.rstrip("/"), s.openrouter_api_key, s.openrouter_model
+    return s.openrouter_base_url.rstrip("/"), s.openrouter_api_key, s.medium_model  # the default tier; small jobs pass get_settings().small_model
 
 
 def _headers(key: str) -> dict:

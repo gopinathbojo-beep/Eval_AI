@@ -2,7 +2,7 @@
 
 import re
 from collections import defaultdict
-from .extraction import choice_signature, merge_nodes, settle_marks, tree_issues, tree_total
+from .extraction import BRANCH_TITLES, BRANCHES, choice_signature, merge_nodes, settle_marks, tree_issues, tree_total
 from ..models import ExamQuestion, AnswerKey, StudentAnswer, EvaluationItem
 from ..services.state import set_state
 from ..documents import cropping
@@ -247,7 +247,12 @@ def mark_answer_continuations(results, printed=None):
             last = result.fragments[-1].root
 
 
-def fix_false_continuations(results):
+def _opens_lettered(fragment):
+    """The piece opens with its own number and choice letter: "31 B. Prepare...", "OR 26 B. I. Cash Book"."""
+    return re.match(rf"\s*(?:OR\s+)?(?:Q?\s*{fragment.root}\s*\.?\s*)?\(?\s*[AB]\s*\)?[.:)]\s", fragment.text or "") is not None
+
+
+def fix_false_continuations(results, choices=()):
     """A visually impaired version is an alternative, never a continuation; a 'continuation' that only repeats
     text already read for the same question (a split-page overlap) is dropped."""
     seen, last = defaultdict(str), None
@@ -256,9 +261,13 @@ def fix_false_continuations(results):
         for index, fragment in enumerate(result.fragments):
             # a piece continues what comes just before it: the previous page's last question for the first piece,
             # the piece above it on the same page otherwise; never one that opens with its own choice label
-            # or a visually impaired heading
+            # or a visually impaired heading. Choice labels are capitals: "(a) Long term Borrowings" opening a page
+            # is a part of the balance sheet carried over, not alternative (A)
             before = kept[-1].root if kept else last
-            if fragment.continues and (fragment.root != before or _CHOICE_MARK.match(fragment.text or "")
+            # "OR 7(B). ..." opening a piece is the other alternative too (capitals only, as above)
+            if fragment.continues and (fragment.root != before or _CHOICE_LABEL.match(fragment.text or "")
+                                       or _OR_CHOICE.match(fragment.text or "")
+                                       or (fragment.root in choices and _opens_lettered(fragment))
                                        or _ACCESSIBLE.match(fragment.text or "")):
                 fragment.continues = False
                 fragment.issues = [x for x in fragment.issues if "continu" not in x.lower()]
@@ -304,23 +313,159 @@ def actionable(notes):
             and sum(c.isalpha() for c in x) >= 12 and not _CROP_NOTE.search(x)]
 
 
-_ROMAN_CLASS = {"VI": 6, "VII": 7, "VIII": 8, "IX": 9, "X": 10, "XI": 11, "XII": 12}
+# The option list printed once for a block of assertion-reason questions ("A. Both A and R are true, and R is the
+# correct explanation of A." ... "D. A is false but R is true.")
+_AR_OPTION = re.compile(
+    r"^\s*\(?\s*([A-Da-d])\s*[).:]?\s*\)?\s*(?:both\s+(?:a|\(a\))\s+and\s+(?:r|\(r\))\b"
+    r"|(?:a|\(a\))\s+is\s+(?:true|false|correct|incorrect)\b"
+    r"|(?:a|\(a\))\s+and\s+(?:r|\(r\))\s+are\s+(?:both\s+)?(?:true|false)\b)", re.I)
+_AR_QUESTION = re.compile(r"\bassertion\s*(?:\(\s*a\s*\))?\s*[:\-]", re.I)
+CBSE_AR_OPTIONS = {
+    "A": "A. Both A and R are true, and R is the correct explanation of A.",
+    "B": "B. Both A and R are true, and R is not the correct explanation of A.",
+    "C": "C. A is true but R is false.",
+    "D": "D. A is false but R is true.",
+}
 
 
-def _metadata_value(name, value):
-    """Class 'XII' and 12 are the same class; a code printed as 55 is 055."""
-    text = str(value).strip().upper().removeprefix("CLASS").strip()
+def share_assertion_reason_options(results):
+    """Assertion-reason questions share one option list, printed once above them and often split by a page break
+    (A and B at the foot of one page, C and D at the top of the next). The model reads the pieces as the text of
+    whichever question is nearby (C and D tacked onto the MCQ before them) or leaves them out. Take the list off
+    every question, and give each assertion-reason question the four options as the paper prints them (the PDF
+    text layer, then the model's reading, then the standard CBSE wording)."""
+    printed = {}
+
+    def harvest(text, into=None):
+        into = printed if into is None else into
+        for line in (text or "").splitlines():
+            if (match := _AR_OPTION.match(line)) and len(line.strip()) <= 120:
+                into.setdefault(match.group(1).upper(), re.sub(r"\s+", " ", line.strip()))
+
+    for page, _ in results:
+        harvest(page.get("page_text"))
+    for _, result in results:
+        for fragment in result.fragments:
+            harvest(fragment.text)
+    if not printed and not any(_AR_QUESTION.search(f.text or "") for _, r in results for f in r.fragments):
+        return
+    options = "\n".join(printed.get(letter) or text for letter, text in CBSE_AR_OPTIONS.items())
+    assertion, last, lists = set(), {}, {}
+    # a number printed again after other questions is another printing (Accountancy's Option II), with its own type
+    printing, previous = defaultdict(int), None
+    for _, result in results:
+        kept = []
+        for fragment in result.fragments:
+            if fragment.root != previous and printing[fragment.root]:
+                printing[fragment.root] += 1
+            printing[fragment.root] = printing[fragment.root] or 1
+            previous = fragment.root
+            version = (fragment.root, printing[fragment.root])
+            own = {}
+            harvest(fragment.text, own)
+            if len(own) < 4:   # read without its full list: the one printed on its own page, if the page has one
+                on_page = {}
+                harvest(next((p.get("page_text") for p, r in results if r is result), ""), on_page)
+                own = on_page if len(on_page) == 4 else own
+            lists[version] = "\n".join(own[letter] for letter in "ABCD") if len(own) == 4 else lists.get(version)
+            lines = (fragment.text or "").split("\n")
+            rest = [line for line in lines if not _AR_OPTION.match(line)]
+            if len(rest) != len(lines) and not any(line.strip() for line in rest):
+                continue  # only the shared option list: it belongs to no single question
+            fragment.text = "\n".join(rest).strip()
+            if fragment.question_type == "assertion_reason" or _AR_QUESTION.search(fragment.text):
+                assertion.add(version)
+            last[version] = fragment
+            kept.append(fragment)
+        result.fragments = kept
+    for version in assertion:  # after the question's last piece: a question cut by a page break keeps its reason first
+        last[version].text = f"{last[version].text}\n{lists.get(version) or options}".strip()
+
+
+def _meta_key(value):
+    """Metadata read on two pages agrees when it differs only in case, spacing or a printed code: "MATHEMATICS"
+    on the cover and "Mathematics" in a running header, "Mathematics (041)" and "Mathematics"."""
+    text = re.sub(r"\(\s*\d+\s*\)", "", str(value)).casefold()
+    return re.sub(r"[^a-z0-9ऀ-෿]+", "", text)
+
+
+_ROMAN_CLASS = {"x": 10, "xi": 11, "xii": 12, "ix": 9}
+
+
+def _meta_value(name, value):
+    """One spelling per printed fact: class "XII" is 12, subject code 41 is "041"."""
     if name == "class_level":
-        return _ROMAN_CLASS.get(text, int(text) if text.isdigit() else value)
-    if name == "subject_code" and text.isdigit():
-        return text.zfill(3)
+        text = re.sub(r"(?i)^\s*class\s*[-:]?\s*", "", str(value)).strip().casefold()
+        if text in _ROMAN_CLASS:
+            return _ROMAN_CLASS[text]
+        return int(text) if text.isdigit() else value
+    if name == "subject_code" and re.fullmatch(r"\s*\d{1,3}\s*", str(value)):
+        return str(value).strip().zfill(3)
     return value
 
 
-def _same_metadata(old, new):
-    """'Accountancy' and 'ACCOUNTANCY 055' name one subject."""
-    a, b = (re.sub(r"[^a-z]", "", str(x).casefold()) for x in (old, new))
-    return str(old) == str(new) or (a and b and (a in b or b in a))
+def merge_metadata(results):
+    """The paper's details as most pages print them. The cover and the running header repeat one fact; a single
+    page read differently (the "1" of "Page 1 of 10" read as the page count) is outvoted, not a conflict. Only
+    a tie between different readings is reported."""
+    from collections import Counter
+
+    seen = defaultdict(list)  # name -> [(value, page)]
+    for page, result in results:
+        for name, value in result.metadata.items():
+            if value is not None and str(value).strip():
+                seen[name].append((_meta_value(name, value), page["page_number"]))
+    metadata, issues = {}, []
+    for name, readings in seen.items():
+        votes = Counter(_meta_key(value) for value, _ in readings)
+        (best, top), *rest = votes.most_common()
+        metadata[name] = next(value for value, _ in readings if _meta_key(value) == best)
+        if rest and rest[0][1] == top:
+            pages = sorted({page for value, page in readings if _meta_key(value) != best})
+            issues.append(f"Conflicting {name} on page {', '.join(map(str, pages))}")
+    return metadata, issues
+
+
+def carry_unnumbered(results):
+    """A piece read with no question number at the top of a page (extraction.CARRIED) belongs to the last
+    question of the page before; with no question before it, it is not a question piece."""
+    from .extraction import CARRIED
+    from .layout import _keep_with
+
+    last = None
+    for page, result in results:
+        kept = []
+        for fragment in result.fragments:
+            if fragment.root == CARRIED:
+                if last is None:
+                    continue
+                _keep_with(fragment, last, f"p{page['page_number']}-top")
+            kept.append(fragment)
+            last = fragment.root
+        result.fragments = kept
+
+
+def _canonical_ids(node, root):
+    """Name a question's scoring nodes q<root>...: the model writes "37" on one page and "q37" on the next, and
+    pieces of one question only merge under one name."""
+    node.id = re.sub(rf"^[qQ]?\s*{root}(?=$|[.\-_(])", f"q{root}", node.id)
+    for child in node.children:
+        _canonical_ids(child, root)
+
+
+def give_every_question_a_tree(results):
+    """Every question piece gets a scoring tree. A piece the model read without one (a plain question: "tree":
+    null) is one point worth its printed marks; a continuation without one only adds text."""
+    from .extraction import Node
+
+    for _, result in results:
+        for fragment in result.fragments:
+            if fragment.tree is not None:
+                _canonical_ids(fragment.tree, fragment.root)
+            elif not fragment.continues:
+                first = next((line.strip() for line in (fragment.text or "").splitlines() if line.strip()), "")
+                fragment.tree = Node(id=f"q{fragment.root}", kind="point", label=str(fragment.root),
+                                     text=first[:200], marks=fragment.marks)
 
 
 # the reader's own remarks sometimes come back as text ("No further numbered questions are visible on this page.")
@@ -357,6 +502,7 @@ def _drop_page_furniture(results):
 def collect(doc, results, kind="question-paper"):
     from .layout import ground_visuals
 
+    carry_unnumbered(results)
     # clean first: the printed number of a fragment is read from its text when grounding it
     for _, result in results:
         # only the model's notes are filtered here; the app's own checks add their notes after this point
@@ -370,8 +516,6 @@ def collect(doc, results, kind="question-paper"):
         result.fragments = [f for f in result.fragments
                             if (f.text and not _TITLE_ONLY.match(f.text)) or (f.tree and f.tree.children)]
     ground_visuals(doc, results, answers=kind == "answer-key")
-    from .layout import tag_branches
-    tag_branches(doc, results)  # after grounding: a re-grounded piece takes the option its printed row sits under
     for _, result in results:  # rows recovered from the PDF text layer need the same clean-up
         for fragment in result.fragments:
             fragment.text = clean_text(fragment.text or "")
@@ -380,6 +524,8 @@ def collect(doc, results, kind="question-paper"):
             fragment.text = re.sub(rf"^\s*{fragment.root}\s*[.)]?(?=\s+[A-Z(])\s*", "", fragment.text, count=1)
             # notes about one half of a page the app split to re-read it ("cut off at the bottom of the cropped image")
             fragment.issues = [x for x in fragment.issues if not _CROP_NOTE.search(x)]
+    if kind == "question-paper":
+        share_assertion_reason_options(results)
     _drop_page_furniture(results)
     if kind == "answer-key":
         mark_answer_continuations(results)
@@ -387,22 +533,16 @@ def collect(doc, results, kind="question-paper"):
         from .layout import printed_by_page
         mark_answer_continuations(results, printed_by_page(doc))
     # before marks are set: a piece wrongly flagged as a continuation gets no whole-question marks
-    fix_false_continuations(results)
+    from .layout import printed_twice
+    fix_false_continuations(results, printed_twice(doc))
     apply_printed_sections(doc, results)
     drop_borrowed_alternatives(results)
+    give_every_question_a_tree(results)
+    mark_branches(results)
     roots = defaultdict(list)
-    metadata, instructions, issues = {}, [], []
+    instructions = []
+    metadata, issues = merge_metadata(results)
     for page, result in results:
-        for name, value in result.metadata.items():
-            if value is None:
-                continue
-            value = _metadata_value(name, value)
-            if name in metadata and _same_metadata(metadata[name], value):
-                continue
-            if name in metadata and str(metadata[name]) != str(value):
-                issues.append(f"Conflicting {name} on page {page['page_number']}")
-            else:
-                metadata[name] = value
         instructions += [x for x in result.instructions if x not in instructions]
         issues += [f"Page {page['page_number']}: {x}" for x in result.issues]
         for fragment in result.fragments:
@@ -438,6 +578,7 @@ def collect(doc, results, kind="question-paper"):
 _CHOICE_MARK = re.compile(r"^\s*(?:[Oo][Rr]\s+)?(?:(?:[Qq]?\s*\d{1,3}\s*\.?\s*)?\(\s*[AB]\s*\)|\d{1,3}\s*[AB]\s*\.)")
 # a bare "A." / "B." (the number cut off when the text was cleaned) is a choice only next to a printed OR
 _BARE_CHOICE = re.compile(r"^\s*[AB]\s*[.)]\s")
+_CHOICE_LABEL = re.compile(r"^\s*(?:Q?\s*\d{1,3}\s*\.?\s*)?\(\s*[AB]\s*\)")  # printed alternatives: capitals only
 _OR_LINE_END = re.compile(r"(?m)^\s*OR\s*\Z")
 _OR_LINE_START = re.compile(r"\A\s*OR\b")
 _B_START = re.compile(r"^\s*(?:OR\s+)?(?:\d{1,3}\s*)?\(?\s*B\s*\)?\s*[.)]?\s+\S")  # "B. ...", "OR 31 B. ...", "(B) ..."
@@ -495,7 +636,8 @@ def _alternatives(fragments, printed_choice=False):
     # each copy carries the same whole-question marks (a visually impaired version may print none);
     # unmarked pieces are parts of one question
     # an alternative the PDF prints under the same number may show no marks of its own ("OR 25 B." beside one marks cell)
-    marks = {f.marks for f, vi in zip(heads, accessible) if not ((vi or printed_choice or bare_or) and f.marks is None)}
+    marks = {f.marks for f, vi in zip(heads, accessible)
+             if not ((vi or (printed_choice and _opens_lettered(f)) or bare_or) and f.marks is None)}
     if len(marks) != 1 or None in marks:
         return None
     root = heads[0].tree.id
@@ -562,7 +704,7 @@ def _is_vi(node):
 
 
 _OPTION_LABEL = re.compile(r"^\s*\(?\s*[A-Da-d]\s*\)?\s*\.?\s*$")
-_CHOICE_LABEL = re.compile(r"^\s*(?:Q?\s*\d{1,3})?\s*\(?\s*([AB])\s*\)?\s*\.?\s*$", re.I)
+_CHOICE_PART_LABEL = re.compile(r"^\s*(?:Q?\s*\d{1,3})?\s*\(?\s*([AB])\s*\)?\s*\.?\s*$", re.I)
 
 
 def shape_choices(node):
@@ -580,7 +722,7 @@ def shape_choices(node):
                     text=((node.get("text") or "") + "\n" + options).strip())
         return node
     if node.get("kind") == "all" and len(children) == 2:
-        labels = [_CHOICE_LABEL.match(c.get("label") or "") for c in children]
+        labels = [_CHOICE_PART_LABEL.match(c.get("label") or "") for c in children]
         marks = {c.get("marks") for c in children}
         if all(labels) and {m[1].upper() for m in labels} == {"A", "B"} and len(marks) == 1 and None not in marks \
                 and node.get("marks") in (None, *marks):
@@ -614,54 +756,93 @@ def shape_choices(node):
     return node
 
 
+_OR_CHOICE = re.compile(r"^\s*OR\s+(?:Q?\s*\d{1,3}\s*\.?\s*)?\(\s*[AB]\s*\)")
+_ONE_ROOT = "Review the whole-question scoring tree; one root is required."
 _PAGE_ONLY_NOTE = re.compile(r"(?:next|previous|following|preceding) page|(?:on|in) this page|"
                              r"may continue|continues? (?:on|from)|cut off", re.I)
 
 
-BRANCH_LABELS = {"financial": "Analysis of Financial Statements", "computerised": "Computerised Accounting"}
+_BRANCH_HEADING = re.compile(r"Part\s*[-\u2013:]*\s*B\s*[:\-\u2013\u2014]*\s*(Analysis\s+of\s+Financial|Computeri[sz]ed)", re.I)
 
 
-def _branch_versions(fragments, options, printed_choice):
-    """Accountancy Part B: one printed number per option (27-34). Each option is built as its own question and the
-    two become alternatives tagged with their option, so the student's answered option is the one marked."""
+def mark_branches(results):
+    """Accountancy Part B prints two options numbered from the same question. The numbers restart where the second
+    option begins; everything from the first printing of that number belongs to the options."""
+    seq = [f for _, result in results for f in result.fragments]
+    tags = [f.tree.audience for f in seq if f.tree is not None and f.tree.audience in BRANCHES]
+    headings = [m[1].lower() for page, _ in results for m in _BRANCH_HEADING.finditer(page.get("page_text") or "")]
+    if not tags and not headings:
+        return
+    prev, start, drop = 0, None, 0
+    for i, f in enumerate(seq):
+        if f.continues:
+            continue
+        if f.root < prev and prev - f.root >= drop:
+            start, drop = i, prev - f.root
+        prev = f.root
+    if start is None:
+        return
+    first = next((i for i in range(start) if seq[i].root == seq[start].root and not seq[i].continues), None)
+    if first is None:
+        return
+    head_tag = next((f.tree.audience for f in seq[first:start] if f.tree is not None and f.tree.audience in BRANCHES), None)
+    if head_tag is None and headings:
+        head_tag = "computerised" if headings[0].startswith("comput") else "financial"
+    head_tag = head_tag or "financial"
+    other = next(b for b in BRANCHES if b != head_tag)
+    for f in seq[first:start]:
+        f.branch = head_tag
+    for f in seq[start:]:
+        f.branch = other
+
+
+def _in_branch(node, branch):
+    """A copy of one option's tree: its ids are its own, as both options use the same question numbers."""
+    node = dict(node)
+    node["id"] = f"{branch[:3]}-{node['id']}"
+    node["deductions"] = [{**d, "id": f"{branch[:3]}-{d['id']}"} for d in node.get("deductions") or []]
+    node["children"] = [_in_branch(c, branch) for c in node.get("children") or []]
+    return node
+
+
+def _combined_options(fragments, options, printed_choice):
+    """Option I and Option II under one question number, each with its label: only one is ever answered."""
     groups = {}
-    for page, fragment in fragments:
-        groups.setdefault(fragment.branch, []).append((page, fragment))
-    if len(groups) < 2 or None in groups:
-        return None
-    root = fragments[0][1].root
-    # the number is printed twice because of the two options; a choice inside one option shows its own (A)/(B)
-    parts = {name: combined(group, options) for name, group in groups.items()}
-    marks = max((part[3] for part in parts.values() if part[3]), default=None)
-    children, texts, problems = [], [], []
-    for name, (text, tree, issues, part_marks, _section) in parts.items():
-        if tree is None:  # a row read from the PDF text only: one point worth the question's printed marks
-            tree = {"id": f"q{root}", "kind": "point", "label": "", "text": text, "marks": part_marks or marks,
-                    "limit": None, "choice_type": "question", "audience": None, "response_type": "open",
-                    "deductions": [], "children": []}
-            issues = [x for x in issues if x != _ONE_ROOT]
-        tree = dict(tree, id=f"q{root}-{name}", label=BRANCH_LABELS[name], audience=name)
-        if tree.get("marks") is None:
-            tree["marks"] = part_marks or marks
-        children.append(tree)
-        texts.append(f"[Part B - {BRANCH_LABELS[name]}]\n{text}")
+    for pair in fragments:
+        groups.setdefault(pair[1].branch, []).append(pair)
+    parts, problems = [], []
+    for number, (branch, group) in enumerate(groups.items(), 1):
+        group[0][1].issues = [x for x in group[0][1].issues if x != _ALTERNATIVE]
+        text, tree, issues, marks, section = _combined_one(group, options, printed_choice)
+        title = f"Option {'I' * number}: {BRANCH_TITLES[branch]}"
+        if tree is not None:
+            tree = _in_branch(tree, branch)
+            tree.update(audience=branch, label=title)
+        parts.append((title, text, tree, marks, section))
         problems += issues
-    tree = {"id": f"q{root}", "kind": "choose", "label": "", "text": "", "marks": marks, "limit": 1,
-            "choice_type": "question", "audience": None, "response_type": "open", "deductions": [],
-            "children": children}
-    sections = {part[4] for part in parts.values() if part[4]}
-    return "\nOR\n".join(texts), tree, problems, marks, next(iter(sorted(sections)), None)
-
-
-_ONE_ROOT = "Review the whole-question scoring tree; one root is required."
+    if len(parts) == 1:
+        problems.append(f"Only {parts[0][0]} has this question; the other option is missing.")
+    if len({p[3] for p in parts if p[3] is not None}) > 1:
+        problems.append("Conflicting whole-question marks across the Part B options")
+    marks = next((p[3] for p in parts if p[3] is not None), None)
+    text = "\nOR\n".join(f"{title}\n{body}" for title, body, *_ in parts)
+    children = [p[2] for p in parts if p[2] is not None]
+    root = f"q{fragments[0][1].root}"
+    tree = {"id": root, "kind": "choose", "label": "", "text": "", "marks": marks, "limit": 1, "choice_type": "question",
+            "audience": None, "response_type": "open", "deductions": [], "children": children}
+    return text, tree, problems, marks, next((p[4] for p in parts if p[4]), None)
 
 
 def combined(fragments, options=None, printed_choice=False):
+    if any(f.branch for _, f in fragments):
+        return _combined_options(fragments, options, printed_choice)
+    return _combined_one(fragments, options, printed_choice)
+
+
+def _combined_one(fragments, options=None, printed_choice=False):
     for _, fragment in fragments:
         mark_solution_methods(fragment)
-    branched = _branch_versions(fragments, options, printed_choice)
-    if branched:
-        return branched
+
     alternative = _alternatives(fragments, printed_choice)
     # a continuation's root marks are a part's marks (or a guess where no marks are printed), not the question's
     trees, problems = ([alternative], []) if alternative else merge_nodes(
@@ -769,7 +950,7 @@ def build_questions(db, doc, exam, results):
                     "root": root,
                     "tree": tree,
                     "issues": issues,
-                    "notes": notes,
+                    "notes": [n for _, f in fragments for n in f.notes] + notes,
                     "source_pages": [p["page_number"] for p, _ in fragments],
                     "visuals": visuals,
                 },

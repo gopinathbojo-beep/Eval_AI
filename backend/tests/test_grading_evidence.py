@@ -61,3 +61,35 @@ def test_missing_extracted_allocations_use_scheme_text_without_guessing_step_mar
         {"id": "overall", "marks": 2, "evidence_quotes": ["angle sum = 180°"]},
     ])
     assert validate_result(result, q, key, {}, "angle sum = 180°").marks_awarded == 2
+
+
+def _choice_scheme():
+    """A: 1 mark; then either C or D (2 marks each), as in a CBSE case-based question."""
+    tree = {"id": "q", "kind": "all", "children": [
+        {"id": "q.A", "kind": "point", "marks": 1},
+        {"id": "q.CD", "kind": "choose", "limit": 1, "children": [
+            {"id": "q.C", "kind": "point", "marks": 2}, {"id": "q.D", "kind": "point", "marks": 2}]}]}
+    return NS(max_marks=3, question_type="case_based"), NS(rubric={"cbse_tree": tree})
+
+
+def test_a_criterion_left_unawarded_counts_as_zero_not_as_an_error():
+    q, key = _choice_scheme()
+    student = "A) Silver is the best conductor\n(c) Yes, the time will increase"
+    result = EvaluationResult(marks_awarded=3, criterion_awards=[
+        {"id": "q.A", "marks": 1, "evidence_quotes": ["Silver is the best conductor"]},
+        {"id": "q.C", "marks": 1, "evidence_quotes": ["Yes, the time will increase"]},
+    ])  # D, the alternative not chosen, has no award
+    assert validate_result(result, q, key, {}, student).marks_awarded == 2
+    with pytest.raises(EvaluationValidationError):
+        validate_result(EvaluationResult(marks_awarded=0, criterion_awards=[]), q, key, {}, student)
+
+
+def test_unmatched_evidence_can_be_kept_for_the_teacher_instead_of_rejected():
+    q, key = _choice_scheme()
+    result = EvaluationResult(marks_awarded=1, criterion_awards=[
+        {"id": "q.A", "marks": 1, "evidence_quotes": ["The student named silver correctly"]}])
+    with pytest.raises(EvaluationValidationError):
+        validate_result(result.model_copy(deep=True), q, key, {}, "A) Silver")
+    unverified = []
+    assert validate_result(result, q, key, {}, "A) Silver", unverified=unverified).marks_awarded == 1
+    assert unverified == ["q.A"]

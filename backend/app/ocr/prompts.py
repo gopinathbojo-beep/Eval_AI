@@ -274,16 +274,17 @@ Previous-page student OCR, for continuity only (never copy this into the current
 {json.dumps(previous_answers or [], ensure_ascii=False)}
 On a new page, transcribe any writing before the first new question as an unlabelled continuation; do not invent
 its question number. A diagram, table, calculation or labelled subpart can also continue a previous answer.
+Lines at the very top of a page, before the first question number written on that page, finish the previous page's answer: return them as their own entry with question_number null. Never fold them into the first numbered answer on the page.
+If anything is handwritten on the page, return it: an empty answers list is only for a page with no handwriting at all.
 
 ==================================================
 11. HANDWRITTEN CORRECTIONS & CROSSED-OUT TEXT
 ==================================================
-Keep crossed-out, struck-through or scribbled-out words out of active answer text. If retained for provenance,
-enclose them in ~~...~~ or use a separate content block with crossed_out:true. Read the remaining visible final
-intended writing without inventing corrections. A ruled notebook line, underline, fraction bar, equals sign,
-separator between answers, or ray/circuit line is not a cancellation. Cancelling a word does not cancel the whole
-subpart or its neighbouring diagram. Preserve labels A/B and i/ii/iii/iv exactly as written; they are alternatives
-or subparts of the parent question, not new main question numbers.
+Completely omit crossed-out, struck-through, or scribbled-out lines. Transcribe ONLY the student's visible final intended writing. Never transcribe struck-through words, and never invent corrected text.
+When a digit or word is overwritten (a new character written on top of an old one), transcribe the character written on top.
+When you cannot tell whether a line is crossed out (a light or partial stroke), transcribe it: the grader keeps the best attempt, so a doubtful line is never dropped.
+Never drop the rest of an answer because part of it is crossed out.
+A crossed-out question number is not the label: when the student strikes out a number and writes a part letter or another number beside it ("B. 29" with 29 struck out), the label is what is not struck out (B, a part of the question being answered).
 
 ==================================================
 12. MATHEMATICAL & SCIENTIFIC ANSWERS
@@ -329,6 +330,23 @@ mapping_status values:
 17. UNIVERSAL TEXT FORMAT SUPPORT
 ==================================================
 Support any language (English, Tamil, Hindi, bilingual, mathematics), paragraphs, headings, tables, formulas. Return what is actually in the image without summarisation or rewriting.
+
+==================================================
+18. ANSWER-SHEET LAYOUT (WHAT IS NOT AN ANSWER)
+==================================================
+Leave these out of every answer_text and never make an answer entry of them:
+- The printed sheet header, repeated on each continuation sheet: school name and logo, ROLL NO, NAME, CLASS & SEC, EXAM, SUBJECT, DATE, SIGN OF INVIGILATOR.
+- Section headings the student copies from the paper ("Section-A", "Section B"). They are not question numbers.
+- Page counts ("Total page - 12") and everything the examiner adds: marks, totals like "39/39", ticks, crosses, signatures, usually in red or a different ink.
+- Rough work in a margin column separated from the answer by a ruled line, or marked "rough work".
+
+==================================================
+19. PART MARKERS THAT LOOK LIKE NUMBERS
+==================================================
+Handwritten roman numerals I, II, III, IV are often written as straight strokes that look like 1, 11, 111, 1V, and a capital B can look like 13.
+When such a mark starts a line INSIDE the current answer (Q16 answer, then "11. B is the heart ...") and that number was already answered earlier, it is a part of the current question: report it as "(ii)", "(iii)" or "(b)" of the current question, not as question 11 or 13.
+In multiple-choice answers the option letter and its text ("C. Carbon dioxide loses oxygen") are the student's chosen option: keep them in the answer text; they are not subquestions.
+Parts may be answered out of order or across pages (37 B, then A, then B again on the next page): keep every part under its own question number.
 
 ==================================================
 OUTPUT FORMAT

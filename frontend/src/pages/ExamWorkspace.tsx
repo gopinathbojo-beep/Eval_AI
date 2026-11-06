@@ -1,27 +1,33 @@
 import { useState } from "react";
 import { Navigate, NavLink, Outlet, useLocation, useNavigate, useOutletContext, useParams } from "react-router-dom";
 import { api, downloadFile } from "../api/client";
+import type { ExamFileKind } from "../components/ReplaceFileBar";
 import { useApi } from "../hooks/useApi";
 import { useCrumbName } from "../context/Crumbs";
 import type { ExamDetail, SchoolProfile, UploaderCode } from "../types";
 import { BUSY_DOC } from "../utils/format";
 import { Button, Card, Confirm, ErrorPanel, Field, Input, Loading, Modal, PageCanvas, PageHeader, StatusBadge } from "../components/ui";
-import { IconCheckCircle, IconDownload, IconEdit, IconPlus, IconTrash, IconUpload } from "../components/Icons";
+import { IconCheckCircle, IconDownload, IconEdit, IconPlus, IconTrash } from "../components/Icons";
 import { UploaderCodesModal } from "./exam/Codes";
 
-export interface ExamCtx { exam: ExamDetail; reload: () => Promise<void> }
+export interface ExamCtx {
+  exam: ExamDetail;
+  reload: () => Promise<void>;
+  /** still choosing and checking the paper and key: their files can be replaced */
+  inSetup: boolean;
+  uploading: ExamFileKind | null;
+  setUploading: (kind: ExamFileKind | null) => void;
+}
 export const useExam = () => useOutletContext<ExamCtx>();
 
 const SETUP = ["DRAFT", "QUESTION_PAPER_UPLOADED", "QUESTIONS_EXTRACTED", "QUESTIONS_VERIFIED", "ANSWER_KEY_UPLOADED",
                "ANSWER_KEY_VERIFIED"];
 const SETUP_PATHS = ["content", "overview", "question-paper", "questions", "answer-key"];
-const SHEET_PATHS = ["submissions", "students", "answer-sheets"];
+const SHEET_PATHS = ["submissions", "students", "answer-sheets", "evaluation", "results"];
 
 const TABS: [string, string][] = [
   ["", "Review & Finalize"],
-  ["submissions", "Answer sheets"],
-  ["evaluation", "Evaluation"],
-  ["results", "Results"],
+  ["submissions", "Students"],
 ];
 
 export default function ExamWorkspace() {
@@ -31,6 +37,7 @@ export default function ExamWorkspace() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [manageCodes, setManageCodes] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [uploading, setUploading] = useState<ExamFileKind | null>(null);
   const { data, error, loading, reload } = useApi<ExamDetail>(`/exams/${id}`, (d) =>
     [d.question_paper, d.answer_key_document].some((x) => x && BUSY_DOC.includes(x.status)) ||
     ["QUEUED", "GENERATING"].includes(d.generation?.status ?? "") ? 2000 : null
@@ -56,6 +63,7 @@ export default function ExamWorkspace() {
     <PageCanvas>
       <PageHeader
         title={data.name}
+        top={inSetup ? <SetupSteps exam={data} /> : undefined}
         badge={
           <div className="flex flex-wrap items-center gap-2">
             <StatusBadge status={data.status} />
@@ -100,8 +108,7 @@ export default function ExamWorkspace() {
         }
       />
 
-      {inSetup && <SetupSteps exam={data} />}
-      {inSetup && <FinalizeBanner exam={data} onReload={async () => { await reload(); }}
+      {inSetup && <FinalizeBanner exam={data} uploading={uploading}
                                   onDone={async () => { await reload(); navigate(`/exams/${data.id}/submissions`); }} />}
 
       {!inSetup && (
@@ -127,7 +134,7 @@ export default function ExamWorkspace() {
       )}
 
       <div>
-        <Outlet context={{ exam: data, reload: async () => { await reload(); } } satisfies ExamCtx} />
+        <Outlet context={{ exam: data, reload: async () => { await reload(); }, inSetup, uploading, setUploading } satisfies ExamCtx} />
       </div>
 
       {manageCodes && (
@@ -180,11 +187,11 @@ function SetupSteps({ exam }: { exam: ExamDetail }) {
     { label: "Finalize & continue", done: false },
   ];
   return (
-    <ol className="flex flex-wrap items-center gap-2 text-sm" aria-label="Exam creation steps">
+    <ol className="flex flex-wrap items-center gap-2 text-xs" aria-label="Exam creation steps">
       {steps.map((st, i) => (
         <li key={st.label} className="flex items-center gap-2">
           {i > 0 && <span aria-hidden className="h-px w-6 bg-line" />}
-          <span className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold ${
+          <span className={`flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-semibold ${
             st.done ? "bg-ok text-white" : st.current ? "bg-pen text-on-pen" : "border border-line text-mute"}`}>
             {st.done ? "✓" : i + 1}
           </span>
@@ -198,40 +205,11 @@ function SetupSteps({ exam }: { exam: ExamDetail }) {
 }
 
 /** Setup is one step: both files are read in parallel; the school checks them below, then finalizes. */
-function FinalizeBanner({ exam, onDone, onReload }: {
-  exam: ExamDetail; onDone: () => Promise<void>; onReload: () => Promise<void>;
+function FinalizeBanner({ exam, onDone, uploading }: {
+  exam: ExamDetail; onDone: () => Promise<void>; uploading: ExamFileKind | null;
 }) {
   const [busy, setBusy] = useState(false);
-  const [uploading, setUploading] = useState<"question-paper" | "answer-key" | null>(null);
   const [error, setError] = useState<unknown>(null);
-  // replacing a file reads it again; the other one is kept (a new paper re-maps the existing key)
-  const reupload = async (kind: "question-paper" | "answer-key", file: File | undefined) => {
-    if (!file) return;
-    setUploading(kind);
-    setError(null);
-    try {
-      const form = new FormData();
-      form.append("file", file);
-      await api(`/exams/${exam.id}/${kind}`, { method: "POST", form });
-      await onReload();
-    } catch (e) {
-      setError(e);
-    } finally {
-      setUploading(null);
-    }
-  };
-  const fileButton = (kind: "question-paper" | "answer-key", label: string) => {
-    const doc = kind === "question-paper" ? exam.question_paper : exam.answer_key_document;
-    return (
-      <label className={`inline-flex min-h-[36px] cursor-pointer items-center gap-1.5 rounded-md border border-line bg-surface px-3 py-1.5 text-xs font-medium text-ink transition-ui hover:bg-hover ${
-        uploading || generating || (doc && BUSY_DOC.includes(doc.status)) ? "pointer-events-none opacity-50" : ""}`}>
-        <IconUpload size={14} />
-        {uploading === kind ? "Uploading..." : `${doc ? "Re-upload" : "Upload"} ${label}`}
-        <input type="file" accept=".pdf,.png,.jpg,.jpeg,.docx" className="sr-only"
-               onChange={(e) => { void reupload(kind, e.target.files?.[0]); e.target.value = ""; }} />
-      </label>
-    );
-  };
   const docs = [exam.question_paper, exam.answer_key_document];
   const generating = ["QUEUED", "GENERATING"].includes(exam.generation?.status ?? "");
   const reading = generating || docs.some((d) => d && BUSY_DOC.includes(d.status));
@@ -267,27 +245,20 @@ function FinalizeBanner({ exam, onDone, onReload }: {
                 : `${exam.question_count} questions found. Check the questions and the answer key below and fix anything that looks wrong, then finalize to continue to answer sheets.`}
           </p>
         </div>
-        <Button variant="primary" busy={busy} disabled={missing || reading || !!uploading} onClick={finalize}
-                icon={<IconCheckCircle size={16} />}>
-          Finalize &amp; continue
-        </Button>
-      </div>
-      <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-dashed border-line pt-3">
-        <span className="text-xs text-mute">Wrong file?</span>
-        {fileButton("question-paper", "question paper")}
-        {fileButton("answer-key", "answer key")}
-        {(exam.question_paper || exam.answer_key_document) && (
-          <Button small variant="soft" icon={<IconDownload size={14} />}
-                  title="Everything the AI read from the paper and key, with its review notes"
-                  onClick={() => downloadFile(`/exams/${exam.id}/extraction-report.pdf`,
-                    `${exam.name.replace(/[^a-zA-Z0-9_-]/g, "_")}_Extraction_Report.pdf`).catch((e) => setError(e))}>
-            Download extraction report
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          {(exam.question_paper || exam.answer_key_document) && (
+            <Button small variant="soft" icon={<IconDownload size={14} />}
+                    title="Everything the AI read from the paper and key, with its review notes"
+                    onClick={() => downloadFile(`/exams/${exam.id}/extraction-report.pdf`,
+                      `${exam.name.replace(/[^a-zA-Z0-9_-]/g, "_")}_Extraction_Report.pdf`).catch((e) => setError(e))}>
+              Download extraction report
+            </Button>
+          )}
+          <Button variant="primary" busy={busy} disabled={missing || reading || !!uploading} onClick={finalize}
+                  icon={<IconCheckCircle size={16} />}>
+            Finalize &amp; continue
           </Button>
-        )}
-        <span className="text-xs text-mute">
-          {[exam.question_paper && `Paper: ${exam.question_paper.original_filename}`,
-            exam.answer_key_document && `Key: ${exam.answer_key_document.original_filename}`].filter(Boolean).join(" · ")}
-        </span>
+        </div>
       </div>
       {error ? <div className="mt-4"><ErrorPanel error={error} /></div> : null}
     </Card>

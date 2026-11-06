@@ -12,6 +12,41 @@ class BBox(BaseModel):
     height: float
 
 
+def _first(d: dict, *keys):
+    for k in keys:
+        if d.get(k) is not None:
+            return d[k]
+    return None
+
+
+def _box(v: Any) -> dict | None:
+    """Read a box however the model wrote it — {x,y,width,height}, {bbox_width,..}, {x1,y1,x2,y2}, [x1,y1,x2,y2].
+    The box is optional, so one that cannot be read is dropped instead of failing the whole page."""
+    try:
+        if isinstance(v, (list, tuple)) and len(v) >= 4:
+            v = dict(zip(("x1", "y1", "x2", "y2"), v[:4]))
+        if not isinstance(v, dict):
+            return None
+        x = _first(v, "x", "x1", "left", "x_min", "xmin")
+        y = _first(v, "y", "y1", "top", "y_min", "ymin")
+        w = _first(v, "width", "w", "bbox_width")
+        h = _first(v, "height", "h", "bbox_height")
+        x2 = _first(v, "x2", "right", "x_max", "xmax")
+        y2 = _first(v, "y2", "bottom", "y_max", "ymax")
+        if x is None or y is None:
+            return None
+        x, y = float(x), float(y)
+        if w is None and x2 is not None:
+            w = float(x2) - x if float(x2) >= x else float(x2)
+        if h is None and y2 is not None:
+            h = float(y2) - y if float(y2) >= y else float(y2)
+        if w is None or h is None:
+            return None
+        return {"x": x, "y": y, "width": max(0.0, float(w)), "height": max(0.0, float(h))}
+    except (TypeError, ValueError):
+        return None
+
+
 def _num(v: Any) -> float | None:
     if v is None or v == "":
         return None
@@ -67,7 +102,7 @@ class QuestionItem(_Base):
     @field_validator("bbox", mode="before")
     @classmethod
     def _bb(cls, v):
-        return v if isinstance(v, dict) else None
+        return _box(v)
 
 
 class QuestionPageResult(_Base):
@@ -109,7 +144,7 @@ class AnswerKeyItem(_Base):
     @field_validator("bbox", mode="before")
     @classmethod
     def _bb(cls, v):
-        return v if isinstance(v, dict) else None
+        return _box(v)
 
 
 class AnswerKeyPageResult(_Base):
@@ -149,14 +184,7 @@ class StudentAnswerItem(_Base):
     @field_validator("bbox", mode="before")
     @classmethod
     def _bb(cls, v):
-        if isinstance(v, dict):
-            return v
-        if isinstance(v, (list, tuple)) and len(v) >= 4:
-            x1, y1, x2, y2 = [float(x) for x in v[:4]]
-            w = max(0.0, x2 - x1) if x2 >= x1 else x2
-            h = max(0.0, y2 - y1) if y2 >= y1 else y2
-            return {"x": x1, "y": y1, "width": w, "height": h}
-        return None
+        return _box(v)
 
     @model_validator(mode="after")
     def _populate_defaults(self):
@@ -299,6 +327,36 @@ class EvaluationResult(_Base):
 
     _n = field_validator("marks_awarded", "max_marks", mode="before")(lambda cls, v: _num(v))
     _c = field_validator("confidence", mode="before")(lambda cls, v: _conf(v))
+
+    @model_validator(mode="before")
+    @classmethod
+    def _spelling(cls, obj):
+        """The grader misspells field names ("criterions_awards", "criteria_awards", "marks") and sends evidence as
+        a list: read what it meant instead of losing a sound marking."""
+        if not isinstance(obj, dict):
+            return obj
+        obj = dict(obj)
+        if "criterion_awards" not in obj:
+            alias = next((k for k in obj if re.fullmatch(r"criteri\w*_?awards?|awards", k, re.I)), None)
+            if alias:
+                obj["criterion_awards"] = obj.pop(alias)
+        if "marks_awarded" not in obj:
+            alias = next((k for k in obj if k in ("marks", "score", "total_marks", "awarded_marks")), None)
+            if alias:
+                obj["marks_awarded"] = obj.pop(alias)
+        awards = obj.get("criterion_awards")
+        if isinstance(awards, list):
+            fixed = []
+            for award in awards:
+                if isinstance(award, dict):
+                    award = dict(award)
+                    if isinstance(award.get("evidence"), list) and "evidence_quotes" not in award:
+                        award["evidence_quotes"] = [str(x) for x in award.pop("evidence") if str(x).strip()]
+                    if "marks" not in award and "marks_awarded" in award:
+                        award["marks"] = award.pop("marks_awarded")
+                fixed.append(award)
+            obj["criterion_awards"] = fixed
+        return obj
 
     @field_validator("matched_points", "missing_points", mode="before")
     @classmethod

@@ -36,6 +36,8 @@ def profiles_for(name: str, grade: int) -> list[str]:
 
 
 def main() -> None:
+    if not any(ROOT.glob("Class *")):  # the folder is not in every checkout: never overwrite the list with nothing
+        sys.exit(f"No 'Class *' folders in {ROOT}; the subject list was left unchanged.")
     out = {}
     for grade_dir in sorted(ROOT.glob("Class *")):
         grade = int(grade_dir.name.split()[-1])

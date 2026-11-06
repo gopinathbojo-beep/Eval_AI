@@ -16,6 +16,7 @@ import {
   Field,
   Input,
   Loading,
+  Modal,
   PageCanvas,
   PageHeader,
   Select,
@@ -23,13 +24,72 @@ import {
 } from "../components/ui";
 import { useApi } from "../hooks/useApi";
 import { useTableState } from "../hooks/useTableState";
-import type { CatalogSubject, Exam } from "../types";
+import type { CatalogSubject, Exam, ReportDetailKey } from "../types";
 import { UploadZone } from "../components/DocPanel";
 import PaperGenerator, { type GenerateBody } from "../components/PaperGenerator";
+
+/** What the exam's printed reports say. Only the wording on the reports changes: marks and grading are untouched. */
+function EditReportDetails({ exam, onClose, onSaved }: { exam: Exam; onClose: () => void; onSaved: () => Promise<void> | void }) {
+  const fields: { key: ReportDetailKey; label: string; current: string; max: number; hint?: string }[] = [
+    { key: "name", label: "Examination", current: exam.name, max: 200 },
+    { key: "class_name", label: "Class", current: exam.class_name, max: 100 },
+    { key: "subject", label: "Subject", current: exam.subject_name, max: 200 },
+    { key: "exam_type", label: "Exam type", current: exam.exam_type, max: 50 },
+    { key: "academic_year", label: "Academic year", current: exam.academic_year, max: 20 },
+    { key: "exam_date", label: "Exam date", current: exam.exam_date ?? "", max: 20, hint: "e.g. 05 Nov 2026" },
+  ];
+  const [values, setValues] = useState<Record<string, string>>(() =>
+    Object.fromEntries(fields.map((f) => [f.key, exam.report_details?.[f.key] ?? f.current])));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+
+  const save = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      // a value equal to the exam's own is not stored, so the report keeps following the exam
+      const json = Object.fromEntries(fields.map((f) => {
+        const v = (values[f.key] ?? "").trim();
+        return [f.key, v === f.current ? null : v || null];
+      }));
+      await api(`/exams/${exam.id}/report-details`, { method: "PUT", json });
+      await onSaved();
+    } catch (err) {
+      setError(err);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal title={`Edit report details: ${exam.name}`} onClose={onClose}>
+      <form onSubmit={save} className="space-y-4">
+        <p className="text-xs text-mute">
+          These appear on this exam's student reports and exam report. Marks and grading do not change. Leave a box
+          empty to use the exam's own value. Student name, roll number and registration number belong to each student.
+        </p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          {fields.map((f) => (
+            <Field key={f.key} label={f.label} hint={f.hint}>
+              {(id) => <Input id={id} maxLength={f.max} placeholder={f.current} value={values[f.key] ?? ""}
+                              onChange={(e) => setValues({ ...values, [f.key]: e.target.value })} />}
+            </Field>
+          ))}
+        </div>
+        <ErrorPanel error={error} />
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
+          <Button type="submit" variant="primary" busy={busy}>Save</Button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
 
 export function ExamsList() {
   const { data, error, loading, reload } = useApi<Exam[]>("/exams");
   const [deletingExam, setDeletingExam] = useState<Exam | null>(null);
+  const [editingExam, setEditingExam] = useState<Exam | null>(null);
 
   const classOptions = useMemo(() => {
     if (!data) return [];
@@ -227,6 +287,22 @@ export function ExamsList() {
                               </Link>
                               <button
                                 type="button"
+                                className="rounded-lg p-1.5 text-slate-400 hover:bg-blue-50 hover:text-blue-700 transition-colors cursor-pointer"
+                                onClick={() => setEditingExam(e)}
+                                title={`Edit report details of ${e.name}`}
+                                aria-label={`Edit report details of ${e.name}`}
+                              >
+                                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    strokeWidth={2}
+                                    d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+                                  />
+                                </svg>
+                              </button>
+                              <button
+                                type="button"
                                 className="rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600 transition-colors cursor-pointer"
                                 onClick={() => setDeletingExam(e)}
                                 title={`Delete exam ${e.name}`}
@@ -266,6 +342,17 @@ export function ExamsList() {
           </>
         )}
       </div>
+
+      {editingExam && (
+        <EditReportDetails
+          exam={editingExam}
+          onClose={() => setEditingExam(null)}
+          onSaved={async () => {
+            await reload();
+            setEditingExam(null);
+          }}
+        />
+      )}
 
       {deletingExam && (
         <Confirm

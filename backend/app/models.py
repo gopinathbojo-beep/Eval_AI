@@ -143,6 +143,8 @@ class Exam(Base):
     duration_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     total_marks: Mapped[float] = mapped_column(Float)
     instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # what the printed reports say (name, class, subject, type, year, date); the fields above still drive the exam
+    report_details: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     status: Mapped[str] = mapped_column(String(40), default="DRAFT")
     # after finalization the exam's files are deleted from disk at files_purge_at (reports are kept)
     files_purge_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -275,6 +277,7 @@ class Evaluation(Base):
     answer_sheet_id: Mapped[str] = mapped_column(ForeignKey("answer_sheet_documents.id"))
     status: Mapped[str] = mapped_column(String(30), default="DRAFT")
     run_status: Mapped[str] = mapped_column(String(20), default="IDLE")  # IDLE|RUNNING|DONE|ERROR
+    part_b_option: Mapped[str | None] = mapped_column(String(20), nullable=True)  # the option this student answered
     run_progress: Mapped[int] = mapped_column(Integer, default=0)
     run_total: Mapped[int] = mapped_column(Integer, default=0)
     total_marks: Mapped[float | None] = mapped_column(Float, nullable=True)

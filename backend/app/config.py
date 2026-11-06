@@ -29,7 +29,16 @@ class Settings(BaseSettings):
     supabase_storage_bucket: str = "eval-ai-documents"
     storage_timeout: int = 120
     openrouter_api_key: str = ""
-    openrouter_model: str = "google/gemini-3.5-flash-lite"
+    openrouter_model: str = "deepseek/deepseek-v4.1-flash-1017"  # DeepSeek only (no Gemini): school decision
+    # Two tiers, so each job pays only for what it needs (empty = OPENROUTER_MODEL):
+    # medium: reading pages and handwriting, grading, and the AI reviewer that settles flagged items
+    ai_medium_model: str = ""
+    # small: short text-only decisions (question types, which question an answer belongs to, details box)
+    ai_small_model: str = ""
+    # settle every review step with the AI and move each document on without waiting for the school
+    autopilot: bool = True
+    # join and map a sheet's answers with one text-only AI call that sees every page; the rules are the fallback
+    ai_join_answers: bool = True
     openrouter_base_url: str = "https://openrouter.ai/api"
     ai_request_logprobs: bool = False
     # read each answer-sheet page twice: the second call checks the first reading against the image
@@ -59,6 +68,9 @@ class Settings(BaseSettings):
                 raise ValueError("PUBLIC_WEB_URL must be the HTTPS origin of GOOGLE_REDIRECT_URI.")
         if not (self.openrouter_api_key and self.openrouter_model):
             raise ValueError("OpenRouter requires OPENROUTER_API_KEY and OPENROUTER_MODEL.")
+        for name in ("openrouter_model", "ai_medium_model", "ai_small_model"):
+            if "gemini" in (getattr(self, name) or "").lower():
+                raise ValueError(f"{name.upper()} is a Gemini model; this school uses DeepSeek on OpenRouter only.")
         if self.storage_provider == "supabase" and not (self.supabase_url.startswith("https://") and self.supabase_service_role_key and self.supabase_storage_bucket):
             raise ValueError("Supabase storage requires HTTPS SUPABASE_URL, service-role key and bucket.")
         return self
@@ -66,6 +78,14 @@ class Settings(BaseSettings):
     @property
     def ai_model(self) -> str:
         return self.openrouter_model
+
+    @property
+    def medium_model(self) -> str:
+        return self.ai_medium_model or self.openrouter_model
+
+    @property
+    def small_model(self) -> str:
+        return self.ai_small_model or self.medium_model
 
     @property
     def ai_provider(self) -> str:

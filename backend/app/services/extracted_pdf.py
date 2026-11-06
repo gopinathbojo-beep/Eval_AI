@@ -353,21 +353,69 @@ def exam_extraction_report_pdf(exam, paper_doc, key_doc, questions, keys) -> byt
     return _build(story)
 
 
-def sheet_extraction_report_pdf(exam, evaluation, sheet_doc, answers, items, questions) -> bytes:
-    """A student's sheet as read, how each answer was mapped, and the AI's grading notes."""
+SHEET_REPORT_PARTS = ("all", "mapping", "marks")
+
+
+def _marks(value) -> str:
+    return "-" if value is None else f"{value:g}"
+
+
+def _marks_table(story, items, questions):
+    """One row per question: the most recent marks (the teacher's when set, else the AI's) and the item status."""
+    items_by_q = {i.exam_question_id: i for i in items}
+    head = _style("marks-head", bold=True, size=8.5, leading=11)
+    cell = _style("marks-cell", size=8.5, leading=11)
+    rows = [[Paragraph(x, head) for x in ("Question", "Max", "AI", "Final", "Status")]]
+    for q in questions:
+        item = items_by_q.get(q.id)
+        rows.append([Paragraph(_markup(str(q.display_number)), cell), Paragraph(_marks(q.max_marks), cell),
+                     Paragraph(_marks(item.ai_marks if item else None), cell),
+                     Paragraph(_marks(item.final_marks if item else None), cell),
+                     Paragraph(_markup((item.status if item else "NOT EVALUATED").replace("_", " ").title()), cell)])
+    table = Table(rows, colWidths=[28 * mm, 22 * mm, 22 * mm, 22 * mm, 70 * mm], repeatRows=1)
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E7F3F1")),
+        ("BOX", (0, 0), (-1, -1), .5, colors.HexColor("#B7CCC7")),
+        ("INNERGRID", (0, 0), (-1, -1), .25, colors.HexColor("#D8E4E1")),
+        ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+    ]))
+    story.extend([table, Spacer(1, 6 * mm)])
+
+
+def sheet_extraction_report_pdf(exam, evaluation, sheet_doc, answers, items, questions, part: str = "all") -> bytes:
+    """A student's sheet as read, how each answer was mapped, and the AI's grading notes. part="mapping" keeps the
+    answers and their mapping only; part="marks" the marks per question, the current total and the grading notes."""
+    titles = {"all": "Extraction Report: Student Answer Sheet", "mapping": "Mapping Review: Student Answer Sheet",
+              "marks": "Marks Review: Student Answer Sheet"}
     story = []
-    _header(story, exam, "Extraction Report: Student Answer Sheet", len(answers))
+    _header(story, exam, titles[part], len(answers) if part != "marks" else len(questions))
     student = evaluation.student
     _plain(story, "Student", (student.name if student.name.strip() == f"Roll {student.roll_number}"
                              else f"{student.name} (roll {student.roll_number})") if student else "-")
-    total = "-" if evaluation.total_marks is None else f"{evaluation.total_marks:g}"
-    maximum = "-" if evaluation.maximum_marks is None else f"{evaluation.maximum_marks:g}"
-    _plain(story, "Evaluation", f"{evaluation.status}, total {total} / {maximum}")
+    by_q = {i.exam_question_id: i for i in items}
+    if evaluation.total_marks is not None:
+        total, maximum = evaluation.total_marks, evaluation.maximum_marks
+    else:  # not finalized yet: the marks given so far
+        total = sum((by_q[q.id].final_marks or 0) for q in questions if q.id in by_q)
+        maximum = sum(q.max_marks or 0 for q in questions)
+    _plain(story, "Evaluation", f"{evaluation.status}, total {_marks(total)} / {_marks(maximum)}")
     _document(story, "Answer sheet file", sheet_doc)
     identity = (getattr(sheet_doc, "identity", None) or {}) if sheet_doc else {}
     _plain(story, "Student details read from the sheet", identity.get("read"))
     _plain(story, "Identity match", identity.get("note"))
     by_id = {q.id: q for q in questions}
+    if part == "marks":
+        _part(story, "Marks")
+        _marks_table(story, items, questions)
+    else:
+        _answers_as_read(story, answers, by_id)
+    if part == "mapping":
+        return _build(story)
+    _grading(story, items, by_id)
+    return _build(story)
+
+
+def _answers_as_read(story, answers, by_id):
     _part(story, "Answers as read")
     for answer in answers:
         question = by_id.get(answer.exam_question_id)
@@ -380,6 +428,9 @@ def sheet_extraction_report_pdf(exam, evaluation, sheet_doc, answers, items, que
         if answer.answer_text and answer.answer_text != answer.raw_ocr_text:
             _plain(story, "Edited by teacher", answer.answer_text)
         _rule(story)
+
+
+def _grading(story, items, by_id):
     _part(story, "Grading")
     for item in sorted(items, key=lambda i: by_id[i.exam_question_id].position if i.exam_question_id in by_id else 0):
         question = by_id.get(item.exam_question_id)
@@ -396,4 +447,3 @@ def sheet_extraction_report_pdf(exam, evaluation, sheet_doc, answers, items, que
             final = "-" if item.final_marks is None else f"{item.final_marks:g}"
             _plain(story, "Teacher", f"{final} marks" + (f", {item.teacher_feedback}" if item.teacher_feedback else ""))
         _rule(story)
-    return _build(story)

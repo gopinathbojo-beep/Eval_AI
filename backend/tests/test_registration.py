@@ -205,3 +205,12 @@ def test_affiliation_lookup_endpoint(client, monkeypatch):
         assert browser.get("/api/auth/affiliation/2222222").json()["code"] == "AFFILIATION_NOT_FOUND"
         assert browser.get("/api/auth/affiliation/1111111").status_code == 502
         assert browser.get("/api/auth/affiliation/12ab").status_code == 400
+
+
+def test_school_can_register_without_a_principal_name(client):
+    """The sign-up chat lets the Principal question be skipped; the server must accept that."""
+    with TestClient(app) as browser:
+        signup(browser)
+        result = browser.put("/api/auth/profile", headers=HEADERS, json={**PROFILE, "principal_name": ""})
+        assert result.status_code == 200, result.text
+        assert browser.get("/api/school-profile").json()["principal_name"] == ""

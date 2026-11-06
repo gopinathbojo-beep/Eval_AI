@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, downloadFile, fetchBlobUrl } from "../../api/client";
 import { useApi } from "../../hooks/useApi";
@@ -6,6 +6,8 @@ import type { Evaluation, IdentityRead, QuestionSummary, ReviewSummary, Student,
 import { BUSY_DOC, date, fmt, label, nameIsRoll } from "../../utils/format";
 import { Badge, Button, Card, Confirm, Empty, ErrorPanel, LinkButton, Loading, Modal, Select, StatusBadge, Table } from "../../components/ui";
 import { useExam } from "../ExamWorkspace";
+import { DeleteSheetConfirm } from "../../components/DeleteSheetConfirm";
+import { IconTrash } from "../../components/Icons";
 
 function IdentityDetails({ read }: { read?: Partial<IdentityRead> }) {
   const parts: [string, string | null | undefined][] = [
@@ -333,339 +335,6 @@ function BatchReview({
   );
 }
 
-export function AnswerSheets() {
-  const { exam, reload } = useExam();
-  const open = TAKES_SHEETS.includes(exam.status);
-  const students = useApi<Student[]>(`/students?class_id=${exam.class_id}`);
-  const sheets = useApi<Evaluation[]>(
-    `/exams/${exam.id}/answer-sheets`,
-    (d) => (d.some((s) => (s.document && BUSY_DOC.includes(s.document.status)) || s.run_status === "RUNNING")
-      ? POLL_MS : open ? WATCH_MS : null)
-  );
-  const unassigned = useApi<UnassignedSheet[]>(
-    `/exams/${exam.id}/answer-sheets/unassigned`,
-    (d) => (d.some((s) => BUSY_DOC.includes(s.status)) ? POLL_MS : open ? WATCH_MS : null)
-  );
-  const summary = useReviewSummary(exam.id, () => Promise.all([sheets.reload(), unassigned.reload()]), open);
-
-  const [del, setDel] = useState<Evaluation | null>(null);
-  const [remapping, setRemapping] = useState<string | null>(null);
-  const [remapError, setRemapError] = useState<unknown>(null);
-  const [remapNote, setRemapNote] = useState<string | null>(null);
-  // the typed and the written roll number differ: the school says which is right, then the sheet is graded
-  const settleRoll = async (rowId: string, docId: string, use: "typed" | "written") => {
-    setRemapping(rowId + use); setRemapError(null);
-    try {
-      await api(`/answer-sheets/${docId}/roll-check`, { method: "POST", json: { use } });
-    } catch (err) {
-      setRemapError(err);
-    } finally {
-      setRemapping(null);
-      await refresh();
-    }
-  };
-  // the school types the right roll number (works on any sheet; a held mismatch counts as settled)
-  const [editing, setEditing] = useState<{ rowId: string; value: string } | null>(null);
-  const saveRoll = async (rowId: string, docId: string, roll: string) => {
-    setRemapping(rowId + "edit"); setRemapError(null);
-    try {
-      await api(`/answer-sheets/${docId}/roll-number`, { method: "POST", json: { roll_number: roll } });
-      setEditing(null);
-    } catch (err) {
-      setRemapError(err);
-    } finally {
-      setRemapping(null);
-      await refresh();
-    }
-  };
-  // map the answers again with the current rules (no page is re-read), then grade what is not yet approved
-  const remap = async (target: string) => {
-    setRemapping(target); setRemapError(null); setRemapNote(null);
-    try {
-      if (target === "all") {
-        const r = await api<{ started: number; skipped: { reason: string }[] }>(`/exams/${exam.id}/remap-and-run`, { method: "POST" });
-        setRemapNote(`Re-mapped and grading ${r.started} sheet${r.started === 1 ? "" : "s"}` +
-          (r.skipped.length ? `; ${r.skipped.length} need a look first (open their review).` : "."));
-      } else {
-        await api(`/evaluations/${target}/remap-and-run`, { method: "POST" });
-      }
-    } catch (e) {
-      setRemapError(e);
-    } finally {
-      setRemapping(null);
-      await refresh();
-    }
-  };
-
-  const taken = new Set((sheets.data ?? []).map((s) => s.student.id));
-
-  const refresh = async () => {
-    await Promise.all([sheets.reload(), unassigned.reload(), summary.reload(), reload()]);
-  };
-
-  return (
-    <div className="space-y-5">
-      {!open ? (
-        <Card className="flex items-center gap-3 p-4 text-sm text-mute">
-          <svg className="h-5 w-5 text-warn flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-          </svg>
-          <span>Answer sheets can be uploaded once the exam questions and answer key are verified.</span>
-        </Card>
-      ) : (
-        <Card className="space-y-1 p-5 shadow-soft">
-          <h2 className="text-lg font-semibold text-ink">Student Answer Sheets</h2>
-          <p className="text-xs text-mute">
-            Sheets are sent from the uploader app with the student's roll number, then read and graded on their own.
-            Each sheet is listed here by its roll number.
-          </p>
-        </Card>
-      )}
-
-      <ErrorPanel error={sheets.error || unassigned.error || remapError} />
-      {remapNote && <Card className="p-3 text-sm text-ink">{remapNote}</Card>}
-
-      {summary.data && <BatchReview examId={exam.id} summary={summary.data} onChanged={refresh} />}
-
-      {unassigned.data && unassigned.data.length > 0 && (
-        <UnassignedSheets rows={unassigned.data} students={students.data ?? []} taken={taken} onChanged={refresh} />
-      )}
-
-
-      {sheets.data && sheets.data.length > 0 && (
-        <Card className="overflow-x-auto shadow-soft">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-3">
-            <h3 className="text-sm font-semibold text-ink">Uploaded Answer Sheets ({sheets.data.length})</h3>
-            <Button small variant="soft" busy={remapping === "all"} disabled={!!remapping}
-                    title="Map every sheet's answers again with the current rules, then grade what is not yet approved"
-                    onClick={() => remap("all")}>
-              Re-map &amp; evaluate all
-            </Button>
-          </div>
-          <table className="w-full text-left text-sm">
-            <thead className="border-b border-line bg-surface text-xs font-semibold uppercase tracking-wider text-mute">
-              <tr>
-                <th className="px-4 py-3">Roll number</th>
-                <th className="px-4 py-3">Reading Status</th>
-                <th className="px-4 py-3">Pages</th>
-                <th className="px-4 py-3">Detected</th>
-                <th className="px-4 py-3">Needs Review</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-line text-sm">
-              {sheets.data.map((e) => (
-                <tr key={e.id} className="hover:bg-hover">
-                  <td className="px-4 py-3">
-                    {editing?.rowId === e.id && e.document ? (
-                      <form className="flex items-center gap-1.5"
-                            onSubmit={(ev) => { ev.preventDefault(); if (editing.value) saveRoll(e.id, e.document!.id, editing.value); }}>
-                        <input autoFocus aria-label="Roll number" value={editing.value}
-                               className="w-28 rounded-md border border-line bg-surface px-2 py-1 font-mono text-sm text-ink"
-                               onChange={(ev) => setEditing({ rowId: e.id, value: ev.target.value.toUpperCase().replace(/[^A-Z0-9/-]/g, "").slice(0, 20) })}
-                               onKeyDown={(ev) => { if (ev.key === "Escape") setEditing(null); }} />
-                        <Button small variant="primary" type="submit" busy={remapping === e.id + "edit"}
-                                disabled={!editing.value || !!remapping}>Save</Button>
-                        <Button small variant="ghost" type="button" onClick={() => setEditing(null)}>Cancel</Button>
-                      </form>
-                    ) : (
-                      <div className="flex items-center gap-1.5">
-                        <p className="font-mono font-medium text-ink">{e.student.roll_number}</p>
-                        {e.document && (
-                          <button type="button" className="text-xs text-mute underline hover:text-ink"
-                                  title="Correct the roll number for this sheet"
-                                  onClick={() => setEditing({ rowId: e.id, value: e.student.roll_number })}>
-                            Edit
-                          </button>
-                        )}
-                      </div>
-                    )}
-                    {e.document?.roll_check?.status === "MISMATCH" && editing?.rowId !== e.id && (
-                      <div className="mt-1.5 max-w-xs rounded-md border border-warn/40 bg-warn-soft/40 p-2 text-xs">
-                        <p className="font-semibold text-ink">
-                          Roll number check: typed <span className="font-mono">{e.document.roll_check.typed}</span>, the
-                          sheet says <span className="font-mono">{e.document.roll_check.written}</span>
-                        </p>
-                        <p className="mt-0.5 text-mute">Grading waits until you choose.</p>
-                        <div className="mt-1.5 flex flex-wrap gap-1.5">
-                          <Button small variant="soft" busy={remapping === e.id + "typed"} disabled={!!remapping}
-                                  onClick={() => settleRoll(e.id, e.document!.id, "typed")}>
-                            Keep {e.document.roll_check.typed}
-                          </Button>
-                          <Button small variant="soft" busy={remapping === e.id + "written"} disabled={!!remapping}
-                                  onClick={() => settleRoll(e.id, e.document!.id, "written")}>
-                            Use {e.document.roll_check.written}
-                          </Button>
-                          <Button small variant="ghost" disabled={!!remapping}
-                                  onClick={() => setEditing({ rowId: e.id, value: "" })}>
-                            Other…
-                          </Button>
-                        </div>
-                      </div>
-                    )}
-                    {!nameIsRoll(e.student) && (
-                      <p className="text-xs text-mute">{e.student.name}</p>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    {e.document && (
-                      <div className="flex items-center gap-2">
-                        <StatusBadge status={e.document.status} />
-                        {BUSY_DOC.includes(e.document.status) && (
-                          <span className="font-mono text-xs text-mute animate-pulse">
-                            {e.document.stage || "reading..."}
-                          </span>
-                        )}
-                      </div>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 font-mono text-mute">{e.document?.pages.length ?? "–"}</td>
-                  <td className="px-4 py-3 font-medium text-ink">{e.detected_answers}</td>
-                  <td className="px-4 py-3">
-                    {(e.unresolved_answers ?? 0) > 0 ? (
-                      <Badge tone="warn">{e.unresolved_answers} to map</Badge>
-                    ) : (
-                      <span className="text-xs text-mute">0</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3">
-                    <StatusBadge status={e.status} />
-                  </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-right">
-                    <div className="flex items-center justify-end gap-1.5">
-                      <LinkButton to={`/evaluations/${e.id}`} small variant="primary" className="shadow-xs">
-                        <span>Open Review</span>
-                        <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                        </svg>
-                      </LinkButton>
-                      <Button small variant="soft" title="The sheet as read, how each answer was mapped, and the AI's grading notes"
-                              onClick={() => downloadFile(`/evaluations/${e.id}/extraction-report.pdf`, "Sheet_Report.pdf")}>
-                        Report
-                      </Button>
-                      {e.status !== "FINALIZED" && (
-                        <Button small variant="soft" busy={remapping === e.id}
-                                disabled={!!remapping || e.run_status === "RUNNING" || (!!e.document && BUSY_DOC.includes(e.document.status))}
-                                title="Map this sheet's answers again with the current rules, then grade what is not yet approved"
-                                onClick={() => remap(e.id)}>
-                          Re-map &amp; evaluate
-                        </Button>
-                      )}
-                      {e.status !== "FINALIZED" && (
-                        <Button
-                          small
-                          variant="ghost"
-                          className="text-mark hover:bg-mark-soft hover:text-mark"
-                          onClick={() => setDel(e)}
-                          title="Delete sheet"
-                        >
-                          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                          </svg>
-                        </Button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
-      )}
-
-      {del && (
-        <Confirm
-          title="Delete Answer Sheet"
-          danger
-          confirmLabel="Delete Sheet"
-          body={
-            <div className="space-y-2 text-sm text-ink">
-              <p>
-                Remove <b>{del.student.name}</b>'s answer sheet and all extracted evaluation marks?
-              </p>
-              <p className="text-xs text-mute">
-                The original file is kept and the deletion is logged.
-              </p>
-            </div>
-          }
-          onConfirm={async () => {
-            await api(`/evaluations/${del.id}`, { method: "DELETE" });
-            await refresh();
-          }}
-          onClose={() => setDel(null)}
-        />
-      )}
-    </div>
-  );
-}
-
-export function ExamEvaluation() {
-  const { exam, reload } = useExam();
-  const watching = TAKES_SHEETS.includes(exam.status);
-  const { data, loading, error, reload: reloadSheets } = useApi<Evaluation[]>(`/exams/${exam.id}/answer-sheets`,
-    (d) => (d.some((s) => s.run_status === "RUNNING") ? POLL_MS : watching ? WATCH_MS : null));
-  const summary = useReviewSummary(exam.id, reloadSheets, watching);
-
-  if (loading) return <Loading />;
-  if (error) return <ErrorPanel error={error} />;
-  if (!data?.length) {
-    return (
-      <Empty
-        title="No answer sheets uploaded"
-        hint="Upload answer sheets in the Answer Sheets tab to begin evaluation."
-      />
-    );
-  }
-
-  return (
-    <div className="space-y-3">
-      {summary.data && (
-        <BatchReview
-          examId={exam.id}
-          summary={summary.data}
-          onChanged={async () => { await Promise.all([reloadSheets(), summary.reload(), reload()]); }}
-        />
-      )}
-      <div className="flex items-center justify-between px-1">
-        <h3 className="text-sm font-semibold text-ink">Student Evaluation Queue ({data.length})</h3>
-        <span className="text-xs text-mute">Click any student to open the evaluation workspace</span>
-      </div>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {data.map((e) => (
-          <Link
-            key={e.id}
-            to={`/evaluations/${e.id}`}
-            className="group block rounded-lg border border-line bg-surface p-4 shadow-soft transition-all hover:border-pen/40 hover:shadow-card"
-          >
-            <div className="flex items-start justify-between gap-2">
-              <div>
-                <p className="font-semibold text-ink group-hover:text-brown transition-colors">
-                  {e.student.name}
-                </p>
-                {!nameIsRoll(e.student) && <p className="font-mono text-xs text-mute">Roll: {e.student.roll_number}</p>}
-              </div>
-              <StatusBadge status={e.status} />
-            </div>
-            <div className="mt-3 flex items-center justify-between border-t border-line/60 pt-2.5 text-xs text-mute">
-              <span>
-                {(e.unresolved_answers ?? 0) > 0 ? (
-                  <span className="font-semibold text-mark">{e.unresolved_answers} need mapping</span>
-                ) : (
-                  <span>{label(e.run_status)}</span>
-                )}
-              </span>
-              <span className="inline-flex items-center gap-1 font-medium text-pen group-hover:translate-x-0.5 transition-transform">
-                Open &rarr;
-              </span>
-            </div>
-          </Link>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 /** After finalization: when the exam's files will be (or were) deleted, with a way to delete them now. */
 function ExamFilesNotice() {
   const { exam, reload } = useExam();
@@ -705,164 +374,346 @@ function ExamFilesNotice() {
   );
 }
 
-export function ExamResults() {
+/** One row per student from upload to final result: reading, mapping, grading, marks, reports and finalizing the exam. */
+export function AnswerSheets() {
   const { exam, reload } = useExam();
-  const { data, loading, error } = useApi<Evaluation[]>(`/exams/${exam.id}/results`);
+  const open = TAKES_SHEETS.includes(exam.status);
+  const students = useApi<Student[]>(`/students?class_id=${exam.class_id}`);
+  const sheets = useApi<Evaluation[]>(
+    `/exams/${exam.id}/answer-sheets`,
+    (d) => (d.some((s) => (s.document && BUSY_DOC.includes(s.document.status)) || s.run_status === "RUNNING")
+      ? POLL_MS : open ? WATCH_MS : null)
+  );
+  const unassigned = useApi<UnassignedSheet[]>(
+    `/exams/${exam.id}/answer-sheets/unassigned`,
+    (d) => (d.some((s) => BUSY_DOC.includes(s.status)) ? POLL_MS : open ? WATCH_MS : null)
+  );
+  const summary = useReviewSummary(exam.id, () => Promise.all([sheets.reload(), unassigned.reload()]), open);
   const questions = useApi<QuestionSummary>(`/exams/${exam.id}/question-summary`);
-  const [err, setErr] = useState<unknown>(null);
-  const [confirm, setConfirm] = useState(false);
+
+  const [del, setDel] = useState<Evaluation | null>(null);
+  const [remapping, setRemapping] = useState<string | null>(null);
+  const [remapError, setRemapError] = useState<unknown>(null);
+  const [remapNote, setRemapNote] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<unknown>(null);
+  const [confirmFinalize, setConfirmFinalize] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [bulkDownloading, setBulkDownloading] = useState(false);
+
+  // sheets are finalized in the background too: the analysis follows the count while this page stays open
+  const finalizedCount = (sheets.data ?? []).filter((e) => e.status === "FINALIZED").length;
+  const lastFinalized = useRef<number | null>(null);
+  const reloadQuestions = questions.reload;
+  useEffect(() => {
+    if (!sheets.data) return;
+    if (lastFinalized.current !== null && lastFinalized.current !== finalizedCount) void reloadQuestions();
+    lastFinalized.current = finalizedCount;
+  }, [sheets.data, finalizedCount, reloadQuestions]);
+
+  // the typed and the written roll number differ: the school says which is right, then the sheet is graded
+  const settleRoll = async (rowId: string, docId: string, use: "typed" | "written") => {
+    setRemapping(rowId + use); setRemapError(null);
+    try {
+      await api(`/answer-sheets/${docId}/roll-check`, { method: "POST", json: { use } });
+    } catch (err) {
+      setRemapError(err);
+    } finally {
+      setRemapping(null);
+      await refresh();
+    }
+  };
+  // map the answers again with the current rules (no page is re-read), then grade what is not yet approved
+  const remap = async (target: string) => {
+    setRemapping(target); setRemapError(null); setRemapNote(null);
+    try {
+      if (target === "all") {
+        const r = await api<{ started: number; skipped: { reason: string }[] }>(`/exams/${exam.id}/remap-and-run`, { method: "POST" });
+        setRemapNote(`Re-mapped and grading ${r.started} sheet${r.started === 1 ? "" : "s"}` +
+          (r.skipped.length ? `; ${r.skipped.length} need a look first (open their review).` : "."));
+      } else {
+        await api(`/evaluations/${target}/remap-and-run`, { method: "POST" });
+      }
+    } catch (e) {
+      setRemapError(e);
+    } finally {
+      setRemapping(null);
+      await refresh();
+    }
+  };
+
+  const downloadStudentReports = async () => {
+    setBulkDownloading(true);
+    setActionError(null);
+    try {
+      await downloadFile(`/exams/${exam.id}/student-reports.zip`,
+        `StudentReports_${exam.name.replace(/[^a-zA-Z0-9_-]/g, "_")}.zip`);
+    } catch (e) {
+      setActionError(e);
+    } finally {
+      setBulkDownloading(false);
+    }
+  };
 
   const downloadExamReport = async () => {
     setDownloading(true);
-    setErr(null);
+    setActionError(null);
     try {
       await downloadFile(`/exams/${exam.id}/report.pdf`, `ExamReport_${exam.name.replace(/[^a-zA-Z0-9_-]/g, "_")}.pdf`);
     } catch (e) {
-      setErr(e);
+      setActionError(e);
     } finally {
       setDownloading(false);
     }
   };
 
-  const [downloadingStudents, setDownloadingStudents] = useState(false);
-  const downloadStudentReports = async () => {
-    setDownloadingStudents(true);
-    setErr(null);
-    try {
-      await downloadFile(`/exams/${exam.id}/student-reports.zip`, `StudentReports_${exam.name.replace(/[^a-zA-Z0-9_-]/g, "_")}.zip`);
-    } catch (e) {
-      setErr(e);
-    } finally {
-      setDownloadingStudents(false);
-    }
+  const taken = new Set((sheets.data ?? []).map((s) => s.student.id));
+
+  const refresh = async () => {
+    await Promise.all([sheets.reload(), unassigned.reload(), summary.reload(), questions.reload(), reload()]);
   };
 
-  if (loading) return <Loading />;
-  const done = (data ?? []).filter((e) => e.status === "FINALIZED");
-  const allFinalized = data && data.length > 0 && done.length === data.length;
+  if (sheets.loading) return <Loading />;
+  const rows = sheets.data ?? [];
+  const allFinalized = rows.length > 0 && finalizedCount === rows.length;
+  const examFinalized = exam.status === "FINALIZED";
+  const nothingYet = !rows.length && !unassigned.data?.length && !sheets.error;
 
   return (
-    <div className="space-y-4">
-      <ErrorPanel error={error ?? err} />
-
-      {exam.status === "FINALIZED" && <ExamFilesNotice />}
-
-      {!data?.length ? (
-        <Empty title="No evaluation results yet" hint="Results appear as answer sheets are evaluated and finalized." />
+    <div className="space-y-5">
+      {examFinalized ? (
+        <ExamFilesNotice />
+      ) : !open ? (
+        <Card className="flex items-center gap-3 p-4 text-sm text-mute">
+          <svg className="h-5 w-5 text-warn flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          <span>Answer sheets can be uploaded once the exam questions and answer key are verified.</span>
+        </Card>
       ) : (
-        <>
-          <Card className="overflow-x-auto shadow-soft">
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
-              <div>
-                <h3 className="text-sm font-semibold text-ink">Exam Final Results</h3>
-                <p className="text-xs text-mute">
-                  {done.length} of {data.length} students finalized
-                </p>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  busy={downloading}
-                  disabled={done.length === 0}
-                  onClick={downloadExamReport}
-                  title={done.length === 0 ? "Finalize at least one student first" : "Download the exam-wise class report (PDF)"}
-                >
-                  Download Exam Report (PDF)
-                </Button>
-                <Button
-                  variant="soft"
-                  busy={downloadingStudents}
-                  disabled={done.length === 0 || downloading}
-                  onClick={downloadStudentReports}
-                  title={done.length === 0 ? "Finalize at least one student first" : "Download every finalized student's personal report (one PDF each, in a ZIP)"}
-                >
-                  Download Student Reports (ZIP)
-                </Button>
-                {exam.status !== "FINALIZED" && (
-                  <Button
-                    variant="primary"
-                    disabled={!allFinalized}
-                    onClick={() => setConfirm(true)}
-                    title={!allFinalized ? "All students must be finalized first" : "Finalize exam"}
-                  >
-                    Finalize the Whole Exam
-                  </Button>
-                )}
-              </div>
+        <Card className="space-y-1 p-5 shadow-soft">
+          <h2 className="text-lg font-semibold text-ink">Students</h2>
+          <p className="text-xs text-mute">
+            Sheets are sent from the uploader app with the student's roll number, then read and graded on their own.
+            Each student is listed here from upload to final result.
+          </p>
+        </Card>
+      )}
+
+      <ErrorPanel error={sheets.error || unassigned.error || questions.error || remapError || actionError} />
+      {remapNote && <Card className="p-3 text-sm text-ink">{remapNote}</Card>}
+
+      {summary.data && <BatchReview examId={exam.id} summary={summary.data} onChanged={refresh} />}
+
+      {unassigned.data && unassigned.data.length > 0 && (
+        <UnassignedSheets rows={unassigned.data} students={students.data ?? []} taken={taken} onChanged={refresh} />
+      )}
+
+      {nothingYet && (
+        <Empty title="No answer sheets uploaded" hint="Each student's review, marks and reports appear here once their sheet is uploaded." />
+      )}
+
+      {rows.length > 0 && (
+        <Card className="overflow-x-auto shadow-soft">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
+            <div>
+              <h3 className="text-sm font-semibold text-ink">Students ({rows.length})</h3>
+              <p className="text-xs text-mute">{finalizedCount} of {rows.length} students finalized</p>
             </div>
-            <table className="w-full text-left text-sm">
-              <thead className="border-b border-line bg-surface text-xs font-semibold uppercase tracking-wider text-mute">
-                <tr>
-                  <th className="px-4 py-3">Roll No.</th>
-                  <th className="px-4 py-3">Student Name</th>
-                  <th className="px-4 py-3">Total Marks</th>
-                  <th className="px-4 py-3">Percentage</th>
-                  <th className="px-4 py-3">Status</th>
-                  <th className="px-4 py-3 text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-line text-sm">
-                {data.map((e) => (
-                  <tr key={e.id} className="hover:bg-hover">
-                    <td className="whitespace-nowrap px-4 py-3 font-mono font-medium text-ink">
-                      {e.student.roll_number}
-                    </td>
-                    <td className="px-4 py-3 font-medium text-ink">
-                      <Link
-                        className="text-pen hover:underline"
-                        to={e.status === "FINALIZED" ? `/results/${e.id}` : `/evaluations/${e.id}`}
-                      >
-                        {e.student.name}
-                      </Link>
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 font-medium text-ink">
-                      {e.status === "FINALIZED" ? `${fmt(e.total_marks)} / ${fmt(e.maximum_marks)}` : "–"}
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 font-medium text-ink">
-                      {e.status === "FINALIZED" ? (
-                        <span className="inline-flex items-center gap-1.5">
-                          <span className="font-semibold">{e.percentage}%</span>
-                        </span>
-                      ) : (
-                        "–"
+            <div className="flex flex-wrap items-center gap-2">
+              {!examFinalized && (
+                <Button small variant="soft" busy={remapping === "all"} disabled={!!remapping}
+                        title="Map every sheet's answers again with the current rules, then grade what is not yet approved"
+                        onClick={() => remap("all")}>
+                  Re-map &amp; evaluate all
+                </Button>
+              )}
+              <Button
+                small
+                busy={bulkDownloading}
+                disabled={finalizedCount === 0}
+                onClick={downloadStudentReports}
+                title={finalizedCount === 0 ? "Finalize at least one student first"
+                  : `Download the report of all ${finalizedCount} finalized students (ZIP of PDFs)`}
+              >
+                Download All Student Reports
+              </Button>
+              <Button
+                small
+                busy={downloading}
+                disabled={finalizedCount === 0}
+                onClick={downloadExamReport}
+                title={finalizedCount === 0 ? "Finalize at least one student first" : "Download the exam-wise class report (PDF)"}
+              >
+                Download Exam Report (PDF)
+              </Button>
+              {!examFinalized && (
+                <Button
+                  small
+                  variant="primary"
+                  disabled={!allFinalized}
+                  onClick={() => setConfirmFinalize(true)}
+                  title={!allFinalized ? "All students must be finalized first" : "Finalize exam"}
+                >
+                  Finalize the Whole Exam
+                </Button>
+              )}
+            </div>
+          </div>
+          <table className="w-full text-left text-sm">
+            <thead className="border-b border-line bg-surface text-xs font-semibold uppercase tracking-wider text-mute">
+              <tr>
+                <th className="px-4 py-3">Student</th>
+                <th className="px-4 py-3">Reading Status</th>
+                <th className="px-4 py-3">Pages</th>
+                <th className="px-4 py-3">Detected</th>
+                <th className="px-4 py-3">Needs Review</th>
+                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">Marks</th>
+                <th className="px-4 py-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line text-sm">
+              {rows.map((e) => {
+                const final = e.status === "FINALIZED";
+                const opens = final ? `/results/${e.id}` : `/evaluations/${e.id}`;
+                const busy = e.run_status === "RUNNING" || (!!e.document && BUSY_DOC.includes(e.document.status));
+                const rollCheck = e.document?.roll_check?.status === "MISMATCH" ? e.document.roll_check : null;
+                return (
+                  <Fragment key={e.id}>
+                  <tr className="align-top hover:bg-hover">
+                    <td className="px-4 py-3">
+                      <Link to={opens} className="font-mono font-medium text-pen hover:underline">{e.student.roll_number}</Link>
+                      {!nameIsRoll(e.student) && (
+                        <Link to={opens} className="block text-xs text-mute hover:text-pen hover:underline">{e.student.name}</Link>
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      <StatusBadge status={e.status} />
+                      {e.document && (
+                        <div className="flex items-center gap-2">
+                          <StatusBadge status={e.document.status} />
+                          {BUSY_DOC.includes(e.document.status) && (
+                            <span className="font-mono text-xs text-mute animate-pulse">
+                              {e.document.stage || "reading..."}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 font-mono text-mute">{e.document?.pages.length ?? "–"}</td>
+                    <td className="px-4 py-3 font-medium text-ink">{e.detected_answers}</td>
+                    <td className="px-4 py-3">
+                      {(e.unresolved_answers ?? 0) > 0 ? (
+                        <span className="whitespace-nowrap"><Badge tone="warn">{e.unresolved_answers} to map</Badge></span>
+                      ) : (
+                        <span className="text-xs text-mute">0</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="whitespace-nowrap"><StatusBadge status={e.status} /></span>
+                      {(e.unresolved_answers ?? 0) === 0 && e.run_status && (
+                        <p className="mt-1 text-xs text-mute">{label(e.run_status)}</p>
+                      )}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 font-medium text-ink">
+                      {final ? (
+                        <>
+                          <p>{fmt(e.total_marks)} / {fmt(e.maximum_marks)}</p>
+                          <p className="text-xs font-semibold text-mute">{e.percentage}%</p>
+                        </>
+                      ) : "–"}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <Link
-                        to={e.status === "FINALIZED" ? `/results/${e.id}` : `/evaluations/${e.id}`}
-                        className="text-xs font-medium text-pen hover:underline"
-                      >
-                        {e.status === "FINALIZED" ? "View Report →" : "Review →"}
-                      </Link>
+                      <div className="ml-auto flex min-w-[15rem] flex-wrap items-center justify-end gap-1.5">
+                        {final && (
+                          <LinkButton to={`/results/${e.id}`} small variant="primary" className="shadow-xs">
+                            View Report
+                          </LinkButton>
+                        )}
+                        <LinkButton to={`/evaluations/${e.id}`} small variant={final ? "soft" : "primary"} className="shadow-xs">
+                          <span>Open Review</span>
+                          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                          </svg>
+                        </LinkButton>
+                        <Button small variant="soft" title="The sheet as read, how each answer was mapped, and the AI's grading notes"
+                                onClick={() => downloadFile(`/evaluations/${e.id}/extraction-report.pdf`, "Sheet_Report.pdf")}>
+                          Sheet Report
+                        </Button>
+                        {!final && (
+                          <Button small variant="soft" busy={remapping === e.id}
+                                  disabled={!!remapping || busy}
+                                  title="Map this sheet's answers again with the current rules, then grade what is not yet approved"
+                                  onClick={() => remap(e.id)}>
+                            Re-map &amp; evaluate
+                          </Button>
+                        )}
+                        <Button
+                          small
+                          variant="ghost"
+                          className="text-mark hover:bg-mark-soft hover:text-mark"
+                          disabled={busy}
+                          onClick={() => setDel(e)}
+                          title={busy ? "Wait for reading or grading to finish" : "Delete this answer sheet"}
+                          icon={<IconTrash size={14} />}
+                        >
+                          Delete
+                        </Button>
+                      </div>
                     </td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </Card>
-          {questions.data && questions.data.finalized_students > 0 && (
-            <div className="space-y-2">
-              <div className="px-1">
-                <h3 className="text-sm font-semibold text-ink">Question-wise analysis</h3>
-                <p className="text-xs text-mute">Across {questions.data.finalized_students} finalized student(s).</p>
-              </div>
-              <Table
-                head={["Question", "Max", "Avg. marks", "Avg. %", "Full marks", "Zero / not attempted"]}
-                rows={questions.data.questions.map((q) => ({
-                  key: q.no,
-                  cells: [<span className="font-medium text-ink">Q{q.no}</span>, fmt(q.max), fmt(q.average),
-                          q.percentage == null ? "–" : `${q.percentage}%`, q.full, q.zero],
-                }))}
-              />
-            </div>
-          )}
-        </>
+                  {rollCheck && (
+                    <tr>
+                      <td colSpan={8} className="px-4 pb-3 pt-0">
+                        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-warn/40 bg-warn-soft/40 p-2 text-xs">
+                          <div>
+                            <p className="font-semibold text-ink">
+                              Roll number check: typed <span className="font-mono">{rollCheck.typed}</span>, the
+                              sheet says <span className="font-mono">{rollCheck.written}</span>
+                            </p>
+                            <p className="mt-0.5 text-mute">Grading waits until you choose.</p>
+                          </div>
+                          <div className="flex flex-wrap gap-1.5">
+                            <Button small variant="soft" busy={remapping === e.id + "typed"} disabled={!!remapping}
+                                    onClick={() => settleRoll(e.id, e.document!.id, "typed")}>
+                              Keep {rollCheck.typed}
+                            </Button>
+                            <Button small variant="soft" busy={remapping === e.id + "written"} disabled={!!remapping}
+                                    onClick={() => settleRoll(e.id, e.document!.id, "written")}>
+                              Use {rollCheck.written}
+                            </Button>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </Card>
       )}
 
-      {confirm && (
+      {questions.data && questions.data.finalized_students > 0 && (
+        <details className="space-y-2">
+          <summary className="cursor-pointer px-1 text-sm font-semibold text-ink">
+            Question-wise analysis
+            <span className="ml-2 text-xs font-normal text-mute">Across {questions.data.finalized_students} finalized student(s).</span>
+          </summary>
+          <Table
+            head={["Question", "Max", "Avg. marks", "Avg. %", "Full marks", "Zero / not attempted"]}
+            rows={questions.data.questions.map((q) => ({
+              key: q.no,
+              cells: [<span className="font-medium text-ink">Q{q.no}</span>, fmt(q.max), fmt(q.average),
+                      q.percentage == null ? "–" : `${q.percentage}%`, q.full, q.zero],
+            }))}
+          />
+        </details>
+      )}
+
+      {del && <DeleteSheetConfirm ev={del} onDeleted={refresh} onClose={() => setDel(null)} />}
+
+      {confirmFinalize && (
         <Confirm
           title="Finalize Exam"
           confirmLabel="Finalize Whole Exam"
@@ -875,7 +726,7 @@ export function ExamResults() {
                 This locks all evaluations for this exam. No further student answer sheets can be added.
               </p>
               <p className="text-xs text-mute">
-                Each student's official PDF report is saved. <b className="text-ink">One week later</b>, the uploaded files
+                Each student's official PDF report is saved. <b className="text-ink">24 hours later</b>, the uploaded files
                 (question paper, answer key, answer sheets), page images and raw AI output are permanently deleted from this
                 computer. Marks, results and the marksheet stay available.
               </p>
@@ -884,13 +735,13 @@ export function ExamResults() {
           onConfirm={async () => {
             try {
               await api(`/exams/${exam.id}/finalize`, { method: "POST" });
-              await reload();
+              await refresh();
             } catch (e) {
-              setErr(e);
+              setActionError(e);
               throw e;
             }
           }}
-          onClose={() => setConfirm(false)}
+          onClose={() => setConfirmFinalize(false)}
         />
       )}
     </div>

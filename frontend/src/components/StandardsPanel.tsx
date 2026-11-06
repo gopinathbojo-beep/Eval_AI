@@ -557,30 +557,6 @@ export function StandardsPanel({
                   <option value="accessible">Visually impaired</option>
                 </select>
               </label>
-              {data.profile.code === "055" && (
-                <label className="text-xs">
-                  Accountancy Part B
-                  <select
-                    className="w-full rounded border border-line p-2"
-                    value={edit.options.accountancy_option || ""}
-                    onChange={(e) =>
-                      setEdit({
-                        ...edit,
-                        options: {
-                          ...edit.options,
-                          accountancy_option: e.target.value,
-                        },
-                      })
-                    }
-                  >
-                    <option value="">Choose option...</option>
-                    <option value="financial">Financial statements</option>
-                    <option value="computerised">
-                      Computerised accounting
-                    </option>
-                  </select>
-                </label>
-              )}
             </div>
           )}
           {edit.evidence && (

@@ -359,6 +359,11 @@ def check_typed_roll(doc_id: str, read_fn=_roll_label_identity) -> bool:
             doc.stage = f"Roll number check: typed {typed}, the sheet says {written}"
             audit(db, exam_id=doc.exam_id, teacher_id=None, entity_type="answer_sheet", entity_id=doc.id,
                   action="roll_number_mismatch", new={"typed": typed, "written": written})
+            from . import autopilot
+            if autopilot.enabled():  # the typed roll stands; grading goes on
+                doc.identity = autopilot.settle_roll_mismatch(identity)
+                doc.stage = f"Roll number {typed} (typed) kept; the sheet reads {written}"
+                status = "CONFIRMED"
         db.commit()
         return status != "MISMATCH"
     finally:
@@ -463,6 +468,13 @@ def _identify(doc_id: str, teacher_id: str | None) -> str:
             _set_hold(doc_id, "The student details on this sheet could not be read. Pick the student or retry.")
             return HELD
         doc.identity = result
+        if result["match"] != "AUTO":
+            from . import autopilot
+            picked = autopilot.pick_student(db, exam, result)  # the free student whose roll number was read
+            if picked is not None:
+                result = {**result, "match": "AUTO", "student_id": picked.id,
+                          "note": f"{result['note']} Assigned to {picked.name} by roll number (autopilot)."}
+                doc.identity = result
         if result["match"] != "AUTO":
             doc.status, doc.stage = "NEEDS_STUDENT", "Pick the student"
             db.commit()

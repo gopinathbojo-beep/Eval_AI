@@ -322,5 +322,149 @@
     "sha256": "383e0dd4f2f8db95d59b21027857002bade6b85413c098c51ba954d9c1870f75",
     "page_count": 13,
     "text_pages": 13
+  },
+  {
+    "profile_id": "cbse-12-241",
+    "version": "2026-27.1",
+    "kind": "question-paper",
+    "path": "exam/Class 12/Applied-Maths-SQP.pdf",
+    "sha256": "a9c308265926c715013def624a1db3b96ab6557789c699f61deceb6ed62f506f",
+    "page_count": 9,
+    "text_pages": 9
+  },
+  {
+    "profile_id": "cbse-12-241",
+    "version": "2026-27.1",
+    "kind": "answer-key",
+    "path": "exam/Class 12/Applied-Maths-MS.pdf",
+    "sha256": "5bff33e87c9c81aefb176e9903402ef82fa072796406d112bae5608882c7ca8b",
+    "page_count": 13,
+    "text_pages": 13
+  },
+  {
+    "profile_id": "cbse-12-045",
+    "version": "2026-27.1",
+    "kind": "question-paper",
+    "path": "exam/Class 12/Biotechnology-SQP.pdf",
+    "sha256": "6a7f1032bb10113a709e533f37c98b0e026bb0662d54897bc34857336a0be3e5",
+    "page_count": 9,
+    "text_pages": 9
+  },
+  {
+    "profile_id": "cbse-12-045",
+    "version": "2026-27.1",
+    "kind": "answer-key",
+    "path": "exam/Class 12/Biotechnology-MS.pdf",
+    "sha256": "1b759f1da57a7b39cda10557355f39e96413b8f65b23f08258dfba7466fa43b4",
+    "page_count": 8,
+    "text_pages": 8
+  },
+  {
+    "profile_id": "cbse-12-066",
+    "version": "2026-27.1",
+    "kind": "question-paper",
+    "path": "exam/Class 12/Entrepreneurship-SQP.pdf",
+    "sha256": "4ed5ebf624cd5b6503629fbedfc983bfd5e6527eb0935580151f8361db2e2042",
+    "page_count": 10,
+    "text_pages": 10
+  },
+  {
+    "profile_id": "cbse-12-066",
+    "version": "2026-27.1",
+    "kind": "answer-key",
+    "path": "exam/Class 12/Entrepreneurship-MS.pdf",
+    "sha256": "2cc31af5074311cab96638ac276c148df62f213c9b06f2507a72a63ef6cc67b1",
+    "page_count": 6,
+    "text_pages": 6
+  },
+  {
+    "profile_id": "cbse-12-029",
+    "version": "2026-27.1",
+    "kind": "question-paper",
+    "path": "exam/Class 12/Geography-SQP.pdf",
+    "sha256": "5312711812e79acb7bf7c4aab862e9a2970d026df904fc3ea9e32ad511011fb2",
+    "page_count": 12,
+    "text_pages": 12
+  },
+  {
+    "profile_id": "cbse-12-029",
+    "version": "2026-27.1",
+    "kind": "answer-key",
+    "path": "exam/Class 12/Geography-MS.pdf",
+    "sha256": "8ad0e17b0521b0d755cec51f61800d343a8e8f6666eb4e23828e4908475b79ce",
+    "page_count": 11,
+    "text_pages": 11
+  },
+  {
+    "profile_id": "cbse-12-027",
+    "version": "2026-27.1",
+    "kind": "question-paper",
+    "path": "exam/Class 12/History-SQP.pdf",
+    "sha256": "8b6185859721c07087711d2023e21fff6b0f6b4f28e667b3c1e312093e245614",
+    "page_count": 10,
+    "text_pages": 10
+  },
+  {
+    "profile_id": "cbse-12-027",
+    "version": "2026-27.1",
+    "kind": "answer-key",
+    "path": "exam/Class 12/History-MS.pdf",
+    "sha256": "83b34630364c13b5aeabfa8fb1c8e6204b80f48360379deb419cd0471833d0d8",
+    "page_count": 10,
+    "text_pages": 10
+  },
+  {
+    "profile_id": "cbse-12-064",
+    "version": "2026-27.1",
+    "kind": "question-paper",
+    "path": "exam/Class 12/HomeScience-SQP.pdf",
+    "sha256": "29dd7055a1ac82a79cad6606305f2d824687455f709aa9806f9be0a32f84f409",
+    "page_count": 4,
+    "text_pages": 4
+  },
+  {
+    "profile_id": "cbse-12-064",
+    "version": "2026-27.1",
+    "kind": "answer-key",
+    "path": "exam/Class 12/HomeScience-MS.pdf",
+    "sha256": "5a90672975aaee3327e0a89ef8015224a4b3c5bf9bb045c7064830c8fe00e802",
+    "page_count": 8,
+    "text_pages": 8
+  },
+  {
+    "profile_id": "cbse-12-065",
+    "version": "2026-27.1",
+    "kind": "question-paper",
+    "path": "exam/Class 12/InformaticsPractices-SQP.pdf",
+    "sha256": "f3005dce53f9ad4c2cd84122bc7a5b9e74c8db221e45d3f3a9e9f732e74894ff",
+    "page_count": 8,
+    "text_pages": 8
+  },
+  {
+    "profile_id": "cbse-12-065",
+    "version": "2026-27.1",
+    "kind": "answer-key",
+    "path": "exam/Class 12/InformaticsPractices-MS.pdf",
+    "sha256": "9b832e6eb9c15a0e55ebdedef373b0a4219c064363189d699501c618bcab3f4c",
+    "page_count": 5,
+    "text_pages": 5
+  },
+  {
+    "profile_id": "cbse-12-039",
+    "version": "2026-27.1",
+    "kind": "question-paper",
+    "path": "exam/Class 12/Sociology-SQP.pdf",
+    "sha256": "4ec572effa769f3f880afd184d413ca67ae6b5084df8d494db7d56f3d86751f3",
+    "page_count": 8,
+    "text_pages": 8
+  },
+  {
+    "profile_id": "cbse-12-039",
+    "version": "2026-27.1",
+    "kind": "answer-key",
+    "path": "exam/Class 12/Sociology-MS.pdf",
+    "sha256": "57d0ee1403423f80983a1da089f668f2282d2f49c99e6ec72fc0eff986b4ee3a",
+    "page_count": 4,
+    "text_pages": 4
   }
 ]

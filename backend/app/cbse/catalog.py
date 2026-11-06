@@ -180,7 +180,7 @@ PROFILES = [
         80,
         [section("A", 1, 26, 60), section("B", 27, 34, 20)],
         notes=(
-            "Part B: explicitly select Financial Statements or Computerised Accounting before verification.",
+            "Part B: two options numbered 27 to 34, Analysis of Financial Statements and Computerised Accounting; each student answers one.",
         ),
     ),
     profile(12, "044", "Biology", "Biology", 70, deepcopy(_SCIENCE12)),
@@ -218,12 +218,6 @@ PROFILES = [
     ),
     profile(12, "042", "Physics", "Physics", 70, deepcopy(_SCIENCE12)),
     profile(
-        12, "041", "Mathematics", "Maths", 80, [],
-        ("Math", "Maths"),
-        notes=("Question count, sections, marks, nested choices and accessible alternatives come from the uploaded paper and scheme.",),
-        upload_driven=True,
-    ),
-    profile(
         12,
         "028",
         "Political Science",
@@ -237,6 +231,130 @@ PROFILES = [
             section("E", 27, 30, 24, 6, 4),
         ],
         ("PoliticalScience",),
+    ),
+    # From the 2026-27 SQP general instructions; each pattern adds up to the printed maximum.
+    profile(
+        12,
+        "041",
+        "Mathematics",
+        "Maths",
+        80,
+        [
+            section("A", 1, 20, 20, 1),
+            section("B", 21, 25, 10, 2, 2),
+            section("C", 26, 31, 18, 3, 3),
+            section("D", 32, 35, 20, 5, 2),
+            section("E", 36, 38, 12, 4),
+        ],
+        ("Maths",),
+    ),
+    profile(
+        12,
+        "241",
+        "Applied Mathematics",
+        "Applied-Maths",
+        80,
+        [
+            section("A", 1, 20, 20, 1),
+            section("B", 21, 25, 10, 2, 2),
+            section("C", 26, 31, 18, 3, 2),
+            section("D", 32, 35, 20, 5, 2),
+            section("E", 36, 38, 12, 4),
+        ],
+        ("Mathematics", "Applied Maths"),
+    ),
+    profile(12, "045", "Biotechnology", "Biotechnology", 70, deepcopy(_SCIENCE12)),
+    profile(
+        12,
+        "066",
+        "Entrepreneurship",
+        "Entrepreneurship",
+        70,
+        [
+            section("A", 1, 18, 18, 1),
+            section("B", 19, 24, 12, 2),
+            section("C", 25, 29, 15, 3),
+            section("D", 30, 34, 25, 5),
+        ],
+    ),
+    profile(
+        12,
+        "029",
+        "Geography",
+        "Geography",
+        70,
+        [
+            section("A", 1, 17, 17, 1),
+            section("B", 18, 19, 6, 3),
+            section("C", 20, 23, 12, 3),
+            section("D", 24, 28, 25, 5),
+            section("E", 29, 30, 10, 5),
+        ],
+    ),
+    profile(
+        12,
+        "027",
+        "History",
+        "History",
+        80,
+        [
+            section("A", 1, 21, 21, 1),
+            section("B", 22, 27, 18, 3),
+            section("C", 28, 30, 24, 8),
+            section("D", 31, 33, 12, 4),
+            section("E", 34, 34, 5, 5),
+        ],
+    ),
+    profile(
+        12,
+        "064",
+        "Home Science",
+        "HomeScience",
+        70,
+        [section("A", 1, 14, 14, 1), section("B", 15, 25, 26), section("C", 26, 32, 30)],
+    ),
+    profile(
+        12,
+        "065",
+        "Informatics Practices",
+        "InformaticsPractices",
+        70,
+        [
+            section("A", 1, 21, 21, 1),
+            section("B", 22, 28, 14, 2),
+            section("C", 29, 32, 12, 3),
+            section("D", 33, 34, 8, 4),
+            section("E", 35, 37, 15, 5),
+        ],
+    ),
+    profile(
+        12,
+        "039",
+        "Sociology",
+        "Sociology",
+        80,
+        [
+            section("A", 1, 16, 16, 1),
+            section("B", 17, 25, 18, 2),
+            section("C", 26, 32, 28, 4),
+            section("D", 33, 35, 18, 6),
+        ],
+    ),
+    # The instructions give mark counts but not every question's place: the uploaded paper sets the structure.
+    profile(
+        12, "054", "Business Studies", "BusinessStudies", 80, [],
+        notes=("Question structure, choices and allocations come from the uploaded paper and scheme.",),
+        upload_driven=True,
+    ),
+    profile(
+        12, "030", "Economics", "Economics", 80, [],
+        notes=("Question structure, choices and allocations come from the uploaded paper and scheme.",),
+        upload_driven=True,
+    ),
+    profile(
+        12, "037", "Psychology", "Psychology", 70, [],
+        notes=("Question structure, choices and allocations come from the uploaded paper and scheme.",),
+        upload_driven=True,
     ),
     profile(
         12, "302", "Hindi", "Hindi", 80, [], ("Hindi Core", "हिन्दी"),
@@ -275,6 +393,7 @@ _PARENT_MARKS = {
     + [1] * 6
     + [3, 3, 3, 5],
     "055": [1] * 16 + [3] * 4 + [4] * 2 + [6] * 4 + [1] * 4 + [3] * 2 + [4, 6],
+    "064": [1] * 14 + [2] * 7 + [3] * 4 + [4] * 5 + [5] * 2,
 }
 _LANGUAGE_CHOICES = {
     "101": {5: [(1, 2)], 6: [(1, 2)], 10: [(2, 3)], 11: [(5, 6)], 12: [(1, 2)]},
@@ -321,17 +440,15 @@ for _p in PROFILES:
             _s["internal_choices"] = {"B": 2, "C": 1, "E": 3}.get(_s["key"])
 
 
-# Board patterns where each student answers one of two printed branches: the exam must say which one it marks.
-BRANCH_OPTIONS = {
-    "055": {"key": "accountancy_option", "label": "Part B option",
-            "choices": [{"value": "financial", "label": "Analysis of Financial Statements"},
-                        {"value": "computerised", "label": "Computerised Accounting"}]},
-}
+# Options the school must choose when creating an exam. None today: Accountancy's Part B options are per student, and
+# the AI reads each student's from their answer sheet (services/part_b.py).
+BRANCH_OPTIONS: dict[str, dict] = {}
 
 
 def profile_options(profile_id: str | None) -> list[dict]:
     """The choices a profile needs at exam creation (Create Exam shows one select per entry)."""
-    return []  # Create Exam asks for the subject only; Part B branches are settled by the answer sheet
+    p = get_profile(profile_id)
+    return [BRANCH_OPTIONS[p["code"]]] if p and p["code"] in BRANCH_OPTIONS else []
 
 
 def get_profile(profile_id: str | None):
@@ -391,7 +508,7 @@ def creation_data(body, school_class, subject):
     if options.get("accessibility") not in {"standard", "accessible"}:
         raise err(400, "CBSE_OPTION_REQUIRED", "Select the paper audience.")
     branch = BRANCH_OPTIONS.get(p["code"])
-    if branch and options.get(branch["key"]) not in {None, *(c["value"] for c in branch["choices"])}:
+    if branch and options.get(branch["key"]) not in {c["value"] for c in branch["choices"]}:
         raise err(400, "CBSE_OPTION_REQUIRED",
                   f"Choose the {p['name']} {branch['label']}: "
                   + " or ".join(c["label"] for c in branch["choices"]) + ".")

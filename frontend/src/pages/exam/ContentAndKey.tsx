@@ -5,6 +5,7 @@ import QuestionPaper from "./QuestionPaper";
 import Questions from "./Questions";
 import AnswerKey from "./AnswerKey";
 import ExamPaperGenerator from "../../components/ExamPaperGenerator";
+import ReplaceFileBar from "../../components/ReplaceFileBar";
 
 // a generated paper can replace the exam's paper and key until answer sheets arrive
 const GEN_OPEN = ["DRAFT", "QUESTION_PAPER_UPLOADED", "QUESTIONS_EXTRACTED", "QUESTIONS_VERIFIED", "ANSWER_KEY_UPLOADED",
@@ -15,7 +16,7 @@ interface ContentAndKeyProps {
 }
 
 export default function ContentAndKey({ defaultSubTab }: ContentAndKeyProps) {
-  const { exam, reload } = useExam();
+  const { exam, reload, inSetup, uploading, setUploading } = useExam();
   const generating = ["QUEUED", "GENERATING"].includes(exam.generation?.status ?? "");
 
   // Determine initial subtab based on prop or exam progress
@@ -100,13 +101,22 @@ export default function ContentAndKey({ defaultSubTab }: ContentAndKeyProps) {
         {activeSubTab === "questions" && (
           <div className="space-y-5">
             {/* AI generation lives with the questions it produces: progress here, then the questions below */}
+            {inSetup && <ReplaceFileBar exam={exam} kind="question-paper" uploading={uploading}
+                                        setUploading={setUploading} onReload={reload} />}
             <ExamPaperGenerator examId={exam.id} examStatus={exam.status} onAttached={reload}
+              hasPaper={!!exam.question_paper}
               locked={!GEN_OPEN.includes(exam.status) || (exam.evaluation_count ?? 0) > 0} />
             {/* remount when a generated paper lands so the list reloads */}
             {!generating && <Questions key={`${exam.status}-${exam.question_count}-${exam.generation?.status ?? ""}`} />}
           </div>
         )}
-        {activeSubTab === "key" && <AnswerKey />}
+        {activeSubTab === "key" && (
+          <div className="space-y-5">
+            {inSetup && <ReplaceFileBar exam={exam} kind="answer-key" uploading={uploading}
+                                        setUploading={setUploading} onReload={reload} />}
+            <AnswerKey />
+          </div>
+        )}
       </div>
     </div>
   );
