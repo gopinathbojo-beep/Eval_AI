@@ -12,6 +12,7 @@ os.environ["AI_MEDIUM_MODEL"] = ""  # tests use the single OPENROUTER_MODEL
 os.environ["AI_SMALL_MODEL"] = ""
 os.environ["AUTOPILOT"] = "false"  # existing tests drive the manual steps; autopilot tests switch it on
 os.environ["AI_PARALLEL_JOBS"] = "1"
+os.environ["AI_JOIN_ANSWERS"] = "false"  # existing tests drive the rule segmenter; the joiner's tests switch it on
 os.environ["STORAGE_PROVIDER"] = "local"
 os.environ["DURABLE_JOBS"] = "false"
 os.environ["AUTO_MIGRATE"] = "false"

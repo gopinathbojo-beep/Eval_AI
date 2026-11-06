@@ -218,6 +218,7 @@ def evaluation_view(ev: Evaluation) -> dict:
     sub_name = ex.subject.name if ex and ex.subject else None
     sub_id = ex.subject_id if ex else None
     return {
+        "part_b_option": ev.part_b_option,
         "id": ev.id,
         "exam_id": ev.exam_id,
         "student": student_view(st),

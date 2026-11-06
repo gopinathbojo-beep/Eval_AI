@@ -182,15 +182,3 @@ def test_generated_paper_replaces_a_paper_read_by_ocr(library, client, auth, mon
     assert detail["status"] == "READY_FOR_EVALUATION" and detail["verified_question_count"] == detail["question_count"] == 3
 
 
-def test_accountancy_exam_asks_for_its_part_b_option(client, auth):
-    """A board pattern with printed branches (Accountancy Part B) is created with the branch the school marks."""
-    catalog = client.get("/api/subjects/catalog?grade=12", headers=auth).json()["12"]
-    acc = next(s for s in catalog if s["key"] == "12-accountancy")
-    assert acc["options"][0]["key"] == "accountancy_option" and len(acc["options"][0]["choices"]) == 2
-    assert all(not s["options"] for s in catalog if s["key"] != "12-accountancy")
-    body = {"name": "Accounts", "grade": "12", "section": "A", "subject_key": "12-accountancy"}
-    r = client.post("/api/exams/simple", headers=auth, json=body)
-    assert r.status_code == 400 and "Computerised Accounting" in r.json()["message"]
-    r = client.post("/api/exams/simple", headers=auth, json={**body, "standard_options": {"accountancy_option": "computerised"}})
-    assert r.status_code == 201, r.text
-    assert r.json()["standard_options"] == {"accessibility": "standard", "accountancy_option": "computerised"}

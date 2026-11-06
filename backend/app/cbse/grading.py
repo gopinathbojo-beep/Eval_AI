@@ -4,7 +4,7 @@ import json
 import math
 import re
 import unicodedata
-from .extraction import leaves, tree_total, deduction_rules
+from .extraction import leaves, only_selected, option_text, tree_total, deduction_rules
 from ..formatter.common.mark_rules import EvaluationValidationError
 from ..ocr.prompts import GENEROUS_MARKING
 
@@ -46,12 +46,14 @@ def prompt(q, key, student, options, instructions, references=None):
         {k: v for k, v in item.items() if k != "crop_file"}
         for item in (key.rubric or {}).get("visuals", [])
     ]
+    branch = options.get("accountancy_option")  # the option this student answered: the other is none of their marks
+    tree = only_selected(tree, options)
     return f"""QUESTION {q.display_number} (maximum marks: {q.max_marks:g})
-{q.question_text}
+{option_text(q.question_text, branch)}
 QUESTION VISUAL EVIDENCE (source descriptions and visible labels):
 {json.dumps(question_visuals, ensure_ascii=False)}
 OFFICIAL UPLOADED MARKING SCHEME:
-{key.answer_text}
+{option_text(key.answer_text, branch)}
 MARKING-SCHEME VISUAL EVIDENCE (source descriptions and visible labels):
 {json.dumps(scheme_visuals, ensure_ascii=False)}
 GENERAL EXAMINER INSTRUCTIONS:

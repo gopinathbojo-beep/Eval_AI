@@ -157,3 +157,116 @@ def test_exam_wise_report(client, auth):
     assert "Meena" in text and "Arjun" in text and "Kavya" in text and "Not evaluated" in text
     assert "55%" in text and "1 / 2" in text and "50%" in text                  # average, passed, pass %
     assert "Question-wise Analysis" in text and "Knowledge Level" not in text and "K Level" not in text
+
+
+def test_all_student_reports_in_one_zip(client, auth):
+    import io
+    import zipfile
+    c, h = client, auth
+    db = SessionLocal()
+    t = db.query(Teacher).filter_by(email="rao@school.org").one()
+    cls = SchoolClass(teacher_id=t.id, name="ZIP-9C")
+    sub = Subject(teacher_id=t.id, name="ZIP Science")
+    db.add_all([cls, sub])
+    db.flush()
+    kids = [Student(class_id=cls.id, name=n, roll_number=r) for n, r in (("Meena", "1"), ("Arjun", "2"), ("Kavya", "3"))]
+    db.add_all(kids)
+    ex = Exam(teacher_id=t.id, name="Science Term 1", academic_year="2026-27", class_id=cls.id, subject_id=sub.id,
+              exam_type="Term", total_marks=10, status="REVIEW_REQUIRED")
+    db.add(ex)
+    db.flush()
+    q1 = ExamQuestion(exam_id=ex.id, display_number="1", max_marks=10, position=0)
+    db.add(q1)
+    db.commit()
+    assert c.get(f"/api/exams/{ex.id}/student-reports.zip", headers=h).status_code == 400   # nobody finalized yet
+    for st, marks, status in ((kids[0], 9, "FINALIZED"), (kids[1], 4, "FINALIZED"), (kids[2], 6, "DRAFT")):
+        doc = AnswerSheetDocument(exam_id=ex.id, student_id=st.id, original_filename="s.pdf", original_file="x",
+                                  mime_type="application/pdf", file_size=1, status="READY")
+        db.add(doc)
+        db.flush()
+        ev = Evaluation(exam_id=ex.id, student_id=st.id, answer_sheet_id=doc.id, status=status, total_marks=marks,
+                        maximum_marks=10, percentage=10.0 * marks,
+                        finalized_at=datetime.now(timezone.utc) if status == "FINALIZED" else None)
+        db.add(ev)
+        db.flush()
+        db.add(EvaluationItem(evaluation_id=ev.id, exam_question_id=q1.id, final_marks=marks))
+    db.commit()
+    ex_id = ex.id
+    db.close()
+
+    r = c.get(f"/api/exams/{ex_id}/student-reports.zip", headers=h)
+    assert r.status_code == 200 and r.headers["content-type"] == "application/zip"
+    assert "StudentReports_Science_Term_1.zip" in r.headers["content-disposition"]
+    z = zipfile.ZipFile(io.BytesIO(r.content))
+    names = z.namelist()
+    assert len(names) == 2 and all(n.endswith(".pdf") for n in names)        # the draft student is left out
+    texts = " ".join(_text(z.read(n))[0] for n in names)
+    assert "Meena" in texts and "Arjun" in texts and "Kavya" not in texts
+
+
+def test_report_details_change_the_reports_and_nothing_else(client, auth):
+    c, h = client, auth
+    db = SessionLocal()
+    t = db.query(Teacher).filter_by(email="rao@school.org").one()
+    cls = SchoolClass(teacher_id=t.id, name="RD-10A")
+    sub = Subject(teacher_id=t.id, name="RD Maths")
+    db.add_all([cls, sub])
+    db.flush()
+    kid = Student(class_id=cls.id, name="Meena", roll_number="1")
+    db.add(kid)
+    ex = Exam(teacher_id=t.id, name="Unit 1", academic_year="2026-27", class_id=cls.id, subject_id=sub.id,
+              exam_type="Board pattern", total_marks=10, status="FINALIZED", standard_profile_id="cbse-12-041")
+    db.add(ex)
+    db.flush()
+    q = ExamQuestion(exam_id=ex.id, display_number="1", max_marks=10, position=0)
+    doc = AnswerSheetDocument(exam_id=ex.id, student_id=kid.id, original_filename="s.pdf", original_file="x",
+                              mime_type="application/pdf", file_size=1, status="READY")
+    db.add_all([q, doc])
+    db.flush()
+    ev = Evaluation(exam_id=ex.id, student_id=kid.id, answer_sheet_id=doc.id, status="FINALIZED", total_marks=7,
+                    maximum_marks=10, percentage=70.0, finalized_at=datetime.now(timezone.utc))
+    db.add(ev)
+    db.flush()
+    db.add(EvaluationItem(evaluation_id=ev.id, exam_question_id=q.id, final_marks=7))
+    db.commit()
+    ex_id, ev_id = ex.id, ev.id
+    db.close()
+
+    r = c.put(f"/api/exams/{ex_id}/report-details", headers=h, json={
+        "name": "Half Yearly", "class_name": "Class XII - A", "subject": "Applied Maths", "exam_type": "Term Exam",
+        "academic_year": "2027-28", "exam_date": "05 Nov 2026"})
+    assert r.status_code == 200, r.text                                   # open on a finalized board-pattern exam
+    body = r.json()
+    assert body["report_details"]["name"] == "Half Yearly"
+    assert body["name"] == "Unit 1" and body["subject_name"] == "RD Maths" and body["exam_type"] == "Board pattern"
+
+    text, _ = _text(c.get(f"/api/evaluations/{ev_id}/report.pdf", headers=h).content)
+    for shown in ("Half Yearly", "Class XII - A", "Applied Maths", "Term Exam", "2027-28", "05 Nov 2026", "7 / 10"):
+        assert shown in text, shown
+    assert "Unit 1" not in text and "RD Maths" not in text
+    text, _ = _text(c.get(f"/api/exams/{ex_id}/report.pdf", headers=h).content)
+    assert "Half Yearly" in text and "Applied Maths" in text and "Unit 1" not in text
+
+    r = c.put(f"/api/exams/{ex_id}/report-details", headers=h, json={"name": "  ", "subject": "Applied Maths"})
+    assert r.json()["report_details"] == {"subject": "Applied Maths"}     # blank goes back to the exam's own value
+    text, _ = _text(c.get(f"/api/evaluations/{ev_id}/report.pdf", headers=h).content)
+    assert "Unit 1" in text and "Applied Maths" in text
+
+
+def test_report_file_name_is_roll_section_subject():
+    from types import SimpleNamespace as NS
+    from app.services.school_reports import report_filename
+
+    def ev(section=None, class_name="10-C", subject="Science", details=None, roll="10C04"):
+        cls, sub = NS(name=class_name), NS(name=subject)
+        return NS(student=NS(roll_number=roll, section=section),
+                  exam=NS(report_details=details, school_class=cls, subject=sub, name="T", exam_type="B",
+                          academic_year="2026-27", exam_date=None))
+
+    assert report_filename(ev()) == "10C04-C-Science.pdf"                       # the section from the class name
+    assert report_filename(ev(section="D")) == "10C04-D-Science.pdf"            # the student's own section first
+    assert report_filename(ev(class_name="Grade 10")) == "10C04-Science.pdf"    # no section at all
+    assert report_filename(ev(subject="Social Science")) == "10C04-C-Social_Science.pdf"
+    assert report_filename(ev(roll="10/C 04")) == "10_C_04-C-Science.pdf"       # safe in a file name
+    edited = {"subject": "Physics", "class_name": "10-E"}
+    assert report_filename(ev(details=edited)) == "10C04-E-Physics.pdf"         # follows what the report prints

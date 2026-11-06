@@ -512,6 +512,31 @@ def download_exam_report(exam_id: str, db: Session = Depends(get_db), t: Teacher
     )
 
 
+@router.get("/exams/{exam_id}/student-reports.zip")
+def download_student_reports(exam_id: str, db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
+    """Every finalized student's report of the exam in one ZIP, the same PDF each "View Report" gives."""
+    import io
+    import re
+    import zipfile
+    exam = get_exam(db, t, exam_id)
+    evs = db.query(Evaluation).filter_by(exam_id=exam.id, status="FINALIZED").all()
+    if not evs:
+        raise err(400, "NO_FINALIZED_STUDENTS", "Finalize at least one student before downloading their reports.")
+    buf, used = io.BytesIO(), set()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for ev in sorted(evs, key=lambda e: (e.student.roll_number or "", e.student.name or "")):
+            pdf, name = build_evaluation_pdf_report(db, t, ev.id)
+            base, n = name, 2
+            while name in used:   # two students whose names and rolls make the same file name
+                name, n = base.replace(".pdf", f"_{n}.pdf"), n + 1
+            used.add(name)
+            z.writestr(name, pdf)
+    filename = f"StudentReports_{re.sub(r'[^A-Za-z0-9_-]+', '_', exam.name).strip('_') or 'exam'}.zip"
+    return Response(content=buf.getvalue(), media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"',
+                             "Cache-Control": "private, no-cache"})
+
+
 @router.get("/results")
 def list_results(db: Session = Depends(get_db), t: Teacher = Depends(current_teacher)):
     exam_ids = [e.id for e in exams_query(db, t)]

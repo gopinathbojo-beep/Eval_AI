@@ -2,7 +2,7 @@
 
 import re
 from collections import defaultdict
-from .extraction import merge_nodes, tree_total
+from .extraction import BRANCH_TITLES, BRANCHES, merge_nodes, tree_total
 from ..models import ExamQuestion, AnswerKey, StudentAnswer, EvaluationItem
 from ..services.state import set_state
 from ..documents import cropping
@@ -238,7 +238,12 @@ def mark_answer_continuations(results, printed=None):
             last = result.fragments[-1].root
 
 
-def fix_false_continuations(results):
+def _opens_lettered(fragment):
+    """The piece opens with its own number and choice letter: "31 B. Prepare...", "OR 26 B. I. Cash Book"."""
+    return re.match(rf"\s*(?:OR\s+)?(?:Q?\s*{fragment.root}\s*\.?\s*)?\(?\s*[AB]\s*\)?[.:)]\s", fragment.text or "") is not None
+
+
+def fix_false_continuations(results, choices=()):
     """A visually impaired version is an alternative, never a continuation; a 'continuation' that only repeats
     text already read for the same question (a split-page overlap) is dropped."""
     seen, last = defaultdict(str), None
@@ -251,6 +256,7 @@ def fix_false_continuations(results):
             # is a part of the balance sheet carried over, not alternative (A)
             before = kept[-1].root if kept else last
             if fragment.continues and (fragment.root != before or _CHOICE_LABEL.match(fragment.text or "")
+                                       or (fragment.root in choices and _opens_lettered(fragment))
                                        or _ACCESSIBLE.match(fragment.text or "")):
                 fragment.continues = False
                 fragment.issues = [x for x in fragment.issues if "continu" not in x.lower()]
@@ -319,10 +325,11 @@ def share_assertion_reason_options(results):
     text layer, then the model's reading, then the standard CBSE wording)."""
     printed = {}
 
-    def harvest(text):
+    def harvest(text, into=None):
+        into = printed if into is None else into
         for line in (text or "").splitlines():
             if (match := _AR_OPTION.match(line)) and len(line.strip()) <= 120:
-                printed.setdefault(match.group(1).upper(), re.sub(r"\s+", " ", line.strip()))
+                into.setdefault(match.group(1).upper(), re.sub(r"\s+", " ", line.strip()))
 
     for page, _ in results:
         harvest(page.get("page_text"))
@@ -332,22 +339,36 @@ def share_assertion_reason_options(results):
     if not printed and not any(_AR_QUESTION.search(f.text or "") for _, r in results for f in r.fragments):
         return
     options = "\n".join(printed.get(letter) or text for letter, text in CBSE_AR_OPTIONS.items())
-    assertion, last = set(), {}
+    assertion, last, lists = set(), {}, {}
+    # a number printed again after other questions is another printing (Accountancy's Option II), with its own type
+    printing, previous = defaultdict(int), None
     for _, result in results:
         kept = []
         for fragment in result.fragments:
+            if fragment.root != previous and printing[fragment.root]:
+                printing[fragment.root] += 1
+            printing[fragment.root] = printing[fragment.root] or 1
+            previous = fragment.root
+            version = (fragment.root, printing[fragment.root])
+            own = {}
+            harvest(fragment.text, own)
+            if len(own) < 4:   # read without its full list: the one printed on its own page, if the page has one
+                on_page = {}
+                harvest(next((p.get("page_text") for p, r in results if r is result), ""), on_page)
+                own = on_page if len(on_page) == 4 else own
+            lists[version] = "\n".join(own[letter] for letter in "ABCD") if len(own) == 4 else lists.get(version)
             lines = (fragment.text or "").split("\n")
             rest = [line for line in lines if not _AR_OPTION.match(line)]
             if len(rest) != len(lines) and not any(line.strip() for line in rest):
                 continue  # only the shared option list: it belongs to no single question
             fragment.text = "\n".join(rest).strip()
             if fragment.question_type == "assertion_reason" or _AR_QUESTION.search(fragment.text):
-                assertion.add(fragment.root)
-            last[fragment.root] = fragment
+                assertion.add(version)
+            last[version] = fragment
             kept.append(fragment)
         result.fragments = kept
-    for root in assertion:  # after the question's last piece: a question cut by a page break keeps its reason first
-        last[root].text = f"{last[root].text}\n{options}".strip()
+    for version in assertion:  # after the question's last piece: a question cut by a page break keeps its reason first
+        last[version].text = f"{last[version].text}\n{lists.get(version) or options}".strip()
 
 
 def _meta_key(value):
@@ -468,10 +489,12 @@ def collect(doc, results, kind="question-paper"):
         from .layout import printed_by_page
         mark_answer_continuations(results, printed_by_page(doc))
     # before marks are set: a piece wrongly flagged as a continuation gets no whole-question marks
-    fix_false_continuations(results)
+    from .layout import printed_twice
+    fix_false_continuations(results, printed_twice(doc))
     apply_printed_sections(doc, results)
     drop_borrowed_alternatives(results)
     give_every_question_a_tree(results)
+    mark_branches(results)
     roots = defaultdict(list)
     instructions = []
     metadata, issues = merge_metadata(results)
@@ -528,7 +551,7 @@ def _alternatives(fragments, printed_choice=False):
         return None
     # each copy carries the same whole-question marks (a visually impaired version may print none);
     # unmarked pieces are parts of one question
-    marks = {f.marks for f, vi in zip(heads, accessible) if not (vi and f.marks is None)}
+    marks = {f.marks for f, vi in zip(heads, accessible) if not ((vi or (printed_choice and _opens_lettered(f))) and f.marks is None)}
     if len(marks) != 1 or None in marks:
         return None
     root = heads[0].tree.id
@@ -624,7 +647,84 @@ _PAGE_ONLY_NOTE = re.compile(r"(?:next|previous|following|preceding) page|(?:on|
                              r"may continue|continues? (?:on|from)|cut off", re.I)
 
 
+_BRANCH_HEADING = re.compile(r"Part\s*[-\u2013:]*\s*B\s*[:\-\u2013\u2014]*\s*(Analysis\s+of\s+Financial|Computeri[sz]ed)", re.I)
+
+
+def mark_branches(results):
+    """Accountancy Part B prints two options numbered from the same question. The numbers restart where the second
+    option begins; everything from the first printing of that number belongs to the options."""
+    seq = [f for _, result in results for f in result.fragments]
+    tags = [f.tree.audience for f in seq if f.tree is not None and f.tree.audience in BRANCHES]
+    headings = [m[1].lower() for page, _ in results for m in _BRANCH_HEADING.finditer(page.get("page_text") or "")]
+    if not tags and not headings:
+        return
+    prev, start, drop = 0, None, 0
+    for i, f in enumerate(seq):
+        if f.continues:
+            continue
+        if f.root < prev and prev - f.root >= drop:
+            start, drop = i, prev - f.root
+        prev = f.root
+    if start is None:
+        return
+    first = next((i for i in range(start) if seq[i].root == seq[start].root and not seq[i].continues), None)
+    if first is None:
+        return
+    head_tag = next((f.tree.audience for f in seq[first:start] if f.tree is not None and f.tree.audience in BRANCHES), None)
+    if head_tag is None and headings:
+        head_tag = "computerised" if headings[0].startswith("comput") else "financial"
+    head_tag = head_tag or "financial"
+    other = next(b for b in BRANCHES if b != head_tag)
+    for f in seq[first:start]:
+        f.branch = head_tag
+    for f in seq[start:]:
+        f.branch = other
+
+
+def _in_branch(node, branch):
+    """A copy of one option's tree: its ids are its own, as both options use the same question numbers."""
+    node = dict(node)
+    node["id"] = f"{branch[:3]}-{node['id']}"
+    node["deductions"] = [{**d, "id": f"{branch[:3]}-{d['id']}"} for d in node.get("deductions") or []]
+    node["children"] = [_in_branch(c, branch) for c in node.get("children") or []]
+    return node
+
+
+def _combined_options(fragments, options, printed_choice):
+    """Option I and Option II under one question number, each with its label: only one is ever answered."""
+    groups = {}
+    for pair in fragments:
+        groups.setdefault(pair[1].branch, []).append(pair)
+    parts, problems = [], []
+    for number, (branch, group) in enumerate(groups.items(), 1):
+        group[0][1].issues = [x for x in group[0][1].issues if x != _ALTERNATIVE]
+        text, tree, issues, marks, section = _combined_one(group, options, printed_choice)
+        title = f"Option {'I' * number}: {BRANCH_TITLES[branch]}"
+        if tree is not None:
+            tree = _in_branch(tree, branch)
+            tree.update(audience=branch, label=title)
+        parts.append((title, text, tree, marks, section))
+        problems += issues
+    if len(parts) == 1:
+        problems.append(f"Only {parts[0][0]} has this question; the other option is missing.")
+    if len({p[3] for p in parts if p[3] is not None}) > 1:
+        problems.append("Conflicting whole-question marks across the Part B options")
+    marks = next((p[3] for p in parts if p[3] is not None), None)
+    text = "\nOR\n".join(f"{title}\n{body}" for title, body, *_ in parts)
+    children = [p[2] for p in parts if p[2] is not None]
+    root = f"q{fragments[0][1].root}"
+    tree = {"id": root, "kind": "choose", "label": "", "text": "", "marks": marks, "limit": 1, "choice_type": "question",
+            "audience": None, "response_type": "open", "deductions": [], "children": children}
+    return text, tree, problems, marks, next((p[4] for p in parts if p[4]), None)
+
+
 def combined(fragments, options=None, printed_choice=False):
+    if any(f.branch for _, f in fragments):
+        return _combined_options(fragments, options, printed_choice)
+    return _combined_one(fragments, options, printed_choice)
+
+
+def _combined_one(fragments, options=None, printed_choice=False):
     alternative = _alternatives(fragments, printed_choice)
     # a continuation's root marks are a part's marks (or a guess where no marks are printed), not the question's
     trees, problems = ([alternative], []) if alternative else merge_nodes(

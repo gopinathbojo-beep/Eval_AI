@@ -1,9 +1,10 @@
 from __future__ import annotations
 import logging
 import re
+import time
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
-from ..database import SessionLocal
+from ..database import SessionLocal, is_locked
 from dataclasses import dataclass, field
 from ..models import AnswerKey, AnswerSheetDocument, Evaluation, Exam, ExamQuestion, EvaluationItem, StudentAnswer
 from ..ocr import prompts
@@ -391,7 +392,7 @@ def evaluate_item(db: Session, ev: Evaluation, q: ExamQuestion, item: Evaluation
                     from ..cbse.validation import active_doc
                     from ..models import AnswerKeyDocument
                     scheme_doc = active_doc(db,AnswerKeyDocument,exam_record.id)
-                    prompt = grading.prompt(q,key,text,exam_record.standard_options or {},(scheme_doc.extraction or {}).get("instructions",[]),
+                    prompt = grading.prompt(q,key,text,_grading_options(exam_record, ev),(scheme_doc.extraction or {}).get("instructions",[]),
                                             references)
                     system = grading.SYSTEM
                 else:
@@ -411,7 +412,7 @@ def evaluate_item(db: Session, ev: Evaluation, q: ExamQuestion, item: Evaluation
                     return chat_structured(system, user, EvaluationResult, model=model)
 
                 if getattr(exam_record,"standard_profile_id",None):
-                    options = exam_record.standard_options or {}
+                    options = _grading_options(exam_record, ev)
 
                     def check(parsed, unverified=None, lenient=False):
                         return grading.validate_result(parsed, q, key, options, text, unverified=unverified,
@@ -478,15 +479,47 @@ def evaluate_item(db: Session, ev: Evaluation, q: ExamQuestion, item: Evaluation
         return
 
 
+LOCK_RETRIES = 4
+
+
+def _still_to_grade(ev_id: str) -> list[str]:
+    """Questions of the sheet without a mark yet (a run interrupted by a busy database resumes with only these)."""
+    db = SessionLocal()
+    try:
+        ev = db.get(Evaluation, ev_id)
+        done = {it.exam_question_id for it in db.query(EvaluationItem).filter_by(evaluation_id=ev_id)
+                if it.status in ("EVALUATED", "APPROVED") or it.teacher_overridden}
+        return [q.id for q in exam_questions(db, ev.exam_id) if q.id not in done]
+    finally:
+        db.close()
+
+
+def _grading_options(exam: Exam, ev: Evaluation) -> dict:
+    """The exam's version choices, with the Part B option this student answered."""
+    options = dict(exam.standard_options or {})
+    if ev.part_b_option and not options.get("accountancy_option"):
+        options["accountancy_option"] = ev.part_b_option
+    return options
+
+
 def run_evaluation(ev_id: str, only_question_ids: list[str] | None = None) -> None:
     with keyed_lock(f"evaluation:{ev_id}"):  # jobs run in parallel; one grading run per sheet at a time
-        _run_evaluation(ev_id, only_question_ids)
+        todo = only_question_ids
+        for attempt in range(1, LOCK_RETRIES + 1):
+            if _run_evaluation(ev_id, todo, last=attempt == LOCK_RETRIES):
+                break
+            log.warning("Database busy while grading %s; retrying (%d/%d)", ev_id, attempt, LOCK_RETRIES)
+            time.sleep(3 * attempt)
+            todo = [q for q in _still_to_grade(ev_id) if not only_question_ids or q in only_question_ids]
+            if not todo:
+                break
         if not only_question_ids:  # a whole-sheet run; a teacher re-grading one question finishes it themselves
             from . import autopilot
             autopilot.after_grading(ev_id)
 
 
-def _run_evaluation(ev_id: str, only_question_ids: list[str] | None) -> None:
+def _run_evaluation(ev_id: str, only_question_ids: list[str] | None, last: bool = True) -> bool:
+    """False when the run hit a busy database and should be run again for the questions still unmarked."""
     db = SessionLocal()
     try:
         ev = db.get(Evaluation, ev_id)
@@ -503,6 +536,10 @@ def _run_evaluation(ev_id: str, only_question_ids: list[str] | None) -> None:
             qs = [q for q in exam_questions(db, ev.exam_id) if not only_question_ids or q.id in only_question_ids]
             ev.run_total, ev.run_progress = len(qs), 0
             db.commit()
+            if not ev.part_b_option:
+                from .part_b import student_option
+                ev.part_b_option = student_option(db, ev)
+                db.commit()
             for q in qs:
                 item = db.query(EvaluationItem).filter_by(evaluation_id=ev.id, exam_question_id=q.id).first()
                 if item is None:
@@ -531,9 +568,11 @@ def _run_evaluation(ev_id: str, only_question_ids: list[str] | None) -> None:
         audit(db, exam_id=exam.id, teacher_id=exam.teacher_id, entity_type="evaluation", entity_id=ev.id,
               action="ai_evaluation_failed" if ev.run_status == "ERROR" else "ai_evaluation_completed")
         db.commit()
-    except Exception:
-        log.exception("Evaluation run crashed")
+    except Exception as e:
         db.rollback()
+        if is_locked(e) and not last:
+            return False
+        log.exception("Evaluation run crashed")
         ev = db.get(Evaluation, ev_id)
         if ev:
             ev.run_status = "ERROR"
@@ -543,6 +582,7 @@ def _run_evaluation(ev_id: str, only_question_ids: list[str] | None) -> None:
             db.commit()
     finally:
         db.close()
+    return True
 
 
 def confirm_not_attempted(db: Session, ev: Evaluation, snap: ExamSnapshot | None = None) -> None:

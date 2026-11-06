@@ -37,6 +37,8 @@ class Settings(BaseSettings):
     ai_small_model: str = "deepseek/deepseek-v4.1-flash"
     # settle every review step with the AI and move each document on without waiting for the school
     autopilot: bool = True
+    # join and map a sheet's answers with one text-only AI call that sees every page; the rules are the fallback
+    ai_join_answers: bool = True
     openrouter_base_url: str = "https://openrouter.ai/api"
     ai_request_logprobs: bool = False
     # OCR transcribes source evidence; reserve output tokens for the document.

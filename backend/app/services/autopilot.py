@@ -203,7 +203,7 @@ def _settle_questions(db, exam, doc):
             present.add(root)
             by_root[root] = q
             _note(db, exam, "question", str(root), "autopilot_question_recovered")
-        db.flush()
+        db.commit()  # not flush: the AI calls below must not hold the database's write lock (SQLite)
 
     # 2. each flagged question checked against its page
     for q in qs:
@@ -443,6 +443,7 @@ def settle_answers(db: Session, ev: Evaluation) -> int:
               + "\n".join(f"id={a.id} position={a.position} page={a.page_number} written number={a.raw_question_number or '-'}: "
                           + re.sub(r"\s+", " ", a.answer_text or "")[:400] for a in open_)
               + '\n\nReply: {"rows": [{"id": "...", "question": "7"}]}')
+    db.commit()  # the caller's pending writes go first, so the AI call holds no write lock
     try:
         picks = {r.id: r.question for r in chat_structured(REVIEW_SYSTEM, prompt, RowChoices,
                                                            model=get_settings().small_model).parsed.rows}

@@ -17,12 +17,6 @@ const ExamNew = lazy(() =>
 const ExamWorkspace = lazy(() => import("./pages/ExamWorkspace"));
 const ContentAndKey = lazy(() => import("./pages/exam/ContentAndKey"));
 const Submissions = lazy(() => import("./pages/exam/Submissions"));
-const ExamEvaluation = lazy(() =>
-  import("./pages/exam/Sheets").then((m) => ({ default: m.ExamEvaluation })),
-);
-const ExamResults = lazy(() =>
-  import("./pages/exam/Sheets").then((m) => ({ default: m.ExamResults })),
-);
 const EvaluationPage = lazy(() => import("./pages/EvaluationPage"));
 const ResultsList = lazy(() =>
   import("./pages/Results").then((m) => ({ default: m.ResultsList })),
@@ -229,22 +223,8 @@ export default function App() {
               </Suspended>
             }
           />
-          <Route
-            path="evaluation"
-            element={
-              <Suspended>
-                <ExamEvaluation />
-              </Suspended>
-            }
-          />
-          <Route
-            path="results"
-            element={
-              <Suspended>
-                <ExamResults />
-              </Suspended>
-            }
-          />
+          <Route path="evaluation" element={<Navigate to="../submissions" replace />} />
+          <Route path="results" element={<Navigate to="../submissions" replace />} />
         </Route>
         <Route
           path="/evaluations"

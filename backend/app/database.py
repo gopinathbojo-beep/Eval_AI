@@ -30,17 +30,24 @@ def _make_engine():
                              pool_recycle=300, connect_args=connect_args, hide_parameters=True)
     if url.get_backend_name() != "sqlite":
         raise ValueError("DATABASE_URL must use PostgreSQL or SQLite.")
-    eng = create_engine(url, connect_args={"check_same_thread": False})
+    # parallel AI jobs write to one file: wait for another job's write instead of failing after a few seconds
+    eng = create_engine(url, connect_args={"check_same_thread": False, "timeout": 60})
 
     @event.listens_for(eng, "connect")
     def _pragmas(dbapi_conn, _):  # enforce FKs and WAL mode in SQLite
         cur = dbapi_conn.cursor()
         cur.execute("PRAGMA foreign_keys=ON")
         cur.execute("PRAGMA journal_mode=WAL")
-        cur.execute("PRAGMA busy_timeout=5000")
+        cur.execute("PRAGMA busy_timeout=60000")
         cur.close()
 
     return eng
+
+
+def is_locked(e: BaseException) -> bool:
+    """SQLite's "database is locked" / "database table is locked": another job held the write too long. The work is
+    fine and is simply run again."""
+    return "database is locked" in str(e) or "database table is locked" in str(e)
 
 
 engine = _make_engine()
@@ -106,10 +113,11 @@ _ADDED_COLUMNS = {"teachers": {"role": "VARCHAR(20) NOT NULL DEFAULT 'MANAGEMENT
 for _table in ("classes", "subjects", "exams", "audit_logs", "verified_reference_examples"):
     _ADDED_COLUMNS.setdefault(_table, {})["workspace_id"] = "VARCHAR(36)"
 _ADDED_COLUMNS["exams"].update({"standard_profile_id": "VARCHAR(40)", "standard_version": "VARCHAR(30)",
-    "standard_options": "JSON", "standard_validation": "JSON"})
+    "standard_options": "JSON", "standard_validation": "JSON", "report_details": "JSON"})
 _ADDED_COLUMNS["exam_questions"]["structure"] = "JSON"
 for _table in ("question_paper_documents", "answer_key_documents"):
     _ADDED_COLUMNS[_table] = {"extraction": "JSON"}
+_ADDED_COLUMNS["evaluations"] = {"part_b_option": "VARCHAR(20)"}
 _ADDED_COLUMNS["answer_sheet_documents"] = {"uploaded_by_code": "VARCHAR(36)"}
 _ADDED_COLUMNS["uploader_codes"] = {"uploader_name": "VARCHAR(100)"}
 

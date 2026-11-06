@@ -193,7 +193,7 @@ def test_download_evaluation_report_pdf_e2e(client, auth):
     assert res.status_code == 200
     assert res.headers["content-type"] == "application/pdf"
     assert "attachment" in res.headers["content-disposition"]
-    assert "Alice_Smith" in res.headers["content-disposition"]
+    assert "101-B-Mathematics.pdf" in res.headers["content-disposition"]
     assert len(res.content) > 1000
 
     # 2. Download via /evaluations/{ev_id}/report

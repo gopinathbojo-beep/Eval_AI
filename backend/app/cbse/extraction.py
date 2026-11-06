@@ -66,7 +66,7 @@ class VisualEvidence(BaseModel):
         value = str(value or "other").lower()
         return names.get(value, value if value in {"diagram", "image", "graph", "map", "table", "formula"} else "other")
     labels: list[str] = Field(default_factory=list)
-    bbox: dict
+    bbox: dict = Field(default_factory=dict)  # described but not located: kept, and the page is not rejected
 
     @field_validator("bbox", mode="before")
     @classmethod
@@ -97,6 +97,7 @@ class Fragment(BaseModel):
     def any_box(cls, value):
         return _box(value)
     continues: bool = False
+    branch: str | None = None  # the Part B option this piece is printed under (set by the app, cbse/build.py)
     issues: list[str] = Field(default_factory=list)
     # what the app did that a teacher may want to know but need not check (text completed from the PDF itself)
     notes: list[str] = Field(default_factory=list)
@@ -206,7 +207,8 @@ For explicitly capped deductions attach deductions:[{{"id":"q1.accuracy","maximu
 OR alternatives: choose with limit=1. Answer any N: choose with limit=N, inside its parent question (never apply to an entire unrelated section).
 Every choose node MUST include an explicit numeric limit when printed instructions establish it; include "limit":1 for a printed OR, including a choice nested within a subpart. Never leave that field null for an explicit OR.
 For alternative SOLUTION METHODS of the same required question use choice_type='method'; question/section alternatives use choice_type='question'. Do not confuse accepted equivalent answers with additional required parts.
-Use audience tags 'standard'/'accessible' for visually impaired alternatives and 'financial'/'computerised' for Accountancy Part B branches. These are alternative versions, never additional marks.
+Use audience tags 'standard'/'accessible' for visually impaired alternatives. These are alternative versions, never additional marks.
+Accountancy Part B prints two options, each numbered from the same question: read both, and on the root tree of every Part B fragment set audience 'financial' under "Analysis of Financial Statements" (Option I) or 'computerised' under "Computerised Accounting" (Option II). Never merge the two options.
 For a marking scheme, point marks must come from its explicit allocations. If only a whole-question total is given, one holistic point with that printed total is acceptable; NEVER invent finer allocations.
 For a paper, points represent the smallest independently marked parts, not MCQ options. Include printed branch labels and choice instructions in text.
 For a paper, when one printed mark covers several subparts (e.g. (II) a) and b) together worth 2), make that group one point with the printed mark. Do not report the missing split as an issue: the marking scheme gives it.
@@ -289,13 +291,35 @@ def merge_nodes(nodes):
     return list(by_id.values()), problems
 
 
+BRANCHES = ("financial", "computerised")
+BRANCH_TITLES = {"financial": "Analysis of Financial Statements", "computerised": "Computerised Accounting"}
+_OPTION_LINE = re.compile(r"(?m)^Option (?:I|II): (Analysis of Financial Statements|Computerised Accounting)[ \t]*$")
+
+
 def selected(node, options):
     audience = node.get("audience")
-    return (
-        not audience
-        or audience == options.get("accessibility")
-        or audience == options.get("accountancy_option")
-    )
+    if audience in BRANCHES:  # each student answers one option: no option chosen yet keeps both
+        return options.get("accountancy_option") in (None, audience)
+    return not audience or audience == options.get("accessibility")
+
+
+def has_branches(tree):
+    return bool(tree) and any(c.get("audience") in BRANCHES for c in tree.get("children") or [])
+
+
+def only_selected(node, options):
+    """The tree without the branches and versions this student does not answer."""
+    return {**node, "children": [only_selected(c, options) for c in node.get("children") or [] if selected(c, options)]}
+
+
+def option_text(text, branch):
+    """One option's part of a question or scheme printed as "Option I: ... OR Option II: ..."; other text unchanged."""
+    marks = list(_OPTION_LINE.finditer(text or ""))
+    for i, m in enumerate(marks):
+        if m[1] == BRANCH_TITLES.get(branch):
+            end = marks[i + 1].start() if i + 1 < len(marks) else len(text)
+            return re.sub(r"\s*\bOR\s*$", "", text[m.end():end]).strip()
+    return text
 
 
 def tree_total(node, options, scores=None):

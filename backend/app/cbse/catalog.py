@@ -180,7 +180,7 @@ PROFILES = [
         80,
         [section("A", 1, 26, 60), section("B", 27, 34, 20)],
         notes=(
-            "Part B: explicitly select Financial Statements or Computerised Accounting before verification.",
+            "Part B: two options numbered 27 to 34, Analysis of Financial Statements and Computerised Accounting; each student answers one.",
         ),
     ),
     profile(12, "044", "Biology", "Biology", 70, deepcopy(_SCIENCE12)),
@@ -440,12 +440,9 @@ for _p in PROFILES:
             _s["internal_choices"] = {"B": 2, "C": 1, "E": 3}.get(_s["key"])
 
 
-# Board patterns where each student answers one of two printed branches: the exam must say which one it marks.
-BRANCH_OPTIONS = {
-    "055": {"key": "accountancy_option", "label": "Part B option",
-            "choices": [{"value": "financial", "label": "Analysis of Financial Statements"},
-                        {"value": "computerised", "label": "Computerised Accounting"}]},
-}
+# Options the school must choose when creating an exam. None today: Accountancy's Part B options are per student, and
+# the AI reads each student's from their answer sheet (services/part_b.py).
+BRANCH_OPTIONS: dict[str, dict] = {}
 
 
 def profile_options(profile_id: str | None) -> list[dict]:

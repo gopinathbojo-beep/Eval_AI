@@ -122,7 +122,7 @@ export default function EvaluationPage() {
               className="text-pen font-medium hover:underline flex items-center gap-1"
               to={`/exams/${ev.exam_id}/answer-sheets`}
             >
-              <span>Back to answer sheets</span>
+              <span>Back to students</span>
             </Link>
           </div>
         }
@@ -140,6 +140,12 @@ export default function EvaluationPage() {
               >
                 Reopen to change marks
               </Button>
+            )}
+            {ev.part_b_option && (
+              <span className="rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700"
+                    title="The AI read this from the answer sheet. Part B is marked against this option only.">
+                Part B: {ev.part_b_option === "computerised" ? "Option II, Computerised Accounting" : "Option I, Analysis of Financial Statements"}
+              </span>
             )}
             <Button
               small

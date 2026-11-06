@@ -8,8 +8,8 @@ import GeneratedPaperView, { GEN_BUSY, GenerationStatus, type GenPaperSummary } 
 interface ExamGen { subject: { grade: "10" | "12"; key: string } | null; paper: GenPaperSummary | null }
 
 /** Exam workspace: write this exam's question paper and answer key with the AI instead of uploading them. */
-export default function ExamPaperGenerator({ examId, examStatus, locked, onAttached }: {
-  examId: string; examStatus: string; locked: boolean; onAttached: () => void;
+export default function ExamPaperGenerator({ examId, examStatus, locked, hasPaper, onAttached }: {
+  examId: string; examStatus: string; locked: boolean; hasPaper: boolean; onAttached: () => void;
 }) {
   const { data, reload } = useApi<ExamGen>(`/exams/${examId}/generated-paper`, (d) => {
     if (d.paper && GEN_BUSY.includes(d.paper.status)) return 2500;
@@ -32,7 +32,7 @@ export default function ExamPaperGenerator({ examId, examStatus, locked, onAttac
   }, [running]);
 
   if (!data || (!data.subject && !gp)) return null;
-  if (locked && !gp) return null;
+  if ((locked || hasPaper) && !gp) return null;  // a paper was uploaded: nothing to generate, or to report on
 
   const reattach = async () => {
     if (!gp) return;

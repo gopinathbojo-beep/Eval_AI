@@ -42,7 +42,7 @@ def apply_student_mapping(db: Session, ev: Evaluation) -> None:
     suggested: list[tuple[StudentAnswer, list[dict]]] = []  # unlabelled answers placed by content alone
     for a in answers:
         conflict = conflicting_answer_heading(a.answer_text or "", a.normalized_number or a.raw_question_number)
-        if conflict and a.status in _RECOMPUTABLE:
+        if conflict and a.status in _RECOMPUTABLE and not (a.mapping_confirmed and a.exam_question_id):
             candidate = next((q for q in qs if q.normalized_number == conflict), None)
             a.status = "NEEDS_REVIEW"
             a.mapping_note = f"The answer text starts with question {conflict}, conflicting with its extracted label. Review the mapping."
@@ -148,7 +148,8 @@ def _repair_misread_labels(answers: list, qs: list) -> None:
     """
     by_num = {q.normalized_number: q for q in qs if q.normalized_number}
     by_id = {q.id: q for q in qs}
-    live = [a for a in answers if a.status in _RECOMPUTABLE]
+    live = [a for a in answers if a.status in _RECOMPUTABLE
+            and not getattr(a, "mapping_confirmed", False)]  # confirmed by the AI joiner or a teacher
 
     def taken(qid, but):
         return any(x is not but and x.exam_question_id == qid and x.status != "IGNORED" for x in answers)

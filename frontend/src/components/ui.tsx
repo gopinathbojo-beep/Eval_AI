@@ -277,18 +277,22 @@ export function PageHeader({
   actions,
   badge,
   breadcrumbs,
+  top,
 }: {
   title: ReactNode;
   sub?: ReactNode;
   actions?: ReactNode;
   badge?: ReactNode;
   breadcrumbs?: { label: string; to?: string }[];
+  /** beside the breadcrumbs, at the top of the page (progress through a multi-step flow) */
+  top?: ReactNode;
 }) {
   return (
     <div className="mb-6 flex flex-col gap-4 border-b border-slate-100 pb-6 sm:flex-row sm:items-end sm:justify-between">
       <div className="min-w-0 flex-1">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
         {breadcrumbs && breadcrumbs.length > 0 ? (
-          <nav aria-label="Breadcrumbs" className="mb-3 flex items-center gap-2 text-xs font-semibold text-slate-600">
+          <nav aria-label="Breadcrumbs" className="flex items-center gap-2 text-xs font-semibold text-slate-600">
             <div className="aurora-fill flex h-7 w-7 items-center justify-center rounded-lg text-white shadow-sm shadow-indigo-500/30">
               <IconHome size={14} />
             </div>
@@ -307,7 +311,7 @@ export function PageHeader({
             ))}
           </nav>
         ) : (
-          <div className="mb-3 flex items-center gap-2 text-xs font-semibold text-slate-600">
+          <div className="flex items-center gap-2 text-xs font-semibold text-slate-600">
             <div className="aurora-fill flex h-7 w-7 items-center justify-center rounded-lg text-white shadow-sm shadow-indigo-500/30">
               <IconHome size={14} />
             </div>
@@ -318,6 +322,8 @@ export function PageHeader({
             </span>
           </div>
         )}
+        {top}
+        </div>
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="aurora-text text-2xl sm:text-3xl font-extrabold tracking-tight">{title}</h1>
           {badge}

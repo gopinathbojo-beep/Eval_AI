@@ -165,7 +165,7 @@ def test_versioned_migrations_are_repeatable(tmp_path):
         assert set(Base.metadata.tables) <= set(inspect(connection).get_table_names())
         for name,table in Base.metadata.tables.items():
             assert {column.name for column in table.columns} <= {column["name"] for column in inspect(connection).get_columns(name)}
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar() == "20261104_generated_papers"
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar() == "20261106_exam_report_details"
 
 
 def test_durable_queue_deduplicates_recovers_queued_and_flags_interrupted(client, auth, monkeypatch):

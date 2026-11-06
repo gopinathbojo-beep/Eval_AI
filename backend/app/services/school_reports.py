@@ -282,6 +282,17 @@ SAMPLE_REPORT = {
 }
 
 
+def _exam_details(exam: Exam) -> dict:
+    """The exam as its reports print it: what the school edited, else the exam's own values."""
+    edited = exam.report_details or {}
+    return {"name": edited.get("name") or exam.name,
+            "subject": edited.get("subject") or (exam.subject.name if exam.subject else ""),
+            "class": edited.get("class_name") or (exam.school_class.name if exam.school_class else ""),
+            "type": edited.get("exam_type") or exam.exam_type,
+            "year": edited.get("academic_year") or exam.academic_year,
+            "date": edited.get("exam_date") or exam.exam_date or ""}
+
+
 def report_data(db: Session, teacher: Teacher, ev: Evaluation) -> dict:
     exam, student = ev.exam, ev.student
     questions = (db.query(ExamQuestion).filter_by(exam_id=exam.id)
@@ -304,11 +315,13 @@ def report_data(db: Session, teacher: Teacher, ev: Evaluation) -> dict:
                      "adjusted": (reasons.get(it.id) or "") if it and it.teacher_overridden else None,
                      "not_attempted": bool(it and it.status == "MISSING" and it.not_attempted_confirmed)})
     sclass = student.school_class.name if student.school_class else (exam.school_class.name if exam.school_class else "")
+    shown = _exam_details(exam)
     return {
         "student": {"name": student.name, "roll": student.roll_number, "reg": student.registration_number or "",
-                    "class": f"{sclass} – {student.section}" if student.section else sclass},
-        "exam": {"name": exam.name, "subject": exam.subject.name if exam.subject else "", "type": exam.exam_type,
-                 "year": exam.academic_year, "date": exam.exam_date or "",
+                    "class": (exam.report_details or {}).get("class_name")
+                    or (f"{sclass} – {student.section}" if student.section else sclass)},
+        "exam": {"name": shown["name"], "subject": shown["subject"], "type": shown["type"],
+                 "year": shown["year"], "date": shown["date"],
                  "finalized": ev.finalized_at.strftime("%d %b %Y") if ev.finalized_at else ""},
         "obtained": ev.total_marks or 0.0, "maximum": ev.maximum_marks or 0.0, "questions": rows,
         "grade": relative_grades({candidate.id: raw_percentage(candidate.total_marks, candidate.maximum_marks)
@@ -392,7 +405,18 @@ def build_evaluation_pdf_report(db: Session, teacher: Teacher, evaluation_id: st
                   f"Reports can only be generated for finalized evaluations. Current status is {ev.status}.")
     profile = db.query(SchoolProfile).filter_by(teacher_id=owner_id(db, teacher)).first()
     pdf = render_report(report_data(db, teacher, ev), active_config(db, teacher, "report"), _school(profile))
-    return pdf, f"Report_{_clean_name(ev.student.name, ev.student.roll_number, ev.exam.name)}.pdf"
+    return pdf, report_filename(ev)
+
+
+def report_filename(ev: Evaluation) -> str:
+    """Roll no-section-subject, e.g. 10C04-C-Science.pdf; a student with no section gives 10C04-Science.pdf."""
+    from .student_io import split_class_name
+    exam, student = ev.exam, ev.student
+    shown = _exam_details(exam)
+    edited_class = (exam.report_details or {}).get("class_name")
+    section = ((split_class_name(edited_class)[1] if edited_class else None) or student.section
+               or (split_class_name(exam.school_class.name)[1] if exam.school_class else None))
+    return "-".join(_clean_name(p) for p in (student.roll_number, section, shown["subject"]) if p) + ".pdf"
 
 
 # ---------------------------------------------------------------- exam-wise class report
@@ -437,9 +461,7 @@ def exam_report_data(db: Session, exam: Exam) -> dict:
         if s.id not in done]
     roll_key = lambda s: s["roll"].zfill(12)  # noqa: E731
     return {
-        "exam": {"name": exam.name, "subject": exam.subject.name if exam.subject else "",
-                 "class": exam.school_class.name if exam.school_class else "", "type": exam.exam_type,
-                 "year": exam.academic_year, "date": exam.exam_date or "", "maximum": exam.total_marks},
+        "exam": {**_exam_details(exam), "maximum": exam.total_marks},
         "students": sorted(students, key=roll_key), "pending": sorted(pending, key=roll_key),
         "questions": question_rows(questions, list(marks.values())),
     }

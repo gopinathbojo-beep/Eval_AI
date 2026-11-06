@@ -73,11 +73,6 @@ def validate(db, exam, phase="evaluation"):
     options = exam.standard_options or {}
     if options.get("accessibility") not in {"standard", "accessible"}:
         add("AUDIENCE_REQUIRED", "Select the standard or accessible paper version.")
-    if p["code"] == "055" and options.get("accountancy_option") not in {
-        "financial",
-        "computerised",
-    }:
-        add("BRANCH_REQUIRED", "Select the Accountancy Part B option.")
     docs = [("question-paper", active_doc(db, QuestionPaperDocument, exam.id))]
     if phase != "paper":
         docs.append(("answer-key", active_doc(db, AnswerKeyDocument, exam.id)))
