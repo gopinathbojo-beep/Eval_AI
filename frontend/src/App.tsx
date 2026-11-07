@@ -17,6 +17,7 @@ const ExamNew = lazy(() =>
 const ExamWorkspace = lazy(() => import("./pages/ExamWorkspace"));
 const ContentAndKey = lazy(() => import("./pages/exam/ContentAndKey"));
 const Submissions = lazy(() => import("./pages/exam/Submissions"));
+const UploadSheets = lazy(() => import("./pages/exam/UploadSheets"));
 const EvaluationPage = lazy(() => import("./pages/EvaluationPage"));
 const ResultsList = lazy(() =>
   import("./pages/Results").then((m) => ({ default: m.ResultsList })),
@@ -211,6 +212,14 @@ export default function App() {
             element={
               <Suspended>
                 <Submissions defaultSubTab="sheets" />
+              </Suspended>
+            }
+          />
+          <Route
+            path="upload"
+            element={
+              <Suspended>
+                <UploadSheets />
               </Suspended>
             }
           />

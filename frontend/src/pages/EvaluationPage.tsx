@@ -27,7 +27,6 @@ import {
   Textarea,
 } from "../components/ui";
 import { PageViewer } from "../components/PageViewer";
-import { AuthImage } from "../components/AuthImage";
 import { DocProgress } from "../components/DocPanel";
 import { DeleteSheetConfirm } from "../components/DeleteSheetConfirm";
 import {
@@ -292,7 +291,6 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
       setBusy(null);
     }
   };
-  const selected = d.answers.find((a) => a.id === sel);
 
   const unconfirmed = d.answers.filter(
     (a) => a.status === "MAPPED" && a.exam_question_id && !a.mapping_confirmed
@@ -451,7 +449,6 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
             pages={d.document.pages}
             page={page}
             onPage={setPage}
-            highlight={selected?.page_number === page ? selected.bbox : null}
           />
         </div>
 
@@ -603,21 +600,6 @@ function MappingTab({ d, reload }: { d: EvaluationDetail; reload: () => Promise<
                       </span>
                     </button>
 
-                    {/* What the model read: Approximate Crop Preview */}
-                    {isSelected && a.has_crop && (
-                      <div className="mt-3 rounded-lg border border-line bg-sunken/60 p-2.5 animate-fadeIn">
-                        <p className="mb-1 text-xs font-medium text-mute flex items-center gap-1">
-                          <IconEye size={13} />
-                          What the model read (approximate crop):
-                        </p>
-                        <AuthImage
-                          path={`/crops/student-answer/${a.id}`}
-                          alt="Crop of detected answer"
-                          className="max-h-44 rounded border border-line/60 bg-surface object-contain"
-                        />
-                      </div>
-                    )}
-
                     {/* Actions Toolbar — Consolidated, Consistent Controls */}
                     {!locked && (
                       <div className="mt-3.5 flex flex-wrap items-center gap-1.5 border-t border-line/60 pt-3">
@@ -751,7 +733,6 @@ function MapDlg({
                 pages={d.document.pages}
                 page={a.page_number}
                 onPage={() => {}}
-                highlight={a.bbox}
               />
             )}
           </div>

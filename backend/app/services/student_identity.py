@@ -298,8 +298,8 @@ def check_typed_roll(doc_id: str, read_fn=_roll_label_identity) -> bool:
     db = SessionLocal()
     try:
         doc = db.get(AnswerSheetDocument, doc_id)
-        if doc is None or not doc.uploaded_by_code or doc.student_id is None:
-            return True  # only sheets sent by an uploader, with a typed roll, are checked
+        if doc is None or doc.student_id is None or not (doc.uploaded_by_code or (doc.identity or {}).get("typed_roll")):
+            return True  # only sheets sent with a typed roll are checked
         identity = dict(doc.identity or {})
         if (identity.get("roll_check") or {}).get("status") in ("MATCH", "NOT_WRITTEN", "CONFIRMED"):
             return True  # checked before, or the school already decided

@@ -71,7 +71,7 @@ async def complete_upload(upload_id: str, bg: BackgroundTasks, db: Session = Dep
     from ..services.pipeline import KINDS, process_document
     from ..serializers import doc_view, evaluation_view
     from ..services.job_queue import submit
-    from ..services.student_identity import identify_sheets
+    from ..services.student_identity import identify_sheets, run_sheet
     lease = owned_upload(db, user, upload_id)
     if lease.result:
         return lease.result
@@ -87,6 +87,8 @@ async def complete_upload(upload_id: str, bg: BackgroundTasks, db: Session = Dep
         if existing.status == "UPLOADED":
             if lease.kind == "answer-sheet" and existing.student_id is None:
                 bg.add_task(submit, lease.exam_id, identify_sheets, [existing.id], user.id)
+            elif lease.kind == "answer-sheet" and (existing.identity or {}).get("typed_roll"):
+                bg.add_task(submit, lease.exam_id, run_sheet, existing.id)
             else:
                 bg.add_task(submit, lease.exam_id, process_document, lease.kind, existing.id)
     else:

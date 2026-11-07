@@ -1,5 +1,6 @@
 from __future__ import annotations
 from pathlib import Path
+import re
 import uuid
 from fastapi import (
     APIRouter,
@@ -35,9 +36,11 @@ from ..services.pipeline import KINDS, process_document
 from ..services.job_queue import submit
 from ..services.state import set_state
 from ..services.student_identity import assign_student, identify_sheets, run_sheet
+from ..services.student_io import split_class_name
 
 router = APIRouter(prefix="/api")
 BUSY = {"UPLOADED", "RENDERING", "OCR_PROCESSING", "EXTRACTING", "IDENTIFYING"}
+ROLL_FORMAT = re.compile(r"^[A-Z0-9/-]{1,20}$")
 EXT = {
     "question-paper": {"pdf", "png", "jpg", "jpeg", "docx"},
     "answer-key": {"pdf", "docx", "png", "jpg", "jpeg"},
@@ -351,6 +354,7 @@ async def upload_answer_sheet(
 ):
     exam = get_exam(db, t, exam_id)
     _require_sheet_state(exam)
+    roll_number = (roll_number or "").strip() or None
     if t.role == "PARENT":
         child = db.query(Student).filter_by(class_id=exam.class_id).one()
         if student_id and student_id != child.id:
@@ -361,12 +365,41 @@ async def upload_answer_sheet(
         for d in docs:
             bg.add_task(submit, exam.id, identify_sheets, [d.id], t.id)
         return _unassigned_view(db, docs[0])
+    typed_roll = None
     if student_id:
         st = db.get(Student, student_id)
         if not st or st.class_id != exam.class_id:
             raise err(
                 400, "INVALID_STUDENT", "Choose a student from this exam's class."
             )
+    elif roll_number and not student_name:
+        # only a roll number, as in the uploader app: it decides the student and is checked against the sheet
+        typed_roll = roll_number.upper()
+        if not ROLL_FORMAT.fullmatch(typed_roll):
+            raise err(
+                400,
+                "INVALID_ROLL",
+                "Enter the student's roll number (letters and digits only).",
+            )
+        st = (
+            db.query(Student)
+            .filter_by(class_id=exam.class_id, roll_number=typed_roll)
+            .first()
+        )
+        if st is None:
+            section = (
+                split_class_name(exam.school_class.name)[1]
+                if exam.school_class
+                else None
+            )
+            st = Student(
+                class_id=exam.class_id,
+                name=f"Roll {typed_roll}",
+                roll_number=typed_roll,
+                section=section,
+            )
+            db.add(st)
+            db.flush()
     else:
         if not student_name or not roll_number:
             raise err(
@@ -403,6 +436,7 @@ async def upload_answer_sheet(
         mime,
         file.filename or "upload",
         student_id=st.id,
+        **({"identity": {"typed_roll": typed_roll}} if typed_roll else {}),
     )
     db.flush()
     ev = Evaluation(
@@ -420,9 +454,31 @@ async def upload_answer_sheet(
         new={"student": st.name, "roll": st.roll_number},
     )
     db.commit()
-    bg.add_task(submit, exam.id, process_document, "answer-sheet", doc.id)
+    if typed_roll:
+        bg.add_task(submit, exam.id, run_sheet, doc.id)
+    else:
+        bg.add_task(submit, exam.id, process_document, "answer-sheet", doc.id)
     db.refresh(ev)
     return {**evaluation_view(ev), "document": doc_view(doc, "answer-sheet")}
+
+
+@router.post("/exams/{exam_id}/answer-sheets/photos", status_code=202)
+async def upload_answer_sheet_photos(
+    exam_id: str,
+    bg: BackgroundTasks,
+    files: list[UploadFile] = File(...),
+    roll_number: str | None = Form(None),
+    db: Session = Depends(get_db),
+    t: Teacher = Depends(current_teacher),
+):
+    """Photos of one student's sheet, one per page in order, become one answer sheet."""
+    from .uploader import _pages_to_pdf
+
+    _require_sheet_state(get_exam(db, t, exam_id))
+    sheet = await _pages_to_pdf(files)
+    return await upload_answer_sheet(
+        exam_id, bg, sheet, None, None, roll_number, db, t
+    )
 
 
 SHEET_STATES = (

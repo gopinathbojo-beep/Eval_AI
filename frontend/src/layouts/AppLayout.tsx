@@ -548,9 +548,7 @@ function AppShell() {
       ? pathSegments[1]
       : null;
 
-  const onUploadPage = ["submissions", "answer-sheets"].includes(
-    pathSegments[2] ?? "",
-  );
+  const onUploadPage = pathSegments[2] === "upload";
 
   if (loading) return <ShellSkeleton />;
   if (!teacher)
@@ -789,7 +787,7 @@ function AppShell() {
       {/* Phone: upload answer sheets from any exam page */}
       {examId && !onUploadPage && (
         <Link
-          to={`/exams/${examId}/submissions`}
+          to={`/exams/${examId}/upload`}
           className="fixed bottom-20 right-4 z-30 flex items-center gap-2 rounded-full bg-blue-600 px-4 py-3 text-sm font-semibold text-white shadow-xl hover:bg-blue-700 transition-all lg:hidden"
         >
           <IconUpload size={18} />

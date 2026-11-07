@@ -493,7 +493,7 @@ export function AnswerSheets() {
         <Card className="space-y-1 p-5 shadow-soft">
           <h2 className="text-lg font-semibold text-ink">Students</h2>
           <p className="text-xs text-mute">
-            Sheets are sent from the uploader app with the student's roll number, then read and graded on their own.
+            Sheets are sent from the Upload tab or the uploader app, then read and graded on their own.
             Each student is listed here from upload to final result.
           </p>
         </Card>
