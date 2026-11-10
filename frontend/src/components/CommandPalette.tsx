@@ -114,6 +114,7 @@ export function CommandPalette({ open, onClose, pages }: { open: boolean; onClos
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search exams, pages…"
+            aria-label="Search exams and pages"
             role="combobox"
             aria-expanded="true"
             aria-controls={listId}

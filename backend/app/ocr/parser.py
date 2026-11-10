@@ -136,6 +136,8 @@ def extract_json_object(raw: str) -> dict:
         if isinstance(obj, dict):
             return _normalize_extracted_obj(obj)
         if isinstance(obj, list):
+            if len(obj) == 1 and isinstance(obj[0], dict):  # Gemini wraps the page object in a list: [{...}]
+                return _normalize_extracted_obj(obj[0])
             return {"items": obj}
     except json.JSONDecodeError:
         pass

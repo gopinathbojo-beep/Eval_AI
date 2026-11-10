@@ -750,7 +750,7 @@ def auto_evaluate_sheet(doc_id: str) -> None:
     """Grade a freshly read sheet straight away when nothing needs the teacher first (pages read, answers mapped).
 
     Sheets with unread pages or unmapped answers are left for the teacher; review_reasons() lists why. Grading is
-    queued as its own OpenRouter job, using the same Gemini model for every language.
+    queued as its own OpenRouter job, using the subject's model (Settings.model_for).
     """
     from . import autopilot
     db = SessionLocal()

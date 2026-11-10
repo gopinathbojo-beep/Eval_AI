@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from .config import get_settings
 from .database import init_db
-from .routes import admin, answer_keys, core, documents, evaluations, google_auth, questions, reference_collection, registration, school, uploader, uploads, exam_setup, notifications, generation
+from .routes import admin, answer_keys, answer_sheets, core, documents, evaluations, google_auth, questions, reference_collection, registration, school, uploader, uploads, exam_setup, notifications, generation
 from .services.admin_accounts import ensure_owner
 from .services.exam_files import start_purge_scheduler
 from .services.recovery import recover_interrupted_jobs
@@ -114,7 +114,7 @@ def create_app() -> FastAPI:
     async def storage_error(_: Request, exc: StorageError):
         return JSONResponse({"code": "STORAGE_UNAVAILABLE", "message": str(exc)}, status_code=503)
 
-    for r in (core.router, documents.router, questions.router, answer_keys.router, evaluations.router, reference_collection.router,
+    for r in (core.router, documents.router, answer_sheets.router, questions.router, answer_keys.router, evaluations.router, reference_collection.router,
               school.router, admin.router, google_auth.router, registration.router, uploader.router, uploads.router, exam_setup.router, notifications.router, generation.router):
         app.include_router(r)
 

@@ -1,6 +1,6 @@
 """How sure the hosted model was of transcribed text, measured from token probabilities when available.
 
-Gemini replies in JSON at temperature zero. The probability of the
+The model replies in JSON at temperature zero. The probability of the
 chosen token is its certainty at that step. Only the tokens inside the transcribed text count (answer_text,
 question_text): JSON punctuation and field names say nothing about how well the page was read:
   word   the probability of the whole word: the product of its tokens' probabilities

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { BrandLabel } from "./Brand";
 import { useAuth } from "../context/Auth";
@@ -80,7 +80,7 @@ export default function RegistrationChat({
   const card = useRef<HTMLFormElement>(null);
   const step = steps[index];
   const review = index >= steps.length;
-  useEffect(() => {
+  useLayoutEffect(() => {
     setDraft(step ? (values[step.key] ?? "") : "");
     setFieldDraft(Object.fromEntries((step?.fields ?? []).map((f) => [f.key, values[f.key] ?? ""])));
     if (step?.fields) card.current?.querySelector("input")?.focus();
@@ -358,9 +358,8 @@ export default function RegistrationChat({
             <div className="pt-1">
               <div className="mb-2 flex justify-between text-xs text-mute">
                 <span>{review ? "Ready to continue" : "Let’s get to know you"}</span>
-                <span>
-                  {Math.min(index, steps.length)} / {steps.length}
-                </span>
+                {/* a step number, not "n / total": the list can grow with the answers (CBSE lookup, school search) */}
+                <span>{review ? "All answered" : `Step ${index + 1}`}</span>
               </div>
               <div
                 role="progressbar"

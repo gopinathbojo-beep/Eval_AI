@@ -1,6 +1,7 @@
 import ssl
 
 import httpx
+from app.config import get_settings
 import pytest
 
 from app.ocr import remote
@@ -24,7 +25,8 @@ def test_status_and_completions_both_use_the_verified_context(monkeypatch):
     def get(url, **kwargs):
         assert_verified_context(kwargs["verify"])
         calls.append(url)
-        body = {"data": [{"id": "vision-model", "architecture": {"input_modalities": ["text", "image"]}}]}
+        body = {"data": [{"id": m, "architecture": {"input_modalities": ["text", "image"]}}
+                         for m in ("vision-model", get_settings().ai_indic_model)]}
         return httpx.Response(200, json=body, request=httpx.Request("GET", url))
 
     def post(url, **kwargs):

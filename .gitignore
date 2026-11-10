@@ -77,3 +77,7 @@ eval_ai_test_key.env
 
 # Isolated extraction verification copies contain private uploaded documents.
 backend/.verification/
+
+# real exam papers and student answer sheets: never in git
+exam/
+exam.zip

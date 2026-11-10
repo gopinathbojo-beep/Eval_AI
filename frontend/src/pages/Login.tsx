@@ -126,6 +126,7 @@ function UploaderLogin({ onClose }: { onClose: () => void }) {
             spellCheck={false}
             maxLength={6}
             placeholder="ABC234"
+            aria-label="Uploader code"
             value={code}
             onChange={(e) =>
               setCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))
@@ -271,6 +272,7 @@ export default function Login() {
               type="email"
               autoComplete="username"
               required
+              aria-label="Email address"
               placeholder="Email address"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -287,6 +289,7 @@ export default function Login() {
               type={showPassword ? "text" : "password"}
               autoComplete="current-password"
               required
+              aria-label="Password"
               placeholder="Password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -375,6 +378,18 @@ export default function Login() {
               <GoogleLogo />
               <span>Continue with Google</span>
             </button>
+          )}
+          {providers && !providers.google && (
+            <p className="mt-2 text-center text-xs text-slate-500">Google sign-in isn’t set up yet. Use your email and password.</p>
+          )}
+          {providers?.google && new URL(providers.google_start_url, window.location.href).origin !== window.location.origin && (
+            <p role="note" className="mt-2 text-center text-xs text-amber-700">
+              Google sign-in works from{" "}
+              <a className="font-semibold underline" href={new URL(providers.google_start_url, window.location.href).origin + "/login"}>
+                {new URL(providers.google_start_url, window.location.href).host}
+              </a>
+              . You opened the app at {window.location.host}.
+            </p>
           )}
         </div>
 

@@ -1,6 +1,6 @@
 """Legacy block-to-schema adapter retained for deterministic Tamil parser fixtures.
 
-The production application no longer calls an IndicOCR service; Gemini reads every language through OpenRouter.
+The production application no longer calls an IndicOCR service; the OpenRouter models read every language (DeepSeek for English-script subjects, Gemini for Tamil, Hindi and Sanskrit).
 """
 from __future__ import annotations
 import re

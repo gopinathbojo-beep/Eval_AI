@@ -141,7 +141,11 @@ def _paper_anchors(doc):
     Such a number is dropped; a number in the column itself is kept even when it goes back (Accountancy Part B
     restarts at 27 for its second option), and an indented number that moves forward is kept (some papers indent
     their numbers on some pages)."""
-    raw = [_raw_anchors(p) for p in doc]
+    raw, last = [], 0
+    for p in doc:  # each page knows the last question number the pages before it printed
+        page_anchors = _raw_anchors(p, last)
+        raw.append(page_anchors)
+        last = max([last] + [root for root, _y, _x in page_anchors])
     xs = [round(x / 5) * 5 for page in raw for _root, _y, x in page]
     # the column is the leftmost position used often (an indented list never outnumbers the questions)
     common = sorted({x for x in xs if xs.count(x) >= max(2, len(xs) // 10)})
@@ -166,7 +170,13 @@ def _anchors(page):
     return _by_doc[key][page.number]
 
 
-def _raw_anchors(page):
+_MAX_SKIP = 2  # a bare number may skip one question (a page the text layer could not read)
+
+
+def _raw_anchors(page, seen=None):
+    """Printed question numbers on a page. `seen` (the last number the earlier pages printed, when the whole paper
+    is in view) keeps a bare number only when it continues the paper: "21" in "...उप प्रश्नों की संख्या 21 है" or the
+    date "27 जून 2025" opening a passage line is not question 21 or 27."""
     found, bare = [], []
     skip = _instruction_span(page)
     for word in page.get_text("words"):
@@ -183,9 +193,13 @@ def _raw_anchors(page):
         return sorted(found, key=lambda item: item[1])
     kept = []
     marks = [(root, y, x, True) for root, y, x in found] + [(root, y, x, False) for root, y, x in bare]
+    if not seen:  # the paper starts here: its sequence starts at the smallest number the page prints (not always 1)
+        seen = min(root for root, _y, _x, _l in marks)
     for root, y, x, labelled in sorted(marks, key=lambda item: item[1]):
         # question numbers run in order; digits inside a question's own table or a fraction do not
-        last = kept[-1][0] if kept else None
+        last = kept[-1][0] if kept else seen
+        if not labelled and last is not None and not last <= root <= last + _MAX_SKIP:
+            continue  # a bare number that does not continue the question sequence is a number in the text
         if last is not None and root < last:
             continue  # a numbered list inside a question: printed question numbers never go back on a page
         if labelled or last is None or root in (last, last + 1):
@@ -204,6 +218,20 @@ def _bands(page, anchors):
         (root, y, unique[index + 1][1] if index + 1 < len(unique) else page.rect.height)
         for index, (root, y, _x) in enumerate(unique)
     ]
+
+
+def printed_text(doc, root: int) -> str | None:
+    """The text a PDF prints for whole question `root` (its first band, from its number to the next question's), or
+    None when the number is not printed or the text layer is mis-encoded. The document's own words: nothing is
+    added or rewritten."""
+    for page in doc:
+        if garbled_text_layer(page.get_text()):
+            return None
+        for number, top, bottom in _bands(page, _anchors(page)):
+            if number == root:
+                text = page.get_textbox(pymupdf.Rect(0, max(0, top - 2), page.rect.width, bottom)).strip()
+                return text or None
+    return None
 
 
 def _bbox_rect(fragment, meta, page):
@@ -229,6 +257,17 @@ def _band_root(rect, bands):
     if len(scored) > 1 and scored[0][0] - scored[1][0] < .15:
         return None
     return scored[0][1]
+
+
+# A PDF made with a legacy Hindi font maps its glyphs to the wrong Unicode: "खंड" comes out "िांि", "पाठ्य" as
+# "प़ाठ््". Nukta on a vowel sign and doubled viramas never occur in real Devanagari text.
+_GARBLED = re.compile("[ा-ौ]़|़[ाी]|््")
+
+
+def garbled_text_layer(text: str) -> bool:
+    """The page's PDF text is mis-encoded (see _GARBLED), so it must not be copied into questions."""
+    devanagari = len(re.findall("[ऀ-ॿ]", text or ""))
+    return devanagari >= 40 and len(_GARBLED.findall(text)) * 100 >= devanagari  # 1 in 100 letters or more
 
 
 def _recovered_parts(page, root, top, bottom):
@@ -282,6 +321,8 @@ def _reconcile_fragments(page, meta, result, anchors, lead=None):
 
     present = {fragment.root for fragment in result.fragments}
     sy = meta["ocr_height"] / page.rect.height
+    if garbled_text_layer(page.get_text()):
+        return  # nothing can be recovered from a mis-encoded text layer; the AI reading stands as it is
     for root, top, bottom in bands:
         if root in present:
             continue
@@ -386,6 +427,40 @@ def _recover_page_top(page, meta, result, bands, lead, present, sy):
                "PDF text (the AI reading skipped it)."],
     ))
     present.add(lead)
+
+
+# a part label in Roman numerals at the start of a piece: "VII The given question has an error..."
+_ROMAN_PART = re.compile(r"^\s*\(?((?=[IVX])X{0,3}(?:IX|IV|V?I{0,3}))\)?[.)]?\s+\S")
+_ROMAN = {"I": 1, "V": 5, "X": 10}
+
+
+def _roman(label: str) -> int:
+    total = 0
+    for a, b in zip(label, label[1:] + " "):
+        total += -_ROMAN[a] if b != " " and _ROMAN[b] > _ROMAN[a] else _ROMAN[a]
+    return total
+
+
+def _keep_roman_parts(result, printed_here, lead, page_number):
+    """A question's parts numbered I, II ... XII ("Complete any ten of the twelve tasks") can come back from the model
+    as whole questions 7, 8 ... 12. A piece labelled with the Roman numeral of its own number, on a page that does not
+    print that number as a question, is a part of the question printed before it (in reading order) on this page, or
+    of the previous page's last question."""
+    owner = lead
+    for index, fragment in enumerate(result.fragments):
+        if fragment.root in printed_here:
+            owner = fragment.root
+            continue
+        label = _ROMAN_PART.match(fragment.text or "")
+        if owner is None or not label or _roman(label[1]) != fragment.root or fragment.root == owner:
+            continue
+        part = label[1]
+        if fragment.tree is not None and not fragment.tree.children:  # the part itself: a child of the question
+            leaf = fragment.tree
+            leaf.id, leaf.label = f"q{fragment.root}.{part.lower()}", f"{owner}({part})"
+            fragment.tree = Node(id=f"q{fragment.root}", kind="all", label=str(fragment.root), children=[leaf])
+        _keep_with(fragment, owner, f"p{page_number}-r{index + 1}")
+        fragment.continues = True
 
 
 def _keep_with(fragment, root, tag):
@@ -526,6 +601,7 @@ def ground_visuals(doc, results, answers=False):
                     if fragment.root not in printed_here and fragment.root < lead:
                         _keep_with(fragment, lead, f"p{meta['page_number']}-{index + 1}")
                         fragment.continues = not _VISUALLY_IMPAIRED.match(fragment.text or "")
+            _keep_roman_parts(result, {root for root, _y, _x in anchors}, lead, meta["page_number"])
             previous = _anchors(pdf[number - 1]) if number else []
             if answers:  # a question paper may print a case-study passage above its number
                 # before reconciling, so a printed row the model skipped is then recovered from the PDF

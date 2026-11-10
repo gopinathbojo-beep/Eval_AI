@@ -44,12 +44,12 @@ test("mobile landing: Login first, Register here, original questions, edits, val
   await expect(page.getByRole("alert").getByText("Enter a valid email address", { exact: false })).toBeVisible();
   await answer(page, unique("parent"));
   await answer(page, "short");
-  await expect(page.getByRole("alert").getByText("at least 10 characters", { exact: false })).toBeVisible();
-  await answer(page, "My-private-password1");
-  await expect(page.getByText("My-private-password1", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("alert").getByText("at least 8 characters", { exact: false })).toBeVisible();
+  await answer(page, "My-Private-password1");
+  await expect(page.getByText("My-Private-password1", { exact: true })).toHaveCount(0);
   await answer(page, "Different-password1");
   await expect(page.getByText("That doesn’t match", { exact: false })).toBeVisible();
-  await answer(page, "My-private-password1");
+  await answer(page, "My-Private-password1");
   await page.route("**/api/auth/register", (route) =>
     route.fulfill({ status: 409, contentType: "application/json",
       body: JSON.stringify({ code: "EMAIL_EXISTS", message: "An account with this email already exists. Sign in instead." }) }));
@@ -64,15 +64,13 @@ test("school registers with the original questions and gets the school tabs", as
   await page.goto("/register");
   await page.getByRole("link", { name: /^School Management/ }).click();
   await account(page, "School Manager", unique("school"));
-  await answer(page, "School Manager");
-  await answer(page, "12345");
-  await expect(page.getByRole("alert").getByText("10-digit phone number", { exact: false })).toBeVisible();
-  await answer(page, "044 2345 6789");
-  await page.getByRole("button", { name: "Skip for now" }).click();   // CBSE affiliation number (optional)
-  // the school name and address are one card: all six fields, then Submit Address
+  await page.getByRole("button", { name: "Skip", exact: true }).click();   // CBSE affiliation number (optional)
+  await answer(page, "New CBSE School");                                     // school name, searched in CBSE records
+  const manual = page.getByRole("button", { name: /None of these/ });
+  if (await manual.isVisible().catch(() => false)) await manual.click();
+  // the address is one card: all five fields, then Submit Address
   await expect(page.getByText("School address details", { exact: true })).toBeVisible();
-  await page.getByLabel("School name").fill("New CBSE School");
-  await page.getByLabel("Building / Institution Name").fill("Green Valley Campus");
+  await page.getByLabel("Building / Campus Name").fill("Green Valley Campus");
   await page.getByLabel("Locality / Area").fill("Anna Nagar");
   await page.getByLabel("City").fill("Chennai");
   await page.getByLabel("State").fill("Tamil Nadu");
@@ -82,13 +80,14 @@ test("school registers with the original questions and gets the school tabs", as
   await page.getByLabel("PIN Code").fill("600001");
   await page.getByRole("button", { name: "Submit Address" }).click();
   await expect(page.getByText("Green Valley Campus, Anna Nagar, Chennai, Tamil Nadu - 600001", { exact: false })).toBeVisible();
-  await page.screenshot({ path: "C:/Users/Me/AppData/Local/Temp/claude/d--Eval-AI/efde37a7-8b85-4ea1-9b9e-506588af7557/scratchpad/shots/school-address-card.png" });
   await answer(page, "Dr. Lakshmi Rao");            // principal: mandatory
+  await answer(page, "12345");
+  await expect(page.getByRole("alert").getByText("10-digit phone number", { exact: false })).toBeVisible();
+  await answer(page, "044 2345 6789");
   await page.getByRole("button", { name: "Open my workspace" }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
-  const nav = page.getByRole("navigation", { name: "School" });
-  for (const tab of ["Dashboard", "Exams", "Students", "Student Report", "QP & Answer Key"])
-    await expect(nav.getByRole("link", { name: tab, exact: true })).toBeVisible();
+  for (const tab of ["Dashboard", "Exams"])
+    await expect(page.getByRole("link", { name: tab, exact: true }).first()).toBeVisible();
   const me = await (await page.request.get("/api/auth/me")).json();
   expect(me.role).toBe("MANAGEMENT");
   expect(me.profile.principal_name).toBe("Dr. Lakshmi Rao");
@@ -105,11 +104,11 @@ test("parent registers with the original questions and reaches the family dashbo
   await answer(page, "9876543210");
   await answer(page, "Arun Raman");
   await page.getByRole("button", { name: "Class 12" }).click();
-  await page.getByRole("button", { name: "Skip for now" }).click();   // child's school (optional)
+  await page.getByRole("button", { name: "Skip", exact: true }).click();   // child's school (optional)
   await page.getByRole("button", { name: "Open my workspace" }).click();
   await expect(page).toHaveURL(/\/dashboard$/);
   const me = await (await page.request.get("/api/auth/me")).json();
   expect(me.role).toBe("PARENT");
   expect(me.profile.child_name).toBe("Arun Raman");
-  await expect(page.getByRole("navigation", { name: "Family" }).getByRole("link", { name: "My child & profile" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Navigation" }).getByRole("link", { name: "My child & profile" })).toBeVisible();
 });

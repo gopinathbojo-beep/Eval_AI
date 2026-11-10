@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { api } from "../api/client";
 import { useAuth } from "../context/Auth";
 import RegistrationChat, { type ChatStep } from "./RegistrationChat";
@@ -115,6 +115,13 @@ export default function ProfileChat() {
   };
 
   // Build steps dynamically based on what was found and what is missing
+  // A conditional question stays in the list once asked. Otherwise answering it makes its own
+  // condition false, the list shifts up and the chat skips the next (often mandatory) question.
+  const asked = useRef(new Set<string>());
+  const keep = (key: string, needed: boolean) => {
+    if (needed) asked.current.add(key);
+    return asked.current.has(key);
+  };
   const steps: ChatStep[] = [
     ...(teacher?.role === "UNASSIGNED" ? [roleStep] : []),
 
@@ -238,7 +245,7 @@ export default function ProfileChat() {
 
                 // Step 2D: Ask for missing details!
                 // If address is missing, or manual chosen
-                ...(!values.building || !values.city || !values.state || values.selected_school === "manual"
+                ...(keep("address", !values.building || !values.city || !values.state || values.selected_school === "manual")
                   ? [
                       {
                         key: "address",
@@ -259,7 +266,7 @@ export default function ProfileChat() {
                     ]
                   : [
                       // If address is present but PIN code is missing:
-                      ...(!values.postcode
+                      ...(keep("postcode", !values.postcode)
                         ? [
                             {
                               key: "postcode",
@@ -272,7 +279,7 @@ export default function ProfileChat() {
                     ]),
 
                 // If Principal name is missing
-                ...(!values.principal_name || values.selected_school === "manual"
+                ...(keep("principal_name", !values.principal_name || values.selected_school === "manual")
                   ? [
                       {
                         key: "principal_name",
@@ -285,7 +292,7 @@ export default function ProfileChat() {
               ]),
 
           // Contact Details (Contact name if not yet set, plus Contact number)
-          ...(!values.name
+          ...(keep("name", !values.name)
             ? [
                 {
                   key: "name",

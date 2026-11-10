@@ -18,6 +18,9 @@ def _root_oauth(name: str, legacy: str = "", default: str = "") -> str:
     return values.get(name.lower(), values.get(legacy.lower(), default))
 
 
+INDIC_SUBJECTS = {"tamil", "hindi", "sanskrit"}  # subject formatters (app/formatter) read with AI_INDIC_MODEL
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=(str(Path(__file__).resolve().parents[2] / ".env"), str(Path(__file__).resolve().parents[1] / ".env")), extra="ignore", hide_input_in_errors=True)
 
@@ -29,7 +32,10 @@ class Settings(BaseSettings):
     supabase_storage_bucket: str = "eval-ai-documents"
     storage_timeout: int = 120
     openrouter_api_key: str = ""
-    openrouter_model: str = "deepseek/deepseek-v4.1-flash-1017"  # DeepSeek only (no Gemini): school decision
+    # English-script subjects (English, Maths, Science, Accountancy, ...) use DeepSeek
+    openrouter_model: str = "deepseek/deepseek-v4.1-flash-1017"
+    # Tamil, Hindi and Sanskrit papers use Gemini: every AI step of those exams, whatever its tier
+    ai_indic_model: str = "google/gemini-3.5-flash"
     # Two tiers, so each job pays only for what it needs (empty = OPENROUTER_MODEL):
     # medium: reading pages and handwriting, grading, and the AI reviewer that settles flagged items
     ai_medium_model: str = ""
@@ -68,9 +74,6 @@ class Settings(BaseSettings):
                 raise ValueError("PUBLIC_WEB_URL must be the HTTPS origin of GOOGLE_REDIRECT_URI.")
         if not (self.openrouter_api_key and self.openrouter_model):
             raise ValueError("OpenRouter requires OPENROUTER_API_KEY and OPENROUTER_MODEL.")
-        for name in ("openrouter_model", "ai_medium_model", "ai_small_model"):
-            if "gemini" in (getattr(self, name) or "").lower():
-                raise ValueError(f"{name.upper()} is a Gemini model; this school uses DeepSeek on OpenRouter only.")
         if self.storage_provider == "supabase" and not (self.supabase_url.startswith("https://") and self.supabase_service_role_key and self.supabase_storage_bucket):
             raise ValueError("Supabase storage requires HTTPS SUPABASE_URL, service-role key and bucket.")
         return self
@@ -86,6 +89,10 @@ class Settings(BaseSettings):
     @property
     def small_model(self) -> str:
         return self.ai_small_model or self.medium_model
+
+    def model_for(self, model: str, subject: str | None) -> str:
+        """The model a call really uses: Tamil, Hindi and Sanskrit exams go to AI_INDIC_MODEL, the rest as asked."""
+        return self.ai_indic_model if subject in INDIC_SUBJECTS and self.ai_indic_model else model
 
     @property
     def ai_provider(self) -> str:

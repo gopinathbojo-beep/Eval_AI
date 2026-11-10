@@ -39,52 +39,31 @@ def _exam_ready_for_sheets(c, h, class_name):
     return cls, eid
 
 
-def test_bulk_sheets_are_matched_to_students_or_held(client, auth):
+def test_bulk_sheets_use_the_roll_number_and_name_read_from_the_sheet(client, auth):
+    """No student list is matched: the roll number and name written on the sheet are used as they are."""
     c, h = client, auth
     cls, eid = _exam_ready_for_sheets(c, h, "10-BulkA")
-    mk = lambda name, roll, reg=None, section="A": j(c.post("/api/students", headers=h, json={  # noqa: E731
-        "name": name, "roll_number": roll, "class_id": cls["id"], "registration_number": reg, "section": section}), 201)
-    asha, ravi, meena, kumar = mk("Asha Devi", "1", "REG-001"), mk("Ravi Kumar", "2"), mk("Meena S", "3", "REG-003"), mk("Asha K", "4", "REG-004")
-
     BEHAVIOUR["sheet"] = "main"
     BEHAVIOUR["identities"] = [
-        {"name": "Asha", "roll_number": "01", "registration_number": "reg 001"},     # reg + roll agree -> auto
-        {"name": "Ravi Kumar", "roll_number": "2", "section": "A"},                  # roll only, no reg on file -> auto
-        {"name": "Priya", "roll_number": "3"},                                      # roll 3 is Meena: name contradicts -> hold
-        {}, {},                                                                     # nothing legible (header, then full page) -> hold
+        {"name": "Asha", "roll_number": "01", "registration_number": "reg 001"},     # roll used as written
+        {"name": "Ravi Kumar", "registration_number": "R-77"},                       # no roll: registration number
+        {"name": "Priya", "roll_number": "01"},                                     # same roll again -> hold
+        {}, {},                                                                     # nothing legible -> hold
     ]
     files = [("files", (f"s{i}.pdf", make_pdf(1), "application/pdf")) for i in range(4)]
     up = j(c.post(f"/api/exams/{eid}/answer-sheets/bulk", headers=h, files=files), 202)
     assert up["uploaded"] == 4
 
     sheets = j(c.get(f"/api/exams/{eid}/answer-sheets", headers=h))
-    assert {s["student"]["id"] for s in sheets} == {asha["id"], ravi["id"]}
-    assert all(s["detected_answers"] > 0 for s in sheets)                       # the regular pipeline ran on them
+    assert {(s["student"]["roll_number"], s["student"]["name"]) for s in sheets} == {("01", "Asha"), ("R-77", "Ravi Kumar")}
+    assert all(s["detected_answers"] > 0 for s in sheets)
     held = j(c.get(f"/api/exams/{eid}/answer-sheets/unassigned", headers=h))
     assert [d["status"] for d in held] == ["NEEDS_STUDENT", "NEEDS_STUDENT"]
-    priya, blank = held
-    # held sheets are read anyway, so the batch never waits on the teacher; only the student is left to pick
-    assert all(pg["ocr_status"] == "OK" for d in held for pg in d["pages"])
-    assert {d["stage"] for d in held} == {"Pick the student (answers already read)"}
-    assert "Priya" in priya["identity"]["note"] and priya["candidates"][0]["id"] == meena["id"]
-    assert "No roll number or registration number" in blank["identity"]["note"]
-
-    # teacher resolves: Priya's sheet is Meena's; the blank one cannot go to Asha (she already has one)
-    BEHAVIOUR["sheet"] = "dup"                  # a different sheet: if assigning read the pages again, its answers would show
-    r = j(c.post(f"/api/answer-sheets/{priya['id']}/assign", headers=h, json={"student_id": meena["id"]}), 200)
-    BEHAVIOUR["sheet"] = "main"
-    assert r["student"]["id"] == meena["id"]
-    answers = j(c.get(f"/api/evaluations/{r['id']}", headers=h))["answers"]
-    assert answers and not any("Another try" in (a["answer_text"] or "") for a in answers)
-    assert c.post(f"/api/answer-sheets/{blank['id']}/assign", headers=h, json={"student_id": asha["id"]}).status_code == 409
-    # a sheet whose student already has one is held, never auto-assigned twice
-    BEHAVIOUR["identities"] = [{"registration_number": "REG-004", "roll_number": "1"}]   # reg -> Kumar, roll -> Asha
-    j(c.post(f"/api/answer-sheets/{blank['id']}/identify", headers=h), 202)
-    again = next(d for d in j(c.get(f"/api/exams/{eid}/answer-sheets/unassigned", headers=h)) if d["id"] == blank["id"])
-    assert again["status"] == "NEEDS_STUDENT" and "roll number 1" in again["identity"]["note"]
-    j(c.post(f"/api/answer-sheets/{blank['id']}/assign", headers=h, json={"student_id": kumar["id"]}), 200)
-    assert j(c.get(f"/api/exams/{eid}/answer-sheets/unassigned", headers=h)) == []
-    assert len(j(c.get(f"/api/exams/{eid}/answer-sheets", headers=h))) == 4
+    notes = sorted(d["identity"]["note"] for d in held)
+    assert "No roll number or registration number" in notes[0]
+    assert "Roll number 01 already has an answer sheet" in notes[1]
+    for d in held:
+        j(c.delete(f"/api/answer-sheets/{d['id']}", headers=h), None)
 
     # an unreadable upload in a batch rejects the batch before anything is stored
     bad = [("files", ("ok.pdf", make_pdf(1), "application/pdf")), ("files", ("bad.pdf", b"nope", "application/pdf"))]
@@ -161,3 +140,12 @@ def test_student_import_export(client, auth):
     assert p.status_code == 200 and p.content.startswith(b"%PDF")
 
 
+
+
+def test_bulk_upload_refuses_photos(client, auth):
+    c, h = client, auth
+    _, eid = _exam_ready_for_sheets(c, h, "10-BulkPhotos")
+    files = [("files", ("ok.pdf", make_pdf(1), "application/pdf")), ("files", ("page.png", make_png(), "image/png"))]
+    r = c.post(f"/api/exams/{eid}/answer-sheets/bulk", headers=h, files=files)
+    assert r.status_code == 400 and "page.png" in r.json()["message"]
+    assert j(c.get(f"/api/exams/{eid}/answer-sheets/unassigned", headers=h)) == []   # nothing stored

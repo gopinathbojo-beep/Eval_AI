@@ -8,6 +8,7 @@ os.environ["DATA_DIR"] = _tmp
 os.environ["DATABASE_URL"] = ""
 os.environ["OPENROUTER_API_KEY"] = "test-openrouter-key"
 os.environ["OPENROUTER_MODEL"] = "deepseek/deepseek-v4.1-flash-1017"
+os.environ["AI_INDIC_MODEL"] = "google/gemini-3.5-flash"  # Tamil, Hindi and Sanskrit exams
 os.environ["AI_MEDIUM_MODEL"] = ""  # tests use the single OPENROUTER_MODEL
 os.environ["AI_SMALL_MODEL"] = ""
 os.environ["AUTOPILOT"] = "false"  # existing tests drive the manual steps; autopilot tests switch it on
@@ -111,14 +112,15 @@ class _H(BaseHTTPRequestHandler):
             body = json.dumps({"models": [{"name": MODEL, "model": MODEL}]}).encode()
             self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(body)
             return
-        body = json.dumps({"data": [{"id": MODEL, "architecture": {"input_modalities": ["text", "image"]}}]}).encode()
+        body = json.dumps({"data": [{"id": m, "architecture": {"input_modalities": ["text", "image"]}}
+                                   for m in (MODEL, os.environ["AI_INDIC_MODEL"])]}).encode()
         if self.path.endswith("/key"):
             body = json.dumps({"data": {"label": "test"}}).encode()
         self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(body)
 
     def do_POST(self):
         req = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-        assert req["model"] == MODEL and req["stream"] is False
+        assert req["model"] in (MODEL, os.environ["AI_INDIC_MODEL"]) and req["stream"] is False
         msgs = req["messages"]
         user = msgs[1]["content"]
         if self.path == "/api/chat":  # InternVL (Ollama)

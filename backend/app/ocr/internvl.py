@@ -1,4 +1,4 @@
-"""Structured Gemini extraction and grading through OpenRouter.
+"""Structured AI extraction and grading through OpenRouter.
 
 The module name remains as an internal compatibility shim for existing imports.
 """
@@ -20,7 +20,7 @@ T = TypeVar("T", bound=BaseModel)
 
 
 class AIUnavailable(Exception):
-    """OpenRouter is unreachable or the configured Gemini model is unavailable."""
+    """OpenRouter is unreachable or the configured model is unavailable."""
     def __init__(self, detail: str = ""):
         super().__init__(ai_unavailable_message())
         self.detail = detail
@@ -352,7 +352,7 @@ def chat_structured(system: str, user: str, schema: Type[T], image_path: Path | 
 
 def _chat_structured(system: str, user: str, schema: Type[T], image_path: Path | None = None,
                     model: str | None = None) -> AICall:
-    """Call Gemini, parse and validate the response, with image split recovery when needed."""
+    """Call the model, parse and validate the response, with image split recovery when needed."""
     s = get_settings()
     attempts = s.ai_max_retries + 1
     raw, last_err, kind = "", "", "AI_ERROR"

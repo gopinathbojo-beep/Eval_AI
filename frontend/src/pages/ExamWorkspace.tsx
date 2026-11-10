@@ -27,6 +27,7 @@ const SHEET_PATHS = ["submissions", "students", "answer-sheets", "evaluation", "
 
 const TABS: [string, string][] = [
   ["", "Review & Finalize"],
+  ["upload", "Upload"],
   ["submissions", "Students"],
 ];
 
@@ -113,7 +114,7 @@ export default function ExamWorkspace() {
 
       {!inSetup && (
         <nav className="flex gap-2 overflow-x-auto border-b border-slate-100 pb-3" aria-label="Exam sections">
-          {TABS.map(([to, tabText]) => {
+          {TABS.filter(([to]) => to !== "upload" || openForUpload).map(([to, tabText]) => {
             const isAct = active(to);
             return (
               <NavLink

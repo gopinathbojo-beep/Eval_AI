@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type DragEvent, type FormEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { api, ApiError } from "../api/client";
 import { useApi } from "../hooks/useApi";
@@ -116,8 +116,14 @@ function PapersList({ data, error }: { data: { papers: Paper[] } | null; error: 
   if (!data) return <Loading text="Loading papers..." />;
   if (!data.papers.length)
     return <Card className="px-4 py-10 text-center text-sm text-mute">No papers yet. Scanned sheets appear here by roll number.</Card>;
+  const held = data.papers.filter((p) => p.status === "NEEDS_STUDENT").length;
   return (
     <Card>
+      {held > 0 && (
+        <p role="status" className="border-b border-line bg-warn-soft px-4 py-2 text-sm text-warn">
+          {held} sheet{held === 1 ? " is" : "s are"} waiting for the school to confirm the student. Nothing to re-upload.
+        </p>
+      )}
       <ul className="divide-y divide-line">
         {data.papers.map((p) => (
           <li key={p.id} className="flex items-center justify-between gap-3 px-4 py-3">
@@ -130,7 +136,11 @@ function PapersList({ data, error }: { data: { papers: Paper[] } | null; error: 
                 {p.pages ? `${p.pages} page${p.pages > 1 ? "s" : ""} · ` : ""}{p.mine ? "by you" : `by ${p.uploaded_by}`} ·{" "}
                 {new Date(p.uploaded_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
               </p>
-              {p.note && <p className="mt-0.5 text-xs text-warn">{p.note}</p>}
+              {p.status === "NEEDS_STUDENT" ? (
+                <p className="mt-1 rounded bg-warn-soft px-2 py-1 text-xs font-medium text-warn">
+                  Waiting for the school{p.note ? `: ${p.note}` : ": the roll number could not be read."}
+                </p>
+              ) : p.note && <p className="mt-0.5 text-xs text-warn">{p.note}</p>}
             </div>
             <StatusBadge status={p.status} className="shrink-0" />
           </li>
@@ -139,6 +149,8 @@ function PapersList({ data, error }: { data: { papers: Paper[] } | null; error: 
     </Card>
   );
 }
+
+const BULK_BATCH = 5; // files per bulk request
 
 /* ------------------------------------------------------------------ scanning, page by page
 
@@ -323,60 +335,37 @@ function SheetScanner({ onSent }: { onSent: () => Promise<void> }) {
     }
     window.setTimeout(() => rollInput.current?.focus(), 50);
   };
-  // one PDF is one student's whole sheet; photos (several pages, in order) follow the camera steps:
-  // details page first, then each page, then finish. Either way: ask the roll number after.
+  // Uploaded files need no roll number: it is read from the sheet's details page. Only live scanning asks for it.
+  // One PDF/Word file, or the photos of one student's pages (in order), is one sheet; several PDFs go as bulk.
   const [pdf, setPdf] = useState<File[] | null>(null);
-  const [pdfRoll, setPdfRoll] = useState("");
-  const pdfRollInput = useRef<HTMLInputElement>(null);
-  const pickPdf = (list: FileList | null) => {
+  const pickPdf = (list: FileList | File[] | null) => {
     const files = Array.from(list ?? []);
     if (!files.length) return;
     const images = files.filter((f) => f.type.startsWith("image/"));
     if (images.length && images.length !== files.length) {
-      setError(new Error("Choose either one PDF, or the photos of one student's pages, not both."));
+      setError(new Error("Choose either PDF files, or the photos of one student's pages, not both."));
       return;
     }
+    setError(null);
+    setMessage(null);
     if (!images.length && files.length > 1) {
-      setError(new Error("One PDF is one student's sheet. Choose one PDF at a time."));
+      void saveBulk(list);
       return;
     }
     setPdf(images.length ? images.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })) : files);
-    setPdfRoll(roll);
-    setError(null);
-    setMessage(null);
-    window.setTimeout(() => pdfRollInput.current?.focus(), 50);
   };
   const savePdf = async () => {
-    const r = pdfRoll.trim();
     if (!pdf) return;
-    if (!/^[A-Z0-9/-]{1,20}$/.test(r)) return setError(new Error("Enter the student's roll number for this PDF."));
     setBusy(true);
     setError(null);
     try {
       const isImages = pdf[0]!.type.startsWith("image/");
-      if (isImages) {
-        // same steps as the camera: details page first, then the other pages, then finish
-        const first = new FormData();
-        first.append("roll_number", r);
-        first.append("page", pdf[0]!);
-        const sheet = await api<{ id: string }>("/uploader/sheets", { method: "POST", form: first });
-        for (let i = 1; i < pdf.length; i++) {
-          const page = new FormData();
-          page.append("index", String(i + 1));
-          page.append("page", pdf[i]!);
-          await api(`/uploader/sheets/${sheet.id}/pages`, { method: "POST", form: page });
-        }
-        await api(`/uploader/sheets/${sheet.id}/finish`, { method: "POST" });
-      } else {
-        const form = new FormData();
-        form.append("files", pdf[0]!);
-        form.append("roll_number", r);
-        await api("/uploader/answer-sheets", { method: "POST", form });
-      }
-      setMessage(`Roll ${r}: ${isImages ? `${pdf.length} page${pdf.length > 1 ? "s" : ""}` : pdf[0]!.name} saved. It is in Papers and goes for evaluation.`);
+      const form = new FormData();
+      pdf.forEach((f) => form.append("files", f));
+      if (isImages) form.append("one_sheet", "true");
+      await api("/uploader/answer-sheets", { method: "POST", form });
+      setMessage(`${isImages ? `${pdf.length} page${pdf.length > 1 ? "s" : ""}` : pdf[0]!.name} saved. The roll number is read from the details page; it is in Papers and goes for evaluation.`);
       setPdf(null);
-      setPdfRoll("");
-      setRoll("");
       await onSent();
     } catch (e) {
       setError(e); // the file stays chosen, so it can be saved again
@@ -385,32 +374,144 @@ function SheetScanner({ onSent }: { onSent: () => Promise<void> }) {
     }
   };
 
+  const bulkInput = useRef<HTMLInputElement>(null);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const saveBulk = async (list: FileList | File[] | null) => {
+    const files = [...(list ?? [])];
+    if (!files.length) return;
+    const wrong = files.find((f) => !/\.(pdf|docx)$/i.test(f.name));
+    if (wrong) return setError(new Error(`${wrong.name}: bulk upload takes PDF or Word files, one per student.`));
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    let saved = 0;
+    try {
+      // small batches, so progress shows and one slow file does not hold up the whole class
+      for (let i = 0; i < files.length; i += BULK_BATCH) {
+        setProgress({ done: i, total: files.length });
+        const form = new FormData();
+        files.slice(i, i + BULK_BATCH).forEach((f) => form.append("files", f));
+        saved += (await api<{ uploaded: number }>("/uploader/answer-sheets/bulk", { method: "POST", form })).uploaded;
+      }
+      setMessage(`${saved} answer sheet${saved === 1 ? "" : "s"} saved. Roll numbers are read from each sheet; they appear in Papers.`);
+    } catch (e) {
+      setError(saved
+        ? new Error(`${saved} of ${files.length} saved, then the upload stopped (${e instanceof Error ? e.message : "network error"}). Choose the remaining files again.`)
+        : e);
+    } finally {
+      setProgress(null);
+      setBusy(false);
+      if (saved) await onSent();
+    }
+  };
+  const [mode, setMode] = useState<"scan" | "one" | "bulk">("scan");
+  const [dragging, setDragging] = useState(false);
+  const drop = (onFiles: (f: File[]) => void) => ({
+    onDragOver: (e: DragEvent) => { e.preventDefault(); setDragging(true); },
+    onDragLeave: () => setDragging(false),
+    onDrop: (e: DragEvent) => { e.preventDefault(); setDragging(false); if (!busy) onFiles([...e.dataTransfer.files]); },
+  });
+  const zone = `rounded-lg border-2 border-dashed p-4 text-center transition-ui ${dragging ? "border-pen bg-pen-soft" : "border-line"}`;
+
   const active = queue.sheets.filter((sh) => !sh.done && !sh.discarded);
   return (
     <Card className="space-y-4 p-4">
-      <div>
-        <h2 className="text-base font-semibold text-ink">Scan answer sheets</h2>
-        <p className="mt-1 text-sm text-mute">
-          Enter the roll number and press Start. Photograph the details page first, then every answer page, and press
-          End on the last page.
-        </p>
+      <div className="grid grid-cols-3 gap-1 rounded-lg bg-sunken p-1" role="tablist" aria-label="How to send sheets">
+        {([["scan", "Scan"], ["one", "Upload one"], ["bulk", "Bulk upload"]] as const).map(([m, label]) => (
+          <button key={m} type="button" role="tab" aria-selected={mode === m} disabled={busy && mode !== m}
+                  onClick={() => { setMode(m); setError(null); setMessage(null); }}
+                  className={`min-h-[44px] rounded-md text-sm font-semibold transition-ui ${
+                    mode === m ? "bg-surface text-ink shadow-xs" : "text-mute hover:text-ink"}`}>
+            {label}
+          </button>
+        ))}
       </div>
-      <label className="block text-sm font-medium text-ink">
-        Student roll number
-        <input
-          ref={rollInput}
-          value={roll}
-          onChange={(e) => setRoll(e.target.value.toUpperCase().replace(/[^A-Z0-9/-]/g, ""))}
-          onKeyDown={(e) => e.key === "Enter" && start()}
-          autoComplete="off"
-          maxLength={20}
-          placeholder="e.g. 24"
-          className="mt-1 min-h-[48px] w-full rounded-md border border-line bg-surface px-3 text-base text-ink outline-none focus:border-pen focus:ring-2 focus:ring-pen/20"
-        />
-      </label>
-      <Button variant="primary" className="min-h-[52px] w-full text-base" onClick={start} icon={<CameraIcon />}>
-        Start scanning
-      </Button>
+
+      {mode === "scan" && (
+        <>
+          <p className="text-sm text-mute">
+            Enter the roll number and press Start. Photograph the details page first, then every answer page, and press
+            End on the last page.
+          </p>
+          {!window.isSecureContext && (
+            <p role="note" className="rounded-md bg-warn-soft px-3 py-2 text-xs text-warn">
+              The live camera needs a secure (https) address. Here each page opens your phone&apos;s camera app instead.
+            </p>
+          )}
+          <label className="block text-sm font-medium text-ink">
+            Student roll number
+            <input
+              ref={rollInput}
+              value={roll}
+              onChange={(e) => setRoll(e.target.value.toUpperCase().replace(/[^A-Z0-9/-]/g, ""))}
+              onKeyDown={(e) => e.key === "Enter" && start()}
+              autoComplete="off"
+              maxLength={20}
+              placeholder="e.g. 24"
+              className="mt-1 min-h-[48px] w-full rounded-md border border-line bg-surface px-3 text-base text-ink outline-none focus:border-pen focus:ring-2 focus:ring-pen/20"
+            />
+          </label>
+          <Button variant="primary" className="min-h-[52px] w-full text-base" onClick={start} icon={<CameraIcon />}>
+            Start scanning
+          </Button>
+        </>
+      )}
+
+      {mode === "one" && (
+        <div {...drop(pickPdf)} className={zone}>
+          <input ref={filesInput} type="file" accept=".pdf,.png,.jpg,.jpeg,.docx" multiple hidden
+                 onChange={(e) => { pickPdf(e.target.files); e.target.value = ""; }} />
+          {pdf ? (
+            <div className="space-y-3 text-left">
+              <p className="truncate text-sm font-medium text-ink">
+                {pdf[0]!.type.startsWith("image/")
+                  ? `${pdf.length} photo${pdf.length > 1 ? "s" : ""}: page 1 (details page) is ${pdf[0]!.name}`
+                  : pdf[0]!.name}
+              </p>
+              <p className="text-xs text-mute">No roll number needed: it is read from the sheet&apos;s details page.</p>
+              <div className="flex gap-2">
+                <Button variant="primary" className="min-h-[48px] flex-1" busy={busy} onClick={savePdf}>Save</Button>
+                <Button variant="ghost" className="min-h-[48px]" disabled={busy} onClick={() => setPdf(null)}>Cancel</Button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <Button variant="soft" className="min-h-[48px] w-full" disabled={busy}
+                      onClick={() => filesInput.current?.click()} icon={<IconUpload size={16} />}>
+                Choose PDF or photos
+              </Button>
+              <p className="mt-2 text-xs text-mute">
+                One student&apos;s sheet: one PDF, or the page photos in order with the details page first. You can also
+                drop them here. No roll number needed: it is read from the sheet.
+              </p>
+            </>
+          )}
+        </div>
+      )}
+
+      {mode === "bulk" && (
+        <div {...drop((f) => void saveBulk(f))} className={zone}>
+          <input ref={bulkInput} type="file" accept=".pdf,.docx" multiple hidden aria-label="Bulk upload answer sheets"
+                 onChange={(e) => { void saveBulk(e.target.files); e.target.value = ""; }} />
+          <Button variant="soft" className="min-h-[48px] w-full" busy={busy} disabled={busy}
+                  onClick={() => bulkInput.current?.click()} icon={<IconUpload size={16} />}>
+            Choose files
+          </Button>
+          <p className="mt-2 text-xs text-mute">
+            Many students at once: PDF or Word files, one file per student. You can also drop them here. No roll
+            numbers to enter: they are read from each sheet&apos;s details page.
+          </p>
+          {progress && (
+            <div className="mt-3 space-y-1" aria-live="polite">
+              <p className="text-sm text-ink">Uploading {progress.done} of {progress.total}…</p>
+              <div className="h-2 overflow-hidden rounded-full bg-sunken" role="progressbar" aria-label="Bulk upload progress"
+                   aria-valuemin={0} aria-valuemax={progress.total} aria-valuenow={progress.done}>
+                <div className="h-full bg-pen transition-all" style={{ width: `${(progress.done / progress.total) * 100}%` }} />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {active.length > 0 && (
         <ul className="space-y-1.5 rounded-md bg-sunken/70 px-3 py-2 text-sm" aria-live="polite" aria-label="Uploads in progress">
@@ -432,51 +533,6 @@ function SheetScanner({ onSent }: { onSent: () => Promise<void> }) {
       )}
       {message && <p role="status" className="rounded-md bg-ok-soft px-3 py-2 text-sm text-ok">{message}</p>}
       <ErrorPanel error={error} />
-
-      <div className="border-t border-dashed border-line pt-4">
-        <input ref={filesInput} type="file" accept=".pdf,.png,.jpg,.jpeg,.docx" multiple hidden
-               onChange={(e) => { pickPdf(e.target.files); e.target.value = ""; }} />
-        {pdf ? (
-          <div className="space-y-3 rounded-md border border-line bg-surface p-3">
-            <p className="truncate text-sm font-medium text-ink">
-              {pdf[0]!.type.startsWith("image/")
-                ? `${pdf.length} photo${pdf.length > 1 ? "s" : ""}: page 1 (details page) is ${pdf[0]!.name}`
-                : pdf[0]!.name}
-            </p>
-            <label className="block text-sm font-medium text-ink">
-              Which roll number is this sheet for?
-              <input
-                ref={pdfRollInput}
-                value={pdfRoll}
-                onChange={(e) => setPdfRoll(e.target.value.toUpperCase().replace(/[^A-Z0-9/-]/g, ""))}
-                onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), void savePdf())}
-                autoComplete="off"
-                maxLength={20}
-                placeholder="e.g. 24"
-                disabled={busy}
-                className="mt-1 min-h-[48px] w-full rounded-md border border-line bg-surface px-3 text-base text-ink outline-none focus:border-pen focus:ring-2 focus:ring-pen/20"
-              />
-            </label>
-            <div className="flex gap-2">
-              <Button variant="primary" className="min-h-[48px] flex-1" busy={busy} onClick={savePdf}>
-                {pdfRoll.trim() ? `Save under roll ${pdfRoll.trim()}` : "Save"}
-              </Button>
-              <Button variant="ghost" className="min-h-[48px]" disabled={busy} onClick={() => setPdf(null)}>Cancel</Button>
-            </div>
-          </div>
-        ) : (
-          <>
-            <Button variant="soft" className="min-h-[48px] w-full" disabled={busy}
-                    onClick={() => filesInput.current?.click()} icon={<IconUpload size={16} />}>
-              Upload PDF or photos
-            </Button>
-            <p className="mt-2 text-center text-xs text-mute">
-              Already scanned? Choose one student's sheet (one PDF, or the page photos in order with the details page
-              first), then enter the roll number.
-            </p>
-          </>
-        )}
-      </div>
 
       {scanning && (
         <CameraOverlay

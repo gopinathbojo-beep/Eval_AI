@@ -238,10 +238,10 @@ def set_uploader_name(body: UploaderNameIn, ctx=Depends(current_uploader), db: S
 
 @router.post("/uploader/answer-sheets", status_code=202)
 async def uploader_upload(bg: BackgroundTasks, files: list[UploadFile] = File(...), one_sheet: bool = Form(False),
-                          roll_number: str = Form(..., max_length=50),
+                          roll_number: str = Form("", max_length=50),
                           ctx=Depends(current_uploader), db: Session = Depends(get_db)):
-    """One student's sheet: a file, or with one_sheet its photographed pages. The typed roll number decides the
-    student; nothing is read from the sheet to identify them."""
+    """One student's sheet: a file, or with one_sheet its photographed pages. A typed roll number decides the
+    student; without one (uploaded files) the roll number is read from the sheet's details page."""
     c, exam = ctx
     ws = db.get(Workspace, c.workspace_id)
     owner = db.get(Teacher, ws.owner_id)  # sheets are processed as the school, the code only delivers them
@@ -250,11 +250,19 @@ async def uploader_upload(bg: BackgroundTasks, files: list[UploadFile] = File(..
         files = [await _pages_to_pdf(files)]
     roll = roll_number.strip()
     if not roll:
-        raise err(400, "INVALID_ROLL", "Enter the student's roll number.")
+        if len(files) != 1:
+            raise err(400, "ONE_SHEET", "Send one student's sheet at a time, or use Bulk upload for many.")
+        from .answer_sheets import _save_unassigned
+        from ..services.student_identity import identify_sheets
+        docs = await _save_unassigned(db, owner, exam, files)
+        docs[0].uploaded_by_code = c.id
+        db.commit()
+        bg.add_task(submit, exam.id, identify_sheets, [docs[0].id], owner.id)
+        return {"uploaded": 1, "roll_number": None}
     if len(files) != 1:
         raise err(400, "ONE_SHEET_PER_ROLL", "A roll number belongs to one answer sheet. Send one sheet at a time.")
     from ..models import Student
-    from .documents import upload_answer_sheet
+    from .answer_sheets import upload_answer_sheet
     known = db.query(Student).filter_by(class_id=exam.class_id, roll_number=roll).first()
     # saved under the typed roll number, then read AND graded
     result = await upload_answer_sheet(exam.id, BackgroundTasks(), files[0], None,
@@ -265,6 +273,25 @@ async def uploader_upload(bg: BackgroundTasks, files: list[UploadFile] = File(..
     from ..services.student_identity import run_sheet
     bg.add_task(submit, exam.id, run_sheet, doc.id)
     return {"uploaded": 1, "roll_number": roll}
+
+
+@router.post("/uploader/answer-sheets/bulk", status_code=202)
+async def uploader_upload_bulk(bg: BackgroundTasks, files: list[UploadFile] = File(...),
+                               ctx=Depends(current_uploader), db: Session = Depends(get_db)):
+    """Many students at once, as the school's bulk upload: PDF or Word, one file per student. No roll numbers are
+    typed; each sheet's roll number is read from its details page."""
+    from .answer_sheets import BULK_EXT, _save_unassigned
+    from ..services.student_identity import identify_sheets
+    c, exam = ctx
+    owner = _owner(db, c)  # sheets are processed as the school, the code only delivers them
+    exam = get_exam(db, owner, exam.id)
+    docs = await _save_unassigned(db, owner, exam, files, BULK_EXT)
+    for d in docs:
+        d.uploaded_by_code = c.id
+    db.commit()
+    for d in docs:  # one job per sheet, so sheets are identified and read in parallel
+        bg.add_task(submit, exam.id, identify_sheets, [d.id], owner.id)
+    return {"uploaded": len(docs)}
 
 
 # ---------- page-by-page scanning (services/sheet_capture.py) ----------

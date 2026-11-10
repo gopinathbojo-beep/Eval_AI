@@ -78,8 +78,7 @@ def test_uploader_code_uploads_only_to_its_exam(client, auth):
         assert up.get(f"/api/exams/{eid}/results").status_code == 401
         BEHAVIOUR["sheet"] = "main"
         # nobody has roll 77 yet; the typed roll decides the student, the sheet is not read for it
-        assert up.post("/api/uploader/answer-sheets", headers=BROWSER,
-                       files=[("files", ("s.pdf", make_pdf(1), "application/pdf"))]).status_code == 422  # roll required
+        # a roll number is optional for uploaded files (read from the sheet); when typed, it decides
         r = j(up.post("/api/uploader/answer-sheets", headers=BROWSER, data={"roll_number": "77"},
                       files=[("files", ("s.pdf", make_pdf(1), "application/pdf"))]), 202)
         assert r["uploaded"] == 1

@@ -6,7 +6,6 @@ import json
 
 OCR_SYSTEM = (
     "You are the document understanding, OCR, structure extraction, and question-mapping engine for Eval AI. "
-    "MODEL: Gemini through OpenRouter. "
     "Your job is to accurately understand the supplied examination document image/PDF page and return structured information.\n\n"
     "CRITICAL PRINCIPLES:\n"
     "1. Read the actual document visually. Never invent text, question numbers, subquestions, or answers. Never autocomplete or finish incomplete answers.\n"

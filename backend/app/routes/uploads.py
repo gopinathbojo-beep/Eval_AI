@@ -31,7 +31,8 @@ class UploadIn(BaseModel):
 
 @router.post("/exams/{exam_id}/uploads", status_code=201)
 def begin_upload(exam_id: str, body: UploadIn, db: Session = Depends(get_db), user: Teacher = Depends(current_teacher)):
-    from .documents import EXT, _require_sheet_state
+    from .documents import EXT
+    from .answer_sheets import _require_sheet_state
     exam = get_exam(db, user, exam_id)
     if get_settings().storage_provider != "supabase":
         raise err(409, "LOCAL_STORAGE", "Use the normal file upload for local storage.")
@@ -67,11 +68,12 @@ def owned_upload(db, user, upload_id):
 
 @router.post("/uploads/{upload_id}/complete")
 async def complete_upload(upload_id: str, bg: BackgroundTasks, db: Session = Depends(get_db), user: Teacher = Depends(current_teacher)):
-    from .documents import upload_question_paper, upload_answer_key, upload_answer_sheet, _unassigned_view
+    from .documents import upload_question_paper, upload_answer_key
+    from .answer_sheets import upload_answer_sheet, _unassigned_view
     from ..services.pipeline import KINDS, process_document
     from ..serializers import doc_view, evaluation_view
     from ..services.job_queue import submit
-    from ..services.student_identity import identify_sheets
+    from ..services.student_identity import identify_sheets, run_sheet
     lease = owned_upload(db, user, upload_id)
     if lease.result:
         return lease.result
@@ -87,6 +89,8 @@ async def complete_upload(upload_id: str, bg: BackgroundTasks, db: Session = Dep
         if existing.status == "UPLOADED":
             if lease.kind == "answer-sheet" and existing.student_id is None:
                 bg.add_task(submit, lease.exam_id, identify_sheets, [existing.id], user.id)
+            elif lease.kind == "answer-sheet" and (existing.identity or {}).get("typed_roll"):
+                bg.add_task(submit, lease.exam_id, run_sheet, existing.id)
             else:
                 bg.add_task(submit, lease.exam_id, process_document, lease.kind, existing.id)
     else:

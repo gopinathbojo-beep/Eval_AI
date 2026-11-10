@@ -42,7 +42,7 @@ export function RegisterChoice({ onPick }: { onPick?: (kind: RegistrationKind) =
              ["parent", "Parent", "A private space for your child's exams and progress."]] as const).map(([kind, label, text]) => {
             const body = (
               <>
-                <span className="block text-lg font-semibold text-pen">{label}</span>
+                <span className="block text-lg font-semibold text-teal-700 dark:text-pen">{label}</span>
                 <span className="mt-2 block text-sm text-mute">{text}</span>
               </>
             );

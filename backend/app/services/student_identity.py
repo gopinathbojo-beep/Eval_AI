@@ -7,8 +7,6 @@ Anything uncertain is held for the teacher (status NEEDS_STUDENT) with the detai
 from __future__ import annotations
 import logging
 import re
-import unicodedata
-from difflib import SequenceMatcher
 from PIL import Image
 from sqlalchemy.orm import Session
 from ..database import SessionLocal
@@ -33,7 +31,6 @@ log = logging.getLogger("adem.identity")
 _IN_FLIGHT: set[str] = set()
 HEADER_FRACTION = 0.4
 IDENTITY_PAGES = 2  # student details are looked for on the first pages only
-MIN_NAME_SIMILARITY = 0.5
 
 
 def norm_id(v: str | None) -> str:
@@ -65,21 +62,7 @@ def _roll_key(v: str | None) -> str:
     return n.lstrip("0") or n
 
 
-def _name_words(v: str | None) -> list[str]:
-    """Words of a name in any script: letters plus vowel signs (Tamil "மாணவர்" keeps its marks), no digits or dots."""
-    return sorted("".join(ch if unicodedata.category(ch)[0] in "LM" else " " for ch in (v or "").casefold()).split())
-
-
-def name_similarity(a: str | None, b: str | None) -> float:
-    ta, tb = _name_words(a), _name_words(b)
-    if not ta or not tb:
-        return 0.0
-    return max(SequenceMatcher(None, " ".join(ta), " ".join(tb)).ratio(),
-               SequenceMatcher(None, "".join(ta), "".join(tb)).ratio())
-
-
 NOTE_NO_ID = "No roll number or registration number could be read from the sheet."
-NOTE_NO_MATCH = "No student in this class matches"
 
 
 def _hold(note: str, read: dict, candidates: list[Student]) -> dict:
@@ -88,59 +71,35 @@ def _hold(note: str, read: dict, candidates: list[Student]) -> dict:
 
 
 def match_student(db: Session, exam: Exam, read: dict) -> dict:
-    """read: {name, roll_number, registration_number, class_name, section} -> {match, student_id, note, read, candidates}."""
-    students = db.query(Student).filter_by(class_id=exam.class_id).all()
-    taken = {e.student_id for e in db.query(Evaluation.student_id).filter_by(exam_id=exam.id)}
-    reg, roll, name, section = read.get("registration_number"), read.get("roll_number"), read.get("name"), read.get("section")
+    """read: {name, roll_number, registration_number, ...} -> {match, student_id, note, read, candidates}.
 
-    def score(s: Student) -> float:  # ranks candidates shown to the teacher when a sheet is held
-        sc = name_similarity(name, s.name)
-        if reg and s.registration_number and norm_id(reg) in norm_id(s.registration_number):
-            sc += 1
-        if roll and _roll_key(roll) == _roll_key(s.roll_number):
-            sc += 1
-        return sc
-    ranked = sorted(students, key=score, reverse=True)
-
-    by_reg = [s for s in students if reg and s.registration_number and norm_id(s.registration_number) == norm_id(reg)]
-    by_roll = [s for s in students if roll and _roll_key(s.roll_number) == _roll_key(roll)]
-
-    if not (reg or roll):
-        return _hold(NOTE_NO_ID, read, ranked)
-
-    swapped = ""
-    if not (by_reg or by_roll):  # students often write the roll number under "Reg. No" (or the reverse)
-        alt_roll = [s for s in students if reg and _roll_key(s.roll_number) == _roll_key(reg)]
-        alt_reg = [s for s in students if roll and s.registration_number and norm_id(s.registration_number) == norm_id(roll)]
-        if alt_roll or alt_reg:
-            reg, roll, by_reg, by_roll = roll, reg, alt_reg, alt_roll
-            swapped = " (written under the other label on the sheet)"
-
-    if len(by_reg) == 1:
-        st = by_reg[0]
-        if by_roll and st not in by_roll:
-            return _hold(f"Registration number matches {st.name} ({st.roll_number}) but roll number {roll} "
-                         f"belongs to {by_roll[0].name}.", read, [st, by_roll[0], *ranked])
-        how = "registration number" + (" and roll number" if by_roll else "")
-    elif len(by_roll) == 1:
-        st = by_roll[0]
-        if reg and st.registration_number:
-            return _hold(f"Roll number {roll} is {st.name}, but registration number {reg} does not match "
-                         f"theirs ({st.registration_number}).", read, [st, *ranked])
-        if name and name_similarity(name, st.name) < MIN_NAME_SIMILARITY:
-            return _hold(f"Roll number {roll} is {st.name}, but the name on the sheet reads '{name}'.", read, [st, *ranked])
-        how = "roll number"
-    else:
-        what = " / ".join(x for x in (f"reg. no. {reg}" if reg else "", f"roll no. {roll}" if roll else "") if x)
-        return _hold(f"{NOTE_NO_MATCH} {what}.", read, ranked)
-
-    if section and st.section and norm_id(section) != norm_id(st.section):
-        return _hold(f"Matched {st.name} by {how}, but the sheet says section {section} and the record says "
-                     f"{st.section}.", read, [st, *ranked])
-    if st.id in taken:
-        return _hold(f"Matched {st.name} ({st.roll_number}) by {how}, but they already have an answer sheet "
-                     f"in this exam.", read, [st, *ranked])
-    return {"match": "AUTO", "student_id": st.id, "note": f"Matched by {how}{swapped}.", "read": read, "candidates": []}
+    Schools keep no student list, so nothing is matched against records: the roll number read from the sheet
+    (the registration number when no roll number is written) and the name are used as they are. The sheet is
+    held only when no number can be read, or when that roll number already has a sheet in this exam."""
+    roll = (read.get("roll_number") or read.get("registration_number") or "").strip()
+    if not roll:
+        return _hold(NOTE_NO_ID, read, [])
+    name = (read.get("name") or "").strip()[:200]
+    from sqlalchemy.exc import IntegrityError
+    from .student_io import split_class_name
+    st = db.query(Student).filter_by(class_id=exam.class_id, roll_number=roll).first()
+    if st is None:
+        _, section = split_class_name(exam.school_class.name) if exam.school_class else (None, None)
+        try:
+            with db.begin_nested():  # two sheets with the same new roll number can race; the second finds the first
+                st = Student(class_id=exam.class_id, roll_number=roll, section=section, name=name or f"Roll {roll}")
+                db.add(st)
+        except IntegrityError:
+            st = db.query(Student).filter_by(class_id=exam.class_id, roll_number=roll).first()
+            if st is None:
+                return _hold(NOTE_NO_ID, read, [])
+        db.flush()
+    elif name and st.name == f"Roll {roll}":
+        st.name = name  # a sheet uploaded earlier by roll number only: keep the name written on the sheet
+    if db.query(Evaluation.id).filter_by(exam_id=exam.id, student_id=st.id).first():
+        return _hold(f"Roll number {roll} already has an answer sheet in this exam.", read, [st])
+    return {"match": "AUTO", "student_id": st.id, "note": f"Roll number {roll} read from the sheet.",
+            "read": read, "candidates": []}
 
 
 # The printed label read as the value: "Roll no", "Roll No.", "Rollinco" (handwritten "Roll no:"), "Reg. No"
@@ -178,17 +137,17 @@ def _identity_pages(doc: AnswerSheetDocument) -> list:
     return [abs_path(p["processed_file"]) for p in doc.pages[:IDENTITY_PAGES]]
 
 
-def _gemini_identity(image) -> dict:
+def _ai_identity(image) -> dict:
     return chat_structured(prompts.IDENTITY_SYSTEM, prompts.student_identity_prompt(), StudentIdentityResult,
                            image).parsed.model_dump()
 
 
 def _reader(exam: Exam | None):
-    """Gemini reads English, Hindi, Tamil and bilingual identity headers."""
-    return _gemini_identity
+    """Reads English, Hindi, Tamil and bilingual identity headers (the model is chosen per subject)."""
+    return _ai_identity
 
 
-def _read_page(page, read_fn=_gemini_identity) -> dict:
+def _read_page(page, read_fn=_ai_identity) -> dict:
     crop = page.parent / f"identity-{page.name}"
     with Image.open(page) as img:
         img.crop((0, 0, img.width, max(1, int(img.height * HEADER_FRACTION)))).save(crop)
@@ -201,7 +160,7 @@ def _read_page(page, read_fn=_gemini_identity) -> dict:
         crop.unlink(missing_ok=True)
 
 
-def _read_header(doc: AnswerSheetDocument, read_fn=_gemini_identity) -> dict:
+def _read_header(doc: AnswerSheetDocument, read_fn=_ai_identity) -> dict:
     """Read the details from the first IDENTITY_PAGES pages, stopping at the first page that gives an ID."""
     read: dict = {}
     want_class = _exam_class(doc)
@@ -228,7 +187,7 @@ def _exam_class(doc) -> int | None:
 ROTATIONS = (90, 270, 180)
 
 
-def _read_rotated(page, angle: int, read_fn=_gemini_identity) -> dict:
+def _read_rotated(page, angle: int, read_fn=_ai_identity) -> dict:
     """Read the details from a whole page turned by `angle` degrees."""
     turned = page.parent / f"identity-r{angle}-{page.name}"
     with Image.open(page) as img:
@@ -251,8 +210,8 @@ def identify_with_rotation(db: Session, exam: Exam, doc: AnswerSheetDocument) ->
     legible = read.pop("legible", False)
     result = match_student(db, exam, read)
     # Turning only helps when nothing usable was read; a clear read that conflicts with a record stays held
-    if result["match"] == "AUTO" or legible or not result["note"].startswith((NOTE_NO_ID, NOTE_NO_MATCH)):
-        return _new_by_roll(db, exam, result)
+    if result["match"] == "AUTO" or legible or not result["note"].startswith(NOTE_NO_ID):
+        return result
     for page in _identity_pages(doc):
         for angle in ROTATIONS:
             try:
@@ -262,32 +221,7 @@ def identify_with_rotation(db: Session, exam: Exam, doc: AnswerSheetDocument) ->
             if alt["match"] == "AUTO":
                 alt["note"] = f"{alt['note']} (page was photographed rotated)"
                 return alt
-    return _new_by_roll(db, exam, result)
-
-
-def _new_by_roll(db: Session, exam: Exam, result: dict) -> dict:
-    """Schools keep no roster: a roll number that matches nobody in the class becomes a new student."""
-    read = result.get("read") or {}
-    roll = (read.get("roll_number") or "").strip()
-    if result["match"] == "AUTO" or not roll or not result["note"].startswith(NOTE_NO_MATCH):
-        return result
-    from sqlalchemy.exc import IntegrityError
-    from .student_io import split_class_name
-    _, section = split_class_name(exam.school_class.name) if exam.school_class else (None, None)
-    try:
-        with db.begin_nested():  # two sheets with the same new roll number can race; the second one finds the first
-            st = Student(class_id=exam.class_id, roll_number=roll, section=section,
-                         name=(read.get("name") or "").strip()[:200] or f"Roll {roll}")
-            db.add(st)
-    except IntegrityError:
-        st = db.query(Student).filter_by(class_id=exam.class_id, roll_number=roll).first()
-        if st is None:
-            return result
-        if db.query(Evaluation.id).filter_by(exam_id=exam.id, student_id=st.id).first():
-            return _hold(f"Roll number {roll} already has an answer sheet in this exam.", read, [st])
-    db.flush()
-    return {"match": "AUTO", "student_id": st.id, "note": f"New student added by roll number {roll}.",
-            "read": read, "candidates": []}
+    return result
 
 
 def assign_student(db: Session, doc: AnswerSheetDocument, student: Student, teacher_id: str | None, how: str) -> Evaluation:
@@ -468,13 +402,6 @@ def _identify(doc_id: str, teacher_id: str | None) -> str:
             _set_hold(doc_id, "The student details on this sheet could not be read. Pick the student or retry.")
             return HELD
         doc.identity = result
-        if result["match"] != "AUTO":
-            from . import autopilot
-            picked = autopilot.pick_student(db, exam, result)  # the free student whose roll number was read
-            if picked is not None:
-                result = {**result, "match": "AUTO", "student_id": picked.id,
-                          "note": f"{result['note']} Assigned to {picked.name} by roll number (autopilot)."}
-                doc.identity = result
         if result["match"] != "AUTO":
             doc.status, doc.stage = "NEEDS_STUDENT", "Pick the student"
             db.commit()

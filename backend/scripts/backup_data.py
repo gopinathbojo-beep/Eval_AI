@@ -1,4 +1,10 @@
-"""Offline DATA_DIR backup/restore. Stop the API first so files match the database."""
+"""DATA_DIR backup/restore, and quick database snapshots.
+
+Full backup (stop the API first so files match the database):  python scripts/backup_data.py <dir>
+Restore into an empty DATA_DIR:                                   python scripts/backup_data.py <archive> --restore
+Database snapshot before a risky change (safe while running):    python scripts/backup_data.py --snapshot before-merge
+  Snapshots go to backups/db/ at the repo root; only the newest --keep (default 10) are kept.
+"""
 import argparse
 from contextlib import closing
 from datetime import datetime, timezone
@@ -81,12 +87,39 @@ def restore(archive: Path, target: Path) -> None:
                 shutil.move(str(path), str(target / path.name))
 
 
+SNAPSHOTS = Path(__file__).resolve().parents[2] / "backups" / "db"
+
+
+def snapshot(source: Path, label: str, keep: int, destination: Path = SNAPSHOTS) -> Path:
+    """Copy adem.db (consistent even while the API runs) to backups/db/adem-<time>-<label>.db, then drop the oldest
+    snapshots beyond `keep`. Only files this command wrote (adem-*.db in that folder) are ever removed."""
+    db_file = source.resolve() / "adem.db"
+    if not db_file.is_file():
+        raise ValueError("No adem.db found in DATA_DIR")
+    clean = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in label).strip("-") or "snapshot"
+    destination.mkdir(parents=True, exist_ok=True)
+    out = destination / f"adem-{datetime.now():%Y%m%d-%H%M%S}-{clean}.db"
+    with closing(sqlite3.connect(db_file.as_uri() + "?mode=ro", uri=True)) as db, closing(sqlite3.connect(out)) as target:
+        db.backup(target)
+    check_database(out)
+    for old in sorted(destination.glob("adem-*.db"), key=lambda p: p.stat().st_mtime, reverse=True)[max(1, keep):]:
+        old.unlink()
+    return out
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("path", type=Path, help="Backup directory, or an archive when --restore is set")
+    parser.add_argument("path", type=Path, nargs="?", help="Backup directory, or an archive when --restore is set")
     parser.add_argument("--restore", action="store_true")
+    parser.add_argument("--snapshot", metavar="LABEL", help="Snapshot only the database, e.g. --snapshot before-merge")
+    parser.add_argument("--keep", type=int, default=10, help="Snapshots to keep (default 10)")
     args = parser.parse_args()
     data = Path(os.environ.get("DATA_DIR", "../data"))
+    if args.snapshot is not None:
+        print(snapshot(data, args.snapshot, args.keep))
+        return
+    if args.path is None:
+        parser.error("give a backup directory, an archive with --restore, or --snapshot LABEL")
     if args.restore:
         restore(args.path, data)
         print("Restore completed. Verify the application before opening traffic.")

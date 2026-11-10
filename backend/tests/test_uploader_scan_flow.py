@@ -203,3 +203,42 @@ def test_bell_lists_sheets_needing_a_person(client, auth):
     r = client.post(f"/api/exams/{eid}/finalize", headers=auth)
     assert r.status_code == 400
     assert {"question": "Roll 25", "reason": "Answer sheet is not linked to a student yet"} in r.json()["issues"]
+
+
+def test_uploader_bulk_upload_reads_each_roll_from_the_sheet(client, auth):
+    """Bulk upload on the uploader page: PDF/Word, one file per student, roll numbers read from the sheets."""
+    from .conftest import make_pdf
+    up, cls, eid = _uploader(client, auth)
+    BEHAVIOUR["sheet"] = "main"
+    BEHAVIOUR["identities"] = [{"name": "Asha", "roll_number": "41"}, {"name": "Ravi", "roll_number": "42"}]
+    files = [("files", (f"s{i}.pdf", make_pdf(1), "application/pdf")) for i in range(2)]
+    assert j(up.post("/api/uploader/answer-sheets/bulk", headers=BROWSER, files=files), 202)["uploaded"] == 2
+    sheets = j(client.get(f"/api/exams/{eid}/answer-sheets", headers=auth), 200)
+    assert {s["student"]["roll_number"] for s in sheets} >= {"41", "42"}
+    mine = j(up.get("/api/uploader/me"), 200)["uploads"]
+    assert len(mine) == 2                                   # credited to this uploader code
+    papers = j(up.get("/api/uploader/papers"), 200)["papers"]
+    assert {p["roll_number"] for p in papers} >= {"41", "42"}
+    # photos are refused: they belong to one student and go through scanning
+    r = up.post("/api/uploader/answer-sheets/bulk", headers=BROWSER, files=[("files", ("p.png", make_png(), "image/png"))])
+    assert r.status_code == 400
+    # without an uploader code the route is closed
+    from fastapi.testclient import TestClient as TC
+    assert TC(client.app).post("/api/uploader/answer-sheets/bulk", headers=BROWSER, files=files).status_code == 401
+
+
+def test_uploaded_pdf_or_photos_need_no_roll_number(client, auth):
+    """Only live scanning asks for a roll number; an uploaded PDF or photo set is read for it."""
+    from .conftest import make_pdf
+    up, cls, eid = _uploader(client, auth)
+    BEHAVIOUR["sheet"] = "main"
+    BEHAVIOUR["identities"] = [{"name": "Meena", "roll_number": "51"}, {"name": "Arun", "roll_number": "52"}]
+    pdf = {"files": ("one.pdf", make_pdf(1), "application/pdf")}
+    assert j(up.post("/api/uploader/answer-sheets", headers=BROWSER, files=pdf), 202)["uploaded"] == 1
+    photos = [("files", (f"p{i}.png", make_png(), "image/png")) for i in range(2)]
+    assert j(up.post("/api/uploader/answer-sheets", headers=BROWSER, data={"one_sheet": "true"}, files=photos), 202)["uploaded"] == 1
+    sheets = j(client.get(f"/api/exams/{eid}/answer-sheets", headers=auth), 200)
+    assert {s["student"]["roll_number"] for s in sheets} >= {"51", "52"}
+    assert len(j(up.get("/api/uploader/me"), 200)["uploads"]) == 2
+    # live scanning still needs the roll number
+    assert up.post("/api/uploader/sheets", headers=BROWSER, files=_page()).status_code in (400, 422)

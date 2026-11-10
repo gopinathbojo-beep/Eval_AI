@@ -84,15 +84,10 @@ def _students_db(students):
     return SimpleNamespace(query=lambda what: _FakeQuery(students if what is si.Student else []))
 
 
-def test_roll_number_written_under_reg_label_still_matches():
-    gopi = SimpleNamespace(id="g", name="Gopinath", roll_number="23CS17", registration_number="538573873874", section="A")
-    other = SimpleNamespace(id="o", name="Priya", roll_number="23CS18", registration_number="538573873875", section="A")
-    db, exam = _students_db([gopi, other]), SimpleNamespace(id="e", class_id="c")
-    res = si.match_student(db, exam, {"name": "GOPINATH.R", "registration_number": "23CS17"})  # "Reg.NO: 23CS17"
-    assert res["match"] == "AUTO" and res["student_id"] == "g" and "other label" in res["note"]
-    res = si.match_student(db, exam, {"name": "Priya", "roll_number": "538573873875"})
-    assert res["match"] == "AUTO" and res["student_id"] == "o"
-    assert si.match_student(db, exam, {"registration_number": "99XX99"})["match"] == "HOLD"
+def test_no_number_read_holds_the_sheet():
+    db, exam = _students_db([]), SimpleNamespace(id="e", class_id="c")
+    res = si.match_student(db, exam, {"name": "Priya"})
+    assert res["match"] == "HOLD" and res["note"].startswith(si.NOTE_NO_ID)
 
 
 def test_legible_page_without_details_is_not_turned(tmp_path, monkeypatch):

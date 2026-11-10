@@ -1,4 +1,5 @@
-"""OpenRouter transport: every AI task uses the one model named by OPENROUTER_MODEL."""
+"""OpenRouter transport. English-script subjects use OPENROUTER_MODEL (DeepSeek); Tamil, Hindi and Sanskrit exams
+use AI_INDIC_MODEL (Gemini) for every call, see Settings.model_for."""
 from __future__ import annotations
 import base64
 import mimetypes
@@ -45,6 +46,21 @@ def connection():
     return s.openrouter_base_url.rstrip("/"), s.openrouter_api_key, s.medium_model  # the default tier; small jobs pass get_settings().small_model
 
 
+def _subject() -> str | None:
+    """The subject formatter of the exam being worked on (a Tamil paper format counts as Tamil)."""
+    from .. import formatter
+    from ..services import paper_format
+    subject = formatter.active()
+    if subject is None and paper_format.active() == paper_format.TAMIL:
+        subject = "tamil"
+    return subject
+
+
+def _can_disable_reasoning(model: str) -> bool:
+    """DeepSeek takes reasoning {"enabled": false}; Gemini models refuse it (reasoning is mandatory there)."""
+    return "gemini" not in (model or "").lower()
+
+
 def _headers(key: str) -> dict:
     return {"Authorization": "Bearer " + key} if key else {}
 
@@ -53,12 +69,13 @@ def call(system: str, user: str, image: Path | None, structured: bool, model: st
          _retry: bool = False):
     s = get_settings()
     base, key, selected = connection()
+    model = s.model_for(model or selected, _subject())
     content: str | list = user
     if image:
         mime = mimetypes.guess_type(image.name)[0] or "image/png"
         content = [{"type": "text", "text": user}, {"type": "image_url", "image_url": {
             "url": f"data:{mime};base64," + base64.b64encode(image.read_bytes()).decode()}}]
-    payload = {"model": model or selected, "messages": [{"role": "system", "content": system},
+    payload = {"model": model, "messages": [{"role": "system", "content": system},
                {"role": "user", "content": content}], "stream": False, "temperature": 0,
                "max_tokens": s.ai_max_output_tokens}
     if structured:
@@ -67,7 +84,10 @@ def call(system: str, user: str, image: Path | None, structured: bool, model: st
         payload["logprobs"] = True
     # thinking models otherwise spend the whole output budget reasoning about a page;
     # DeepSeek ignores effort "minimal" (all 8192 tokens on one page), so page reads turn thinking off
-    payload["reasoning"] = ({"enabled": False} if _retry or (image and s.ai_ocr_reasoning_effort == "minimal")
+    # Gemini 3.5 cannot turn reasoning off (OpenRouter answers HTTP 400), so it gets effort "minimal" instead,
+    # which spends no reasoning tokens on a page read
+    off = {"enabled": False} if _can_disable_reasoning(model) else {"effort": "minimal", "exclude": True}
+    payload["reasoning"] = (off if _retry or (image and s.ai_ocr_reasoning_effort == "minimal")
                             else {"effort": s.ai_ocr_reasoning_effort if image else s.ai_text_reasoning_effort,
                                   "exclude": True})
     headers = _headers(key)
@@ -91,9 +111,9 @@ def call(system: str, user: str, image: Path | None, structured: bool, model: st
     completion_tokens = usage.get("completion_tokens")
     reasoning_tokens = (usage.get("completion_tokens_details") or {}).get("reasoning_tokens")
     log.info("AI completion model=%s finish=%s completion_tokens=%s reasoning_tokens=%s visible_characters=%d",
-             model or selected, choice.get("finish_reason"), completion_tokens, reasoning_tokens, len(text))
+             model, choice.get("finish_reason"), completion_tokens, reasoning_tokens, len(text))
     if choice.get("finish_reason") == "length":
-        if not text.strip() and payload["reasoning"].get("enabled") is not False and not _retry:
+        if not text.strip() and payload["reasoning"] != off and not _retry:
             # the whole budget went on thinking and nothing came back (long sheets, long answers):
             # ask once more with thinking off, as page reads already do
             log.info("AI spent its output budget reasoning; asking again without reasoning")
@@ -110,10 +130,14 @@ def status():
     response = httpx.get(base + "/v1/models", headers=_headers(key), timeout=15, verify=tls_context())
     if not response.is_success:
         raise RuntimeError(f"AI provider health request failed (HTTP {response.status_code})")
-    found = next((m for m in response.json().get("data") or [] if m.get("id") == model), None)
-    if not found:
-        raise RuntimeError("OPENROUTER_MODEL is not available on OpenRouter")
-    inputs = (found.get("architecture") or {}).get("input_modalities")
-    if inputs is not None and "image" not in inputs:
-        raise RuntimeError("OPENROUTER_MODEL does not accept images; choose a vision model")
+    models = response.json().get("data") or []
+    for name, wanted in (("OPENROUTER_MODEL", model), ("AI_INDIC_MODEL", get_settings().ai_indic_model)):
+        if not wanted:
+            continue
+        found = next((m for m in models if m.get("id") == wanted), None)
+        if not found:
+            raise RuntimeError(f"{name} ({wanted}) is not available on OpenRouter")
+        inputs = (found.get("architecture") or {}).get("input_modalities")
+        if inputs is not None and "image" not in inputs:
+            raise RuntimeError(f"{name} ({wanted}) does not accept images; choose a vision model")
     return {"available": True, "model": model, "provider": "openrouter", "url": base}

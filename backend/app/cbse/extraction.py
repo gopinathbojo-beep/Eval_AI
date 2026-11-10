@@ -74,6 +74,10 @@ class VisualEvidence(BaseModel):
         return _box(value) or {}
 
 
+# example values in the reply format of prompt() below; returned as content they mean nothing was read
+_PROMPT_EXAMPLES = {"verbatim marking instructions", "explicit alternatives"}
+
+
 class Fragment(BaseModel):
     root: int = Field(gt=0)
     text: str
@@ -89,6 +93,12 @@ class Fragment(BaseModel):
     tree: Node | None = None
     criteria: list[str] = Field(default_factory=list)
     accepted_answers: list[str] = Field(default_factory=list)
+
+    @field_validator("criteria", "accepted_answers", mode="before")
+    @classmethod
+    def not_the_prompt_examples(cls, value):
+        # the model sometimes returns the prompt's example values ("verbatim marking instructions") as content
+        return [x for x in value or [] if isinstance(x, str) and x.strip().casefold() not in _PROMPT_EXAMPLES]
     bbox: dict | None = None
     visuals: list[VisualEvidence] = Field(default_factory=list)
 
@@ -266,6 +276,13 @@ def merge_nodes(nodes):
             by_id[key] = dict(data)
             continue
         old = by_id[key]
+        if (old.get("kind") == "choose" and (old.get("limit") or 1) > 1 and data.get("kind") != "choose"
+                and data.get("children")):
+            # "answer any ten of the twelve" over a page break: the next page carries more of its parts
+            old["children"] = (old.get("children") or []) + list(data["children"])
+            if data.get("text") and data["text"] not in (old.get("text") or ""):
+                old["text"] = ((old.get("text") or "") + "\n" + data["text"]).strip()
+            continue
         if old.get("kind") == "choose" and data.get("kind") != "choose" and old.get("children"):
             # a page break inside an internal choice: the continuation carries on the last printed alternative
             last = old["children"][-1]

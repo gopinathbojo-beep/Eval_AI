@@ -33,9 +33,6 @@ log = logging.getLogger("adem.autopilot")
 
 REVIEW_SYSTEM = ("You check the work of an automatic reader of school examination documents against the source. "
                  "Use only what the source shows. Reply with one JSON object and nothing else.")
-WRITER_SYSTEM = ("You are an experienced CBSE examiner writing the marking-scheme answer for questions whose scheme "
-                 "entry is missing: correct, complete for the marks, in the board's style. Reply with one JSON object "
-                 "and nothing else.")
 REOPENED = "evaluation_reopened"  # audit action: a teacher reopened the result, so it is never finalized again here
 
 
@@ -288,12 +285,17 @@ def settle_answer_key(exam_id: str) -> None:
     db = SessionLocal()
     try:
         exam = db.get(Exam, exam_id)
-        if exam is None or exam.status != "ANSWER_KEY_UPLOADED":
+        if exam is None or exam.status not in ("QUESTIONS_VERIFIED", "ANSWER_KEY_UPLOADED"):
             return
         doc = (db.query(AnswerKeyDocument).filter_by(exam_id=exam.id, is_active=True)
                .order_by(AnswerKeyDocument.uploaded_at.desc()).first())
         if doc is None or doc.status not in ("READY", "NEEDS_ATTENTION"):
             return
+        if exam.status == "QUESTIONS_VERIFIED":
+            # uploaded with the paper and still being read when the questions were verified: it is the exam's key now
+            from .state import set_state
+            set_state(exam, "ANSWER_KEY_UPLOADED")
+            db.commit()
         with keyed_lock(f"exam:{exam.id}"):
             verified = _settle_answer_key(db, exam, doc)
     finally:
@@ -348,35 +350,28 @@ def _settle_answer_key(db, exam, doc) -> bool:
         k.is_active = False
         k.mapping_note = "Joined into the first row for this question (AI review)."
 
-    # 3. questions the key has no answer for: the medium model writes one
+    # 3. questions the reading left without an answer: the marking scheme's own printed text for that question is
+    # used (the scheme is the authority; no AI writes or changes an answer). A question the scheme prints no answer
+    # for stays empty, so verifying the key holds it for the teacher.
     missing = [q for q in qs if q.id not in seen or not (seen[q.id].answer_text or "").strip()]
     if missing:
-        from ..ocr import prompts
-        from ..ocr.schemas import GeneratedAnswerKeyResult
-        prompt = prompts.generate_answer_key_prompt(exam.name, [
-            {"id": q.id, "display_number": q.display_number, "max_marks": q.max_marks,
-             "question_type": q.question_type, "question_text": q.question_text} for q in missing])
-        try:
-            written = chat_structured(WRITER_SYSTEM, prompt, GeneratedAnswerKeyResult).parsed.answers
-        except AIResponseError:
-            written = []
-        by_id = {q.id: q for q in missing}
-        for answer in written:
-            q = by_id.get(getattr(answer, "exam_question_id", None)) or by_number.get(str(getattr(answer, "question_number", "")))
-            if q is None or not (answer.answer_text or "").strip():
+        recovered = _printed_answers(doc, missing)
+        for q in missing:
+            text = recovered.get(q.id)
+            if not text:
                 continue
+            note = "The AI reading missed this answer; it was taken from the marking scheme's printed text."
             if q.id in seen:
-                seen[q.id].answer_text = answer.answer_text
+                seen[q.id].answer_text = seen[q.id].raw_ocr_text = text
+                seen[q.id].mapping_note = note
                 continue
             row = AnswerKey(exam_id=exam.id, document_id=doc.id, raw_question_number=q.display_number,
-                            normalized_number=q.normalized_number, exam_question_id=q.id,
-                            answer_text=answer.answer_text, raw_ocr_text="", marks=q.max_marks,
-                            criteria=list(answer.criteria or []), accepted_answers=list(answer.accepted_answers or []),
-                            keywords=list(answer.keywords or []), mapping_status="MAPPED",
-                            mapping_note="The uploaded key had no answer for this question; written by the AI.")
+                            normalized_number=q.normalized_number, exam_question_id=q.id, answer_text=text,
+                            raw_ocr_text=text, marks=q.max_marks, criteria=[], accepted_answers=[], keywords=[],
+                            mapping_status="MAPPED", mapping_note=note)
             db.add(row)
             seen[q.id] = row
-        _note(db, exam, "answer_key", doc.id, "autopilot_answers_written", len(written))
+        _note(db, exam, "answer_key", doc.id, "autopilot_answers_from_scheme_text", len(recovered))
 
     # 4. marks follow the question paper
     qmap = {q.id: q for q in qs}
@@ -399,6 +394,30 @@ def _settle_answer_key(db, exam, doc) -> bool:
     _note(db, exam, "exam", exam.id, "autopilot_answer_key_verified")
     db.commit()
     return True
+
+
+def _printed_answers(doc, questions) -> dict:
+    """question id -> the marking scheme's printed text for that question (its PDF text layer), when it prints one."""
+    from ..cbse.build import clean_text
+    from ..cbse.layout import printed_text
+    try:
+        import pymupdf
+        path = abs_path(doc.original_file)
+        if path.suffix.lower() != ".pdf":
+            return {}
+        out = {}
+        with pymupdf.open(path) as pdf:
+            for q in questions:
+                if not str(q.normalized_number).isdigit():
+                    continue
+                text = printed_text(pdf, int(q.normalized_number))
+                text = re.sub(rf"^\s*{q.normalized_number}\s*[.)]?\s*", "", clean_text(text or ""), count=1)
+                if len(text) >= 2:
+                    out[q.id] = text
+        return out
+    except Exception:
+        log.exception("Could not read the marking scheme's printed text")
+        return {}
 
 
 def grade_waiting_sheets(exam_id: str) -> None:
@@ -478,22 +497,6 @@ def settle_roll_mismatch(identity: dict) -> dict:
     check = dict(identity.get("roll_check") or {})
     check["status"], check["use"], check["settled_by"] = "CONFIRMED", "typed", "autopilot"
     return {**identity, "roll_check": check}
-
-
-def pick_student(db: Session, exam: Exam, result: dict):
-    """A sheet the identity rules held: take the candidate whose roll number matches what was read, when that
-    student has no sheet yet. Anything else stays with the school (two sheets for one student is not guessed)."""
-    from ..models import Student
-    from .student_identity import _roll_key
-    roll = (result.get("read") or {}).get("roll_number")
-    if not enabled() or not roll:
-        return None
-    taken = {e.student_id for e in db.query(Evaluation.student_id).filter_by(exam_id=exam.id)}
-    for sid in result.get("candidates") or []:
-        st = db.get(Student, sid)
-        if st and st.id not in taken and _roll_key(st.roll_number) == _roll_key(roll):
-            return st
-    return None
 
 
 # ---------------------------------------------------------------- marks

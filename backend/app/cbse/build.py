@@ -69,7 +69,10 @@ _MENTIONS_VI = re.compile(r"visually\s+(?:impaired|challenged)", re.I)
 _TABLE_HEAD = re.compile(r"^\s*(Q\.?\s*No\.?.*?Marks|This section comprises\b.*)\s*$", re.I | re.M)
 # "Q. No. ANS HINTS/SOLUTION Marks" can share a line with the first answer
 _TABLE_HEAD_INLINE = re.compile(r"Q\.?\s*No\.?\s+(?:Question|ANS\b[^\n]*?)\s+Marks\s*", re.I)
-_SECTION_LINE = re.compile(r"^\s*section\s*\W{0,3}\s*[A-E]\b(?:\s*\[[^\]]*\])?[^\n]*?(?=\d+\s*[.(]|$)", re.I | re.M)
+# a section heading: it ends where the first question starts ("1.", "1(", "1 B. Amine...") or with its line, and is
+# never longer than a heading, so a page read as one run-on line ("Section-A 1 B. ... 2 C. ...") keeps its answers
+_SECTION_LINE = re.compile(r"^\s*section\s*\W{0,3}\s*[A-E]\b(?:\s*\[[^\]]*\])?[^\n]{0,160}?"
+                           r"(?=\d+\s*[.(]|\b\d{1,3}\s+\(?[A-Z][.)]|$)", re.I | re.M)
 # a header is a short line; a page read as one run-on line keeps its question text
 _PAPER_HEADER = re.compile(r"^[^\n]{0,120}?\b(?:marking\s+scheme|sample\s+question\s+paper|subject\s*:|class\s*-\s*x)\b[^\n]{0,120}$", re.I | re.M)
 # the footer itself ("Note: ... Page 8 of 13"): on a run-on line it is cut off and the text before it stays

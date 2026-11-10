@@ -212,6 +212,7 @@ export function UploaderCodesModal({ exam, onClose, onUpdated }: UploaderCodesMo
                     </div>
                     <textarea
                       rows={3}
+                      aria-label="Multiple uploader names"
                       placeholder={`Room 101\nRoom 102\nRoom 103\nMr. Sharma`}
                       value={multipleText}
                       onChange={(e) => setMultipleText(e.target.value)}
